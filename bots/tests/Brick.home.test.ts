@@ -221,6 +221,16 @@ describe('a Brick that lives in a room, moved and returned by Orbit', () => {
         expect(internals.bots.has('brick-1')).toBe(false);
     });
 
+    it('is not started from a list that may be older than a take-out when Orbit cannot be asked again (CodeRabbit on #2055)', async () => {
+        const { botManager, spawn, internals } = manager((_roomUrl, call) => {
+            if (call > 1) throw new Error('down');
+            return [homed('brick-1', ROOM)];
+        });
+        await botManager.handlePlayerEnterRoom(ROOM);
+        expect(spawn).not.toHaveBeenCalled();
+        expect(internals.bots.has('brick-1')).toBe(false);
+    });
+
     it('is started once when two rooms read it at the same time, the second after the first has moved it', async () => {
         // B starts the Brick (its connection is slow); A, with a list from before the move, comes while B is connecting
         let release!: () => void;

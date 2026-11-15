@@ -1484,10 +1484,9 @@ export class BotManager {
                         const standsElsewhere = !existingInstance || existingInstance.config.roomUrl !== bot.roomUrl;
                         if (bot.brick?.home && (waited || standsElsewhere)) {
                             const now = await this.adminApiService.getHomedBricks(bot.roomUrl).catch(() => undefined);
-                            const livesHere = now?.some((current) => current.botId === bot.botId);
-                            // Orbit says it lives elsewhere now: leave it. Orbit could not say: leave one already standing,
-                            // and start one that is not (the list we hold is all we know)
-                            if (now ? !livesHere : !!existingInstance) return;
+                            // Orbit says it lives elsewhere now, or cannot say: it is not started or replaced on the strength of a
+                            // list that may be older than a move or a take-out. The next sync of the room brings it
+                            if (!now?.some((current) => current.botId === bot.botId)) return;
                         }
                         const current = this.bots.get(bot.botId);
 
