@@ -294,6 +294,27 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("appsLoadFailed")).toBeNull();
         });
 
+        it("treats an Instant Apps answer it cannot read as a failed read, with the message and Try again in a search", async () => {
+            game.getInstantApps.mockResolvedValue({ apps: [{ name: "Instant video", blurb: "Make short videos" }] });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsInstant")).toBeNull();
+            const input = byId("appsSearchInput") as HTMLInputElement;
+            input.value = "video";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+            expect(byId("appsInstantFailed")).not.toBeNull();
+            expect(byId("appsNoMatch")).toBeNull();
+            game.getInstantApps.mockResolvedValue({
+                apps: [{ key: "instant-video", name: "Instant video", blurb: "Make short videos" }],
+            });
+            await click("appsInstantTryAgain");
+            warn.mockRestore();
+            expect(byId("appsInstantFailed")).toBeNull();
+            expect(allById("appsInstantRow").map(words)).toEqual(["Instant video Make short videos"]);
+        });
+
         it("keeps the Instant Apps when an older read ends after the newer one", async () => {
             let answerFirst: (answer: unknown) => void = () => undefined;
             game.getInstantApps.mockReset();

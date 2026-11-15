@@ -78,7 +78,9 @@
     async function loadInstant() {
         const mine = ++instantRead;
         try {
-            const list = parseInstant(await botApiService.getInstantApps()) ?? [];
+            // An answer that is not the list (or has a row that is not an app) is a failed read, never an empty list
+            const list = parseInstant(await botApiService.getInstantApps());
+            if (!list) throw new Error("The Instant Apps answer could not be read");
             if (mine !== instantRead) return;
             instant = list;
             instantFailed = false;
