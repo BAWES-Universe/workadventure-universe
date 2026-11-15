@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { MyApp } from "../Apps";
-import { isConnectedApp, matchesSearch, parseCatalog, parseReadyMade, toConnectAnother } from "../Connectable";
+import {
+    isConnectedApp,
+    matchesSearch,
+    parseCatalog,
+    parseInstant,
+    parseReadyMade,
+    toConnectAnother,
+} from "../Connectable";
 
 const mine = (over: Partial<MyApp> = {}): MyApp => ({
     id: "c1",
@@ -12,6 +19,9 @@ const mine = (over: Partial<MyApp> = {}): MyApp => ({
     signInLostAt: null,
     connectedAt: "2026-11-10T09:00:00.000Z",
     lendable: false,
+    kind: "mcp",
+    keyLast4: null,
+    keyMode: null,
     bricks: [],
     ...over,
 });
@@ -100,5 +110,31 @@ describe("Search apps", () => {
         expect(matchesSearch("files", "Dropbox", "Your files")).toBe(true);
         expect(matchesSearch("  ", "Dropbox")).toBe(true);
         expect(matchesSearch("slack", "Dropbox", "Your files")).toBe(false);
+    });
+});
+
+describe("the Instant Apps (credits and grants)", () => {
+    it("reads a name and one line for each, and nothing else", () => {
+        expect(
+            parseInstant({
+                apps: [
+                    {
+                        key: "instant-video",
+                        name: "Instant video",
+                        blurb: "Make short videos",
+                        price: 5,
+                        provider: "x",
+                    },
+                ],
+            })
+        ).toEqual([{ key: "instant-video", name: "Instant video", blurb: "Make short videos" }]);
+        expect(parseInstant({ apps: [{ key: "a", name: "A" }] })).toEqual([{ key: "a", name: "A", blurb: "" }]);
+    });
+
+    it("is nothing when the answer is not a list, and one unreadable row makes it unreadable", () => {
+        expect(parseInstant(null)).toBeUndefined();
+        expect(parseInstant({})).toBeUndefined();
+        expect(parseInstant({ apps: [{ key: "a", name: "A" }, { name: "no key" }] })).toBeUndefined();
+        expect(parseInstant({ apps: [] })).toEqual([]);
     });
 });

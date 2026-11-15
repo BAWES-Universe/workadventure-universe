@@ -21,7 +21,7 @@ describe("the fixed words of a person's own Brick", () => {
     it("says hello to the person by name, in the Brick's own name", () => {
         const LL = i18nObject("en-US");
         expect(brickHello("Brick", LL, "Khalid")).toBe(
-            "Hi Khalid, I'm Brick, your own helper in Universe. Ask me anything, or hand me a job."
+            "Hi Khalid, I'm Brick, your own helper in Universe. Ask me anything, hand me a job, or give me a goal and I'll keep at it while you're away."
         );
         expect(brickHello("Recipe Brick", LL, "  Noura ")).toContain("Hi Noura, I'm Recipe Brick,");
     });
@@ -30,7 +30,7 @@ describe("the fixed words of a person's own Brick", () => {
         const LL = i18nObject("en-US");
         for (const name of [undefined, null, "", "   "]) {
             expect(brickHello("Brick", LL, name)).toBe(
-                "Hi, I'm Brick, your own helper in Universe. Ask me anything, or hand me a job."
+                "Hi, I'm Brick, your own helper in Universe. Ask me anything, hand me a job, or give me a goal and I'll keep at it while you're away."
             );
         }
     });
@@ -44,6 +44,7 @@ describe("the fixed words of a person's own Brick", () => {
             choices: [
                 { id: STARTER_IDEAS, label: "See what I can do", line: "A few ideas to start with" },
                 { id: "apps", label: "Connect my apps", line: "Email, calendar, GitHub and more" },
+                { id: "goal", label: "Give me a goal", line: "I plan it and keep at it while you're away" },
                 { id: "make", label: "Make another Brick", line: "One for a single job, like your recipes" },
             ],
         });
@@ -52,7 +53,7 @@ describe("the fixed words of a person's own Brick", () => {
         expect(card.expiresAt).toBeGreaterThan(Date.now() + 100 * 365 * 24 * 3600 * 1000);
     });
 
-    it("lists four ideas a Brick can do today, each with the words a tap sends", () => {
+    it("lists the ideas a Brick can do today, each with the words a tap sends", () => {
         const LL = i18nObject("en-US");
         const card = brickIdeasCard(LL);
         expect(card.id).toBe(BRICK_IDEAS_CARD);
@@ -60,6 +61,9 @@ describe("the fixed words of a person's own Brick", () => {
         expect(card.question?.multiple).toBe(false);
         expect(card.question?.choices.map((choice) => choice.id)).toEqual([...BRICK_IDEAS]);
         expect(card.question?.choices.map((choice) => choice.label)).toEqual([
+            "Brief you every morning",
+            "Keep watch on a price",
+            "Work toward a goal with you",
             "Write something with you",
             "Read a web page for you",
             "Go through a file with you",
@@ -69,6 +73,14 @@ describe("the fixed words of a person's own Brick", () => {
             expect(choice.line).toBeTruthy();
             expect(brickIdeaWords(choice.id, LL)).toBeTruthy();
         }
+        expect(card.question?.choices.slice(0, 3).map((choice) => choice.line)).toEqual([
+            "Your day and the weather, at 7:30 on workdays",
+            "Tell me what, and I'll say when it drops",
+            "Like a visa sorted before your trip",
+        ]);
+        expect(brickIdeaWords("brief", LL)).toBe("Brief me every morning.");
+        expect(brickIdeaWords("watch", LL)).toBe("Keep watch on a price for me.");
+        expect(brickIdeaWords("goal", LL)).toBe("Work toward a goal with me.");
         expect(brickIdeaWords("write", LL)).toBe("Help me write something.");
         expect(brickIdeaWords("web", LL)).toBe("Read a web page for me.");
         expect(brickIdeaWords("file", LL)).toBe("Go through a file with me.");

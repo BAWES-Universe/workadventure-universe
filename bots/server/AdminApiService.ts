@@ -285,6 +285,9 @@ export interface BrickItemView {
     id: string;
     kind: 'reminder' | 'schedule' | 'watch' | 'goal';
     words: string;
+    /** A watch: when it speaks. A goal: the outcome that counts as reached. */
+    condition?: string | null;
+    outcome?: string | null;
     cadence: { type: 'once'; at: string } | { type: 'daily'; time: string; days: number[] } | { type: 'every'; minutes: number } | { type: 'none' };
     timeZone: string;
     nextDueAt: string | null;
@@ -311,8 +314,8 @@ export interface BotAccessAnswer {
 const DM_ACCESS_REPORT_EVERY_MS = 60_000;
 let lastDmAccessReportAt = 0;
 
-/** What a Brick that cannot answer people where it visits says to them (#2005): its owner's own key is not lent to this place. */
-export const KEY_NOT_LENT_LINE = "I can't answer here right now. Ask the person I came with.";
+/** What a Brick that cannot answer people where it visits or lives says to them (#2005): its owner's own key is not lent to this place. */
+export const KEY_NOT_LENT_LINE = "I can't answer here right now. Ask my owner.";
 
 /** How long a bot waits for Orbit's access answer before it counts as "could not check". */
 const BOT_ACCESS_TIMEOUT_MS = 4_000;
@@ -328,7 +331,8 @@ export interface BotConfiguration {
     // direct messages only and is never put on a map.
     // `deleted` (#1996): its owner deleted it and Undo can still give it back. It answers nobody and keeps its chat.
     // `visiting` (#2005): it walks beside this person (their game uuid) in the room `roomUrl`, and goes when they do.
-    brick?: { ownerId: string; isDefault: boolean; deleted?: boolean; visiting?: BrickCompany };
+    // `home` (#2005): it lives in the room `roomUrl`, put there by this person (their game uuid), and stays at its spot.
+    brick?: { ownerId: string; isDefault: boolean; deleted?: boolean; visiting?: BrickCompany; home?: BrickCompany };
     userId?: string; // User who created the bot
     behaviorType: 'idle' | 'patrol' | 'social';
     behaviorConfig: Record<string, any>;
@@ -382,13 +386,14 @@ function companyOf(value: unknown): BrickCompany | undefined {
 }
 
 /** Whose Brick a configuration from Orbit is (#1995), or null for a room bot and for anything that isn't shaped like one. */
-function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?: boolean; visiting?: BrickCompany } | null {
+function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?: boolean; visiting?: BrickCompany; home?: BrickCompany } | null {
     const brick = (data as { brick?: unknown } | null)?.brick;
     if (!brick || typeof brick !== 'object') return null;
-    const { ownerId, isDefault, deleted, visiting } = brick as { ownerId?: unknown; isDefault?: unknown; deleted?: unknown; visiting?: unknown };
+    const { ownerId, isDefault, deleted, visiting, home } = brick as { ownerId?: unknown; isDefault?: unknown; deleted?: unknown; visiting?: unknown; home?: unknown };
     if (typeof ownerId !== 'string' || !ownerId) return null;
     const company = companyOf(visiting);
-    return { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}), ...(company ? { visiting: company } : {}) };
+    const lives = companyOf(home);
+    return { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}), ...(company ? { visiting: company } : {}), ...(lives ? { home: lives } : {}) };
 }
 
 /** One App on Orbit's list as a Brick may offer it (game #2001): what a person sees of it, and where they stand with it. */
@@ -749,6 +754,24 @@ export class AdminApiService {
         if (!this.isConfigured()) return undefined;
         const response = await this.brickCall<{ alive?: unknown }>('post', 'api/brick-visits/seen', { botId, ownerUuid, roomUrl });
         return typeof response.data?.alive === 'boolean' ? response.data.alive : undefined;
+    }
+
+    /**
+     * The Bricks that live in this room (#2005), each in the Brick shape with `brick.home`, the room's URLs and how it
+     * stands there. Throws when Orbit cannot answer: the caller leaves the ones it has on the map.
+     */
+    async getHomedBricks(roomUrl: string): Promise<BotConfiguration[]> {
+        if (!this.isConfigured()) return [];
+        const response = await this.brickCall<BotConfiguration[]>('post', 'api/brick-homes/room', { roomUrl });
+        const list = Array.isArray(response.data) ? response.data : [];
+        const configs: BotConfiguration[] = [];
+        for (const config of list) {
+            const brick = brickOf(config);
+            // Only a Brick that names whose it is, and where, is one that lives in a room
+            if (!brick?.home || typeof config.botId !== 'string' || typeof config.roomUrl !== 'string') continue;
+            configs.push({ ...config, brick, createdAt: new Date(config.createdAt), updatedAt: new Date(config.updatedAt) });
+        }
+        return configs;
     }
 
     /**

@@ -27,6 +27,7 @@
     import { appsPageRequest, takeAppsPageRequest } from "./Apps/OpenApps";
     import { brickPageRequest, takeBrickPageRequest } from "./Templates/OpenBrick";
     import UsagePage from "./UsagePage.svelte";
+    import { takeUsagePageRequest, usagePageRequest } from "./OpenUsage";
     import { fullAgainWhen } from "./Usage";
     import { loadMyUsage, myUsageStore } from "./UsageStore";
     import { IconApps, IconChartBar, IconChevronDown, IconPlus } from "@wa-icons";
@@ -51,13 +52,21 @@
     // The Brick whose own page is open over the list
     let pageOfId: string | undefined;
     let undoing = new Set<string>();
-    // The Usage page, open over the list
+    // The Usage page, open over the list. A link in a Brick's answer ("What it used") asks for it, with one receipt open.
     let usageOpen = false;
+    let usageReceiptId: string | undefined;
     // The Apps page, open over the list. A link or a card elsewhere (a Brick's "Connect my apps") asks for it to open.
     let appsOpen = false;
     $: if ($appsPageRequest) {
         appsOpen = true;
         takeAppsPageRequest();
+    }
+    $: if ($usagePageRequest) {
+        appsOpen = false;
+        pageOfId = undefined;
+        usageReceiptId = $usagePageRequest.receiptId;
+        usageOpen = true;
+        takeUsagePageRequest();
     }
 
     // A Brick just made from a template opens on its own page: that is where "Setup required" and "Made from" are
@@ -97,8 +106,22 @@
             ? appsRowNames(myApps, appsText.and(), (count) => appsText.more({ count }))
             : appsText.rowNone();
 
+    $: brickLooks = Object.fromEntries((bricks ?? []).map((brick) => [brick.id, brick.characterTextureId]));
+
     function usageBriefOf(chat: typeof usageChat, language: string | undefined): string {
         if (!chat) return usageText.rowUnknown();
+        if (chat.unavailable) return usageText.rowUnknown();
+        const replies = chat.replies;
+        if (replies) {
+            // Real counts: what is available out of what the person has, never "plenty"
+            if (chat.extra?.noLimit) return usageText.rowNoLimit();
+            if (!replies.running) return usageText.rowRepliesIdle({ count: replies.total });
+            if (replies.available === 0) {
+                const when = fullAgainWhen(chat.fullAgainAt, language);
+                return when ? usageText.rowRepliesOut({ when }) : usageText.rowRepliesOutNoTime();
+            }
+            return usageText.rowReplies({ available: replies.available, total: replies.total });
+        }
         if (chat.words === "plenty" || chat.words === "half") return usageText.rowPlenty();
         const when = fullAgainWhen(chat.fullAgainAt, language);
         if (chat.words === "low") return when ? usageText.rowLow({ when }) : usageText.rowLowNoTime();
@@ -152,7 +175,7 @@
 {#if appsOpen}
     <AppsPage onBack={() => (appsOpen = false)} />
 {:else if usageOpen}
-    <UsagePage onBack={() => (usageOpen = false)} />
+    <UsagePage onBack={() => (usageOpen = false)} receiptId={usageReceiptId} looks={brickLooks} />
 {:else if pageOf}
     <BrickPage brick={pageOf} onBack={() => (pageOfId = undefined)} onDeleted={() => (pageOfId = undefined)} />
 {:else}
@@ -277,7 +300,10 @@
                         title={usageText.title()}
                         brief={usageBrief}
                         link
-                        onToggle={() => (usageOpen = true)}
+                        onToggle={() => {
+                            usageReceiptId = undefined;
+                            usageOpen = true;
+                        }}
                     />
                 </div>
             </div>

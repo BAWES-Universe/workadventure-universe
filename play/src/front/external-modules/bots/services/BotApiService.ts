@@ -474,11 +474,16 @@ export class BotApiService {
             let errorMessage = `API error: ${response.status}`;
             let isSessionExpired = false;
             let errorCode: string | undefined;
+            let errorReason: string | undefined;
+            let errorPlace: string | undefined;
 
             try {
                 const errorJson = JSON.parse(errorText);
                 errorMessage = errorJson.message || errorJson.error || errorMessage;
                 errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
+                // Why a Brick's visit was refused, and in which place (#2005): `lives_in` names the room it lives in
+                errorReason = typeof errorJson.reason === "string" ? errorJson.reason : undefined;
+                errorPlace = typeof errorJson.place === "string" ? errorJson.place : undefined;
                 // Check if it's a session expiration error
                 if (
                     errorMessage.toLowerCase().includes("session expired") ||
@@ -529,10 +534,17 @@ export class BotApiService {
                 throw authError;
             }
 
-            const error = new Error(errorMessage) as Error & { status?: number; code?: string };
+            const error = new Error(errorMessage) as Error & {
+                status?: number;
+                code?: string;
+                reason?: string;
+                place?: string;
+            };
             error.status = response.status;
             // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
             if (errorCode !== undefined) error.code = errorCode;
+            if (errorReason !== undefined) error.reason = errorReason;
+            if (errorPlace !== undefined) error.place = errorPlace;
             throw error;
         }
 
@@ -1358,11 +1370,28 @@ export class BotApiService {
     }
 
     /**
-     * "Ask for more" on the Usage page, when computer time is used up. Only a request to the Universe team: no debt.
-     * Throws when Orbit refuses or can't be reached.
+     * "Ask for more" on the Usage page, when Instant Apps credit or computer time is used up (the category says which;
+     * Orbit reads none as the computer's). Only a request to the Universe team: no debt. Throws when Orbit refuses or
+     * can't be reached.
      */
-    async askForMoreUsage(): Promise<unknown> {
-        const response = await this.fetch("/api/me/usage/ask-for-more", { method: "POST" });
+    async askForMoreUsage(category?: "apps" | "computer"): Promise<unknown> {
+        const response = await this.fetch("/api/me/usage/ask-for-more", {
+            method: "POST",
+            ...(category
+                ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category }) }
+                : {}),
+        });
+        return response.json();
+    }
+
+    /**
+     * "Didn't work?" on one task in Activity: Orbit looks at it and answers what it came to (refunded, delivered again,
+     * trying again, credit, or just sent). Throws when Orbit refuses or can't be reached.
+     */
+    async reportActivityProblem(activityId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/me/usage/activity/${encodeURIComponent(activityId)}/didnt-work`, {
+            method: "POST",
+        });
         return response.json();
     }
 
@@ -1394,6 +1423,35 @@ export class BotApiService {
     /** The apps the person connected, with the Bricks of theirs that use each, and the Bricks they have. */
     async getMyApps(): Promise<unknown> {
         return await this.appsCall("/api/me/apps");
+    }
+
+    /** What the safe form for a key shows (game #2044): the service, where the key will be sent, and what is checked. Only for the person it was opened for. */
+    async getKeyForm(formId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/key-forms/${encodeURIComponent(formId)}`);
+    }
+
+    /** Opens the safe form for a service Universe ships, or for replacing the key of an app of theirs. Answers the form's id. */
+    async openKeyForm(target: { service: string } | { connectionId: string }): Promise<string> {
+        const answer = (await this.appsCall("/api/me/apps/key-forms", {
+            method: "POST",
+            body: JSON.stringify(target),
+        })) as { id?: unknown } | undefined;
+        if (typeof answer?.id !== "string" || !answer.id) throw new Error("The form was not opened");
+        return answer.id;
+    }
+
+    /**
+     * The key, typed into the safe form. It goes straight to Orbit and nowhere else, and is never read back: the answer holds the
+     * app's id and name. A refusal is thrown with Orbit's `status` and `code` (rejected, mode_change, invalid_key, unreachable,
+     * expired, used, too_many).
+     */
+    async submitKey(formId: string, key: string, confirmChange = false): Promise<{ id: string; name: string }> {
+        const answer = (await this.appsCall(`/api/me/apps/key-forms/${encodeURIComponent(formId)}/key`, {
+            method: "POST",
+            body: JSON.stringify({ key, ...(confirmChange ? { confirmChange: true } : {}) }),
+        })) as { id?: unknown; name?: unknown } | undefined;
+        if (typeof answer?.id !== "string" || !answer.id) throw new Error("The key was not saved");
+        return { id: answer.id, name: typeof answer.name === "string" ? answer.name : "" };
     }
 
     /** "Add your own app": connects an app by its link. No Brick uses it until the person lets one. Answers `{ id, name }`
@@ -1578,6 +1636,16 @@ export class BotApiService {
         }
     }
 
+    /** The Instant Apps, ready to use with nothing to connect. Orbit answers 404 while there are none: that is an empty list. */
+    async getInstantApps(): Promise<unknown> {
+        try {
+            return await this.appsCall("/api/me/apps/instant");
+        } catch (error) {
+            if ((error as { status?: number }).status === 404) return { apps: [] };
+            throw error;
+        }
+    }
+
     /** "Connect" on a ready-made app: the person's connection and the address of the app's own sign-in page, unless already signed in. */
     async connectReadyMadeApp(key: string, returnUrl: string): Promise<unknown> {
         return await this.appsCall("/api/me/apps/ready-made", {
@@ -1750,6 +1818,41 @@ export class BotApiService {
     /** "End visit" (game #2005): the Brick goes home. Only the visit goes; nothing of the Brick changes. */
     async endBrickVisit(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/visit`, { method: "DELETE" });
+    }
+
+    /**
+     * The Bricks that live in this room and the person's own Bricks that can be added to it (game #2005), for the map
+     * editor's list: `{ here: [...], mine: [...] }`. Orbit answers only someone who can manage bots here. Throws when it
+     * refuses or can't be reached.
+     */
+    async getRoomBricks(roomUrl: string): Promise<unknown> {
+        // With the deadline brickWrite gives, like the Brick controls beside it: a list or a button that never hears back fails
+        return await this.brickWrite(`/api/brick-homes?roomUrl=${encodeURIComponent(roomUrl)}`, {});
+    }
+
+    /**
+     * "Add here" (game #2005): the person's Brick gets a home in this room, standing at the spot they picked. Placing it
+     * again moves it. Answers `{ home, keyNote }`. Throws with `status` 403 when they cannot manage bots here.
+     */
+    async placeBrickHome(
+        brickId: string,
+        roomUrl: string,
+        spot: { behaviorType?: string; behaviorConfig?: unknown }
+    ): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, {
+            method: "PUT",
+            body: JSON.stringify({ roomUrl, ...spot }),
+        });
+    }
+
+    /** Where a Brick lives, for its page (game #2005): `{ home }`, with `home` null when it has none. */
+    async getBrickHome(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, {});
+    }
+
+    /** "Take out" / "Take it out of this room" (game #2005): the Brick goes back to its owner's Bricks, nothing is deleted. */
+    async takeBrickOut(brickId: string): Promise<void> {
+        await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, { method: "DELETE" });
     }
 
     /**

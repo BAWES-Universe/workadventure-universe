@@ -86,6 +86,7 @@
         BRICK_OFFER_CARD,
         BRICK_STARTERS_CARD,
         STARTER_APPS,
+        STARTER_GOAL,
         STARTER_MAKE,
         OFFER_MAKE,
         brickAppCard,
@@ -117,6 +118,7 @@
     import { drawnGuestChats } from "../../Bricks/GuestBrickMessages";
     import { bringGuestChatInto, guestBrickShownAt } from "../../Bricks/GuestBrickStore";
     import { brickChatLinks } from "../../Bricks/BrickChatLink";
+    import KeySheetHost from "../../Bricks/Apps/KeySheetHost.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
     import {
@@ -693,6 +695,11 @@
                 if (tap.choices[0] === STARTER_APPS) {
                     // Nothing is sent: the Apps page opens, to connect and to choose which Bricks use what
                     openAppsPage();
+                    return true;
+                }
+                if (tap.choices[0] === STARTER_GOAL) {
+                    // Plain words from the person: the Brick asks what the goal is, and nothing is set until they say it
+                    matrixRoom.sendMessage($LL.chat.brick.giveGoalAsk());
                     return true;
                 }
                 if (tap.choices[0] === STARTER_MAKE) {
@@ -1521,6 +1528,7 @@
                     <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
                 </div>
             {/if}
+            <KeySheetHost />
             <ul
                 use:brickChatLinks
                 bind:this={messageListContentRef}

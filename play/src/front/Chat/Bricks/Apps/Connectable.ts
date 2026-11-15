@@ -47,6 +47,22 @@ export const parseCatalog = (value: unknown): Connectable[] | undefined => readL
 export const parseReadyMade = (value: unknown): Connectable[] | undefined => readList(value, "readyMade");
 
 /**
+ * An Instant App (credits and grants work): ready to use with nothing to connect, paid from the person's Instant Apps credit.
+ * It has a name and one line, and no Connect: Orbit sends no price and no provider (`GET /api/me/apps/instant`, which answers
+ * 404 while there are none and is then just empty).
+ */
+export interface InstantApp {
+    key: string;
+    name: string;
+    blurb: string;
+}
+
+/** `/api/me/apps/instant`: undefined when it is not that. */
+export function parseInstant(value: unknown): InstantApp[] | undefined {
+    return readList(value, "listed")?.map(({ key, name, blurb }) => ({ key, name, blurb }));
+}
+
+/**
  * Whether an app of the person's belongs under "Connected": its sign-in is done (or ended, so Reconnect is what it needs), or
  * it is one they pasted a link for, which is always theirs to see. A listed or ready-made app they started and never finished
  * signing in to is not connected yet: it is under "Connect another" with its Connect.

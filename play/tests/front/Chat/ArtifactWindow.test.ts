@@ -23,6 +23,7 @@ const api = vi.hoisted(() => {
         fetchArtifactCode: vi.fn(),
         restoreArtifactVersion: vi.fn(),
         shareArtifact: vi.fn(),
+        payOnArtifact: vi.fn(),
         artifactLink: (id: string) => `https://orbit.test/a/${id}`,
     };
 });
