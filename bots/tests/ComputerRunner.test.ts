@@ -400,6 +400,36 @@ describe('a turn that is lost, or room that is gone', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
+    it('stops the agent when Orbit refuses the renewal with a 4xx, and keeps trying when Orbit cannot be reached or says slow down', async () => {
+        const refused = fakeOrbit([done('working')]);
+        const original = refused.orbit.action;
+        refused.orbit.action = async (botId, jobId, body) => {
+            if (body.action === 'renew') throw Object.assign(new Error('Request failed with status code 404'), { response: { status: 404 } });
+            return original(botId, jobId, body);
+        };
+        let looks = 0;
+        refused.orbit.job = async () => (looks++ < 1 ? { status: 'running', control: 'brick' } : { status: 'stopped', control: 'brick' });
+        await runJob(refused.orbit);
+        expect(refused.seen.cancels).toBe(1);
+        expect(refused.seen.turns).toEqual([]);
+
+        for (const failure of [Object.assign(new Error('down'), {}), Object.assign(new Error('slow'), { response: { status: 429 } }), Object.assign(new Error('bad'), { response: { status: 502 } })]) {
+            const kept = fakeOrbit([done('[[done]]')]);
+            const run = kept.orbit.action;
+            let thrown = false;
+            kept.orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'renew' && !thrown) {
+                    thrown = true;
+                    throw failure;
+                }
+                return run(botId, jobId, body);
+            };
+            await runJob(kept.orbit);
+            expect(kept.seen.cancels).toBe(0);
+            expect(kept.seen.turns).toHaveLength(1);
+        }
+    });
+
     it('stops the agent and ends nothing itself when Orbit says the room is gone', async () => {
         const { orbit, seen, setRenew } = fakeOrbit([done('working')], () => ({ status: 'running', control: 'brick' }));
         setRenew(() => ({ ok: false, reason: 'allowance' }));

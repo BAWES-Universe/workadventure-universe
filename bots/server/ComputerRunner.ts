@@ -151,6 +151,12 @@ const realSleep = (ms: number, signal: AbortSignal) =>
         signal.addEventListener('abort', done, { once: true });
     });
 
+/** An answer from Orbit that says no (a 4xx, other than "slow down" or "try again"), as opposed to an Orbit that could not be reached. */
+function refusedByOrbit(error: unknown): boolean {
+    const status = typeof error === 'object' && error !== null && 'response' in error ? (error as { response?: { status?: unknown } }).response?.status : undefined;
+    return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429;
+}
+
 type TurnResult =
     /** The turn ended and what the agent said is here (it may be empty). */
     | { kind: 'ended'; words: string; failed: boolean; fenced: boolean }
@@ -251,8 +257,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 renewing.nextAt = now() + next * 1000;
                 renewTimer = setTimeout(() => void renew(), next * 1000);
             } catch (error) {
-                // Orbit could not be reached: try again soon, the room is held for a while yet
                 if (turnController.signal.aborted) return;
+                // Orbit answered and refused (the job is over or gone): the agent stops, as when it says the room is gone
+                if (refusedByOrbit(error)) {
+                    lost = true;
+                    turnController.abort();
+                    await orbit.cancel(job.jobId).catch(() => undefined);
+                    return;
+                }
+                // Orbit could not be reached: try again soon, the room is held for a while yet
                 say('Could not renew a job:', error);
                 renewing.nextAt = now() + 15_000;
                 renewTimer = setTimeout(() => void renew(), 15_000);
