@@ -33,6 +33,8 @@ import type { SpokeAnswer } from '../server/BrickRunner';
 export const ROOM_LINK_KEY = 'universe.room_link';
 /** The words of a voice note the bot heard, carried by a notice that points at the note: `{ v: 1, for, state, text }`. */
 export const TRANSCRIPT_KEY = 'universe.transcript';
+/** What `hearNote` returns when the words heard look like a key (not a real transcript: it cannot be spoken). */
+const HEARD_A_KEY = '\u0000key';
 /** Marks the one copy, in a direct chat, of an answer its person got in nearby chat with others around (game #1993). */
 export const ANSWERED_NEARBY_KEY = 'universe.answered_nearby';
 /** On a person's message: the starter they tapped under a Brick's hello (game #1995). The message is the starter's own words. */
@@ -1300,6 +1302,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // A voice note is heard once, here: the bot answers the words, and the note shows what was heard (or that it could not be)
             const heard = await this.hearNote(botUserId, botId, event, read.note, { userId: user.uuid, isGuest: user.isGuest });
             if (heard === 'unheard') return;
+            // Words heard in a note are screened like typed ones: never shown, remembered or given to the model
+            if (heard === HEARD_A_KEY) {
+                await refuseKey();
+                return;
+            }
             if (heard) text = text ? `${text}\n[Voice note] ${heard}` : `[Voice note] ${heard}`;
         }
         if (!text && attachments.length === 0) {
@@ -1768,6 +1775,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (!words) {
                 await show('failed');
                 return 'unheard';
+            }
+            // A key read out loud is held back like a typed one: the transcript row is not shown with it, and the bot never gets it
+            if (holdsAKey(words)) {
+                await show('failed');
+                return HEARD_A_KEY;
             }
             await show('heard', words);
             return words;

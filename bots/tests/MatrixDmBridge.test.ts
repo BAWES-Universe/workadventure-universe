@@ -1286,6 +1286,20 @@ describe('MatrixDmBridge', () => {
             expect(deps.reply.mock.calls.at(-1)[2]).toBe('[Voice note] Remind me about the meeting');
         });
 
+        it('holds back a key read out in a note: no words shown, nothing given to the bot, and it says where keys go (game #2044)', async () => {
+            const spoken = ['sk_', 'live_51Habcdefghijklmnop12345'].join('');
+            deps.noteHearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                onStart?.();
+                return { ok: true, text: `my key is ${spoken}`, provider: 'soniox', timings: {} };
+            });
+            await bridge.onEvent(note);
+            expect(deps.reply).not.toHaveBeenCalled();
+            expect((bridge as any).localWaiting.size).toBe(0);
+            expect(transcripts().at(-1)['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'failed' });
+            expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
+            expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
+        });
+
         it('says it could not listen, and the bot is not made to answer a file it cannot read', async () => {
             deps.noteHearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
                 onStart?.();
