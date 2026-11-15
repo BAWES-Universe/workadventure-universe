@@ -4,6 +4,7 @@
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import {
+        DISCOVERY_DEADLINE_MS,
         NO_DISCOVERY,
         looksLikeLink,
         newAppBody,
@@ -70,6 +71,8 @@
     let createdFrom = "";
     /** The sheet was closed: an app that is still being made is taken away again when Orbit answers */
     let closed = false;
+    /** The app is connected: from here on closing the sheet keeps it, even while the list of what it can do is still loading */
+    let signedIn = false;
     let things: string[] | undefined;
     let linkInput: HTMLInputElement | undefined;
 
@@ -108,7 +111,7 @@
         const id = createdId;
         createdId = undefined;
         createdFrom = "";
-        if (!id || phase === "connected") return;
+        if (!id || signedIn || phase === "connected") return;
         botApiService
             .disconnectMyApp(id)
             .catch((error: unknown) => console.warn("Could not drop the unfinished app", error));
@@ -131,20 +134,34 @@
         if (!looksLikeLink(link)) return;
         forgetCheck();
         const mine = checkId;
-        checkAbort = new AbortController();
-        const signal = checkAbort.signal;
+        const controller = new AbortController();
+        checkAbort = controller;
+        const signal = controller.signal;
         phase = "checking";
         let answer: unknown;
+        // An app that never answers is "the app didn't say" too: the sheet does not wait for it for ever
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        const tooLate = new Promise<never>((_resolve, reject) => {
+            deadline = setTimeout(() => {
+                controller.abort();
+                reject(new Error("The app did not answer in time"));
+            }, DISCOVERY_DEADLINE_MS);
+        });
         try {
-            answer = await botApiService.discoverMcpOAuthEndpoints(
-                link.trim(),
-                `${window.location.origin}/api/oauth/mcp-callback`,
-                signal
-            );
+            answer = await Promise.race([
+                botApiService.discoverMcpOAuthEndpoints(
+                    link.trim(),
+                    `${window.location.origin}/api/oauth/mcp-callback`,
+                    signal
+                ),
+                tooLate,
+            ]);
         } catch (error) {
             // An app that can't be reached, or an answer that is not understood, is "the app didn't say"
-            if (!signal.aborted) console.warn("Could not check how the app signs in", error);
+            if (!signal.aborted || mine === checkId) console.warn("Could not check how the app signs in", error);
             answer = undefined;
+        } finally {
+            clearTimeout(deadline);
         }
         if (mine !== checkId) return;
         discovery = parseDiscovery(answer);
@@ -268,6 +285,7 @@
     async function connected() {
         const id = createdId;
         if (!id) return;
+        signedIn = true;
         // What it can do, from the app itself. Orbit may not say (yet): the sheet then just says "Connected".
         things = parseThings(await botApiService.getMyAppThings(id).catch(() => undefined));
         phase = "connected";

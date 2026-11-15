@@ -44,6 +44,7 @@ vi.mock("../Reconnect", () => ({ signInInPopup: game.reconnect }));
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
 import AddAppSheet from "../AddAppSheet.svelte";
+import { DISCOVERY_DEADLINE_MS } from "../AddApp";
 import { forgetMyApps } from "../AppsStore";
 
 const ZAPIER = "https://mcp.zapier.com/api/mcp/mcp";
@@ -417,6 +418,37 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         sheet?.$destroy();
         sheet = undefined;
         expect(game.disconnectMyApp).not.toHaveBeenCalled();
+    });
+
+    it("keeps a connected app when the sheet is closed while the list of what it can do is still loading", async () => {
+        game.getMyAppThings.mockImplementationOnce(() => new Promise(() => {}));
+        await open();
+        await paste(ZAPIER);
+        void click("addAppSignIn");
+        await settle();
+        expect(game.getMyAppThings).toHaveBeenCalledTimes(1);
+        await click("addAppCancel");
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(game.disconnectMyApp).not.toHaveBeenCalled();
+    });
+
+    it("asks how the app signs in when the app never answers the check", async () => {
+        game.discoverMcpOAuthEndpoints.mockImplementationOnce(() => new Promise(() => {}));
+        await open();
+        vi.useFakeTimers();
+        try {
+            const input = byId("addAppLink") as HTMLInputElement;
+            input.value = ZAPIER;
+            input.dispatchEvent(new InputEvent("input", { inputType: "insertFromPaste", bubbles: true }));
+            await vi.advanceTimersByTimeAsync(1);
+            expect(words(byId("addAppSheet"))).toContain("Checking how it signs in");
+            await vi.advanceTimersByTimeAsync(DISCOVERY_DEADLINE_MS);
+        } finally {
+            vi.useRealTimers();
+        }
+        await settle();
+        expect(words(byId("addAppSheet"))).toContain("How does it sign in?");
+        expect(words(byId("addAppSheet"))).not.toContain("Checking how it signs in");
     });
 
     it("says so when the window can't open", async () => {
