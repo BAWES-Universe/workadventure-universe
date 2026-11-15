@@ -106,6 +106,34 @@ describe('MatrixDmBridge', () => {
             .toBe("You've used your guest replies for now. Nora answers you again at 09:05 UTC.");
     });
 
+    it('never gives a pasted key to the model, remembers nothing of it, and says where keys go (game #2044)', async () => {
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message(['here it is: sk_', 'live_51Habcdefghijklmnop12345'].join('')));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.size).toBe(0);
+        const said = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => /Keys don't go in chat/.test(String(content?.body)));
+        expect(said?.msgtype).toBe('m.text');
+        expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
+        // Every paste gets the note (the person is waiting on it); an ordinary message still gets its answer
+        await bridge.onEvent(message(['sk_', 'test_abcdefghijklmnopqrstu again'].join('')));
+        expect(client.sendMessage.mock.calls.filter((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toHaveLength(2);
+        expect(deps.reply).not.toHaveBeenCalled();
+        await bridge.onEvent(message('what can you do?'));
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not keep a pasted key for a resting Brick either, and says where keys go (game #2044)', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' } as never);
+        await bridge.onEvent(message(['here it is: sk_', 'live_51Habcdefghijklmnop12345'].join('')));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.size).toBe(0);
+        expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
+        // An ordinary message to the resting Brick is still remembered
+        await bridge.onEvent(message('hello'));
+        expect((bridge as any).localWaiting.size).toBe(1);
+    });
+
     it('sends nothing for a message answered together with others', async () => {
         await bridge.onEvent(invite());
         deps.reply.mockResolvedValue({ text: '', media: [], answeredTogether: true });
@@ -1256,6 +1284,32 @@ describe('MatrixDmBridge', () => {
             expect(listening['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'listening' });
             expect(heard['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'heard', text: 'Remind me about the meeting' });
             expect(deps.reply.mock.calls.at(-1)[2]).toBe('[Voice note] Remind me about the meeting');
+        });
+
+        it('holds back a key read out in a note: no words shown, nothing given to the bot, and it says where keys go (game #2044)', async () => {
+            const spoken = ['sk_', 'live_51Habcdefghijklmnop12345'].join('');
+            deps.noteHearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                onStart?.();
+                return { ok: true, text: `my key is ${spoken}`, provider: 'soniox', timings: {} };
+            });
+            await bridge.onEvent(note);
+            expect(deps.reply).not.toHaveBeenCalled();
+            expect((bridge as any).localWaiting.size).toBe(0);
+            expect(transcripts().at(-1)['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'failed' });
+            expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
+            expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
+        });
+
+        it('reads the whole transcript for a key, so one past the cut-off is held back too (CodeRabbit on #2048)', async () => {
+            const spoken = ['sk_', 'live_51Habcdefghijklmnop12345'].join('');
+            deps.noteHearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                onStart?.();
+                return { ok: true, text: `${'word '.repeat(1000)}my key is ${spoken}`, provider: 'soniox', timings: {} };
+            });
+            await bridge.onEvent(note);
+            expect(deps.reply).not.toHaveBeenCalled();
+            expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
+            expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
         });
 
         it('says it could not listen, and the bot is not made to answer a file it cannot read', async () => {

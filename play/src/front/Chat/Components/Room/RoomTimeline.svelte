@@ -118,6 +118,7 @@
     import { drawnGuestChats } from "../../Bricks/GuestBrickMessages";
     import { bringGuestChatInto, guestBrickShownAt } from "../../Bricks/GuestBrickStore";
     import { brickChatLinks } from "../../Bricks/BrickChatLink";
+    import KeySheetHost from "../../Bricks/Apps/KeySheetHost.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
     import {
@@ -1527,6 +1528,7 @@
                     <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
                 </div>
             {/if}
+            <KeySheetHost />
             <ul
                 use:brickChatLinks
                 bind:this={messageListContentRef}

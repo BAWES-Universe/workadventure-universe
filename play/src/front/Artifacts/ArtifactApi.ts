@@ -159,3 +159,23 @@ export function fetchArtifactCode(
 ): Promise<{ version: ArtifactVersionInfo; content: string }> {
     return post(`${encodeURIComponent(id)}/versions/${number}`, { chat });
 }
+
+/** The payment side of a page that takes payments (game #2044): nothing but what the page's window may know. */
+export interface ArtifactPay {
+    enabled?: boolean;
+    orderId?: string;
+    /** Where the buyer pays; only an https address is ever opened */
+    checkoutUrl?: string | null;
+    app?: string;
+    status?: "checking" | "paid" | "not_paid" | "cant_confirm";
+    testPayment?: boolean;
+}
+
+/** Whether the page takes payments; `start` makes a checkout for the owner's amount, `order` asks where an order stands. */
+export function payOnArtifact(
+    id: string,
+    chat: ArtifactChat | undefined,
+    request: { start?: boolean; order?: string } = {}
+): Promise<ArtifactPay> {
+    return post<ArtifactPay>(`${encodeURIComponent(id)}/pay`, { chat, ...request });
+}
