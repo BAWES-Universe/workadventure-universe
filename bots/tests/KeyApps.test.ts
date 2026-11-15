@@ -152,6 +152,14 @@ describe('a call', () => {
         expect(result.outcome).toBeUndefined();
     });
 
+    it('waits as long as the bot’s Patience says, and a minute when it has none', async () => {
+        http.post.mockResolvedValue({ status: 200, data: { ok: true, data: {} } });
+        await callKeyApp(where, entryFor('example_lookuppayment'), {}, use);
+        await callKeyApp(where, entryFor('example_lookuppayment'), {}, { ...use, callId: 'c2' }, undefined, 15_000);
+        expect(http.post.mock.calls[0][2]).toMatchObject({ timeout: 60_000 });
+        expect(http.post.mock.calls[1][2]).toMatchObject({ timeout: 15_000 });
+    });
+
     it('does not claim it did not run when Orbit could not be reached', async () => {
         http.post.mockRejectedValueOnce(new Error('timeout'));
         const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use)) as { error: string; outcome?: string };

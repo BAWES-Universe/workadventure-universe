@@ -398,7 +398,9 @@ export class AIService {
                     entry,
                     args,
                     { botId: use?.botId ?? '', callId: use?.callId ?? '', ...(use?.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use?.forOwner ? { forOwner: true } : {}) },
-                    abortSignal
+                    abortSignal,
+                    // The bot's Patience, as for every other tool
+                    toolTimeoutMs(toolTimeoutSeconds)
                 );
             }
             // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
