@@ -494,6 +494,31 @@ describe('the bot server’s calls to Orbit', () => {
         expect(await orbit.prepare('j', RELAY)).toEqual({ ok: false, reason: 'failed' });
     });
 
+    it('reads every page of the running jobs, and stops when a page gives no way forward', async () => {
+        const service = Object.create(AdminApiService.prototype) as { computerRunningJobs: AdminApiService['computerRunningJobs']; brickCall: unknown };
+        const job = (id: string) => ({ jobId: id, botId: 'b', title: 'T', brief: null, writes: true, hasTurn: false });
+        const pages: Record<string, unknown> = {
+            '': { jobs: [job('a'), job('b')], nextCursor: 'c1' },
+            c1: { jobs: [job('b'), job('c')], nextCursor: 'c2' },
+            c2: { jobs: [job('d')], nextCursor: null },
+        };
+        const asked: Array<Record<string, string> | undefined> = [];
+        service.brickCall = async (_method: string, _path: string, _body: unknown, params?: Record<string, string>) => {
+            asked.push(params);
+            return { data: pages[params?.cursor ?? ''] };
+        };
+        expect((await service.computerRunningJobs()).map((j) => j.jobId)).toEqual(['a', 'b', 'c', 'd']);
+        expect(asked).toEqual([undefined, { cursor: 'c1' }, { cursor: 'c2' }]);
+        // a cursor that does not move on ends the walk
+        let calls = 0;
+        service.brickCall = async () => {
+            calls++;
+            return { data: { jobs: [job('x')], nextCursor: 'same' } };
+        };
+        expect((await service.computerRunningJobs()).map((j) => j.jobId)).toEqual(['x']);
+        expect(calls).toBe(2);
+    });
+
     it('says a job is gone only when Orbit says so (404); a hiccup is an error the runner waits out', async () => {
         const service = Object.create(AdminApiService.prototype) as { getComputerJob: AdminApiService['getComputerJob']; brickCall: unknown };
         const answer = { value: undefined as unknown };

@@ -417,6 +417,8 @@ export type GuestBrickAllowance =
     | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
 
 const BRICK_CALL_TIMEOUT_MS = 8_000;
+/** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
+const RUNNING_PAGES_MAX = 100;
 
 function brickCardOf(data: unknown): BrickCard | null {
     const card = data as Partial<BrickCard> | null;
@@ -1243,15 +1245,36 @@ export class AdminApiService {
         return { status: response.status, data: response.data ?? {} };
     }
 
-    /** The jobs Brick is working on now, with the words for the agent (#2000). Throws when Orbit cannot be reached. */
+    /**
+     * The jobs Brick is working on now, with the words for the agent (#2000). Orbit gives them a page at a time and every page is read, so no
+     * running job stays out of sight when there are many. Throws when Orbit cannot be reached.
+     */
     async computerRunningJobs(): Promise<Array<{ jobId: string; botId: string; title: string; brief: string | null; writes: boolean; hasTurn: boolean }>> {
-        const response = await this.brickCall<{ jobs?: unknown }>('get', 'api/computer/jobs/running');
-        const jobs = Array.isArray(response.data?.jobs) ? response.data.jobs : [];
-        return jobs.flatMap((job: Record<string, unknown>) =>
-            typeof job?.jobId === 'string' && typeof job.botId === 'string' && typeof job.title === 'string'
-                ? [{ jobId: job.jobId, botId: job.botId, title: job.title, brief: typeof job.brief === 'string' ? job.brief : null, writes: job.writes !== false, hasTurn: job.hasTurn === true }]
-                : []
-        );
+        const found: Array<{ jobId: string; botId: string; title: string; brief: string | null; writes: boolean; hasTurn: boolean }> = [];
+        const seen = new Set<string>();
+        let cursor: string | null = null;
+        for (let page = 0; page < RUNNING_PAGES_MAX; page++) {
+            // eslint-disable-next-line no-await-in-loop
+            const response: AxiosResponse<{ jobs?: unknown; nextCursor?: unknown }> = await this.brickCall<{ jobs?: unknown; nextCursor?: unknown }>(
+                'get',
+                'api/computer/jobs/running',
+                undefined,
+                cursor ? { cursor } : undefined
+            );
+            const jobs: unknown[] = Array.isArray(response.data?.jobs) ? response.data.jobs : [];
+            for (const entry of jobs) {
+                const job = entry as Record<string, unknown>;
+                if (typeof job?.jobId === 'string' && typeof job.botId === 'string' && typeof job.title === 'string' && !seen.has(job.jobId)) {
+                    seen.add(job.jobId);
+                    found.push({ jobId: job.jobId, botId: job.botId, title: job.title, brief: typeof job.brief === 'string' ? job.brief : null, writes: job.writes !== false, hasTurn: job.hasTurn === true });
+                }
+            }
+            const next: unknown = response.data?.nextCursor;
+            // A cursor that does not move on ends the walk, so a broken answer never loops
+            if (typeof next !== 'string' || next === '' || next === cursor) break;
+            cursor = next;
+        }
+        return found;
     }
 
     /** One call to a computer's broker route in Orbit that answers with JSON (prepare, cancel): the status is passed on, never thrown for a 4xx or 5xx. */
