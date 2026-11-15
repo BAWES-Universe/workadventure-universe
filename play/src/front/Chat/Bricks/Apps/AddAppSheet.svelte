@@ -82,7 +82,7 @@
      * all the same, and the sheet holds no id for it. Kept so that it is found, with the same key, and taken away before the
      * person's changed form makes another app, or when the sheet goes away.
      */
-    let uncertain: NewApp | undefined;
+    let uncertain: NewApp[] = [];
     /** The sheet was closed: an app that is still being made is taken away again when Orbit answers */
     let closed = false;
     /** The app is connected: from here on closing the sheet keeps it, even while the list of what it can do is still loading */
@@ -141,16 +141,22 @@
      */
     async function settleUncertain(): Promise<void> {
         const pending = uncertain;
-        uncertain = undefined;
-        if (!pending) return;
-        // That key is about to be freed (its app taken away): a form that goes back to the same content makes a new app with a new key
+        uncertain = [];
+        if (pending.length === 0) return;
+        // Those keys are about to be freed (their apps taken away): a form that goes back to the same content makes a new app with a new key
         keyFrom = "";
-        try {
-            const id = parseNewAppId(await botApiService.addMyApp(pending));
-            if (id) await botApiService.disconnectMyApp(id);
-        } catch (error) {
-            console.warn("Could not find out whether the earlier try made an app", error);
-        }
+        await Promise.all(
+            pending.map(async (body) => {
+                try {
+                    const id = parseNewAppId(await botApiService.addMyApp(body));
+                    if (id) await botApiService.disconnectMyApp(id);
+                } catch (error) {
+                    console.warn("Could not find out whether the earlier try made an app", error);
+                    // Orbit did not answer: the try stays to be found the next time the sheet settles (a change, closing it)
+                    uncertain = [...uncertain, body];
+                }
+            })
+        );
     }
 
     function onLinkInput(event: Event) {
@@ -266,7 +272,7 @@
             }
             createdId = id;
             createdFrom = from;
-            uncertain = undefined;
+            uncertain = uncertain.filter((earlier) => earlier.requestKey !== body.requestKey);
             return id;
         } catch (error) {
             console.warn("Could not add the app", error);
@@ -277,9 +283,9 @@
             // A refused repeat try (too many requests, say) says nothing about an earlier unanswered try with the same key: that one stays
             // to be found.
             const refused = status !== undefined && status < 500;
-            if (known) uncertain = undefined;
-            else if (!refused) uncertain = body;
-            else if (status === 409 || uncertain?.requestKey !== body.requestKey) uncertain = undefined;
+            const others = uncertain.filter((earlier) => earlier.requestKey !== body.requestKey);
+            if (known || status === 409) uncertain = others;
+            else if (!refused) uncertain = [...others, body];
             // A closed sheet has nobody left to try again: look for it now
             if (closed) void settleUncertain();
             else trouble = "failed";

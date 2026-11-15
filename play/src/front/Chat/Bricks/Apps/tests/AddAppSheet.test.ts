@@ -686,6 +686,30 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(onDone).toHaveBeenCalledWith("app-2");
     });
 
+    it("keeps looking for an earlier try whose look got no answer, even after a later try also never answered", async () => {
+        game.discoverMcpOAuthEndpoints.mockResolvedValue({ discovered: false });
+        game.addMyApp
+            .mockRejectedValueOnce(new Error("Orbit did not answer in time")) // sk-1
+            .mockRejectedValueOnce(new Error("Orbit did not answer in time")) // the look for sk-1
+            .mockRejectedValueOnce(new Error("Orbit did not answer in time")) // sk-2
+            .mockResolvedValueOnce({ id: "app-1" }) // the look for sk-1 when the sheet closes
+            .mockResolvedValueOnce({ id: "app-2" }); // the look for sk-2
+        await open();
+        await paste("https://tools.example.com/mcp");
+        await click("addAppHowKey");
+        await type("addAppKey", "sk-1");
+        await click("addAppAdd");
+        await type("addAppKey", "sk-2");
+        await click("addAppAdd");
+        expect(game.addMyApp).toHaveBeenCalledTimes(3);
+        await click("addAppCancel");
+        expect(game.addMyApp).toHaveBeenCalledTimes(5);
+        expect(keyOfCall(3)).toBe(keyOfCall(0));
+        expect(keyOfCall(4)).toBe(keyOfCall(2));
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-2");
+    });
+
     it("does not look for an app when Orbit refused the try, since nothing was made", async () => {
         game.discoverMcpOAuthEndpoints.mockResolvedValue({ discovered: false });
         game.addMyApp
