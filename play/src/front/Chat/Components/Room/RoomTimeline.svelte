@@ -86,6 +86,7 @@
         BRICK_OFFER_CARD,
         BRICK_STARTERS_CARD,
         STARTER_APPS,
+        STARTER_GOAL,
         STARTER_MAKE,
         OFFER_MAKE,
         brickAppCard,
@@ -693,6 +694,11 @@
                 if (tap.choices[0] === STARTER_APPS) {
                     // Nothing is sent: the Apps page opens, to connect and to choose which Bricks use what
                     openAppsPage();
+                    return true;
+                }
+                if (tap.choices[0] === STARTER_GOAL) {
+                    // Plain words from the person: the Brick asks what the goal is, and nothing is set until they say it
+                    matrixRoom.sendMessage($LL.chat.brick.giveGoalAsk());
                     return true;
                 }
                 if (tap.choices[0] === STARTER_MAKE) {

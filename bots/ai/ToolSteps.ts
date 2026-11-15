@@ -7,7 +7,7 @@ import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
 import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
-import { CHANGE_TASK_TOOL, SET_REMINDER_TOOL } from './BrickTasks';
+import { CHANGE_TASK_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL } from './BrickTasks';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
 export type StepKind = 'read' | 'search' | 'write';
@@ -101,9 +101,13 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
     [COMPUTER_TOOL]: (args) => ({ doing: 'Working on its computer', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
     // A reminder the person asked for (game #2002): "Set a reminder", with what it says under it. Reading what is kept is never a step.
     [SET_REMINDER_TOOL]: (args) => ({ doing: 'Setting a reminder', done: 'Set a reminder', detail: shown(args.text), group: 'set_reminder', kind: 'write' }),
+    // A briefing, a watch or a goal the person asked for: what it is, with their words under it
+    [SET_BRIEFING_TOOL]: (args) => ({ doing: 'Setting a briefing', done: 'Set a briefing', detail: shown(args.text), group: 'set_briefing', kind: 'write' }),
+    [SET_WATCH_TOOL]: (args) => ({ doing: 'Setting a watch', done: 'Set a watch', detail: shown(args.text), group: 'set_watch', kind: 'write' }),
+    [SET_GOAL_TOOL]: (args) => ({ doing: 'Setting a goal', done: 'Set a goal', detail: shown(args.text), group: 'set_goal', kind: 'write' }),
     [CHANGE_TASK_TOOL]: (args) => {
         const [doing, done] =
-            args.action === 'snooze' ? ['Snoozing a reminder', 'Snoozed a reminder'] : args.action === 'cancel' ? ['Stopping a reminder', 'Stopped a reminder'] : args.action === 'pause' ? ['Pausing a reminder', 'Paused a reminder'] : args.action === 'resume' ? ['Resuming a reminder', 'Resumed a reminder'] : ['Changing a reminder', 'Changed a reminder'];
+            args.action === 'snooze' ? ['Snoozing a reminder', 'Snoozed a reminder'] : args.action === 'cancel' ? ['Stopping it', 'Stopped it'] : args.action === 'pause' ? ['Pausing it', 'Paused it'] : args.action === 'resume' ? ['Resuming it', 'Resumed it'] : args.action === 'close' ? ['Closing it', 'Closed it'] : args.action === 'keep_going' ? ['Keeping it going', 'Kept it going'] : ['Changing it', 'Changed it'];
         return { doing, done, group: `change_task:${String(args.action ?? '')}`, kind: 'write' };
     },
 };

@@ -970,12 +970,18 @@ const chat: BaseTranslation = {
     // A person's own Brick (#1995): a bot that lives in their chats. Its hello and ideas are fixed words, shown by the
     // game, so they cost nothing and nothing is sent to anyone.
     brick: {
-        hello: "Hi {name}, I'm {brick}, your own helper in Universe. Ask me anything, or hand me a job.",
-        helloNoName: "Hi, I'm {brick}, your own helper in Universe. Ask me anything, or hand me a job.",
+        hello: "Hi {name}, I'm {brick}, your own helper in Universe. Ask me anything, hand me a job, or give me a goal and I'll keep at it while you're away.",
+        helloNoName:
+            "Hi, I'm {brick}, your own helper in Universe. Ask me anything, hand me a job, or give me a goal and I'll keep at it while you're away.",
         suggests: "{name} suggests",
         startTitle: "Where shall we start?",
         seeWhatICanDo: "See what I can do",
         seeWhatICanDoLine: "A few ideas to start with",
+        // The starter that gives the Brick a goal (#2002): nothing is set by the tap, the Brick asks what the goal is
+        giveGoal: "Give me a goal",
+        giveGoalLine: "I plan it and keep at it while you're away",
+        // What a tap on "Give me a goal" sends, in the person's words
+        giveGoalAsk: "I'd like to give you a goal.",
         makeAnother: "Make another Brick",
         makeAnotherLine: "One for a single job, like your recipes",
         // What a tap on "Make another Brick" sends, in the person's words: the Brick asks what the job is
@@ -986,6 +992,16 @@ const chat: BaseTranslation = {
         ideasLine: "A few things I could take off your plate. Pick one, or just ask in your own words.",
         ideasTitle: "What shall I take on?",
         ideas: {
+            // Things it keeps at while the person is away (#2002). Each tap sends the words under it, and the Brick asks for what it needs
+            brief: "Brief you every morning",
+            briefLine: "Your day and the weather, at 7:30 on workdays",
+            briefAsk: "Brief me every morning.",
+            watch: "Keep watch on a price",
+            watchLine: "Tell me what, and I'll say when it drops",
+            watchAsk: "Keep watch on a price for me.",
+            goal: "Work toward a goal with you",
+            goalLine: "Like a visa sorted before your trip",
+            goalAsk: "Work toward a goal with me.",
             write: "Write something with you",
             writeLine: "A message, a post or a tricky reply",
             writeAsk: "Help me write something.",

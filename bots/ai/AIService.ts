@@ -132,7 +132,7 @@ import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTo
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
-import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_REMINDER_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
+import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
@@ -4497,6 +4497,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         break;
 
                     case SET_REMINDER_TOOL:
+                    case SET_BRIEFING_TOOL:
+                    case SET_WATCH_TOOL:
+                    case SET_GOAL_TOOL:
                     case MY_TASKS_TOOL:
                     case CHANGE_TASK_TOOL:
                     case KEEP_WORKDAYS_TOOL:
