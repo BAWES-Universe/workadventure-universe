@@ -420,6 +420,22 @@ describe('seeing and changing what is kept', () => {
         expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'delete' });
     });
 
+    it('answers the question a goal asked: close it is done, keep going is keep, and my_tasks shows which goal asked', async () => {
+        const goal = item({ kind: 'goal', words: 'Get my visa', state: 'on', nextDueAt: '2026-11-15T13:00:00.000Z', asking: 'unsure' });
+        const { admin, context } = setUp({ items: [goal, item({ id: 'item-2', kind: 'goal', asking: 'date_passed' }), item({ id: 'item-3', kind: 'goal' })] });
+        const listed = (await runTaskTool(MY_TASKS_TOOL, {}, context)) as { items: Array<Record<string, unknown>> };
+        expect(listed.items[0].asking).toMatch(/could not tell/);
+        expect(listed.items[1].asking).toMatch(/date passed/);
+        expect(listed.items[2]).not.toHaveProperty('asking');
+        expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'close' }, context)).toMatchObject({ closed: true });
+        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'done' });
+        expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'keep_going' }, context)).toMatchObject({ kept_going: true });
+        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'keep' });
+        // Only a goal asks: Orbit says no to anything else, and the Brick says so plainly
+        admin.changeBrickItem.mockResolvedValueOnce({ ok: false, status: 409, code: 'wrong_state', error: 'Only a goal asks a question' } as never);
+        expect(String((await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-9', action: 'keep_going' }, context)).error)).toContain('cannot be done');
+    });
+
     it('changes its words or its time, on their clock', async () => {
         const { admin, context } = setUp();
         await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', text: 'Pick up the car and the keys', when: '2026-11-15 17:00' }, context);

@@ -291,6 +291,8 @@ export interface BrickItemView {
     state: 'on' | 'paused' | 'done' | 'deleted';
     setBy: 'you' | 'brick';
     lastRunAt: string | null;
+    /** The one question a goal has open for its person (close it, keep going, change it), when Orbit says so. */
+    asking?: 'unsure' | 'date_passed' | null;
 }
 
 /** Orbit's answer to "can this person do this with this bot?" (POST /api/bots/:id/access). */
@@ -1226,11 +1228,23 @@ export class AdminApiService {
     /** How a run went. What Orbit answered (whether the person is to be told of a row of failures), or null when it did not record it. */
     async reportItemRun(runId: string, report: RunReport): Promise<ReportAnswer | null> {
         try {
-            const response = await this.brickCall<{ tellPerson?: unknown }>('post', `api/bricks/items/runs/${encodeURIComponent(runId)}`, report);
-            return { tellPerson: response.data?.tellPerson === true };
+            const response = await this.brickCall<{ tellPerson?: unknown; askPerson?: unknown }>('post', `api/bricks/items/runs/${encodeURIComponent(runId)}`, report);
+            const asked = response.data?.askPerson;
+            return { tellPerson: response.data?.tellPerson === true, askPerson: asked === 'unsure' || asked === 'date_passed' ? asked : null };
         } catch (error) {
             console.warn('[AdminApiService] Could not report a run:', error instanceof Error ? error.message : error);
             return null;
+        }
+    }
+
+    /** The person was asked a goal's one question. Called only after it went out. True when Orbit kept it. */
+    async keepItemAsked(runId: string): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}/asked`, {});
+            return true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not keep that a goal asked its person:', error instanceof Error ? error.message : error);
+            return false;
         }
     }
 
