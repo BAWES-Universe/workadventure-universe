@@ -167,6 +167,58 @@ describe("a page that takes payments, in the game's window", () => {
         expect(told().at(-1)).toBe("cant_confirm");
     });
 
+    it("ends at the deadline even when a question to the server never gets an answer, and a late answer changes nothing", async () => {
+        let answerLate: (value: ArtifactPay) => void = () => undefined;
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockImplementationOnce(
+                () =>
+                    new Promise<ArtifactPay>((resolve) => {
+                        answerLate = resolve;
+                    })
+            );
+        const payments = make(pay, () => null);
+        ask(payments);
+        await flush();
+        await vi.advanceTimersByTimeAsync(21 * 60_000);
+        expect(get(payments.line)).toMatchObject({ checking: false, problem: "cant_confirm" });
+        expect(told().at(-1)).toBe("cant_confirm");
+        // The question answers after the deadline: what was said stays said
+        answerLate({ status: "paid", checkoutUrl: null, testPayment: false } as ArtifactPay);
+        await flush();
+        expect(get(payments.line)).toMatchObject({ paid: null, problem: "cant_confirm" });
+        expect(told().filter((status) => status === "paid")).toEqual([]);
+        // The payment is free to be started again
+        pay.mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" });
+        ask(payments);
+        await flush();
+        expect(pay).toHaveBeenCalledTimes(3);
+    });
+
+    it("gives the same checkout back as a link when the buyer closes its tab before paying", async () => {
+        const popup = { location: { href: "" }, close: vi.fn(), opener: {}, closed: false } as unknown as Window & {
+            closed: boolean;
+        };
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValue({ status: "checking", checkoutUrl: null, testPayment: false });
+        const payments = make(pay, () => popup);
+        ask(payments);
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        // The tab is still open: no link yet
+        expect(get(payments.line)).toMatchObject({ checking: true, resume: null });
+        popup.closed = true;
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line)).toMatchObject({
+            checking: true,
+            resume: { url: "https://checkout.examplepay.com/c1", app: "Example" },
+        });
+        payments.destroy();
+    });
+
     it("stops asking when the window is closed", async () => {
         const pay = vi
             .fn()

@@ -93,13 +93,18 @@ describe('discovering a Brick’s tools', () => {
     });
 
     it('keeps an MCP tool that has the same name, and adds the rest', async () => {
-        http.get.mockImplementation(async (url: string) => {
-            if (url.endsWith('/mcp-servers')) return { data: [] };
-            if (url.endsWith('/key-apps')) return { status: 200, data: { apps: [APP] } };
-            throw new Error(`Unexpected GET ${url}`);
+        const mcpTool = { type: 'function', function: { name: 'example_lookuppayment', description: 'From the MCP server', parameters: { type: 'object', properties: {} } } };
+        const mcpEntry = { serverId: 'mcp-1', serverUrl: 'https://mcp.test', authType: 'none' as const };
+        const found = await (MCPConnector as unknown as { withKeyApps: (keyApps: Promise<ReturnType<typeof parseKeyApps>>, found: unknown) => Promise<{ tools: Array<{ function: { name: string; description: string } }>; toolServerMap: Map<string, { serverId: string; keyApp?: unknown }> }> }).withKeyApps(Promise.resolve(parseKeyApps({ apps: [APP] })), {
+            tools: [mcpTool],
+            toolServerMap: new Map([['example_lookuppayment', mcpEntry]]),
         });
-        const found = await MCPConnector.discoverToolsWithMapping('bot-1', ORBIT, 'admin', 'svc');
-        expect(found.tools).toHaveLength(2);
+        // The name is there once, still the MCP server's; the other key-App operation is added
+        expect(found.tools.map((tool) => tool.function.name).sort()).toEqual(['example_lookuppayment', 'example_makepaymentlink']);
+        expect(found.tools.find((tool) => tool.function.name === 'example_lookuppayment')?.function.description).toBe('From the MCP server');
+        expect(found.toolServerMap.get('example_lookuppayment')).toMatchObject({ serverId: 'mcp-1' });
+        expect(found.toolServerMap.get('example_lookuppayment')?.keyApp).toBeUndefined();
+        expect(found.toolServerMap.get('example_makepaymentlink')?.keyApp).toBeDefined();
     });
 });
 
@@ -125,6 +130,26 @@ describe('a call', () => {
         expect(await callKeyApp(where, { serverId: 's', serverUrl: 'https://x.test', authType: 'none' }, {}, use)).toMatchObject({ outcome: 'not_sent' });
         expect(await callKeyApp({ adminApiUrl: ORBIT, serviceToken: '' }, entryFor('example_lookuppayment'), {}, use)).toMatchObject({ outcome: 'not_sent' });
         expect(http.post).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when the turn was stopped first, and says so as proof it did not run', async () => {
+        const stopped = new AbortController();
+        stopped.abort();
+        const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, stopped.signal)) as { error: string; outcome?: string };
+        expect(result.outcome).toBe('not_sent');
+        expect(http.post).not.toHaveBeenCalled();
+    });
+
+    it('hands the turn’s stop signal to the request, and a stop after it was sent is not proof it did not run', async () => {
+        const turn = new AbortController();
+        http.post.mockImplementationOnce(async (_url: string, _body: unknown, config: { signal?: AbortSignal }) => {
+            expect(config.signal).toBe(turn.signal);
+            turn.abort();
+            throw Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' });
+        });
+        const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, turn.signal)) as { error: string; outcome?: string };
+        expect(result.error).toMatch(/couldn't tell whether/);
+        expect(result.outcome).toBeUndefined();
     });
 
     it('does not claim it did not run when Orbit could not be reached', async () => {
@@ -158,11 +183,12 @@ describe('what the model is told', () => {
             [400, { code: 'bad_arguments', error: 'amount is required' }, 'not_sent'],
             [429, { code: 'limit' }, 'not_sent'],
             [502, { code: 'key_rejected' }, 'failed'],
-            [502, { code: 'unavailable' }, 'failed'],
+            // Orbit may have sent it and lost the answer: never said to be undone
+            [502, { code: 'unavailable' }, undefined],
             [500, {}, 'not_sent'],
         ];
         for (const [status, body, outcome] of cases) {
-            const result = answerOf(status, body) as { error: string; outcome: string };
+            const result = answerOf(status, body) as { error: string; outcome?: string };
             expect(result.error.length).toBeGreaterThan(10);
             expect(result.outcome).toBe(outcome);
         }
@@ -226,6 +252,18 @@ describe('the two tools of a Brick for keys', () => {
         const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency: 'KWD' }, context)) as { done: boolean; amount: string };
         expect(result).toMatchObject({ done: true, amount: '4.500 KWD' });
         expect(http.post).toHaveBeenCalledWith(`${ORBIT}/api/bots/bot-1/key-apps/grant-1/page-jobs`, { requesterKey: 'sara-uuid', artifactId: 'art-1', amount: '4.500', currency: 'KWD' }, expect.anything());
+    });
+
+    it('refuse a currency that is not exactly three letters, instead of cutting it to fit', async () => {
+        for (const currency of ['USDT', 'US', '', 'K W', 'U$D', undefined, 3]) {
+            const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency }, context)) as { error?: string };
+            expect(result.error).toMatch(/three-letter/);
+        }
+        expect(http.post).not.toHaveBeenCalled();
+        // Spaces around a good code are only trimmed
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: { amount: '4.500', currency: 'KWD', app: 'Example Pay' } } });
+        await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency: ' KWD ' }, context);
+        expect(http.post.mock.calls[0][1]).toMatchObject({ currency: 'KWD' });
     });
 
     it('do not set up a payment through an App that cannot take one, or is off', async () => {

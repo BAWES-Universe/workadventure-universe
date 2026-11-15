@@ -153,11 +153,14 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
     const artifact = text(args.artifact, 100);
     if (!artifact) return { error: 'Say which page, by its artifact id.' };
     const amount = typeof args.amount === 'number' ? String(args.amount) : text(args.amount, 30);
+    // Whatever was written is checked whole: cut to three letters, "USDT" would become a different money, and Orbit could not tell
+    const currency = typeof args.currency === 'string' ? args.currency.trim() : '';
+    if (!/^[A-Za-z]{3}$/.test(currency)) return { error: 'The currency must be a three-letter code, like USD. Nothing was set up. Ask which one they mean.' };
     const sent = await post(context, `key-apps/${encodeURIComponent(app.serverId)}/page-jobs`, {
         requesterKey: context.userId,
         artifactId: artifact,
         amount,
-        currency: text(args.currency, 3),
+        currency,
         ...(text(args.description, 200) ? { description: text(args.description, 200) } : {}),
     });
     const body = (sent.data ?? {}) as { job?: { amount?: string; currency?: string; app?: string }; error?: unknown };

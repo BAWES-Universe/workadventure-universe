@@ -1776,8 +1776,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await show('failed');
                 return 'unheard';
             }
-            // A key read out loud is held back like a typed one: the transcript row is not shown with it, and the bot never gets it
-            if (holdsAKey(words)) {
+            // A key read out loud is held back like a typed one: the transcript row is not shown with it, and the bot never gets it.
+            // The whole transcript is read, before it is cut to fit: a key past the cut (or across it) must not slip by.
+            if (holdsAKey(heard.text)) {
                 await show('failed');
                 return HEARD_A_KEY;
             }

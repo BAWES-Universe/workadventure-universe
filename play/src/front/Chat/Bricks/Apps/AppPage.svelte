@@ -18,7 +18,7 @@
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
     import { loadMyApps } from "./AppsStore";
-    import { replaceKey } from "./KeyForm";
+    import { keySaves, replaceKey } from "./KeyForm";
     import { mayLine, thingLabel } from "./AppWords";
     import LendSheet from "./LendSheet.svelte";
     import { reconnectApp } from "./Reconnect";
@@ -110,6 +110,13 @@
             // eslint-disable-next-line require-atomic-updates
             busy = false;
         }
+    }
+
+    // A key was saved (a replacement, from the form this page opened): the end and the mode shown under the name are read again
+    let savesSeen = $keySaves;
+    $: if ($keySaves !== savesSeen) {
+        savesSeen = $keySaves;
+        load().catch((error) => console.error(error));
     }
 
     const letUse = (botId: string) => change(() => botApiService.letBrickUseApp(appId, botId));

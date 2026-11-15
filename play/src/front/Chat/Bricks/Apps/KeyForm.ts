@@ -1,3 +1,4 @@
+import { writable } from "svelte/store";
 import { botApiService } from "../../../external-modules/bots/services/BotApiService";
 import { loadMyApps } from "./AppsStore";
 import { openKeyFormSheet } from "./KeyFormLink";
@@ -117,7 +118,11 @@ export async function afterKeySaved(): Promise<void> {
     } catch (error) {
         console.warn("Could not read the apps again", error);
     }
+    keySaves.update((count) => count + 1);
 }
+
+/** Counts the keys saved since the game opened: a page that shows a key's end and mode reads itself again when it changes. */
+export const keySaves = writable(0);
 
 /** Opens the form for replacing the key of an app of theirs. False when Orbit could not open it. */
 export async function replaceKey(connectionId: string): Promise<boolean> {

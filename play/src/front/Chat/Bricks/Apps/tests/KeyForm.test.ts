@@ -5,7 +5,8 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
 }));
 vi.mock("../AppsStore", () => ({ loadMyApps: vi.fn(() => Promise.resolve(undefined)) }));
 
-import { isModeChange, keyProblemOf, parseKeyForm } from "../KeyForm";
+import { get } from "svelte/store";
+import { afterKeySaved, isModeChange, keyProblemOf, keySaves, parseKeyForm } from "../KeyForm";
 
 const form = {
     id: "f1",
@@ -87,5 +88,15 @@ describe("what went wrong with a key", () => {
         expect(isModeChange(Object.assign(new Error("x"), { code: "mode_change" }))).toBe(true);
         expect(isModeChange(Object.assign(new Error("x"), { code: "rejected" }))).toBe(false);
         expect(isModeChange(null)).toBe(false);
+    });
+});
+
+describe("after a key is saved", () => {
+    it("tells the pages that show a key (its end and mode) to read themselves again, once per saved key", async () => {
+        const before = get(keySaves);
+        await afterKeySaved();
+        expect(get(keySaves)).toBe(before + 1);
+        await afterKeySaved();
+        expect(get(keySaves)).toBe(before + 2);
     });
 });

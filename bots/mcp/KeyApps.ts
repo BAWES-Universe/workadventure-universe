@@ -158,8 +158,17 @@ export interface KeyAppUse {
  * Runs one operation through Orbit. Always an answer the model can use, never a thrown error and never a raw answer from the service:
  * Orbit returns only the fields the definition lists. `outcome` says what is proven about whether it ran.
  */
-export async function callKeyApp(where: { adminApiUrl: string; serviceToken: string }, entry: ToolServerEntry, args: Record<string, unknown>, use: KeyAppUse): Promise<unknown> {
+export async function callKeyApp(
+    where: { adminApiUrl: string; serviceToken: string },
+    entry: ToolServerEntry,
+    args: Record<string, unknown>,
+    use: KeyAppUse,
+    /** The turn's stop signal: a turn that was stopped while it waited sends nothing */
+    abortSignal?: AbortSignal
+): Promise<unknown> {
     if (!entry.keyApp || !where.adminApiUrl || !where.serviceToken) return { error: "That App can't be used right now. This was not done.", outcome: 'not_sent' };
+    // Stopped before anything was sent: that is proof it did not run. Stopped after, it is not (see the catch below).
+    if (abortSignal?.aborted) return { error: 'The turn was stopped before this was sent. This was not done.', outcome: 'not_sent' };
     const body = {
         callId: use.callId,
         operation: entry.keyApp.operation,
@@ -174,6 +183,7 @@ export async function callKeyApp(where: { adminApiUrl: string; serviceToken: str
             headers: { Authorization: `Bearer ${where.serviceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
             timeout: CALL_TIMEOUT_MS,
             validateStatus: () => true,
+            ...(abortSignal ? { signal: abortSignal } : {}),
         });
     } catch (error) {
         console.warn('[KeyApps] A key app could not be reached:', error instanceof Error ? error.message : error);
@@ -208,7 +218,8 @@ export function answerOf(status: number, data: unknown): unknown {
     if (status === 429) return { error: 'Too many requests to Apps for now. This was not done. Tell the person to try again in a while.', outcome: 'not_sent' };
     if (status === 502) {
         if (body.code === 'key_rejected') return { error: "The service did not accept the key, so it may have stopped working. This was not done. Tell the person to open Apps and tap Replace key.", outcome: 'failed' };
-        return { error: "I couldn't reach that service. Try again soon. This was not done.", outcome: 'failed' };
+        // Orbit may have sent it and lost the answer (a timeout): there is no proof either way, so it is never said to be undone
+        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person." };
     }
     return { error: "That App can't be used right now. This was not done.", outcome: 'not_sent' };
 }

@@ -397,7 +397,8 @@ export class AIService {
                     { adminApiUrl: this.adminApiUrl, serviceToken: process.env.BOT_SERVICE_TOKEN || '' },
                     entry,
                     args,
-                    { botId: use?.botId ?? '', callId: use?.callId ?? '', ...(use?.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use?.forOwner ? { forOwner: true } : {}) }
+                    { botId: use?.botId ?? '', callId: use?.callId ?? '', ...(use?.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use?.forOwner ? { forOwner: true } : {}) },
+                    abortSignal
                 );
             }
             // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
@@ -1399,6 +1400,9 @@ export class AIService {
             // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
             const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
 
+            // Anyone but the owner, in a Brick standing in a room: nothing of the owner's Apps goes into what the model is told (#2005)
+            const forOthers = visit?.forOthers === true || (resolved as { forOthers?: boolean }).forOthers === true;
+
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
             // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
@@ -1416,7 +1420,7 @@ export class AIService {
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
                     // A person's own Brick can lead them to connect an App (game #2001)
                     channel === 'dm' && botId && playerId !== undefined ? await this.appsNoteFor(botId, playerId, botClient, adminApiService) : '',
-                    channel === 'dm' && botId && playerId !== undefined ? await this.keyAppsNoteFor(botId, botClient, adminApiService) : '',
+                    channel === 'dm' && botId && playerId !== undefined && !forOthers ? await this.keyAppsNoteFor(botId, botClient, adminApiService) : '',
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
@@ -1448,7 +1452,6 @@ export class AIService {
                       computerOn
                   );
             // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
-            const forOthers = visit?.forOthers === true || (resolved as { forOthers?: boolean }).forOthers === true;
             if (forOthers) {
                 for (let at = tools.length - 1; at >= 0; at--) {
                     const name: string = tools[at]?.function?.name ?? '';

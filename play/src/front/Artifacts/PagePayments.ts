@@ -49,7 +49,6 @@ export interface PagePaymentsOptions {
     /** Opens the checkout's window straight from the tap's moment; undefined when the browser blocked it. */
     openWindow?: () => Window | null;
     pay?: typeof payOnArtifact;
-    now?: () => number;
 }
 
 export interface PagePayments {
@@ -60,10 +59,10 @@ export interface PagePayments {
 
 export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const pay = options.pay ?? payOnArtifact;
-    const now = options.now ?? Date.now;
     const line = writable<PayLine>(NO_PAY_LINE);
     let busy = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     let destroyed = false;
 
     // The frame has no origin of its own, so it can only be addressed with "*": the message holds nothing but a status
@@ -75,22 +74,42 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         tell(status);
     };
 
-    const watch = (orderId: string) => {
-        const until = now() + POLL_FOR_MS;
+    /**
+     * Asks about an order every few seconds until it ends. Two things the asking alone cannot do are done here: the deadline has its own
+     * clock, so a question that never gets an answer cannot keep "checking" past it, and a checkout tab the buyer closed gets its link back.
+     */
+    const watch = (orderId: string, checkout: { url: string; app: string; popup: Window | null }) => {
+        let over = false;
+        let linkBack = false;
+        const finish = (update: Partial<PayLine>, status: string) => {
+            // Whatever answers later never overwrites how this ended
+            if (over || destroyed) return;
+            over = true;
+            if (timer) clearTimeout(timer);
+            if (deadline) clearTimeout(deadline);
+            end(update, status);
+        };
+        // Twenty minutes without an answer: said plainly, never a silent end. The order may still be counted later.
+        deadline = setTimeout(() => finish({ problem: "cant_confirm" }, "cant_confirm"), POLL_FOR_MS);
         const poll = async () => {
-            if (destroyed) return;
+            if (over || destroyed) return;
+            // The buyer closed the checkout tab before paying: the same checkout is offered again, so the payment is never out of reach
+            if (!linkBack && checkout.popup?.closed === true) {
+                linkBack = true;
+                line.update((now) =>
+                    now.checking ? { ...now, resume: { url: checkout.url, app: checkout.app } } : now
+                );
+            }
             try {
                 const answer: ArtifactPay = await pay(options.artifactId, options.chat(), { order: orderId });
-                if (destroyed) return;
-                if (answer.status === "paid") return end({ paid: { test: answer.testPayment === true } }, "paid");
-                if (answer.status === "not_paid") return end({ problem: "not_paid" }, "not_paid");
-                if (answer.status === "cant_confirm") return end({ problem: "cant_confirm" }, "cant_confirm");
+                if (over || destroyed) return;
+                if (answer.status === "paid") return finish({ paid: { test: answer.testPayment === true } }, "paid");
+                if (answer.status === "not_paid") return finish({ problem: "not_paid" }, "not_paid");
+                if (answer.status === "cant_confirm") return finish({ problem: "cant_confirm" }, "cant_confirm");
             } catch {
                 // Try again on the next turn
             }
-            if (now() < until) timer = setTimeout(() => void poll(), POLL_MS);
-            // Twenty minutes without an answer: said plainly, never a silent end. The order may still be counted later.
-            else end({ problem: "cant_confirm" }, "cant_confirm");
+            if (!over && !destroyed) timer = setTimeout(() => void poll(), POLL_MS);
         };
         timer = setTimeout(() => void poll(), POLL_MS);
     };
@@ -128,7 +147,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     resume: popup ? null : { url, app: answer.app ?? "" },
                 });
                 tell("started");
-                watch(answer.orderId);
+                watch(answer.orderId, { url, app: answer.app ?? "", popup });
             } catch (error) {
                 popup?.close();
                 if (destroyed) return;
@@ -144,6 +163,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         destroy() {
             destroyed = true;
             if (timer) clearTimeout(timer);
+            if (deadline) clearTimeout(deadline);
         },
     };
 }
