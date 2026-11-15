@@ -160,6 +160,9 @@ export interface BotPlayerMemory {
     /** What make and change did in the turn being answered, by their arguments, so asking the model again for the same
      * turn (a repeated reply is regenerated) does not make a second copy. Cleared when the next turn starts. Runtime only. */
     artifactCalls?: Map<string, Record<string, unknown>>;
+    /** The Instant App runs of the turn being answered, by tool and arguments, so asking the model again for the same turn (a repeated
+     * reply is regenerated) never runs or pays a second time. Cleared when the next turn starts. Runtime only. */
+    instantCalls?: Map<string, Promise<Record<string, unknown>>>;
     /** The songs, images and videos of the turn being answered, by their short names ("m1"), that an artifact may carry
      * (#1510). Started fresh with each turn from its message, added to by its tools. Runtime only: nothing here is saved. */
     turnMedia?: Array<{ ref: string; url: string; kind: 'audio' | 'image' | 'video' | 'file'; by: 'person' | 'tool' }>;

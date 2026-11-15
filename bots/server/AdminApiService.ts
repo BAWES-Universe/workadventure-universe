@@ -370,6 +370,53 @@ function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?
     return typeof ownerId === 'string' && ownerId ? { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}) } : null;
 }
 
+/** One Instant App tool as Orbit offers it to a Brick right now (Orbit `GET /api/instant/tools`). The schema goes to the model as it is. */
+export interface InstantToolInfo {
+    name: string;
+    toolkit: string;
+    description: string | null;
+    inputSchema: Record<string, unknown>;
+    /** The least one run costs, for the Brick's own judgement. Never a bound, and never said to anyone. */
+    fromMicros: number;
+}
+
+/** What may be offered now. `ready` false (paused, not set up, no credit source) comes with no tools. */
+export interface InstantListing {
+    ready: boolean;
+    reason: string | null;
+    tools: InstantToolInfo[];
+}
+
+/** Who an Instant call is for: a person's own chat message, or the Brick working for its owner on its own. */
+export type InstantWho = { requesterKey: string; forOwner?: undefined } | { forOwner: true; requesterKey?: undefined };
+
+/**
+ * What Orbit said to one Instant run (`POST /api/instant/run`, always HTTP 200 or 202). `refused` and `failed` carry a fixed reason and
+ * Orbit's own plain message, shown as it is. `not_owner` is Orbit's 404 (the asker is not the Brick's owner). `unreachable` means no
+ * answer was read (a network error, a timeout or a server error): the run may or may not have started, so the same call id is asked again.
+ */
+export type InstantRunAnswer =
+    | { status: 'done'; data: unknown; chargedMicros: number; activityId: string | null }
+    | { status: 'failed'; reason: string; message: string; activityId: string | null }
+    | { status: 'refused'; reason: string; message: string; renewsAt: string | null | undefined; canAskForMore: boolean | undefined; activityId: string | null }
+    | { status: 'checking'; activityId: string | null }
+    | { status: 'already_done'; chargedMicros: number | null; activityId: string | null }
+    | { status: 'not_owner' }
+    | { status: 'unreachable'; retry: boolean };
+
+/** What Orbit said to "Didn't work" on a charged run (`POST /api/instant/giveback`). */
+export type InstantGiveBackAnswer =
+    | { status: 'given' }
+    | { status: 'refused'; reason: string }
+    | { status: 'not_owner' }
+    | { status: 'unreachable' };
+
+/** Orbit's own wait for the provider is a minute; the bot server waits a little longer so the answer comes back. */
+const INSTANT_RUN_TIMEOUT_MS = 75_000;
+const INSTANT_LIST_TIMEOUT_MS = 10_000;
+
+const asText = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
+
 /** One App on Orbit's list as a Brick may offer it (game #2001): what a person sees of it, and where they stand with it. */
 export interface OfferableApp {
     key: string;
@@ -1175,6 +1222,113 @@ export class AdminApiService {
             console.warn("[AdminApiService] Could not read a Brick's computer:", error instanceof Error ? error.message : error);
             return false;
         }
+    }
+
+    /** An Instant call to Orbit with the service token. Never throws: 200 and 202 are answers, 404 is "not the owner", the rest are not answers. */
+    private async instantCall(method: 'get' | 'post', path: string, body: unknown, params: Record<string, string> | undefined, timeout: number): Promise<{ status: number; data: Record<string, unknown> } | { status: 'none'; retry: boolean }> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) return { status: 'none', retry: false };
+        try {
+            const response = await axios.request<Record<string, unknown>>({
+                method,
+                url: resolveAdminApiEndpoint(this.adminApiUrl, path),
+                ...(body === undefined ? {} : { data: body }),
+                ...(params ? { params } : {}),
+                headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+                timeout,
+                maxRedirects: 0,
+                validateStatus: () => true,
+            });
+            const data = response.data && typeof response.data === 'object' && !Array.isArray(response.data) ? response.data : {};
+            if (response.status === 200 || response.status === 202 || response.status === 404) return { status: response.status, data };
+            // A server error may have come after the run started: the same call id is asked again. Anything else (a refused token, a body Orbit does not take) will not change
+            return { status: 'none', retry: response.status >= 500 };
+        } catch (error) {
+            console.warn('[AdminApiService] An Instant call got no answer:', error instanceof Error ? error.message : error);
+            return { status: 'none', retry: true };
+        }
+    }
+
+    /** The Instant tools this Brick may be offered now (Orbit decides: Apps its owner switched on for it, only while Instant can really run). Null when Orbit cannot say. */
+    async instantTools(botId: string): Promise<InstantListing | null> {
+        const answer = await this.instantCall('get', 'api/instant/tools', undefined, { botId }, INSTANT_LIST_TIMEOUT_MS);
+        if (answer.status !== 200) return null;
+        const list = Array.isArray(answer.data.tools) ? answer.data.tools : [];
+        const tools: InstantToolInfo[] = [];
+        for (const one of list) {
+            const tool = one as Record<string, unknown> | null;
+            const name = asText(tool?.name);
+            if (!tool || !name) continue;
+            const schema = tool.inputSchema;
+            tools.push({
+                name,
+                toolkit: asText(tool.toolkit) ?? '',
+                description: asText(tool.description),
+                // Passed to the model as Orbit gave it; only a missing one is made an empty object
+                inputSchema: schema && typeof schema === 'object' && !Array.isArray(schema) ? (schema as Record<string, unknown>) : { type: 'object', properties: {} },
+                fromMicros: typeof tool.fromMicros === 'number' && Number.isFinite(tool.fromMicros) ? tool.fromMicros : 0,
+            });
+        }
+        return { ready: answer.data.ready === true, reason: asText(answer.data.reason), tools };
+    }
+
+    /**
+     * One Instant run for the Brick's owner. `callId` is this attempt's own id: asking again with the same one never runs or pays twice,
+     * and is how an unclear run is looked at again. Never throws.
+     */
+    async instantRun(botId: string, ask: InstantWho & { tool: string; arguments: Record<string, unknown>; callId: string }): Promise<InstantRunAnswer> {
+        const answer = await this.instantCall(
+            'post',
+            'api/instant/run',
+            { botId, tool: ask.tool, arguments: ask.arguments, callId: ask.callId, ...(ask.forOwner ? { forOwner: true } : { requesterKey: ask.requesterKey }) },
+            undefined,
+            INSTANT_RUN_TIMEOUT_MS
+        );
+        if (answer.status === 'none') return { status: 'unreachable', retry: answer.retry };
+        if (answer.status === 404) return { status: 'not_owner' };
+        const data = answer.data;
+        // The receipt this run is under in Usage's Activity, only when Orbit says so: a run id is not guessed to be one
+        const activityId = asText(data.activityId);
+        const message = asText(data.message) ?? '';
+        const reason = asText(data.reason) ?? 'unclear';
+        switch (data.status) {
+            case 'done':
+                return { status: 'done', data: data.data, chargedMicros: typeof data.chargedMicros === 'number' && data.chargedMicros > 0 ? data.chargedMicros : 0, activityId };
+            case 'failed':
+                return { status: 'failed', reason, message, activityId };
+            case 'refused':
+                return {
+                    status: 'refused',
+                    reason,
+                    message,
+                    renewsAt: typeof data.renewsAt === 'string' ? data.renewsAt : data.renewsAt === null ? null : undefined,
+                    canAskForMore: typeof data.canAskForMore === 'boolean' ? data.canAskForMore : undefined,
+                    activityId,
+                };
+            case 'checking':
+                return { status: 'checking', activityId };
+            case 'already_done':
+                return { status: 'already_done', chargedMicros: typeof data.chargedMicros === 'number' ? data.chargedMicros : null, activityId };
+            default:
+                // An answer this server does not know is not a result: nothing is claimed, and the same call id is asked about again
+                return { status: 'unreachable', retry: true };
+        }
+    }
+
+    /** "Didn't work" on a run that was charged (a bounded goodwill give-back, once per run; Orbit holds the limits). Never throws. */
+    async instantGiveBack(botId: string, ask: InstantWho & { callId: string }): Promise<InstantGiveBackAnswer> {
+        const answer = await this.instantCall(
+            'post',
+            'api/instant/giveback',
+            { botId, callId: ask.callId, ...(ask.forOwner ? { forOwner: true } : { requesterKey: ask.requesterKey }) },
+            undefined,
+            INSTANT_LIST_TIMEOUT_MS
+        );
+        if (answer.status === 'none') return { status: 'unreachable' };
+        if (answer.status === 404) return { status: 'not_owner' };
+        if (answer.data.status === 'given') return { status: 'given' };
+        if (answer.data.status === 'refused') return { status: 'refused', reason: asText(answer.data.reason) ?? 'unavailable' };
+        return { status: 'unreachable' };
     }
 
     /** Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. */

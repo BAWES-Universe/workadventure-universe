@@ -10,7 +10,7 @@
 
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer } from '../server/AdminApiService';
+import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer, InstantListing } from '../server/AdminApiService';
 import { reachFor } from '../server/AdminApiService';
 import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
@@ -130,11 +130,26 @@ import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefin
 import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
+import {
+    INSTANT_GIVE_BACK_TOOL,
+    InstantOffers,
+    formatInstantResult,
+    instantGiveBackDefinition,
+    instantToolDefinitions,
+    instantToolsNote,
+    isInstantGiveBackTool,
+    isInstantTool,
+    runInstantGiveBack,
+    runInstantTool,
+} from './InstantTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_REMINDER_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
+
+/** The case an Instant App's run is sent to in the tool switch: its tool names are made from Orbit's list, so none is known ahead. */
+const INSTANT_RUN_CASE = '\u0000instant-run';
 
 /** How long after someone joins a space the game has said who they are (the cards wait as long, see NearbyAsks). */
 const PERSON_BACK_WAIT_MS = 1500;
@@ -1100,6 +1115,7 @@ export class AIService {
         if (!isRetry && playerId !== undefined) {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
+            memory?.instantCalls?.clear();
             memory?.sentAgain?.clear();
             memory?.cardsAgain?.clear();
         }
@@ -1328,6 +1344,9 @@ export class AIService {
 
             // A Brick's own computer, in its owner's direct messages and only while it is on for them (game #2000)
             const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService) : false;
+            // Instant Apps, in the owner's own Brick's direct messages: only what Orbit offers this Brick now (Apps its owner switched on for it)
+            const instantListing = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.instantFor(botId, playerId, botClient, adminApiService) : null;
+            const instantGiveBack = instantListing && botId && playerId !== undefined ? this.instantChargedRuns(botId, playerId).length > 0 : false;
             // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
             const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
 
@@ -1351,6 +1370,7 @@ export class AIService {
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
+                    instantListing ? instantToolsNote() : '',
                     // The owner, in their own Brick's direct messages: it can set reminders when they ask (#2002)
                     taskSettings ? taskToolsNote(taskSettings, Date.now()) : '',
                 ].filter(Boolean).join('\n\n') || undefined,
@@ -1376,7 +1396,9 @@ export class AIService {
                       channel,
                       providerId,
                       this.gatePerson(botId, playerId, botClient, spaceName),
-                      computerOn
+                      computerOn,
+                      instantListing,
+                      instantGiveBack
                   );
             if (taskSettings) this.offerTaskTools(tools, toolServerMap);
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
@@ -3180,7 +3202,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false, instant: InstantListing | null = null, instantGiveBack = false): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
 
@@ -3386,6 +3408,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
         if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
+        // Tools: Instant Apps, exactly the list Orbit gave for this Brick, and "Didn't work" once one of them took credit. Owner only, in their Brick's direct messages.
+        if (channel === 'dm' && instant && !botClient) {
+            tools.push(...instantToolDefinitions(instant));
+            if (instantGiveBack) tools.push(instantGiveBackDefinition());
+        }
 
         // Add MCP tools
         if (botId && adminApiService) {
@@ -3494,6 +3521,91 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const on = await admin.computerIsOn(botId, userId).catch(() => false);
         this.computerOnCache.set(key, { on, at: Date.now() });
         return on;
+    }
+
+    private instantOffers = new InstantOffers();
+    /** The runs in a chat that took credit, newest first, by Brick and person: what "Didn't work" gives back. Runtime only, a day at most. */
+    private instantCharged = new Map<string, Array<{ callId: string; at: number }>>();
+
+    private instantChargedRuns(botId: string, playerId: number): string[] {
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        const kept = userId ? this.instantCharged.get(`${botId}|${userId}`) : undefined;
+        return (kept ?? []).filter((run) => Date.now() - run.at < 24 * 60 * 60 * 1000).map((run) => run.callId);
+    }
+
+    /**
+     * What Orbit offers this Brick's owner as Instant Apps right now, or null: not a person's own Brick, in a bubble, not its owner, nothing
+     * switched on for this Brick, Instant paused or not set up, or Orbit could not say. Kept a short while so chat stays fast.
+     */
+    private async instantFor(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<InstantListing | null> {
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (botClient || !this.ownBricks.has(botId) || !admin?.isConfigured?.() || !userId) return null;
+        return this.instantOffers.listingFor(admin, botId, userId);
+    }
+
+    /**
+     * Runs one Instant App for the person in this direct message: its Brick's owner, in their own Brick's chat. Orbit holds the credit, the price
+     * table and every limit; this carries the question with this attempt's own id. The same run asked again in the same turn (a repeated reply is
+     * regenerated) is the same run: its answer comes back, nothing is run or taken twice. Never throws.
+     */
+    private async runInstantToolCall(
+        name: string,
+        args: Record<string, unknown>,
+        where: { adminApiService?: AdminApiService; botClient?: BotClient; botId?: string; playerId?: number; spaceName?: string }
+    ): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        const userId = memory?.userUuid;
+        const gone = { success: false, outcome: 'not_sent', error: "That can't be done in this chat right now.", note: 'Nothing ran. Say so in one plain sentence.' };
+        if (!admin || !where.botId || where.playerId === undefined || !userId || where.botClient) return gone;
+        const botId = where.botId;
+        const playerId = where.playerId;
+
+        const repeatKey = `${name}:${JSON.stringify(args)}`;
+        const earlier = memory?.instantCalls?.get(repeatKey);
+        if (earlier) return earlier;
+
+        const run = (async (): Promise<Record<string, unknown>> => {
+            // Offered now, to the Brick's owner: a call from a reply that was not offered it, or after it was switched off or paused, is not run
+            const listing = await this.instantFor(botId, playerId, undefined, admin);
+            const tool = InstantOffers.toolNamed(listing, name);
+            if (!tool) return { success: false, outcome: 'not_sent', error: 'That Instant App is not available right now.', note: 'Nothing ran. Say so in one plain sentence and carry on another way. Do not try it again in this reply.' };
+            const ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args });
+            if (ran.charged) {
+                const key = `${botId}|${userId}`;
+                const now = Date.now();
+                const kept = [{ callId: ran.callId, at: now }, ...(this.instantCharged.get(key) ?? [])].filter((one) => now - one.at < 24 * 60 * 60 * 1000).slice(0, 10);
+                this.instantCharged.set(key, kept);
+                if (this.instantCharged.size > 500) for (const [other, list] of this.instantCharged) if (!list.some((one) => now - one.at < 24 * 60 * 60 * 1000)) this.instantCharged.delete(other);
+            }
+            // What Orbit offers may change with a run (credit spent, a pause): read it again next time
+            if (ran.notSent || ran.charged) this.instantOffers.forget(botId, userId);
+            let result = ran.result;
+            if (ran.carryOn) {
+                // The credit ran out: one card asks how to carry on, whatever "asks which way to go" says, since this is a recovery
+                const asked = await this.askPerson(botId, { question: ran.carryOn.question, choices: ran.carryOn.choices, before: ran.carryOn.before }, playerId, undefined, where.spaceName, true).catch(() => ({ error: 'no card' }));
+                if (asked.error) result = { ...result, note: "Nothing ran and nothing was taken: their Instant Apps credit does not cover it. Say so in one plain sentence, add [Usage](#usage), and carry on another way." };
+            }
+            // A run that was not sent (refused) may be asked again in a later turn; one that ran, or may have run, is never asked again in this one
+            if (ran.notSent) memory?.instantCalls?.delete(repeatKey);
+            return result;
+        })();
+        if (memory) (memory.instantCalls ??= new Map()).set(repeatKey, run);
+        return run;
+    }
+
+    /** Runs instant_didnt_work: a bounded give-back on a run in this chat that took credit. Orbit holds the limits and says no when it must. */
+    private async runInstantGiveBackCall(
+        args: Record<string, unknown>,
+        where: { adminApiService?: AdminApiService; botClient?: BotClient; botId?: string; playerId?: number }
+    ): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
+        if (!admin || !where.botId || where.playerId === undefined || !userId || where.botClient || !this.ownBricks.has(where.botId)) {
+            return { success: false, error: "That can't be done in this chat right now.", note: 'Say so in one plain sentence.' };
+        }
+        return runInstantGiveBack(args, { admin, botId: where.botId, who: { requesterKey: userId }, callIds: this.instantChargedRuns(where.botId, where.playerId) });
     }
 
     /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
@@ -3977,7 +4089,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
+                // An Instant App's name is made from its tool, so it has no case of its own: it is told apart here. A tool server's tool of the same name stays that tool's
+                const instantRun = isInstantTool(toolCall.name) && !toolServerMap?.has(toolCall.name);
+                switch (instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4321,6 +4435,21 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         );
                         break;
 
+                    case INSTANT_RUN_CASE:
+                        result = await this.runInstantToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botClient, botId, playerId, spaceName }
+                        );
+                        break;
+
+                    case INSTANT_GIVE_BACK_TOOL:
+                        result = await this.runInstantGiveBackCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botClient, botId, playerId }
+                        );
+                        break;
+
                     case COMPUTER_TOOL:
                         result = await this.runComputerToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
@@ -4477,11 +4606,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * The model asks which way to go (#1661): a card with the choices, in a direct message or, in a bubble, to the person
      * alone with one plain line for everyone. The reply ends there; their pick comes back as their next message. Never throws.
      */
-    private async askPerson(botId: string | undefined, args: Record<string, unknown>, playerId: number | undefined, botClient?: BotClient, spaceName?: string): Promise<Record<string, unknown>> {
+    private async askPerson(
+        botId: string | undefined,
+        args: Record<string, unknown>,
+        playerId: number | undefined,
+        botClient?: BotClient,
+        spaceName?: string,
+        /** A card the Brick must show to recover (the credit ran out), whatever the setting for asking which way to go says. */
+        recovery = false
+    ): Promise<Record<string, unknown>> {
         const inWords = 'A question card could not be shown here. Ask in one short sentence in words instead.';
         const chat = botId && playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
         if (!botId || !this.approvals || !chat || !chat.person.signedIn || !chat.person.identifier) return { error: inWords };
-        if ((await this.approvals.settings(botId)).askWhichWay === 'never') {
+        if (!recovery && (await this.approvals.settings(botId)).askWhichWay === 'never') {
             return { error: "This bot's settings say not to ask which way to go. Pick the best choice, say your pick in one short line and start." };
         }
         const read = readQuestion(args);
@@ -5263,6 +5400,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // The file tools ran (Orbit keeps files here), not an MCP tool of the same name
         if (isFileTool(r.name) && r.result && this.keepsFiles(botId)) {
             return formatFileResult(r.name, r.result);
+        }
+        if ((isInstantTool(r.name) || isInstantGiveBackTool(r.name)) && r.result && typeof r.result === 'object') {
+            return formatInstantResult(r.name, r.result);
         }
         if (r.name === READ_WEB_PAGE_TOOL && r.result) {
             if (r.result.error || !r.result.content) {
