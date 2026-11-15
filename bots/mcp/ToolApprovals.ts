@@ -203,6 +203,8 @@ export class ToolApprovals {
     private readonly cards = new Map<string, Card>();
     private readonly dispatching = new Set<string>();
     private readonly proposing = new Map<string, Promise<Proposed>>();
+    /** A goal's saved step whose card could not be shown and whose saved step could not be closed: the next ask for it shows the card instead of joining a card nobody has. */
+    private readonly unshown = new Set<string>();
     /** A person's card in a bubble that closed because they said something else: a new card for the same tool is a change (#1658). */
     private readonly changing = new Map<string, number>();
     /** The replies only a person saw in a bubble, kept a while so they come back with the person after a reload (#1658). */
@@ -268,7 +270,7 @@ export class ToolApprovals {
             if (task) {
                 // Orbit sets the wait of a goal's card (a super admin's "Scheduled card wait"), and says when it is the card already waiting
                 const saved = await this.deps.orbit.createOrJoin(botId, { ...base, proposalKey: randomKey(), rememberScope: null });
-                if (!saved.created) return { kind: 'waiting', result: ALREADY_ASKED_TASK_RESULT };
+                if (!saved.created && !this.unshown.has(saved.action.id)) return { kind: 'waiting', result: ALREADY_ASKED_TASK_RESULT };
                 action = saved.action;
                 wait = Math.max(1, Math.round((Date.parse(action.reviewExpiresAt) - this.now()) / 60_000));
             } else {
@@ -308,10 +310,17 @@ export class ToolApprovals {
                 if (task && person.matrixUserId && this.deps.roomStillTheirs && !this.deps.roomStillTheirs(botId, roomId, person.matrixUserId)) throw new Error('The chat is not only theirs any more');
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
                 card.shownAt = this.now();
+                this.unshown.delete(action.id);
             } catch (error) {
                 // No card, no OK: the saved action is closed so a tap can never find it
                 console.warn(`[ToolApprovals] Could not show the card for ${toolName}:`, errorText(error));
-                await this.deps.orbit.cancel(botId, action.id, { actorKey: person.uuid, revision: action.revision }).catch(() => undefined);
+                const closed = await this.deps.orbit.cancel(botId, action.id, { actorKey: person.uuid, revision: action.revision }).then(
+                    () => true,
+                    () => false
+                );
+                // Still waiting at Orbit with no card: the same step asked again must show it, not join it
+                if (task && !closed) this.unshown.add(action.id);
+                else this.unshown.delete(action.id);
                 return { kind: 'failed', result: NO_CARD_RESULT };
             }
             this.keep(action.id, card);

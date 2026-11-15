@@ -84,7 +84,9 @@ class FakeOrbit {
         return closed;
     }
     cancelled: string[] = [];
+    cancelFails = false;
     async cancel(_bot: string, id: string) {
+        if (this.cancelFails) throw new Error('Orbit is down');
         this.cancelled.push(id);
         this.actions.set(id, { ...this.actions.get(id)!, status: 'closed', closedReason: 'cancelled' } as SavedAction);
     }
@@ -265,5 +267,23 @@ describe('a goal’s card and who is in the room', () => {
         expect(sent).toHaveLength(0);
         expect(orbit.cancelled).toEqual(['act_1']);
         expect(orbit.actions.get('act_1')!.status).toBe('closed');
+    });
+
+    it('shows its card on the next ask when it could not be shown and could not be closed, and does not join a card nobody has', async () => {
+        orbit.cancelFails = true;
+        let theirs = false;
+        const approvals = make(orbit, sent, undefined, RUN, () => theirs);
+        expect((await approvals.propose(input())).kind).toBe('failed');
+        expect(sent).toHaveLength(0);
+        expect(orbit.actions.get('act_1')!.status).toBe('waiting');
+        // The chat is theirs again: the same step is that saved step, now with its card
+        theirs = true;
+        expect((await approvals.propose(input())).kind).toBe('waiting');
+        expect(sent).toHaveLength(1);
+        expect(orbit.actions.size).toBe(1);
+        // And now that a card is shown, asking again joins it
+        const again = await approvals.propose(input());
+        expect((again as unknown as { result: { message: string } }).result.message).toMatch(/already asked/);
+        expect(sent).toHaveLength(1);
     });
 });
