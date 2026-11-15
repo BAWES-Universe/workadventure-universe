@@ -16,16 +16,13 @@
 import { createHash } from 'crypto';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
-import type { ProposeInput, Proposed } from '../mcp/ToolApprovals';
+import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import type { DueRun } from './BrickRunner';
 import { FINISH_CHECK_TOOL, READ_PAGE_TOOL, type ToolDefinition } from './BrickTaskRun';
 
 /** What an App's answer to a step can be at most, as text for the model (the rest is cut). */
 export const APP_RESULT_MAX = 12_000;
-
-/** Headings that never run by themselves on a run: they ask for this occurrence on a card. */
-const ALWAYS_ASK: readonly ToolHeading[] = ['makesNew', 'deletesOrSends'];
 
 export interface TaskAppsDeps {
     /** The tools the Brick's Apps give, and where each one lives. Throws when they cannot be listed. */
@@ -128,7 +125,7 @@ export class TaskApps {
             if (why !== null) return refused(why);
             if (verdict.kind === 'refuse') return refused(verdict.line);
             const heading = verdict.heading!;
-            const asks = verdict.kind === 'ask' || ALWAYS_ASK.includes(heading);
+            const asks = verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading);
             if (!asks) {
                 return asText(await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) }));
             }

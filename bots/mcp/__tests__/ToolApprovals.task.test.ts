@@ -87,7 +87,7 @@ class FakeOrbit {
     async revokeGrants() {}
 }
 
-function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, run = vi.fn(async () => [{ type: 'text', text: 'Created WEB-12' }])) {
+function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, run = vi.fn(async () => [{ type: 'text', text: 'Created WEB-12' }]), checked: GateDecision = RUN) {
     return new ToolApprovals({
         orbit: orbit as never,
         cards: {
@@ -97,7 +97,7 @@ function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, r
             },
             say: async () => undefined,
         },
-        gate: { decide: async () => RUN } as never,
+        gate: { decide: async () => checked } as never,
         tools: { find: async () => ENTRY, run },
         now: () => 1_000,
     });
@@ -221,5 +221,25 @@ describe('two asks at the same moment', () => {
         await Promise.all([approvals.propose(input()), approvals.propose(input()), approvals.propose(input({ task: { itemId: other } }))]);
         expect([...orbit.actions.values()].map((a) => a.conversationKey).sort()).toEqual([`task:${other}`, `task:${ITEM}`].sort());
         expect(sent).toHaveLength(2);
+    });
+});
+
+describe('"Review again" on a goal’s card', () => {
+    const review = { ask: 'act_1', revision: 2, tap: { action: 'reviewAgain' } as never };
+    const close = () => orbit.actions.set('act_1', { ...orbit.actions.get('act_1')!, status: 'closed', closedReason: 'expired', revision: 2 });
+
+    it('is a new card for a step that makes something, though its setting says right away', async () => {
+        await make(orbit, sent).propose(input({ decision: { ...ASK, heading: 'makesNew' } }));
+        close();
+        await make(orbit, sent, undefined, { ...RUN, heading: 'makesNew' }).handleTap('b1', ROOM, SARA, review);
+        expect(sent).toHaveLength(2);
+        expect([...orbit.actions.values()].map((a) => a.conversationKey)).toEqual([`task:${ITEM}`, `task:${ITEM}`]);
+    });
+
+    it('is not a card for a step that only changes things and now runs by itself', async () => {
+        await make(orbit, sent).propose(input());
+        close();
+        await make(orbit, sent).handleTap('b1', ROOM, SARA, review);
+        expect(sent).toHaveLength(1);
     });
 });

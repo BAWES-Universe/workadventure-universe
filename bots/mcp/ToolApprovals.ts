@@ -192,6 +192,9 @@ const WAITING_NEARBY_RESULT = {
 };
 
 /** What the model is told when a card could not be shown: no OK, no action. */
+/** Headings a goal's or task's run never does by itself: it asks for this occurrence on a card, whatever the setting says. */
+export const TASK_ALWAYS_ASK: readonly ToolHeading[] = ['makesNew', 'deletesOrSends'];
+
 const NO_CARD_RESULT = { error: "The card asking for the person's OK could not be shown, so this was not done. Tell them to try again in a moment." };
 
 export class ToolApprovals {
@@ -515,9 +518,11 @@ export class ToolApprovals {
         const stale = !entry || entry.fingerprint !== action.toolFingerprint;
         const checked = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person));
         // A card before making more than the limit comes from a tool that runs right away: it asks again as it did
+        // A goal's card for a step that makes, sends or deletes asks again too: its run never does those by itself
+        const askedAnyway = !!card.batch ? checked?.heading === 'makesNew' : !!taskItemOf(action.conversationKey) && !!checked?.heading && TASK_ALWAYS_ASK.includes(checked.heading);
         const decision: GateDecision | null =
-            card.batch && checked?.kind === 'run' && checked.heading === 'makesNew' && checked.policyRevision !== undefined && checked.fingerprint
-                ? { kind: 'ask', heading: 'makesNew', notReviewed: false, policyRevision: checked.policyRevision, fingerprint: checked.fingerprint }
+            checked?.kind === 'run' && askedAnyway && checked.heading && checked.policyRevision !== undefined && checked.fingerprint
+                ? { kind: 'ask', heading: checked.heading, notReviewed: false, policyRevision: checked.policyRevision, fingerprint: checked.fingerprint }
                 : checked;
         if (!entry || !decision || decision.kind !== 'ask') {
             const why = decision?.kind === 'refuse' ? decision.line : 'That changed since, so I need you to ask me again.';
