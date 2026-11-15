@@ -249,9 +249,9 @@
     }
 
     // Something that looks like a key, written to a Brick: held here and never sent (game #2044). The server takes it out too.
-    const holdsAKey = (text: string): boolean =>
-        (partner?.isBot === true || room instanceof GuestBrickChatRoom) && looksLikeAKeyPastedWords(text);
-    $: keyHeld = holdsAKey(message);
+    // Tracked on its own: a partner that turns out to be a bot after the box opened holds the text too (Sentry on #2048)
+    $: keysHeldHere = partner?.isBot === true || room instanceof GuestBrickChatRoom;
+    $: keyHeld = keysHeldHere && looksLikeAKeyPastedWords(message);
 
     function clearHeldKey() {
         const held = message;
@@ -575,7 +575,10 @@
         if (draft) {
             // A draft saved as a lone <br> counts as empty: the hint shows again.
             // A key is never kept as a draft: one saved by an earlier version is dropped here, and the empty box replaces it on leaving
-            message = isEmptyMessage(draft.message) || holdsAKey(draft.message) ? "" : draft.message;
+            message =
+                isEmptyMessage(draft.message) || (keysHeldHere && looksLikeAKeyPastedWords(draft.message))
+                    ? ""
+                    : draft.message;
             if (draft.replyingToMessageId) {
                 if (room instanceof MatrixChatRoom) {
                     let loadReplyMessage = await room.getMessageById(draft.replyingToMessageId);
