@@ -570,6 +570,7 @@ export class BotApiService {
                 ) as AuthError;
                 authError.isAuthError = true;
                 authError.isSessionExpired = refusal.isSessionExpired;
+                authError.status = response.status;
                 throw authError;
             }
 

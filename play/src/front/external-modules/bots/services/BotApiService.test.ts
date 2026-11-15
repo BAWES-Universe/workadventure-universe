@@ -439,7 +439,7 @@ describe("BotApiService when Orbit refuses a call after the session was renewed"
 
     it("still says the session has expired when the renewed session is refused too", async () => {
         orbit(new Response(JSON.stringify({ error: "Invalid session" }), { status: 401 }));
-        await expect(addApp()).rejects.toMatchObject({ isAuthError: true });
+        await expect(addApp()).rejects.toMatchObject({ isAuthError: true, status: 401 });
     });
 
     it("answers the retried call once the renewed session is taken", async () => {
