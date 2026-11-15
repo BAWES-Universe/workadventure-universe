@@ -923,4 +923,22 @@ describe('POST /api/bots/:botId/direct-chat', () => {
     it('is not there while direct messages are off', async () => {
         expect((await ask({ chatId: ALICE }, undefined, baseWithoutDms)).status).toBe(404);
     });
+
+    it('knows the Brick before its resting line asks for credentials, so the first direct message after a restart is asked for by who it is for (CodeRabbit on #2023)', async () => {
+        const order: string[] = [];
+        const replies = Object.create(DmReplyService.prototype) as DmReplyService;
+        const brick = { ownerId: 'user-alice', isDefault: false };
+        Object.assign(replies, {
+            aiService: {
+                noteBrick: vi.fn((id: string, known: unknown) => order.push(`note:${id}:${(known as { ownerId: string }).ownerId}`)),
+                quickGenerate: vi.fn(async () => {
+                    order.push('ask');
+                    return 'Zzz';
+                }),
+            },
+        });
+        const line = await replies.restingLine({ botId: BRICK, name: 'Brick', aiProviderRef: 'universe-ai', brick } as never, 'hello?', 'uuid-bob');
+        expect(line).toBe('Zzz');
+        expect(order).toEqual([`note:${BRICK}:user-alice`, 'ask']);
+    });
 });
