@@ -271,8 +271,13 @@
             const status = (error as { status?: number } | null)?.status;
             // Orbit says this key was used for another app: the next try starts with a fresh one
             if (status === 409) keyFrom = "";
-            // Orbit refusing (a 4xx) made nothing; an answer that never came, or an Orbit that failed, may have made the app
-            uncertain = known || (status !== undefined && status < 500) ? undefined : body;
+            // Orbit refusing (a 4xx) made nothing with this try; an answer that never came, or an Orbit that failed, may have made the app.
+            // A refused repeat try (too many requests, say) says nothing about an earlier unanswered try with the same key: that one stays
+            // to be found.
+            const refused = status !== undefined && status < 500;
+            if (known) uncertain = undefined;
+            else if (!refused) uncertain = body;
+            else if (status === 409 || uncertain?.requestKey !== body.requestKey) uncertain = undefined;
             // A closed sheet has nobody left to try again: look for it now
             if (closed) void settleUncertain();
             else trouble = "failed";

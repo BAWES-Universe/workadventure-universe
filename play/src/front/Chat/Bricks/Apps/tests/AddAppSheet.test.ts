@@ -702,6 +702,23 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(game.disconnectMyApp).not.toHaveBeenCalled();
     });
 
+    it("still finds the earlier app when a repeat try with the same key is then refused", async () => {
+        game.addMyApp
+            .mockRejectedValueOnce(new Error("Orbit did not answer in time"))
+            .mockRejectedValueOnce(Object.assign(new Error("API error: 429"), { status: 429 }))
+            .mockResolvedValueOnce({ id: "app-1" });
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        await click("addAppSignIn");
+        expect(game.addMyApp).toHaveBeenCalledTimes(2);
+        await click("addAppCancel");
+        // the first try may have made the app after all: the same key finds it, and it is taken away
+        expect(game.addMyApp).toHaveBeenCalledTimes(3);
+        expect(keyOfCall(2)).toBe(keyOfCall(0));
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+    });
+
     it("finds and takes away the app a try that never answered may have made when the sheet is closed", async () => {
         game.addMyApp
             .mockRejectedValueOnce(new Error("Orbit did not answer in time"))
