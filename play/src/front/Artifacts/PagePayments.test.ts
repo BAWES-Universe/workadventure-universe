@@ -226,7 +226,12 @@ describe("a page that takes payments, in the game's window", () => {
         const pay = vi
             .fn()
             .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
-            .mockImplementation(() => new Promise<ArtifactPay>(() => undefined));
+            .mockImplementation(
+                () =>
+                    new Promise<ArtifactPay>(() => {
+                        // never answers
+                    })
+            );
         const payments = make(pay, () => popup);
         ask(payments);
         await flush();
