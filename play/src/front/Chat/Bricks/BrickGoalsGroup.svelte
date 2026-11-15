@@ -196,7 +196,9 @@
                             ><span class="bkg-t">{item.words}</span><span class="bkg-cn">{sub(item, $LL, $locale)}</span
                             ></span
                         >
-                        {#if item.state === "paused"}
+                        {#if item.state === "paused" && item.goalId !== null && $items.some((one) => one.id === item.goalId && one.state === "paused")}
+                            <!-- Paused with its goal: only the goal's own Resume brings it back, so no button of its own -->
+                        {:else if item.state === "paused"}
                             <PageButton
                                 disabled={busy.has(item.id)}
                                 testId="goalResume"

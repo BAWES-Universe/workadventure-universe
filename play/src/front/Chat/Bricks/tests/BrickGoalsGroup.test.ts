@@ -209,6 +209,23 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
         expect(game.tapBrickItem).toHaveBeenLastCalledWith(BOT, "w", "resume");
     });
 
+    it("gives a goal's own check no Resume while its goal is paused (the goal's Resume brings it back), but keeps one for a check the person paused alone", async () => {
+        const check = (over: Record<string, unknown> = {}) =>
+            row({ id: "k1", kind: "schedule", cadence: daily, words: "Check my visa status", parentId: "g1", ...over });
+        await show([goal({ state: "paused", checks: [check({ state: "paused" })] })]);
+        expect(all("goalScheduled")).toHaveLength(1);
+        expect(text(byId("goalScheduled"))).toContain("Check my visa status");
+        expect(text(byId("goalScheduled"))).toContain("Paused");
+        expect(byId("goalScheduled")?.querySelector("button")).toBeNull();
+        expect(all("goalResume")).toHaveLength(1);
+        expect(byId("goalCard")?.querySelector('[data-testid="goalResume"]')).not.toBeNull();
+
+        part?.$destroy();
+        target.innerHTML = "";
+        await show([goal({ checks: [check({ state: "paused" })] })]);
+        expect(byId("goalScheduled")?.querySelector('[data-testid="goalResume"]')).not.toBeNull();
+    });
+
     it("tells the person when Orbit refuses a tap, and shows the list as it really stands", async () => {
         await show([goal()]);
         game.tapBrickItem.mockRejectedValueOnce(new Error("wrong_state"));
