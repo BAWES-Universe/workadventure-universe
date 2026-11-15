@@ -1686,6 +1686,19 @@ export class BotApiService {
         });
     }
 
+    /** A Brick's goals and tasks for its owner (game #2002): `{ items }`, each with the part of the page it sits in. */
+    async getBrickItems(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items`, {});
+    }
+
+    /** The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze or Keep going. Answers `{ item }`. */
+    async tapBrickItem(brickId: string, itemId: string, action: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items/${encodeURIComponent(itemId)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ action }),
+        });
+    }
+
     /** A Brick's files for its owner (game #2003): what it made, what they sent it, and what is on its computer. */
     async getBrickFiles(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files`, {});

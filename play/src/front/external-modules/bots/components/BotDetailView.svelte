@@ -31,6 +31,7 @@
     import type { UsageScreen } from "../usageModel";
     import type { ToolsScreen } from "../toolsModel";
     import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
+    import BrickGoalsGroup from "../../../Chat/Bricks/BrickGoalsGroup.svelte";
     import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
     import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
     import BrickMadeFrom from "../../../Chat/Bricks/Templates/BrickMadeFrom.svelte";
@@ -999,9 +1000,16 @@
                         onToggle={toggleGroup}
                     />
                 {/if}
-                <!-- What it remembers about its owner, and its files (game #2003) -->
+                <!-- What it keeps for its owner: goals, briefings, watches and reminders (game #2002), then what it
+                     remembers about them and its files (game #2003) -->
                 <!-- Keyed by the Brick: each reads its list once, so another Brick must start them over -->
                 {#key currentBot.id}
+                    <BrickGoalsGroup
+                        botId={currentBot.id}
+                        name={currentBot.name || "Brick"}
+                        open={openGroup === "goals"}
+                        onToggle={toggleGroup}
+                    />
                     <BrickMemoryGroup
                         botId={currentBot.id}
                         name={currentBot.name || "Brick"}
