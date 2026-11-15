@@ -15,7 +15,7 @@ import { BotAccessGate } from '../server/BotAccessGate';
 import { BotManager } from '../server/BotManager';
 import { AIService } from '../ai/AIService';
 import { visitingRule } from '../ai/systemPrompt';
-import { VisitingBrickBehavior, spotBeside, VISIT_GONE_AFTER_MS, VISIT_LOOK_ACROSS_AFTER_MS, VISIT_SEEN_EVERY_MS, VISIT_WALK_AFTER } from '../behaviors/VisitingBrickBehavior';
+import { VisitingBrickBehavior, spotBeside, spotsAround, VISIT_RETRY_AFTER_MS, VISIT_GONE_AFTER_MS, VISIT_LOOK_ACROSS_AFTER_MS, VISIT_SEEN_EVERY_MS, VISIT_WALK_AFTER } from '../behaviors/VisitingBrickBehavior';
 
 const KHALID = 'uuid-khalid';
 const NOURA = 'uuid-noura';
@@ -75,6 +75,14 @@ describe('what Orbit says about visiting Bricks', () => {
         expect(last).toMatchObject({ method: 'POST', url: '/api/brick-visits/room', auth: 'Bearer service-token', body: { roomUrl: ROOM_A, people: [KHALID] } });
         expect(configs).toHaveLength(1);
         expect(configs[0].brick?.visiting).toEqual({ ownerUuid: KHALID, ownerName: 'Khalid' });
+    });
+
+    it('says when the person\'s game saw them come into the room and which page load said so, only when known (Orbit reads a missing time as now)', async () => {
+        const T = Date.now() - 5_000;
+        await service.getVisitingBricks(ROOM_A, [KHALID], { at: T, clientId: 'page-laptop-0001' });
+        expect(last).toMatchObject({ body: { roomUrl: ROOM_A, people: [KHALID], enteredAt: T, clientId: 'page-laptop-0001' } });
+        await service.getVisitingBricks(ROOM_A, [KHALID]);
+        expect((last as { body: Record<string, unknown> }).body).toEqual({ roomUrl: ROOM_A, people: [KHALID] });
     });
 
     it('asks nothing when there is nobody to ask about', async () => {
@@ -142,15 +150,18 @@ describe('a visiting Brick on the map', () => {
 
     function brickAt(position: { x: number; y: number }, person: { x: number; y: number } | undefined, onOwnerSeen?: () => void) {
         const walks: { x: number; y: number }[] = [];
+        const path = { following: false, reachable: (_x: number, _y: number) => true };
         const bot = {
             getPlayerPositionByUuid: vi.fn(() => person),
             getState: () => ({ getPosition: () => position, isMoving: () => false }),
-            getIsFollowingPath: () => false,
+            getIsFollowingPath: () => path.following,
             lookAcrossTheRoom: vi.fn(),
             moveToWithPathfinding: vi.fn(async (x: number, y: number) => {
                 walks.push({ x, y });
-                return true;
+                path.following = path.reachable(x, y);
+                return path.reachable(x, y);
             }),
+            stopAndUpdate: vi.fn(),
             getBotId: () => 'brick-1',
             getNearbyPlayers: () => [],
             cancelPathfinding: vi.fn(),
@@ -159,7 +170,7 @@ describe('a visiting Brick on the map', () => {
         const gone = vi.fn();
         const behavior = new VisitingBrickBehavior(config(gone, onOwnerSeen));
         (behavior as unknown as { bot: unknown }).bot = bot;
-        return { behavior, bot, walks, gone };
+        return { behavior, bot, walks, gone, path };
     }
 
     it('tells the manager it sees its person, at most every half minute, and never while they are not seen (it keeps the visit alive)', () => {
@@ -198,6 +209,52 @@ describe('a visiting Brick on the map', () => {
         behavior.update(16);
         expect(walks).toEqual([{ x: 444, y: 100 }]);
         vi.useRealTimers();
+    });
+
+    it('stands still, and says so once, when its walk ends: its path ending alone does not stop it (Sentry on #2023)', async () => {
+        vi.useFakeTimers();
+        const { behavior, bot, path } = brickAt({ x: 100, y: 100 }, { x: 500, y: 100 });
+        behavior.update(16);
+        await Promise.resolve();
+        vi.advanceTimersByTime(1000);
+        behavior.update(16);
+        expect(bot.stopAndUpdate).not.toHaveBeenCalled();
+        path.following = false;
+        vi.advanceTimersByTime(1000);
+        behavior.update(16);
+        expect(bot.stopAndUpdate).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(1000);
+        behavior.update(16);
+        expect(bot.stopAndUpdate).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
+    });
+
+    it('does not search again at once for a spot it cannot reach, and tries another side of its person next (Sentry on #2023)', async () => {
+        vi.useFakeTimers();
+        const person = { x: 500, y: 100 };
+        const { behavior, bot, walks, path } = brickAt({ x: 100, y: 100 }, person);
+        const sides = spotsAround(person, { x: 100, y: 100 });
+        path.reachable = (x, y) => !(x === sides[0].x && y === sides[0].y);
+        behavior.update(16);
+        await Promise.resolve();
+        await Promise.resolve();
+        for (let i = 0; i < 3; i++) {
+            vi.advanceTimersByTime(800);
+            behavior.update(16);
+        }
+        expect(walks).toEqual([sides[0]]);
+        vi.advanceTimersByTime(VISIT_RETRY_AFTER_MS);
+        behavior.update(16);
+        await Promise.resolve();
+        expect(walks).toEqual([sides[0], sides[1]]);
+        expect(bot.stopAndUpdate).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
+    it('keeps every spot the same distance from its person', () => {
+        for (const spot of spotsAround({ x: 100, y: 100 }, { x: 300, y: 100 })) {
+            expect(Math.round(Math.hypot(spot.x - 100, spot.y - 100))).toBe(56);
+        }
     });
 
     it('leaves the map once its person has not been seen in the room for a while, and says so once', () => {
@@ -286,6 +343,26 @@ describe('putting the Brick on the map', () => {
         await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         expect(spawn).toHaveBeenCalledTimes(1);
         expect(spawn.mock.calls[0][2]).toEqual({ position: { x: 40, y: 50 } });
+    });
+
+    it('tells Orbit when the person\'s game saw them come in, and leaves the Brick in their new room alone when Orbit says the sync is late', async () => {
+        const { botManager, orbit, spawn, despawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        const T = Date.now() - 5_000;
+        // The getVisitingBricks stub in this helper only takes the room; look at the full call
+        const admin = (botManager as unknown as { adminApiService: { getVisitingBricks: ReturnType<typeof vi.fn> } }).adminApiService;
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT, true, { at: T, clientId: 'page-laptop-0001' });
+        expect(admin.getVisitingBricks).toHaveBeenLastCalledWith(ROOM_A, [KHALID], { at: T, clientId: 'page-laptop-0001' });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        expect(admin.getVisitingBricks).toHaveBeenLastCalledWith(ROOM_A, [KHALID]);
+        expect(spawn).toHaveBeenCalledTimes(1);
+        // Orbit answers 409 for a late sync from a room the person left: it reaches the bot server as an error, and the Brick
+        // standing on the map stays exactly as it is
+        orbit.fail = true;
+        // (the Brick is in ROOM_A: for ROOM_B's map the answer is that there is none, said as "not now")
+        expect(await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID }, AT, true, { at: T + 1_000, clientId: 'page-laptop-0001' })).toEqual({ botId: null, reason: 'orbit_unavailable' });
+        expect(despawn).not.toHaveBeenCalled();
+        expect(internals.bots.has('brick-1')).toBe(true);
     });
 
     it('runs one sync at a time for a person however many calls queue behind it (Sentry on #2023)', async () => {
@@ -395,6 +472,93 @@ describe('putting the Brick on the map', () => {
         expect(rooms.has(ROOM_A)).toBe(true);
     });
 
+    it('a held-up sync for a room the person left before does not take the Brick off the map of the room they are in (CodeRabbit on #2023)', async () => {
+        const { botManager, orbit, spawn, despawn, internals } = manager();
+        const page = 'page-laptop-0001';
+        const T = Date.now();
+        orbit.answer = [visitingConfig('brick-1', ROOM_B)];
+        // Room A was entered first, room B later; B's sync ran first, A's arrives after it
+        await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID }, AT, true, { at: T, clientId: page });
+        expect(spawn).toHaveBeenCalledTimes(1);
+        const asked = (botManager as unknown as { adminApiService: { getVisitingBricks: ReturnType<typeof vi.fn> } }).adminApiService.getVisitingBricks.mock.calls.length;
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT, true, { at: T - 4_000, clientId: page })).toEqual({ botId: null });
+        expect(despawn).not.toHaveBeenCalled();
+        expect(internals.bots.has('brick-1')).toBe(true);
+        // Nothing was asked of Orbit for a sync that is already out of date
+        expect((botManager as unknown as { adminApiService: { getVisitingBricks: ReturnType<typeof vi.fn> } }).adminApiService.getVisitingBricks.mock.calls.length).toBe(asked);
+        // A later sync from another page load, or without a time, is not told apart this way and goes to Orbit as before
+        orbit.answer = [];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT, true, { at: T - 4_000, clientId: 'page-phone-00002' });
+        expect(despawn).toHaveBeenCalledWith('brick-1');
+    });
+
+    it('leaves a room alone this time when a visiting Brick came or went while the game was asked who is in it (CodeRabbit on #2023)', async () => {
+        const { botManager, orbit, despawn, internals } = manager();
+        internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
+        rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        // The game saw one person and the room's bot (2); the person's Brick joins while it is being asked
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        vi.spyOn(botManager as unknown as { queryWorkAdventureRooms: () => Promise<Map<string, number>> }, 'queryWorkAdventureRooms').mockImplementation(async () => {
+            await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+            return new Map([[ROOM_A, 2]]);
+        });
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).not.toHaveBeenCalledWith('room-bot');
+        expect(rooms.has(ROOM_A)).toBe(true);
+    });
+
+    it('leaves a room alone this time when one visiting Brick was replaced by another while the game was asked, though their number is the same (CodeRabbit on #2023)', async () => {
+        const { botManager, orbit, despawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A), visitingConfig('brick-2', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
+        rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        // The game counted one person and the room's bot (2) when the first Brick had left; the second is on the map when it answers
+        vi.spyOn(botManager as unknown as { queryWorkAdventureRooms: () => Promise<Map<string, number>> }, 'queryWorkAdventureRooms').mockImplementation(async () => {
+            orbit.answer = [];
+            await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+            orbit.answer = [visitingConfig('brick-2', ROOM_A)];
+            await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+            return new Map([[ROOM_A, 2]]);
+        });
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).not.toHaveBeenCalledWith('room-bot');
+        expect(rooms.has(ROOM_A)).toBe(true);
+    });
+
+    it('leaves a room alone while a visiting Brick is still being taken off the map, though the game already dropped it (CodeRabbit on #2023)', async () => {
+        const { botManager, orbit, despawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
+        rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        // The Brick's despawn is under way (the registry has not answered yet); the game already counts one person and the room bot
+        let finish: () => void = () => undefined;
+        despawn.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    finish = resolve;
+                })
+        );
+        orbit.answer = [];
+        const ending = botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
+        });
+        vi.spyOn(botManager as unknown as { queryWorkAdventureRooms: () => Promise<Map<string, number>> }, 'queryWorkAdventureRooms').mockResolvedValue(new Map([[ROOM_A, 2]]));
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).not.toHaveBeenCalledWith('room-bot');
+        expect(rooms.has(ROOM_A)).toBe(true);
+        finish();
+        await ending;
+    });
+
     it('follows its person to the next room: off the old map, on the new one', async () => {
         const { botManager, orbit, spawn, despawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A), visitingConfig('brick-1', ROOM_B)];
@@ -403,6 +567,25 @@ describe('putting the Brick on the map', () => {
         expect(despawn).toHaveBeenCalledWith('brick-1');
         expect(spawn).toHaveBeenCalledTimes(2);
         expect(spawn.mock.calls[1][1].roomUrl).toBe(ROOM_B);
+    });
+
+    it('puts a Brick back beside its person when its connection dropped mid-visit, and does nothing while it is connected (Sentry on #2023)', async () => {
+        const { botManager, orbit, spawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        // The game asks again every minute while the Brick is with its person: nothing changes while it is connected
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 60, y: 70 });
+        expect(spawn).toHaveBeenCalledTimes(1);
+        // Its socket dropped (the pusher restarted, the network failed): the next sync starts it again beside the person
+        internals.bots.get('brick-1')!.status = 'disconnected';
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 80, y: 90 })).toEqual({ botId: 'brick-1' });
+        expect(spawn).toHaveBeenCalledTimes(2);
+        expect(spawn.mock.calls[1][2]).toEqual({ position: { x: 80, y: 90 } });
+        // And after the bot server restarted (nothing is held for it any more)
+        internals.bots.delete('brick-1');
+        (botManager as unknown as { visitors: Map<string, unknown> }).visitors.clear();
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 11, y: 12 });
+        expect(spawn).toHaveBeenCalledTimes(3);
     });
 
     it('swaps one Brick for another the person brings along', async () => {

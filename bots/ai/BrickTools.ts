@@ -28,7 +28,10 @@ export interface MadeBrickNote {
     made: boolean;
 }
 
-/** A suggestion Orbit allowed: the game shows it as a card once the answer is done. */
+/**
+ * A suggestion the Brick made this turn. Orbit is asked whether it may be shown only once the answer is ready to go
+ * (DmReplyService), so a turn that fails or comes back empty never uses up the topic.
+ */
 export interface BrickOfferNote {
     kind: 'offer';
     topic: string;
@@ -39,7 +42,30 @@ export interface BrickOfferNote {
     instructions: string;
 }
 
-export type BrickNote = MadeBrickNote | BrickOfferNote;
+/**
+ * An App the Brick offered to connect this turn (game #2001, "Connect your calendar?"): the card goes out after the answer,
+ * like a Brick's suggestion. See AppTools.ts.
+ */
+export interface AppOfferNote {
+    kind: 'app';
+    /** What Orbit keeps "Not now" under, for this person and this App ("app google calendar"). */
+    topic: string;
+    /** The App on Orbit's list: its key and the name people see. */
+    app: string;
+    name: string;
+    /** "new": nothing is connected yet. "connected": they already connected it, and this Brick may not use it yet. */
+    state: 'new' | 'connected';
+    /** Their connection when they have one, so the card lets this Brick use it instead of signing in again. */
+    connectionId: string | null;
+    /** The card's question ("Connect your calendar?"); empty for one they asked for by name ("Connect Notion?"). */
+    ask: string;
+    /** They asked for it by name: shown whatever they said to an earlier offer, and "Not now" is not remembered. */
+    asked: boolean;
+    /** The second choice, when the kind of App has others ("Another calendar" / "Outlook, iCloud and more"). */
+    other: { label: string; line: string; search: string } | null;
+}
+
+export type BrickNote = MadeBrickNote | BrickOfferNote | AppOfferNote;
 
 const NAME_MAX = 40;
 const LINE_MAX = 120;
@@ -121,11 +147,16 @@ export function brickToolsNote(offers: { after: number; topics: string[] } | nul
     return lines.join('\n');
 }
 
+/** Two topics are the same job when their words match, whatever the case or punctuation ("Recipes!" and "recipes"). */
+const sameTopic = (a: string, b: string): boolean => {
+    const words = (topic: string) => topic.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    return words(a) === words(b);
+};
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const longText = (value: unknown, max: number): string => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
 export interface BrickToolContext {
-    admin: Pick<AdminApiService, 'makeBrickFor' | 'claimBrickOffer'>;
+    admin: Pick<AdminApiService, 'makeBrickFor' | 'brickOffersFor'>;
     /** The Brick that asks, and the person it belongs to (their game uuid). */
     botId: string;
     userId: string;
@@ -138,49 +169,77 @@ export interface BrickToolContext {
 export const BRICK_CHAT_LINK = '#brick-chat=';
 const chatLink = (brickId: string) => `[Open its chat](${BRICK_CHAT_LINK}${brickId})`;
 
+/** The Bricks being made in this reply, by name: a second call for the same name waits for the first. */
+const makingByReply = new WeakMap<BrickNote[], Map<string, Promise<Record<string, unknown>>>>();
+function makingIn(notes: BrickNote[]): Map<string, Promise<Record<string, unknown>>> {
+    let making = makingByReply.get(notes);
+    if (!making) makingByReply.set(notes, (making = new Map()));
+    return making;
+}
+
+async function makeBrick(brickName: string, line: string, instructions: string, args: Record<string, unknown>, context: BrickToolContext): Promise<Record<string, unknown>> {
+    const hello = text(args.hello, HELLO_MAX);
+    try {
+        const { made, brick } = await context.admin.makeBrickFor(context.botId, context.userId, {
+            name: brickName,
+            description: line,
+            chatInstructions: instructions,
+            ...(hello ? { hello } : {}),
+            ...(args.second === true ? { evenIfThere: true } : {}),
+        });
+        context.notes.push({ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made });
+        return made
+            ? { made: true, name: brick.name, note: `It is ready and knows its job. Say so in one or two short sentences, and give them this link to its chat, with its words in their language and its address exactly as written: ${chatLink(brick.id)}. It is in their Chats too.` }
+            : { made: false, name: brick.name, note: `They already have a Brick of this name, so nothing new was made. Tell them, and give them this link to its chat, with its words in their language and its address exactly as written: ${chatLink(brick.id)}. Make a second only if they ask for one.` };
+    } catch (error) {
+        console.warn('[BrickTools] Could not make a Brick:', error instanceof Error ? error.message : error);
+        return { error: 'The Brick could not be made just now. Say so in one plain sentence and offer to try again.' };
+    }
+}
+
 export async function runBrickTool(name: string, args: Record<string, unknown>, context: BrickToolContext): Promise<Record<string, unknown>> {
     const brickName = text(args.name, NAME_MAX);
     const line = text(args.line, LINE_MAX);
     const instructions = longText(args.instructions, INSTRUCTIONS_MAX);
     if (!brickName) return { error: 'Give the Brick a name.' };
+    // Its job is what makes it a Brick: one without its line or instructions is neither made nor offered
+    if (!line || !instructions) return { error: 'Give the Brick its one line and its instructions, then call this again.' };
 
     if (name === MAKE_BRICK_TOOL) {
-        // One Brick per ask: a model that calls twice in one reply gets the first one back
+        // One Brick per ask: a model that calls twice in one reply gets the first one back, also while the first is
+        // still being made (the tools of one answer run side by side)
         const already = context.notes.find((note): note is MadeBrickNote => note.kind === 'made' && note.name.toLowerCase() === brickName.toLowerCase());
         if (already) return { made: already.made, name: already.name, note: 'Already done in this reply.' };
-        const hello = text(args.hello, HELLO_MAX);
-        try {
-            const { made, brick } = await context.admin.makeBrickFor(context.botId, context.userId, {
-                name: brickName,
-                ...(line ? { description: line } : {}),
-                ...(instructions ? { chatInstructions: instructions } : {}),
-                ...(hello ? { hello } : {}),
-                ...(args.second === true ? { evenIfThere: true } : {}),
-            });
-            context.notes.push({ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made });
-            return made
-                ? { made: true, name: brick.name, note: `It is ready and knows its job. Say so in one or two short sentences, and give them this link to its chat, with its words in their language and its address exactly as written: ${chatLink(brick.id)}. It is in their Chats too.` }
-                : { made: false, name: brick.name, note: `They already have a Brick of this name, so nothing new was made. Tell them, and give them this link to its chat, with its words in their language and its address exactly as written: ${chatLink(brick.id)}. Make a second only if they ask for one.` };
-        } catch (error) {
-            console.warn('[BrickTools] Could not make a Brick:', error instanceof Error ? error.message : error);
-            return { error: 'The Brick could not be made just now. Say so in one plain sentence and offer to try again.' };
+        const making = makingIn(context.notes);
+        const key = brickName.toLowerCase();
+        const first = making.get(key);
+        if (first) {
+            const result = await first;
+            return 'error' in result ? result : { made: result.made, name: result.name, note: 'Already done in this reply.' };
         }
+        const run = makeBrick(brickName, line, instructions, args, context).then((result) => {
+            // Only a Brick that was made is shared: after a failure the model may try again in this reply, and that
+            // try asks Orbit again
+            if ('error' in result) making.delete(key);
+            return result;
+        });
+        making.set(key, run);
+        return run;
     }
 
     if (name === SUGGEST_BRICK_TOOL) {
         const topic = text(args.topic, 60);
         const ask = text(args.ask, ASK_MAX);
-        if (!topic || !ask || !line) return { shown: false, note: 'Nothing was suggested. Do not mention it.' };
+        if (!topic || !ask) return { shown: false, note: 'Nothing was suggested. Do not mention it.' };
         if (context.notes.some((note) => note.kind === 'offer')) return { shown: false, note: 'One suggestion in a reply is enough. Do not mention it.' };
-        try {
-            const claim = await context.admin.claimBrickOffer(context.botId, context.userId, topic);
-            if (!claim.show) return { shown: false, note: 'This was already suggested to them once. Never suggest it again, and do not mention it.' };
-            context.notes.push({ kind: 'offer', topic: claim.topic, ask, name: brickName, line, instructions });
-            return { shown: true, note: 'The card is under your answer. Do not mention it in your words.' };
-        } catch (error) {
-            console.warn('[BrickTools] Could not suggest a Brick:', error instanceof Error ? error.message : error);
-            return { shown: false, note: 'Nothing was suggested. Do not mention it.' };
+        // Only looked up here: Orbit is asked to allow the card right before it is sent, so a turn that fails or comes back
+        // empty never uses up the topic. A card turned down then is simply not shown; the words never mention it.
+        const offered = await context.admin.brickOffersFor(context.botId, context.userId).catch(() => null);
+        if (offered?.topics.some((one) => sameTopic(one, topic))) {
+            return { shown: false, note: 'This was already suggested to them once. Never suggest it again, and do not mention it.' };
         }
+        context.notes.push({ kind: 'offer', topic, ask, name: brickName, line, instructions });
+        return { shown: true, note: 'The card goes under your answer. Do not mention it in your words.' };
     }
     return { error: 'Unknown tool.' };
 }

@@ -1,10 +1,12 @@
-import { get, writable } from "svelte/store";
+import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { parseBrickVisit, type BrickVisit, type BringAlongOutcome } from "./BrickVisit";
 
 /** How long the bot server gets before it is asked again whether the Brick is on the map. */
 const RETRY_SYNC_MS = 1000;
+/** How long before the page's visit read is tried once more after it failed (or timed out). */
+const RETRY_READ_MS = 3000;
 
 /**
  * What the Brick page shows about visiting (game #2005): for the Brick it is open on, in the room the person is in now.
@@ -33,20 +35,43 @@ export function provideOwnPosition(read: () => Position | undefined): void {
     ownPosition = read;
 }
 
+/**
+ * Reads what a Brick's page says about visiting. The answer is kept only while that Brick is still the one the page shows
+ * (a read for a Brick the person has since left changes nothing, not even which read counts as newest), and only if nothing
+ * newer was written. Gives the answer it read, or undefined when it could not be read, and whether the read failed.
+ */
+async function tryReadBrickVisit(brickId: string): Promise<{ answer: BrickVisit | undefined; failed: boolean }> {
+    const roomUrl = botApiService.getRoomId();
+    if (!roomUrl) return { answer: undefined, failed: false };
+    const shown = forBrick === brickId;
+    const mine = shown ? ++newest : newest;
+    try {
+        const answer = parseBrickVisit(await botApiService.getBrickVisit(brickId, roomUrl));
+        if (shown && forBrick === brickId && mine === newest) visit.set(answer);
+        return { answer, failed: false };
+    } catch (error) {
+        console.warn("Could not read whether a Brick visits", error);
+        return { answer: undefined, failed: true };
+    }
+}
+
+async function readBrickVisit(brickId: string): Promise<BrickVisit | undefined> {
+    return (await tryReadBrickVisit(brickId)).answer;
+}
+
 /** Reads what the Brick's page says about visiting. Resolves either way; a failure leaves the page with nothing to say. */
 export async function loadBrickVisit(brickId: string): Promise<void> {
     if (forBrick !== brickId) {
         forBrick = brickId;
         visit.set(undefined);
     }
-    const roomUrl = botApiService.getRoomId();
-    if (!roomUrl) return;
-    const mine = ++newest;
-    try {
-        const answer = parseBrickVisit(await botApiService.getBrickVisit(brickId, roomUrl));
-        if (forBrick === brickId && mine === newest) visit.set(answer);
-    } catch (error) {
-        console.warn("Could not read whether a Brick visits", error);
+    const first = await tryReadBrickVisit(brickId);
+    // A read that failed or timed out would leave the visit controls hidden until the page is opened again: tried once more
+    if (first.failed && forBrick === brickId) {
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, RETRY_READ_MS);
+        });
+        if (forBrick === brickId) await readBrickVisit(brickId);
     }
 }
 
@@ -78,8 +103,8 @@ export async function bringBrickAlong(brickId: string): Promise<BringAlongOutcom
         const status = (error as { status?: number } | undefined)?.status;
         if (status === 409) {
             // The place stopped taking visits, or the Brick was switched off, since the page was read
-            await loadBrickVisit(brickId);
-            return get(visit)?.state === "blocked" ? "not_taken" : "off";
+            const answer = await readBrickVisit(brickId);
+            return answer?.state === "blocked" ? "not_taken" : "off";
         }
         console.warn("Could not bring a Brick along", error);
         return "failed";
@@ -91,7 +116,7 @@ export async function endBrickVisit(brickId: string): Promise<boolean> {
     try {
         await botApiService.endBrickVisit(brickId);
         // Read again rather than guess: the answer to an ended visit names no place, and the page says where it would walk
-        await loadBrickVisit(brickId);
+        await readBrickVisit(brickId);
         // The visit is over in Orbit; the Brick is taken off the map, asked once more when the bot server did not answer
         if ((await botApiService.syncVisitingBrick(undefined, { ending: true })) === undefined) {
             await botApiService.syncVisitingBrick(undefined, { ending: true });

@@ -50,9 +50,43 @@ describe('POST /api/bricks/visit/sync', () => {
         expect(botManager.syncVisitingBrick).toHaveBeenCalledWith(ROOM, { uuid: 'uuid-alice' }, { x: 40, y: 50 }, true);
     });
 
+    it('passes on when the person\'s game saw them come into the room and which page load said so, and nothing that is not a plain time and a plain name', async () => {
+        const T = Date.now() - 5_000;
+        const client = 'page-laptop-0001';
+        await sync({ roomId: ROOM, x: 40, y: 50, enteredAt: T, clientId: client });
+        expect(botManager.syncVisitingBrick).toHaveBeenLastCalledWith(ROOM, { uuid: 'uuid-alice' }, { x: 40, y: 50 }, true, { at: T, clientId: client });
+        const bad: Record<string, unknown>[] = [
+            { enteredAt: T },
+            { clientId: client },
+            { enteredAt: 'yesterday', clientId: client },
+            { enteredAt: -1, clientId: client },
+            { enteredAt: 0, clientId: client },
+            { enteredAt: 1.5, clientId: client },
+            { enteredAt: null, clientId: client },
+            { enteredAt: T, clientId: 'short' },
+            { enteredAt: T, clientId: 'has spaces and a / slash' },
+            { enteredAt: T, clientId: 'x'.repeat(65) },
+            { enteredAt: T, clientId: {} },
+        ];
+        for (const extra of bad) {
+            botManager.syncVisitingBrick.mockClear();
+            await sync({ roomId: ROOM, x: 40, y: 50, ...extra });
+            expect(botManager.syncVisitingBrick).toHaveBeenLastCalledWith(ROOM, { uuid: 'uuid-alice' }, { x: 40, y: 50 }, true);
+        }
+        // Ending a visit takes the Brick off wherever the person stands: no time is passed on
+        botManager.syncVisitingBrick.mockClear();
+        await sync({ roomId: ROOM, ending: true, enteredAt: T, clientId: client });
+        expect(botManager.syncVisitingBrick).toHaveBeenLastCalledWith(ROOM, { uuid: 'uuid-alice' }, undefined, false);
+    });
+
     it('says the Brick is not on the map when there is none for this person', async () => {
         botManager.syncVisitingBrick.mockResolvedValue({ botId: null });
         expect(await (await sync()).json()).toEqual({ present: false });
+    });
+
+    it('says why when Orbit could not be asked, so the front looks again later', async () => {
+        botManager.syncVisitingBrick.mockResolvedValue({ botId: null, reason: 'orbit_unavailable' });
+        expect(await (await sync()).json()).toEqual({ present: false, reason: 'orbit_unavailable' });
     });
 
     it('says why when there was no place to put the Brick from, so the front tries again with one', async () => {
@@ -64,7 +98,8 @@ describe('POST /api/bricks/visit/sync', () => {
         botManager.hasPlayersIn.mockResolvedValue(false);
         const answer = await sync({ roomId: 'http://play.test/@/someone/else/private' });
         expect(answer.status).toBe(200);
-        expect(await answer.json()).toEqual({ present: false });
+        // "Not seen yet", not "none": the game's list of the room can lag a person who just came in, so the front looks again
+        expect(await answer.json()).toEqual({ present: false, reason: 'not_seen' });
         expect(botManager.syncVisitingBrick).not.toHaveBeenCalled();
     });
 

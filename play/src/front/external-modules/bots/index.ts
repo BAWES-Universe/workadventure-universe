@@ -14,6 +14,7 @@ import { warningMessageStore } from "../../Stores/ErrorStore";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { provideOwnPosition } from "../../Chat/Bricks/BrickVisitStore";
 import { provideBrickLocator } from "../../Chat/Bricks/BrickHomeStore";
+import { addTemplateAction } from "../../Chat/Bricks/Templates/TemplateCardAction";
 import { getBotServerUrl } from "./services/BotServerUrl";
 import { botApiService } from "./services/BotApiService";
 import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
@@ -817,13 +818,15 @@ function putVisitingBrickBeside(): void {
     // The Brick page brings a Brick along from where the person stands, and shows one that lives here
     provideOwnPosition(ownPlace);
     provideBrickLocator(showBrick);
+    // A Brick that dropped off the map while its person is still here is put back beside them
+    botApiService.setOwnPlaceProvider(ownPlace);
     const sync = () => {
         // The player's sprite is made a moment after the room loads: the Brick appears where they stand, once the game knows
         // where that is. Never without it: the bot server would not put the Brick on the map
         stopWaitingForPlace?.();
         stopWaitingForPlace = waitForPlace(ownPlace, (place) => {
             stopWaitingForPlace = undefined;
-            void botApiService.syncVisitingBrick(place);
+            void botApiService.syncVisitingBrick(place, { entry: true });
         });
     };
     // One wait at a time: a room entered again replaces the wait of the one before
@@ -925,6 +928,7 @@ function setupWokaMenuHook() {
                 // Mark as processed immediately
                 lastProcessedMenu = currentState;
                 const opening = ++wokaMenuOpening;
+                addTemplateAction(menuData.userUuid, () => opening === wokaMenuOpening);
 
                 // Check if "Summon" action already exists (safety check)
                 const hasSummon = menuData.actions.some((a) => a.actionName === "Summon");

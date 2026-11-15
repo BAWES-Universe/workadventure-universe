@@ -214,13 +214,13 @@ describe('AIService – a reply keeps its own steps', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         await reply(withLongResults(new AIService(memory, admin, 'http://admin.local')));
         const said = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('did not answer in full'));
-        expect(said).toEqual([expect.stringContaining('the provider failed (500): server error')]);
+        expect(said).toEqual([expect.stringContaining('the provider failed (500)')]);
         // The failed call's own event too: the refusal's text is not carried past the call that fixed it
         const { captureAiGeneration } = await import('../ai/PostHogClient');
         const failed = vi.mocked(captureAiGeneration).mock.calls.map((call: any[]) => call[0].error).filter(Boolean);
         expect(failed.length).toBeGreaterThan(0);
         for (const error of failed) expect(error).not.toContain('maximum context length');
-        expect(failed.at(-1)).toBe('the provider failed (500): server error');
+        expect(failed.at(-1)).toBe('the provider failed (500)');
     });
 
     it("never marks a person's key failing for a rate limit its own asking again caused", async () => {

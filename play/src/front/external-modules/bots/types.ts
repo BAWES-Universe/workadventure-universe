@@ -12,6 +12,15 @@ export interface BrickChange {
     description?: string | null;
     chatInstructions?: string | null;
     enabled?: boolean;
+    /** Its look: a Brick look or a WOKA id. */
+    characterTextureId?: string;
+    /** What it runs on (Universe AI or one of its owner's own keys) and its model on that key (game, Slice 13). */
+    aiProviderRef?: string | null;
+    aiModel?: string | null;
+    /** How it behaves: only the keys Orbit lets a Brick's page change, merged into what is saved. */
+    behaviorType?: "idle" | "patrol" | "social";
+    behaviorConfig?: Record<string, unknown>;
+    companionTextureId?: string | null;
 }
 
 /** What Delete asks on a Brick's page (game #1996), beside the words every Brick's question has. */
@@ -29,6 +38,8 @@ export interface BrickDeleteAsk {
 export interface BrickPageWay extends BrickDeleteAsk {
     /** Saves one change. False when Orbit refused it or could not be reached: the page goes back to what was saved. */
     save: (change: BrickChange) => Promise<boolean>;
+    /** Opens the Apps page, looking for this app (a Brick made from a template that needs one: "Connect Gmail"). */
+    openApps?: (search: string) => void;
 }
 
 export interface BotData {

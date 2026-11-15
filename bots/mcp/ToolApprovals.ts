@@ -20,6 +20,7 @@ import { askEdit, askNotice, argumentLines, buildAsk, cardTitle, outcomeOf, reme
 import { acceptLine, fallbackLine, nameForLine, WORDS_SYSTEM, wordsPrompt, type Moment } from './NearbyWords';
 import type { GateCall, GateDecision, ToolGate } from './ToolGate';
 import type { ToolServerEntry } from './MCPConnector';
+import type { ToolHeading } from './ToolCatalog';
 import { DEFAULT_CARD_SETTINGS, OrbitActionsUnavailable, type CardSettings, type OrbitActions, type SavedAction } from './OrbitActions';
 import type { QuestionField } from './QuestionCard';
 import { QuestionCards, type Asked, type AskInput } from './QuestionCards';
@@ -59,7 +60,8 @@ export interface CardSurface {
 /** Finding and running the tool a saved action names, the way a reply does. */
 export interface ToolRunner {
     find(botId: string, toolName: string): Promise<ToolServerEntry | null>;
-    run(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string): Promise<unknown>;
+    /** `use` says which attempt this is and what heading the saved action was under, for the check an App on a connection gets (#2001). */
+    run(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, use: { heading: ToolHeading; callId: string }): Promise<unknown>;
 }
 
 export interface Asker {
@@ -544,7 +546,7 @@ export class ToolApprovals {
             started = true;
             // The request this tap belongs to, taken before the tool runs: a person who writes again meanwhile starts a new one
             const requestEpoch = this.made.epochOf(this.countKey(botId, roomId, person));
-            const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid);
+            const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid, { heading: action.heading, callId: claim.attemptId });
             const outcome = outcomeOf(result);
             // What this tap let be made counts in the request, so a later step doesn't ask again for the same ones. A call that
             // proved it made nothing counts for nothing.

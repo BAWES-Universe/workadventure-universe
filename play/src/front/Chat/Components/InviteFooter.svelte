@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onDestroy, tick } from "svelte";
     import { fade, fly } from "svelte/transition";
+    import { openModal } from "svelte-modals";
     import { CHAT_SHEET_INVITE_PEEK } from "../ChatSheetSizes";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
@@ -14,6 +15,8 @@
         navChat,
     } from "../Stores/ChatStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { guestBrickEntries } from "../Bricks/GuestBrickStore";
+    import GuestBrickSignIn from "../Bricks/GuestBrickSignIn.svelte";
     import ChatHeader from "./ChatHeader.svelte";
     import ChatHeaderNewMenu from "./Header/ChatHeaderNewMenu.svelte";
     import { focusChatSearchRequest, getNewChatOptions } from "./Header/ChatHeaderNewMenu";
@@ -23,7 +26,8 @@
     /**
      * The footer of the Chats and People lists, pinned to the bottom of the chat panel: "Invite someone to join", a
      * round search button and, on Chats, a round "+". Someone signed in also has the Bricks button on Chats, left of
-     * Invite, which then reads "Invite" (game #1995). Tapping search turns the whole row into the search field with
+     * Invite, which then reads "Invite" (game #1995); a guest with the Brick for guests has it too and it opens the
+     * sign-in card (#1997). Tapping search turns the whole row into the search field with
      * its Cancel (ChatHeader.svelte). Invite takes the row's place the same way, with a panel that slides up over the
      * dimmed list (the list doesn't move): the link to this room, two options (arrive next to me, pick an entry
      * point) and Share and Copy link at the bottom, where the button was. On a phone's chat sheet the sheet borrows the
@@ -72,8 +76,15 @@
     // Search covers the open tab's own list; People reaches the world's members too. Chats has none while offline.
     $: showSearch = $navChat.key === "users" || ($navChat.key === "chat" && $chatStatusStore !== "OFFLINE");
 
-    // The Bricks button: on Chats, for someone signed in (a guest's Brick is its own thing, #1997).
-    $: showBricks = $navChat.key === "chat" && $userIsConnected;
+    // The Bricks button: on Chats, for someone signed in. A guest who has the Brick for guests (#1997) sees it too, and
+    // it opens the sign-in card: Bricks are a signed-in person's own (mock v10, Part 1, picture 1).
+    $: hasGuestBrick = $guestBrickEntries.length > 0;
+    $: showBricks = $navChat.key === "chat" && ($userIsConnected || hasGuestBrick);
+
+    function openBricks() {
+        if ($userIsConnected) bricksPageOpenStore.set(true);
+        else openModal(GuestBrickSignIn);
+    }
 
     // One "+" for New message, New group, Find a group and New folder. Hidden for guests: saved chat needs an account.
     $: newChatOptions =
@@ -246,7 +257,7 @@
                             ? 'flex-auto gap-1.5 px-3 @[330px]/chatfooter:flex-1 @[330px]/chatfooter:gap-2'
                             : 'gap-2 px-5'}"
                         data-testid="chatBricksButton"
-                        on:click={() => bricksPageOpenStore.set(true)}
+                        on:click={openBricks}
                     >
                         <span class="bricks-eyes" aria-hidden="true"><i /><i /></span>
                         <span class="min-w-0 truncate">{$LL.chat.brick.bricks()}</span>

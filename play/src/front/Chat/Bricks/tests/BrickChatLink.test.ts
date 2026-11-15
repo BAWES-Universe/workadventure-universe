@@ -20,6 +20,8 @@ const { bricks, openBrickChat, loadMyBricks } = vi.hoisted(() => {
         loadMyBricks: vi.fn(() => Promise.resolve()),
     };
 });
+const { openAppsPage } = vi.hoisted(() => ({ openAppsPage: vi.fn() }));
+vi.mock("../Apps/OpenApps", () => ({ APPS_LINK: "#apps", openAppsPage }));
 vi.mock("../BrickChat", () => ({ openBrickChat }));
 vi.mock("../MyBricksStore", () => ({ myBricksStore: bricks, loadMyBricks }));
 
@@ -36,8 +38,8 @@ function listWithLink(href: string): { list: HTMLElement; link: HTMLAnchorElemen
     document.body.appendChild(list);
     return { list, link: list.querySelector("a")! };
 }
-function tap(target: Element, type = "click"): MouseEvent {
-    const event = new MouseEvent(type, { bubbles: true, cancelable: true });
+function tap(target: Element, type = "click", button = type === "auxclick" ? 1 : 0): MouseEvent {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, button });
     target.dispatchEvent(event);
     return event;
 }
@@ -79,6 +81,8 @@ describe("a link to a Brick's chat inside an answer", () => {
 
         // A middle click would open the game again in a new tab: it opens the chat too
         expect(tap(link, "auxclick").defaultPrevented).toBe(true);
+        // A right click opens the browser's menu as anywhere else
+        expect(tap(link, "auxclick", 2).defaultPrevented).toBe(false);
 
         action.destroy();
         expect(tap(link).defaultPrevented).toBe(false);
@@ -115,5 +119,26 @@ describe("a link to a Brick's chat inside an answer", () => {
         brickChatLinks(list);
         expect(tap(link).defaultPrevented).toBe(false);
         expect(openBrickChat).not.toHaveBeenCalled();
+    });
+});
+
+describe("the Apps link in what a Brick says after connecting an App", () => {
+    it("opens the Apps page here on a tap, and is never followed", () => {
+        const { list, link } = listWithLink("#apps");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(true);
+        expect(openAppsPage).toHaveBeenCalledTimes(1);
+        expect(openBrickChat).not.toHaveBeenCalled();
+        action.destroy();
+    });
+
+    it("leaves any other address alone", () => {
+        const { list, link } = listWithLink("#apps-and-more");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(false);
+        expect(openAppsPage).not.toHaveBeenCalled();
+        action.destroy();
     });
 });

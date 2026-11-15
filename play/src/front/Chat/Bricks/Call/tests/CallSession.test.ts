@@ -17,6 +17,37 @@ const run = (state: CallState, ...events: CallEvent[]) => events.reduce(callRedu
 const live = (): CallState => run(startCall(T0), { type: "connected", now: T0 + 1000 });
 
 describe("a call starts and connects", () => {
+    it("a bot already speaking as the call connects shows as speaking at once", () => {
+        const state = run(
+            startCall(T0),
+            { type: "bot-speaking", speaking: true, now: T0 + 500 },
+            { type: "connected", now: T0 + 1000 }
+        );
+        expect(state.phase).toBe("on");
+        expect(state.doing).toBe("speaking");
+    });
+
+    it("a bot that spoke while the call was on hold shows as speaking again on resume", () => {
+        const onHold = run(
+            live(),
+            { type: "meeting-joined" },
+            { type: "bot-speaking", speaking: true, now: T0 + 2000 }
+        );
+        expect(onHold.phase).toBe("hold");
+        expect(onHold.doing).toBe("listening");
+        expect(run(onHold, { type: "resume", now: T0 + 3000 }).doing).toBe("speaking");
+        const stopped = run(onHold, { type: "bot-speaking", speaking: false, now: T0 + 2500 });
+        expect(run(stopped, { type: "resume", now: T0 + 3000 }).doing).toBe("listening");
+    });
+
+    it("walk-up-gone clears the card only for the person it asks about", () => {
+        const asked = run(live(), { type: "someone-here", id: "u1", name: "Sara" });
+        expect(run(asked, { type: "walk-up-gone", id: "u2" }).walkUp?.id).toBe("u1");
+        const cleared = run(asked, { type: "walk-up-gone", id: "u1" });
+        expect(cleared.walkUp).toBeUndefined();
+        expect(cleared.phase).toBe("on");
+    });
+
     it("waits for the bot to be heard before it is on", () => {
         const state = startCall(T0);
         expect(state.phase).toBe("connecting");
@@ -89,9 +120,10 @@ describe("a call starts and connects", () => {
         expect(run(both, { type: "bot-speaking", speaking: false, now: T0 + 2000 }).doing).toBe("working");
     });
 
-    it("ignores the bot's doings before it is on, and after the call is over", () => {
-        const connecting = startCall(T0);
-        expect(run(connecting, { type: "bot-speaking", speaking: true, now: T0 })).toBe(connecting);
+    it("does not show the bot's doings before it is on, and ignores them after the call is over", () => {
+        const connecting = run(startCall(T0), { type: "bot-speaking", speaking: true, now: T0 + 500 });
+        expect(connecting.doing).toBe("listening");
+        expect(connecting.lastHeardAt).toBe(T0);
         const over = run(live(), { type: "end", by: "you" });
         expect(run(over, { type: "bot-speaking", speaking: true, now: T0 })).toBe(over);
         expect(isLive(over)).toBe(false);

@@ -43,6 +43,7 @@ describe("the fixed words of a person's own Brick", () => {
             multiple: false,
             choices: [
                 { id: STARTER_IDEAS, label: "See what I can do", line: "A few ideas to start with" },
+                { id: "apps", label: "Connect my apps", line: "Email, calendar, GitHub and more" },
                 { id: "make", label: "Make another Brick", line: "One for a single job, like your recipes" },
             ],
         });

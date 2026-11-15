@@ -8,6 +8,7 @@
     import { isIOS } from "../../WebRtc/DeviceUtils";
     import { orbitHoldsHistoryStore } from "../../Stores/OrbitHistoryStore";
     import { userIsConnected } from "../../Stores/MenuStore";
+    import BrickScreenHost from "../Bricks/Computer/BrickScreenHost.svelte";
     import RoomUserList from "./UserList/RoomUserList.svelte";
     import RoomList from "./RoomList.svelte";
     import ChatTabs from "./ChatTabs.svelte";
@@ -66,6 +67,7 @@
                 <RoomList {sideBarWidth} {listTopInset} />
             {/if}
         </div>
+        <BrickScreenHost />
     </div>
 </div>
 

@@ -24,6 +24,8 @@
     export let onEnd: () => void = () => undefined;
     export let onMute: () => void = () => undefined;
     export let onStopSpeaking: () => void = () => undefined;
+    /** Whether Stop speaking can be offered: only where the game can really stop the bot's voice. */
+    export let stoppable = true;
     export let onOpen: () => void = () => undefined;
 
     $: hold = state.phase === "hold";
@@ -82,7 +84,7 @@
                 >{$LL.chat.brickCall.resume()}</button
             >
         {:else}
-            {#if speaking}
+            {#if speaking && stoppable}
                 <button
                     type="button"
                     class="call-ic"
@@ -113,11 +115,19 @@
         left: 0;
         right: 0;
         top: 12px;
+        /* It sits inside the game's layer, which lets clicks through to the map: only the bar itself takes them */
+        pointer-events: none;
+    }
+    .call-wrap.floating .call-bar {
+        pointer-events: auto;
     }
     @media (min-width: 768px) {
         .call-wrap.floating {
             right: auto;
             width: 408px;
+            /* On a computer the game's action bar runs along the top and draws over this corner (its chat and people
+               buttons covered the call's name), so the bar sits just under it. On a phone that bar is at the bottom. */
+            top: 104px;
         }
     }
     .call-bar {

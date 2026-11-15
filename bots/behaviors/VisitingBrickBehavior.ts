@@ -36,6 +36,8 @@ export const VISIT_GONE_AFTER_MS = 20_000;
 /** Unseen this long, it first asks to see the whole room: its usual view ends a few thousand pixels away. */
 export const VISIT_LOOK_ACROSS_AFTER_MS = 4_000;
 const LOOK_EVERY_MS = 700;
+/** After a walk that could not start (no way to the spot), it waits this long before it tries again, from another side. */
+export const VISIT_RETRY_AFTER_MS = 3_000;
 /** How often Orbit is told the person is still seen (its shortest visit time is minutes). */
 export const VISIT_SEEN_EVERY_MS = 30_000;
 
@@ -48,6 +50,22 @@ export function spotBeside(person: { x: number; y: number }, from: { x: number; 
     return { x: Math.round(person.x + (dx / length) * rest), y: Math.round(person.y + (dy / length) * rest) };
 }
 
+/**
+ * The spots to try, in turn, when one cannot be reached (a wall, a closed-off corner): the side it is on, then each side
+ * of its person, and the side it is on again last. Always the same distance from them.
+ */
+export function spotsAround(person: { x: number; y: number }, from: { x: number; y: number }, rest = VISIT_REST_DISTANCE): { x: number; y: number }[] {
+    const first = spotBeside(person, from, rest);
+    const dx = first.x - person.x;
+    const dy = first.y - person.y;
+    return [
+        first,
+        { x: Math.round(person.x - dy), y: Math.round(person.y + dx) },
+        { x: Math.round(person.x + dy), y: Math.round(person.y - dx) },
+        { x: Math.round(person.x - dx), y: Math.round(person.y - dy) },
+    ];
+}
+
 export class VisitingBrickBehavior extends IdleBehavior {
     private readonly ownerUuid: string;
     private readonly onOwnerGone: () => void;
@@ -57,7 +75,11 @@ export class VisitingBrickBehavior extends IdleBehavior {
     private lookedAt = 0;
     private told = false;
     private walking = false;
+    /** A path was started and has not ended yet: when it ends the Brick must stand still, or it keeps showing as walking. */
+    private pathStarted = false;
     private lookedAcross = false;
+    private failedSpots = 0;
+    private retryAt = 0;
 
     constructor(config: VisitingBrickConfig) {
         super(config);
@@ -82,6 +104,13 @@ export class VisitingBrickBehavior extends IdleBehavior {
         const now = Date.now();
         if (now - this.lookedAt < LOOK_EVERY_MS) return;
         this.lookedAt = now;
+
+        // A path ends without the Brick stopping (that is left to the behavior): so it says it stands still, once
+        if (this.pathStarted && !bot.getIsFollowingPath()) {
+            this.pathStarted = false;
+            this.walking = false;
+            bot.stopAndUpdate();
+        }
 
         const person = bot.getPlayerPositionByUuid(this.ownerUuid);
         if (!person) {
@@ -108,19 +137,35 @@ export class VisitingBrickBehavior extends IdleBehavior {
         // While someone is talking to it, it stays unless its person is really leaving
         const limit = this.engagedWithUsers.size > 0 ? VISIT_WALK_AFTER_WHEN_BUSY : VISIT_WALK_AFTER;
         if (distance <= limit) {
-            this.walking = false;
+            this.failedSpots = 0;
+            // A walk that is still going carries on to its spot: it stops when its path ends
+            if (!this.pathStarted) this.walking = false;
             return;
         }
         // It is already on its way: the path is worked out again only when the person is well past where it was heading
         if (this.walking && bot.getIsFollowingPath()) return;
-        const spot = spotBeside(person, here);
+        // A spot it could not reach is not asked for again at once: a search for a way costs the whole map
+        if (now < this.retryAt) return;
+        const spots = spotsAround(person, here);
+        const spot = spots[this.failedSpots % spots.length];
         this.walking = true;
         bot.moveToWithPathfinding(spot.x, spot.y)
             .then((started) => {
-                if (!started) this.walking = false;
+                if (started) {
+                    this.pathStarted = true;
+                    this.failedSpots = 0;
+                    return;
+                }
+                this.giveUpOnSpot();
             })
             .catch(() => {
-                this.walking = false;
+                this.giveUpOnSpot();
             });
+    }
+
+    private giveUpOnSpot(): void {
+        this.walking = false;
+        this.failedSpots += 1;
+        this.retryAt = Date.now() + VISIT_RETRY_AFTER_MS;
     }
 }

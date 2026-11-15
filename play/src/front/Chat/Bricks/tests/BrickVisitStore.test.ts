@@ -190,6 +190,8 @@ describe("what the Brick page knows about visiting (#2005)", () => {
 
     it("ends a visit, reads the page's answer again and has the Brick taken off the map", async () => {
         api.endBrickVisit.mockResolvedValue({ state: "none", place: null });
+        api.getBrickVisit.mockResolvedValueOnce({ state: "visiting", place: "Universe" });
+        await loadBrickVisit(A);
         api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
         await expect(endBrickVisit(A)).resolves.toBe(true);
         expect(api.endBrickVisit).toHaveBeenCalledWith(A);
@@ -210,5 +212,79 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         api.endBrickVisit.mockRejectedValue(new Error("offline"));
         await expect(endBrickVisit(A)).resolves.toBe(false);
         expect(api.syncVisitingBrick).not.toHaveBeenCalled();
+    });
+
+    it("a visit ended for one Brick after the page moved to another changes nothing on the other's page (CodeRabbit on #2023)", async () => {
+        let ended: (value: unknown) => void = () => undefined;
+        api.endBrickVisit.mockReturnValueOnce(
+            new Promise((resolve) => {
+                ended = resolve;
+            })
+        );
+        const ending = endBrickVisit(A);
+        api.getBrickVisit.mockResolvedValueOnce({ state: "visiting", place: "Universe" });
+        await loadBrickVisit(B);
+        expect(get(brickVisitStore)).toEqual({ state: "visiting", place: "Universe" });
+        // A's DELETE completes now; the read that follows is A's, and B's page must stay B's
+        api.getBrickVisit.mockResolvedValueOnce({ state: "none", place: "Universe" });
+        ended({ state: "none", place: null });
+        await expect(ending).resolves.toBe(true);
+        expect(get(brickVisitStore)).toEqual({ state: "visiting", place: "Universe" });
+        expect(api.syncVisitingBrick).toHaveBeenCalledWith(undefined, { ending: true });
+    });
+
+    it("a read for a Brick the page left does not make another Brick's slow read count as old (CodeRabbit on #2023)", async () => {
+        let slow: (value: unknown) => void = () => undefined;
+        api.getBrickVisit.mockReturnValueOnce(
+            new Promise((resolve) => {
+                slow = resolve;
+            })
+        );
+        const onB = loadBrickVisit(B);
+        // A's ended visit reads A's answer while B's read is still on its way
+        api.endBrickVisit.mockResolvedValue({ state: "none", place: null });
+        api.getBrickVisit.mockResolvedValueOnce({ state: "none", place: "Universe" });
+        await endBrickVisit(A);
+        slow({ state: "blocked", place: "Universe" });
+        await onB;
+        expect(get(brickVisitStore)).toEqual({ state: "blocked", place: "Universe" });
+    });
+
+    it("the reason a bring along was refused comes from the answer read, even when the page has moved to another Brick", async () => {
+        const conflict = Object.assign(new Error("conflict"), { status: 409 });
+        api.startBrickVisit.mockRejectedValue(conflict);
+        api.getBrickVisit.mockResolvedValueOnce({ state: "none", place: "Universe" });
+        await loadBrickVisit(B);
+        api.getBrickVisit.mockResolvedValueOnce({ state: "blocked", place: "Universe" });
+        await expect(bringBrickAlong(A)).resolves.toBe("not_taken");
+        expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
+    });
+
+    it("tries the page's visit read once more when it failed, so the controls do not stay hidden (CodeRabbit on #2023)", async () => {
+        vi.useFakeTimers();
+        try {
+            api.getBrickVisit.mockRejectedValueOnce(new Error("Orbit did not answer in time"));
+            api.getBrickVisit.mockResolvedValueOnce({ state: "none", place: "Universe" });
+            const loading = loadBrickVisit(A);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(get(brickVisitStore)).toBeUndefined();
+            await vi.advanceTimersByTimeAsync(3000);
+            await loading;
+            expect(api.getBrickVisit).toHaveBeenCalledTimes(2);
+            expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
+
+            // Only once, and not for a page that has moved on
+            api.getBrickVisit.mockReset();
+            api.getBrickVisit.mockRejectedValue(new Error("down"));
+            const again = loadBrickVisit(A);
+            await vi.advanceTimersByTimeAsync(0);
+            api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
+            await loadBrickVisit(B);
+            await vi.advanceTimersByTimeAsync(3000);
+            await again;
+            expect(api.getBrickVisit.mock.calls.filter(([id]) => id === A)).toHaveLength(1);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
