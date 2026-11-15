@@ -1,7 +1,7 @@
 /**
- * Goals and tasks, set by asking (game #2002): a person asks their own Brick, in their own chat with it, for a reminder. The tools only
- * run for the owner (Orbit says who that is), turn the person's own clock into the moment Orbit keeps, say plainly what Orbit refused,
- * and set nothing twice. Reminders only: nothing here runs one.
+ * Goals and tasks, set by asking (game #2002): a person asks their own Brick, in their own chat with it, for a reminder, a briefing, a
+ * watch or a goal. The tools only run for the owner (Orbit says who that is), turn the person's own clock into the moment Orbit keeps,
+ * say plainly what Orbit refused, and set nothing twice. Nothing here runs one.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -23,7 +23,10 @@ import {
     CHANGE_TASK_TOOL,
     KEEP_WORKDAYS_TOOL,
     MY_TASKS_TOOL,
+    SET_BRIEFING_TOOL,
+    SET_GOAL_TOOL,
     SET_REMINDER_TOOL,
+    SET_WATCH_TOOL,
     forgetTaskSettings,
     isTaskTool,
     runTaskTool,
@@ -61,7 +64,16 @@ function setUp(over: { settings?: Record<string, unknown>; refused?: { status: n
                 : ({ ok: false as const, ...over.refused })
         ),
         keepBrickWorkdays: vi.fn(async (_b: string, _u: string, days: number[]) => ({ ok: true as const, workdays: days })),
-        setBrickItem: vi.fn(async (_b: string, body: Record<string, unknown>) => ({ ok: true as const, item: item({ words: String(body.words), cadence: body.cadence as BrickItemView['cadence'] }) })),
+        setBrickItem: vi.fn(async (_b: string, body: Record<string, unknown>) => ({
+            ok: true as const,
+            item: item({
+                kind: (body.kind as BrickItemView['kind']) ?? 'reminder',
+                words: String(body.words),
+                condition: (body.condition as string | undefined) ?? null,
+                outcome: (body.outcome as string | undefined) ?? null,
+                cadence: body.cadence as BrickItemView['cadence'],
+            }),
+        })),
         listBrickItems: vi.fn(async () => ({ ok: true as const, items: over.items ?? [item()] })),
         changeBrickItem: vi.fn(async () => ({ ok: true as const, item: item({ nextDueAt: '2026-11-15T14:00:00.000Z' }) })),
     };
@@ -111,9 +123,10 @@ describe('time, on the person’s own clock', () => {
 });
 
 describe('who has the reminder tools', () => {
-    it('are four tools, with names nothing else answers to', () => {
-        expect(taskToolDefinitions().map((tool) => tool.function.name)).toEqual([SET_REMINDER_TOOL, MY_TASKS_TOOL, CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL]);
-        expect([SET_REMINDER_TOOL, MY_TASKS_TOOL, CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL].every(isTaskTool)).toBe(true);
+    it('are seven tools, with names nothing else answers to', () => {
+        const names = [SET_REMINDER_TOOL, SET_BRIEFING_TOOL, SET_WATCH_TOOL, SET_GOAL_TOOL, MY_TASKS_TOOL, CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL];
+        expect(taskToolDefinitions().map((tool) => tool.function.name)).toEqual(names);
+        expect(names.every(isTaskTool)).toBe(true);
         expect(isTaskTool('make_brick')).toBe(false);
     });
 
@@ -152,13 +165,18 @@ describe('who has the reminder tools', () => {
 });
 
 describe('what the Brick is told', () => {
-    it('gives their clock, the rules for setting one, and says it can only set reminders for now', () => {
+    it('gives their clock, the rules for setting one, and the four kinds it can keep', () => {
         const note = taskToolsNote({ timeZone: 'Asia/Kuwait', workdays: [0, 1, 2, 3, 4], limits: { itemsPerPerson: 20, snooze: 60 } }, NOW);
         expect(note).toContain('Thu, Nov 12, 2026, 9:00 AM (Asia/Kuwait)');
         expect(note).toContain('never guess a time they did not give');
         expect(note).toContain('a specific offer you made in your message just before');
         expect(note).toContain('ask you here to change, snooze or stop it');
-        expect(note).toContain('only set reminders for now');
+        expect(note).toContain('set_briefing');
+        expect(note).toContain('set_watch');
+        expect(note).toContain('set_goal');
+        expect(note).toContain('offer one specific schedule in your message and set it only when they say yes');
+        expect(note).not.toContain('only set reminders');
+        expect(note).not.toContain('cannot do that yet');
         expect(note).toContain('Snooze moves a reminder by 1 hour');
         expect(note).toContain('Their workdays: sun, mon, tue, wed, thu');
     });
@@ -396,6 +414,160 @@ describe('setting a reminder', () => {
     });
 });
 
+describe('setting a briefing, a watch or a goal', () => {
+    it('sets a briefing for a time of day on their clock, every day or on their workdays, as a schedule', async () => {
+        const { admin, context } = setUp();
+        const result = await runTaskTool(SET_BRIEFING_TOOL, { text: 'my day and the weather', repeat: 'workdays', when: '2026-11-15 07:30' }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledWith(BRICK, {
+            userId: SARA,
+            kind: 'schedule',
+            words: 'my day and the weather',
+            cadence: { type: 'daily', time: '07:30', days: [0, 1, 2, 3, 4] },
+            timeZone: 'Asia/Kuwait',
+        });
+        expect(result).toMatchObject({ set: true, kind: 'schedule', says: 'my day and the weather', time_zone: 'Asia/Kuwait' });
+        expect(String(result.note)).toContain('also when there is nothing');
+        await runTaskTool(SET_BRIEFING_TOOL, { text: 'my day', repeat: 'every_day', when: '2026-11-15 06:00' }, context);
+        expect(admin.setBrickItem.mock.calls[1][1]).toMatchObject({ cadence: { type: 'daily', time: '06:00', days: [0, 1, 2, 3, 4, 5, 6] } });
+    });
+
+    it('never guesses a briefing: no time, no repeat or a check every few hours sets nothing, and it is not made a reminder', async () => {
+        const { admin, context } = setUp();
+        expect(await runTaskTool(SET_BRIEFING_TOOL, { text: 'my day', repeat: 'every_day' }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_BRIEFING_TOOL, { text: 'my day', when: '2026-11-15 07:30' }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_BRIEFING_TOOL, { text: 'my day', repeat: 'every_hours', hours: 4 }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_BRIEFING_TOOL, { repeat: 'every_day', when: '2026-11-15 07:30' }, context)).toHaveProperty('error');
+        expect(admin.setBrickItem).not.toHaveBeenCalled();
+    });
+
+    it('sets a watch with the condition it speaks for, checking at a time of day or every few hours', async () => {
+        const { admin, context } = setUp();
+        const result = await runTaskTool(SET_WATCH_TOOL, { text: 'the flight to London', speak_when: 'the price drops under KWD 90', repeat: 'every_hours', hours: 6 }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledWith(BRICK, {
+            userId: SARA,
+            kind: 'watch',
+            words: 'the flight to London',
+            condition: 'the price drops under KWD 90',
+            cadence: { type: 'every', minutes: 360 },
+            timeZone: 'Asia/Kuwait',
+        });
+        expect(result).toMatchObject({ set: true, kind: 'watch', speaks_when: 'the price drops under KWD 90', repeats: 'every 6 hours' });
+        expect(String(result.note)).toContain('speak only when the condition is met');
+        await runTaskTool(SET_WATCH_TOOL, { text: 'the flight', speak_when: 'it drops', repeat: 'every_day', when: '2026-11-15 09:00' }, context);
+        expect(admin.setBrickItem.mock.calls[1][1]).toMatchObject({ cadence: { type: 'daily', time: '09:00', days: [0, 1, 2, 3, 4, 5, 6] } });
+    });
+
+    it('sets no watch without its condition or a schedule, and none for hours that are not a wait', async () => {
+        const { admin, context } = setUp();
+        expect(await runTaskTool(SET_WATCH_TOOL, { text: 'the flight', repeat: 'every_day', when: '2026-11-15 09:00' }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_WATCH_TOOL, { text: 'the flight', speak_when: 'it drops' }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_WATCH_TOOL, { text: 'the flight', speak_when: 'it drops', repeat: 'every_hours' }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_WATCH_TOOL, { text: 'the flight', speak_when: 'it drops', repeat: 'every_hours', hours: 0 }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_WATCH_TOOL, { text: 'the flight', speak_when: 'it drops', repeat: 'every_hours', hours: 100000 }, context)).toHaveProperty('error');
+        expect(admin.setBrickItem).not.toHaveBeenCalled();
+    });
+
+    it('sets a goal with the outcome that counts as reached, and its check schedule', async () => {
+        const { admin, context } = setUp();
+        const result = await runTaskTool(SET_GOAL_TOOL, { text: 'get my visa sorted before my trip', outcome: 'the visa is issued', repeat: 'every_day', when: '2026-11-15 09:00' }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledWith(BRICK, {
+            userId: SARA,
+            kind: 'goal',
+            words: 'get my visa sorted before my trip',
+            outcome: 'the visa is issued',
+            cadence: { type: 'daily', time: '09:00', days: [0, 1, 2, 3, 4, 5, 6] },
+            timeZone: 'Asia/Kuwait',
+        });
+        expect(result).toMatchObject({ set: true, kind: 'goal', done_when: 'the visa is issued' });
+        expect(String(result.note)).toContain('what counts as done');
+    });
+
+    it('sets no goal without the outcome, or with no check schedule: the schedule is offered and said yes to first', async () => {
+        const { admin, context } = setUp();
+        expect(await runTaskTool(SET_GOAL_TOOL, { text: 'my visa', repeat: 'every_day', when: '2026-11-15 09:00' }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_GOAL_TOOL, { text: 'my visa', outcome: 'issued' }, context)).toHaveProperty('error');
+        expect(await runTaskTool(SET_GOAL_TOOL, { text: 'my visa', outcome: 'issued', repeat: 'every_day' }, context)).toHaveProperty('error');
+        expect(admin.setBrickItem).not.toHaveBeenCalled();
+    });
+
+    it('keeps the reminder tool to a reminder: checking every few hours is a watch or a goal', async () => {
+        const { admin, context } = setUp();
+        expect(await runTaskTool(SET_REMINDER_TOOL, { text: 'x', repeat: 'every_hours', hours: 2 }, context)).toHaveProperty('error');
+        expect(admin.setBrickItem).not.toHaveBeenCalled();
+    });
+
+    it('asks once for a time zone when none is kept, for each of them, and for workdays when none are kept', async () => {
+        const { admin, context } = setUp({ settings: { timeZone: null, workdays: null } });
+        expect(await runTaskTool(SET_BRIEFING_TOOL, { text: 'my day', repeat: 'every_day', when: '2026-11-15 07:30' }, context)).toMatchObject({ needs: 'time_zone' });
+        expect(await runTaskTool(SET_WATCH_TOOL, { text: 'x', speak_when: 'y', repeat: 'every_hours', hours: 3 }, context)).toMatchObject({ needs: 'time_zone' });
+        expect(await runTaskTool(SET_GOAL_TOOL, { text: 'x', outcome: 'y', repeat: 'every_day', when: '2026-11-15 09:00' }, context)).toMatchObject({ needs: 'time_zone' });
+        expect(admin.setBrickItem).not.toHaveBeenCalled();
+        expect(await runTaskTool(SET_BRIEFING_TOOL, { text: 'my day', repeat: 'workdays', when: '2026-11-15 07:30', time_zone: 'Asia/Kuwait' }, context)).toMatchObject({ needs: 'workdays' });
+        expect(admin.setBrickItem).not.toHaveBeenCalled();
+    });
+
+    it('says plainly what Orbit refused: too many, too often, switched off', async () => {
+        const { admin, context } = setUp();
+        const refuse = (code: string, limit?: number) => admin.setBrickItem.mockResolvedValueOnce({ ok: false as const, status: 422, error: 'no', code, limit } as never);
+        refuse('too_many', 20);
+        expect(await runTaskTool(SET_GOAL_TOOL, { text: 'x', outcome: 'y', repeat: 'every_day', when: '2026-11-15 09:00' }, context)).toMatchObject({ error: expect.stringContaining('20 goals and tasks') });
+        refuse('too_often', 60);
+        expect(await runTaskTool(SET_WATCH_TOOL, { text: 'x', speak_when: 'y', repeat: 'every_hours', hours: 1 }, context)).toMatchObject({ error: expect.stringContaining('every 60 minutes') });
+        refuse('off');
+        expect(await runTaskTool(SET_BRIEFING_TOOL, { text: 'x', repeat: 'every_day', when: '2026-11-15 09:00' }, context)).toMatchObject({ error: expect.stringContaining('switched off') });
+    });
+
+    it('sets one when the model asks for the same one twice, or twice at once, and two different kinds with the same words are two', async () => {
+        const { admin, context } = setUp();
+        const ask = { text: 'the flight', speak_when: 'it drops', repeat: 'every_hours', hours: 6 };
+        const [first, second] = await Promise.all([runTaskTool(SET_WATCH_TOOL, ask, context), runTaskTool(SET_WATCH_TOOL, ask, context)]);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(1);
+        expect(first).toMatchObject({ set: true });
+        expect(second).toMatchObject({ set: true, note: expect.stringContaining('Already set') });
+        await runTaskTool(SET_WATCH_TOOL, ask, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(1);
+        await runTaskTool(SET_GOAL_TOOL, { text: 'the flight', outcome: 'it drops', repeat: 'every_hours', hours: 6 }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(2);
+        // Another condition is another watch
+        await runTaskTool(SET_WATCH_TOOL, { ...ask, speak_when: 'it is gone' }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(3);
+    });
+
+    it('shows what a watch speaks for and what a goal is done when, and says "every 6 hours", in what it keeps', async () => {
+        const { context } = setUp({
+            items: [
+                item({ id: 'w', kind: 'watch', words: 'the flight', condition: 'it drops under KWD 90', cadence: { type: 'every', minutes: 360 }, nextDueAt: '2026-11-12T12:00:00.000Z' }),
+                item({ id: 'g', kind: 'goal', words: 'my visa', outcome: 'the visa is issued', cadence: { type: 'daily', time: '09:00', days: [0, 1, 2, 3, 4, 5, 6] }, nextDueAt: '2026-11-13T06:00:00.000Z' }),
+            ],
+        });
+        const { items } = (await runTaskTool(MY_TASKS_TOOL, {}, context)) as { items: Record<string, unknown>[] };
+        expect(items[0]).toMatchObject({ kind: 'watch', speaks_when: 'it drops under KWD 90', repeats: 'every 6 hours' });
+        expect(items[1]).toMatchObject({ kind: 'goal', done_when: 'the visa is issued', repeats: 'every day' });
+    });
+
+    it('changes a watch’s condition, a goal’s outcome and how often it checks', async () => {
+        const { admin, context } = setUp();
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'w', action: 'change', speak_when: 'it drops under KWD 80' }, context);
+        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'w', { userId: SARA, action: 'change', change: { condition: 'it drops under KWD 80' } });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'g', action: 'change', outcome: 'the visa is in my passport' }, context);
+        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'g', { userId: SARA, action: 'change', change: { outcome: 'the visa is in my passport' } });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'w', action: 'change', repeat: 'every_hours', hours: 12 }, context);
+        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'w', { userId: SARA, action: 'change', change: { cadence: { type: 'every', minutes: 720 } } });
+    });
+
+    it('is the owner’s only: Orbit’s "no" sets none of them', async () => {
+        const { admin, context } = setUp({ refused: { status: 404, error: 'Brick not found' } });
+        for (const [name, args] of [
+            [SET_BRIEFING_TOOL, { text: 'x', repeat: 'every_day', when: '2026-11-15 07:30' }],
+            [SET_WATCH_TOOL, { text: 'x', speak_when: 'y', repeat: 'every_hours', hours: 3 }],
+            [SET_GOAL_TOOL, { text: 'x', outcome: 'y', repeat: 'every_hours', hours: 3 }],
+        ] as const) {
+            expect(await runTaskTool(name, args, context)).toHaveProperty('error');
+        }
+        expect(admin.setBrickItem).not.toHaveBeenCalled();
+    });
+});
+
 describe('seeing and changing what is kept', () => {
     it('lists what they asked it to keep, in words on their clock, with when it last went off', async () => {
         const { context } = setUp({ items: [item({ state: 'done', lastRunAt: '2026-11-12T05:00:00.000Z', nextDueAt: null }), item({ id: 'item-2', state: 'deleted' })] });
@@ -608,6 +780,10 @@ describe('what the chat shows for them', () => {
         expect(showsAsStep(MY_TASKS_TOOL, false)).toBe(false);
         expect(describeStep({ id: '1', name: SET_REMINDER_TOOL, arguments: { text: 'Pick up the car' } })).toMatchObject({ done: 'Set a reminder', detail: 'Pick up the car' });
         expect(describeStep({ id: '2', name: CHANGE_TASK_TOOL, arguments: { action: 'snooze' } })).toMatchObject({ done: 'Snoozed a reminder' });
-        expect(describeStep({ id: '3', name: CHANGE_TASK_TOOL, arguments: { action: 'cancel' } })).toMatchObject({ done: 'Stopped a reminder' });
+        expect(describeStep({ id: '3', name: CHANGE_TASK_TOOL, arguments: { action: 'cancel' } })).toMatchObject({ done: 'Stopped it' });
+        expect(describeStep({ id: '4', name: SET_BRIEFING_TOOL, arguments: { text: 'my day' } })).toMatchObject({ done: 'Set a briefing', detail: 'my day' });
+        expect(describeStep({ id: '5', name: SET_WATCH_TOOL, arguments: { text: 'the flight' } })).toMatchObject({ done: 'Set a watch', detail: 'the flight' });
+        expect(describeStep({ id: '6', name: SET_GOAL_TOOL, arguments: { text: 'my visa' } })).toMatchObject({ done: 'Set a goal', detail: 'my visa' });
+        for (const name of [SET_BRIEFING_TOOL, SET_WATCH_TOOL, SET_GOAL_TOOL]) expect(showsAsStep(name, false)).toBe(true);
     });
 });

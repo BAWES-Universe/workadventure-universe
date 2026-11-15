@@ -525,6 +525,7 @@ describe("a Brick's own suggestions on the question card (#1995)", () => {
         expect(choices().map((choice) => choice.textContent?.replace(/\s+/g, " ").trim())).toEqual([
             "See what I can do A few ideas to start with",
             "Connect my apps Email, calendar, GitHub and more",
+            "Give me a goal I plan it and keep at it while you're away",
             "Make another Brick One for a single job, like your recipes",
         ]);
         // Nothing to approve, and no clock on it
@@ -542,12 +543,20 @@ describe("a Brick's own suggestions on the question card (#1995)", () => {
         expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["ideas"] });
     });
 
-    it("lists the four ideas under the Brick's answer, and a tap picks one", async () => {
+    it("lists the ideas under the Brick's answer, and a tap picks one", async () => {
         await show(brickIdeasCard(LL));
         expect(text()).toContain("Brick suggests");
         expect(text()).toContain("What shall I take on?");
-        expect(choices().map((choice) => choice.dataset.choice)).toEqual(["write", "web", "file", "think"]);
-        await click(choices()[2]);
+        expect(choices().map((choice) => choice.dataset.choice)).toEqual([
+            "brief",
+            "watch",
+            "goal",
+            "write",
+            "web",
+            "file",
+            "think",
+        ]);
+        await click(choices()[5]);
         expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["file"] });
     });
 

@@ -285,6 +285,9 @@ export interface BrickItemView {
     id: string;
     kind: 'reminder' | 'schedule' | 'watch' | 'goal';
     words: string;
+    /** A watch: when it speaks. A goal: the outcome that counts as reached. */
+    condition?: string | null;
+    outcome?: string | null;
     cadence: { type: 'once'; at: string } | { type: 'daily'; time: string; days: number[] } | { type: 'every'; minutes: number } | { type: 'none' };
     timeZone: string;
     nextDueAt: string | null;
