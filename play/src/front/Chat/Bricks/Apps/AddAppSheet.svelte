@@ -77,6 +77,12 @@
      */
     let requestKey = "";
     let keyFrom = "";
+    /**
+     * A try whose answer never came (the 20 s wait ran out, the connection dropped, Orbit failed): Orbit may have made the app
+     * all the same, and the sheet holds no id for it. Kept so that it is found, with the same key, and taken away before the
+     * person's changed form makes another app, or when the sheet goes away.
+     */
+    let uncertain: NewApp | undefined;
     /** The sheet was closed: an app that is still being made is taken away again when Orbit answers */
     let closed = false;
     /** The app is connected: from here on closing the sheet keeps it, even while the list of what it can do is still loading */
@@ -104,6 +110,7 @@
         if (checkTimer) clearTimeout(checkTimer);
         checkAbort?.abort();
         dropUnfinished();
+        void settleUncertain();
     });
 
     function forgetCheck() {
@@ -128,9 +135,26 @@
             .catch((error: unknown) => console.warn("Could not drop the unfinished app", error));
     }
 
+    /**
+     * Finds the app an unanswered try may have made, by trying again with its own key (Orbit answers that with the app it
+     * made, or makes it now), and takes it away. Never throws: when Orbit still does not answer there is nothing more to do.
+     */
+    async function settleUncertain(): Promise<void> {
+        const pending = uncertain;
+        uncertain = undefined;
+        if (!pending) return;
+        try {
+            const id = parseNewAppId(await botApiService.addMyApp(pending));
+            if (id) await botApiService.disconnectMyApp(id);
+        } catch (error) {
+            console.warn("Could not find out whether the earlier try made an app", error);
+        }
+    }
+
     function onLinkInput(event: Event) {
         forgetCheck();
         dropUnfinished();
+        void settleUncertain();
         discovery = NO_DISCOVERY;
         phase = "empty";
         trouble = "";
@@ -214,18 +238,23 @@
         const from = JSON.stringify(body);
         if (createdId && createdFrom === from) return Promise.resolve(createdId);
         dropUnfinished();
+        // Changed since an unanswered try: that try's app is found and taken away first, then this one is made with a new key
+        const settled = keyFrom !== from ? settleUncertain() : Promise.resolve();
         if (keyFrom !== from) {
             requestKey = newRequestKey();
             keyFrom = from;
         }
-        return create({ ...body, requestKey }, from);
+        const sent = { ...body, requestKey };
+        return settled.then(async () => await create(sent, from));
     }
 
     /** Makes the app in Orbit, with the way in the person gave */
     async function create(body: NewApp, from: string): Promise<string> {
+        let known = false;
         try {
             const id = parseNewAppId(await botApiService.addMyApp(body));
             if (!id) throw new Error("Orbit did not say which app it made");
+            known = true;
             if (closed) {
                 // The sheet was closed while Orbit was making it: nobody is left to finish it
                 botApiService
@@ -235,12 +264,18 @@
             }
             createdId = id;
             createdFrom = from;
+            uncertain = undefined;
             return id;
         } catch (error) {
             console.warn("Could not add the app", error);
+            const status = (error as { status?: number } | null)?.status;
             // Orbit says this key was used for another app: the next try starts with a fresh one
-            if ((error as { status?: number } | null)?.status === 409) keyFrom = "";
-            if (!closed) trouble = "failed";
+            if (status === 409) keyFrom = "";
+            // Orbit refusing (a 4xx) made nothing; an answer that never came, or an Orbit that failed, may have made the app
+            uncertain = known || (status !== undefined && status < 500) ? undefined : body;
+            // A closed sheet has nobody left to try again: look for it now
+            if (closed) void settleUncertain();
+            else trouble = "failed";
             throw error;
         }
     }
@@ -313,6 +348,7 @@
         closed = true;
         forgetCheck();
         dropUnfinished();
+        void settleUncertain();
         onClose();
     }
 
