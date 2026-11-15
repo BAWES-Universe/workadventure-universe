@@ -76,6 +76,23 @@ describe("where a Brick lives (#2005)", () => {
         expect(game.notifyRoomEnter).not.toHaveBeenCalledWith("/@/team/universe/room");
     });
 
+    it("never lets a read begun before the take-out put the old home back (Sentry on #2055)", async () => {
+        game.getBrickHome.mockResolvedValueOnce({ home: HOME });
+        await loadBrickHome("b1");
+        let answerLate: (value: unknown) => void = () => undefined;
+        game.getBrickHome.mockReturnValueOnce(
+            new Promise((resolve) => {
+                answerLate = resolve;
+            })
+        );
+        const reopened = loadBrickHome("b1");
+        game.takeBrickOut.mockResolvedValue({ ok: true });
+        expect(await takeBrickOutOfHome("b1")).toBe(true);
+        answerLate({ home: HOME });
+        await reopened;
+        expect(get(brickHomeStore)).toBeNull();
+    });
+
     it("says it did not work, and changes nothing, when Orbit refused", async () => {
         game.getBrickHome.mockResolvedValue({ home: HOME });
         game.takeBrickOut.mockRejectedValue(new Error("offline"));

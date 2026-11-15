@@ -13,6 +13,9 @@ export const brickHomeStore: Readable<BrickHome | null | undefined> = { subscrib
 /** The Brick the stored answer is about, so a page opened on another Brick never shows the last one's. */
 let forBrick: string | undefined;
 
+/** Which read is the latest, so a slow read never puts an older answer back over a newer one or over a take-out. */
+let newest = 0;
+
 /** Finds the Brick on this room's map and points the camera at it; false when it is not on this map. The game gives it. */
 let locate: (brickId: string) => boolean = () => false;
 
@@ -26,9 +29,10 @@ export async function loadBrickHome(brickId: string): Promise<void> {
         forBrick = brickId;
         home.set(undefined);
     }
+    const mine = ++newest;
     try {
         const answer = parseBrickHome(await botApiService.getBrickHome(brickId));
-        if (forBrick === brickId) home.set(answer);
+        if (forBrick === brickId && mine === newest) home.set(answer);
     } catch (error) {
         console.warn("Could not read where a Brick lives", error);
     }
@@ -40,6 +44,8 @@ export async function takeBrickOutOfHome(brickId: string): Promise<boolean> {
         // The room it lived in is the one to tell, which is not always the room the person is in
         const lived = forBrick === brickId ? get(home) : undefined;
         await botApiService.takeBrickOut(brickId);
+        // A read that began before it was taken out is about a Brick that no longer lives there
+        newest++;
         if (forBrick === brickId) home.set(null);
         // The bot server takes it off the map of the room it was standing in
         const roomUrl = lived?.roomUrl ?? botApiService.getRoomId();
@@ -59,6 +65,7 @@ export function showBrickOnMap(brickId: string): boolean {
 /** For tests and for a person who signs out without a reload. */
 export function forgetBrickHome(): void {
     forBrick = undefined;
+    newest++;
     home.set(undefined);
 }
 
