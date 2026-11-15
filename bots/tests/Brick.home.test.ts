@@ -292,6 +292,26 @@ describe('a Brick that lives in a room, moved and returned by Orbit', () => {
         expect(internals.roomsWithBots.get(ROOM)?.botIds.size).toBe(2);
     });
 
+    it('stays on the map when it was visiting this room and was given a home in it, whoever ends the old visit (Sentry on #2055)', async () => {
+        // It walked with its owner here; the owner then gave it a home in this room (Orbit ends the visit as it places it)
+        const visiting = { ...homed('brick-1'), brick: { ownerId: 'user-khalid', isDefault: false, visiting: { ownerUuid: KHALID, ownerName: 'Khalid' } } } as unknown as BotConfiguration;
+        let placed = false;
+        const { botManager, internals } = manager(() => (placed ? [homed()] : []));
+        const oldClient = { setFullConfig: () => undefined };
+        internals.bots.set('brick-1', { botId: 'brick-1', client: oldClient, config: visiting, status: 'connected', lastHeartbeat: 0 });
+        (internals as unknown as { visitors: Map<string, unknown> }).visitors.set(KHALID, { botId: 'brick-1', roomUrl: ROOM });
+        placed = true;
+        await botManager.handlePlayerEnterRoom(ROOM);
+        const standing = internals.bots.get('brick-1');
+        expect(standing?.config.brick?.home).toBeDefined();
+        expect(standing?.config.brick?.visiting).toBeUndefined();
+        // The old visit is ended by its owner's next visit sync, and by the old client saying the owner is gone
+        const ends = botManager as unknown as { endVisitor: (uuid: string, botId: string, client?: unknown) => Promise<void> };
+        await ends.endVisitor(KHALID, 'brick-1');
+        await ends.endVisitor(KHALID, 'brick-1', oldClient);
+        expect(internals.bots.get('brick-1')).toBe(standing);
+    });
+
     it('is read again while people are in the room, so a return Orbit makes by itself is never kept', async () => {
         let lives = true;
         const { botManager, despawn, internals } = manager(() => (lives ? [homed()] : []));
