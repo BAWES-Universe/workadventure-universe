@@ -17,6 +17,7 @@ export function isComputerTool(name: string): boolean {
 }
 
 const TITLE_MAX = 120;
+const DETAILS_MAX = 4000;
 
 export function computerToolDefinitions(): { type: 'function'; function: { name: string; description: string; parameters: object } }[] {
     return [
@@ -33,6 +34,8 @@ export function computerToolDefinitions(): { type: 'function'; function: { name:
                     type: 'object',
                     properties: {
                         job: { type: 'string', description: 'What the job is, in a few plain words, as the bar will show it: "Visa form", "Shop website", "Taxi booking".' },
+                        details: { type: 'string', description: 'Everything the computer needs to do it, in the person\'s words: the site, what they asked for, the choices they made. Leave out passwords, card numbers and ID numbers: the computer asks the person for those when it needs them.' },
+                        app_cannot: { type: 'string', description: 'Only when one of your apps could seem to fit this job: in a few words, why that app cannot do it (it has no such action, or the job lives on a website screen). Leave out otherwise.' },
                         reads_only: { type: 'boolean', description: 'True when the job only looks and writes nothing anywhere (it may run beside another job). Leave out otherwise.' },
                     },
                     required: ['job'],
@@ -53,6 +56,8 @@ export function computerToolsNote(): string {
 
 export interface ComputerToolContext {
     admin: Pick<AdminApiService, 'startComputerJob'>;
+    /** The apps this person has connected to this Brick in this reply (their names), so a job an app can do is not started on the computer. */
+    apps?: string[];
     botId: string;
     userId: string;
     /** Called once a job is running, so a development server can pretend to do it. */
@@ -66,13 +71,34 @@ const day = (iso: string): string => {
     return Number.isNaN(at.getTime()) ? '' : at.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 };
 
+const plain = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * The fixed order is answer, then an app, then the computer. The first is Brick's own judgement; this is the second, checked where the
+ * job is started: when the job names one of the person's connected apps, it goes there first, unless Brick says in its own words why
+ * that app cannot do it. Never silent and never a price: the model is told in one plain line.
+ */
+export function appThatFits(job: string, details: string, apps: string[] | undefined): string | null {
+    const haystack = ` ${plain(`${job} ${details}`)} `;
+    for (const app of apps ?? []) {
+        const name = plain(app);
+        if (name.length >= 3 && haystack.includes(` ${name} `)) return app;
+    }
+    return null;
+}
+
 /** Runs use_computer. Never throws: the model is told in plain words what happened. */
 export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext): Promise<Record<string, unknown>> {
     const job = text(args.job, TITLE_MAX);
     if (!job) return { error: 'Say in a few words what the job is.' };
+    const brief = typeof args.details === 'string' ? args.details.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, DETAILS_MAX) : '';
+    const fits = appThatFits(job, brief, context.apps);
+    if (fits && text(args.app_cannot, 300).length < 8) {
+        return { started: false, success: false, note: `You have ${fits} connected, and this names it: do the job through ${fits} first. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
+    }
     let started;
     try {
-        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, writes: args.reads_only === true ? false : undefined });
+        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined });
     } catch (error) {
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };

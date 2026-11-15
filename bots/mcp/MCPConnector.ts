@@ -13,6 +13,7 @@ import { keyAppTools, loadKeyApps, type KeyApp } from './KeyApps';
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
+import { sanitizedError } from '../utils/sanitizedError';
 import { linkExternalAbort } from '../ai/providers/abortUtils';
 import { checkOutboundUrl, guardedLookup } from './outboundGuard';
 import {
@@ -143,6 +144,14 @@ function sessionCacheKey(serverUrl: string, authType: string, authConfig?: strin
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The name of the first header whose value cannot be sent (a character above 255, or a line break), or null when all can. */
+export function unsendableHeader(headers: Record<string, string>): string | null {
+    for (const [name, value] of Object.entries(headers)) {
+        if (typeof value === 'string' && /[^\t\x20-\x7e\x80-\xff]/.test(value)) return name;
+    }
+    return null;
+}
 
 /**
  * Build proper auth headers based on server config.
@@ -445,6 +454,14 @@ async function sendJsonRpc(
 
     const baseHeaders = buildAuthHeaders(authType, authConfig, extraHeaders);
 
+    // A header with a character above 255 (an em dash pasted into a key) cannot be sent: the request would fail inside the HTTP
+    // client with an error that names nothing. Nothing is sent, and the log says which header it is.
+    const unsendable = unsendableHeader(baseHeaders);
+    if (unsendable) {
+        console.warn(`[MCPConnector] Not sent: the "${unsendable}" header has text that cannot be sent (${method} to ${serverUrl})`);
+        return NOT_SENT;
+    }
+
     // Auto-initialize MCP session (required by MCP Streamable HTTP spec).
     // Some servers (like Linear) tolerate tools/list without initialize,
     // but spec-compliant servers (like Brick) require it.
@@ -613,11 +630,6 @@ async function sendJsonRpc(
             }
         } else if (axios.isAxiosError(error)) {
             const status = error.response?.status;
-            const detail = error.response?.data
-                ? typeof error.response.data === 'string'
-                    ? error.response.data.slice(0, 200)
-                    : JSON.stringify(error.response.data).slice(0, 200)
-                : error.message;
             const sanitizedUrl = (() => {
                 try {
                     const u = new URL(serverUrl);
@@ -627,9 +639,10 @@ async function sendJsonRpc(
                 }
             })();
             console.warn(
-                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}: ${detail}`
+                // No words from the answer or the error: they can quote what was asked of the tool (an email, a file)
+                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}`
             );
-            Sentry.captureException(new Error(`MCPConnector HTTP ${status || 'error'} on ${method}`));
+            Sentry.captureException(sanitizedError(error, `MCPConnector HTTP ${status || 'error'} on ${method}`));
             // Invalidate session cache on HTTP errors for non-initialize methods.
             // Handles server restarts, session expiry, and stale session reuse
             // after bot respawn — without this, a dead session is retried for up
@@ -640,8 +653,10 @@ async function sendJsonRpc(
             const neverRan = requestNeverRan(error, sessionId !== undefined);
             return { data: null, neverRan, retryable: neverRan };
         } else {
-            console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
-            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            // The error's words can quote what was asked of the tool: only the method and the kind of error are kept
+            const kind = error instanceof Error ? error.name : 'Error';
+            console.warn(`[MCPConnector] Error on ${method}: ${kind}`);
+            Sentry.captureException(sanitizedError(error, `MCPConnector error on ${method} (${kind})`));
         }
         return NOT_ANSWERED;
     } finally {
@@ -1050,7 +1065,8 @@ export class MCPConnector {
 
         if (response.error) {
             const errMsg = response.error.message || JSON.stringify(response.error);
-            console.warn(`[MCPConnector] Tool ${toolName} returned error: ${errMsg}`);
+            // The server's words can quote what the tool was given (an email, a file): the log keeps the outcome only
+            console.warn(`[MCPConnector] Tool ${toolName} returned an error`);
             return { error: `Tool error: ${errMsg}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 
@@ -1062,7 +1078,7 @@ export class MCPConnector {
                 .map((item) => item.text)
                 .join(' ')
                 .trim();
-            console.warn(`[MCPConnector] Tool ${toolName} failed: ${why || 'no reason given'}`);
+            console.warn(`[MCPConnector] Tool ${toolName} failed`);
             return { error: `Tool error: ${why || `${toolName} failed`}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 

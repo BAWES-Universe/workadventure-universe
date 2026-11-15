@@ -33,6 +33,11 @@
     import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
     import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
     import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
+    import BrickMadeFrom from "../../../Chat/Bricks/Templates/BrickMadeFrom.svelte";
+    import BrickTemplateGroup from "../../../Chat/Bricks/Templates/BrickTemplateGroup.svelte";
+    import type { UpdateField } from "../../../Chat/Bricks/Templates/Template";
+    import { brickComputers } from "../../../Chat/Bricks/Computer/BrickComputerStore";
+    import { warningMessageStore } from "../../../Stores/ErrorStore";
     import BrickLookPicker from "../../../Chat/Bricks/BrickLookPicker.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
@@ -57,6 +62,7 @@
     import BotToolsHeadingScreen from "./BotToolsHeadingScreen.svelte";
     import BotToolsApprovalsScreen from "./BotToolsApprovalsScreen.svelte";
     import {
+        brickAfterTemplate,
         brickChangeBetween,
         brickPutBack,
         brickSavedAfter,
@@ -64,6 +70,7 @@
         emptyBrickSaved,
         type BrickSaved,
     } from "./brickSaves";
+    import { templateSync } from "./templateSync";
     import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
@@ -300,6 +307,7 @@
             lastSavedName = bot.name || null;
             brickSaved = brickSavedOf(bot);
             brickUnsaved.clear();
+            templateParts.clear();
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
@@ -321,9 +329,22 @@
 
     /** The typed fields of this Brick whose last save failed: the error line stays until each is saved. */
     const brickUnsaved = new Set<string>();
+    // Whether the Brick has its computer on: the made-from card reads its setup again when that changes
+    $: computerOn = currentBot?.id ? $brickComputers.get(currentBot.id)?.on : undefined;
     const TYPED_FIELDS: ReadonlySet<string> = new Set(["description", "chatInstructions"]);
     /** The last save asked for each Brick: the next one waits for it, so changes reach Orbit in the order they were made. */
     const brickSaving = new Map<string, Promise<boolean>>();
+
+    /**
+     * Typed text that failed stays on the page unsaved: the line says so until that text is saved, and a later save of
+     * another field does not clear it. A name or switch that failed goes back on its own.
+     */
+    function noteBrickSave(change: BrickChange, saved: boolean) {
+        const typed = Object.keys(change).filter((field) => TYPED_FIELDS.has(field));
+        if (saved) typed.forEach((field) => brickUnsaved.delete(field));
+        else typed.forEach((field) => brickUnsaved.add(field));
+        brickError = !saved || brickUnsaved.size > 0 ? $LL.mapEditor.edit.bots.page.telemetry.saveFailed() : null;
+    }
 
     /** Saves a change of a Brick's page through its own route, after any save of it still on its way. False when it was not saved. */
     function saveBrick(change: BrickChange): Promise<boolean> {
@@ -340,13 +361,7 @@
             })
             .then((saved) => {
                 if (brickSaving.get(brickId) === run) brickSaving.delete(brickId);
-                // Typed text that failed stays on the page unsaved: the line says so until that text is saved, and a
-                // later save of another field does not clear it. A name or switch that failed goes back on its own.
-                const typed = Object.keys(change).filter((field) => TYPED_FIELDS.has(field));
-                if (saved) typed.forEach((field) => brickUnsaved.delete(field));
-                else typed.forEach((field) => brickUnsaved.add(field));
-                brickError =
-                    !saved || brickUnsaved.size > 0 ? $LL.mapEditor.edit.bots.page.telemetry.saveFailed() : null;
+                noteBrickSave(change, saved);
                 return saved;
             });
         brickSaving.set(brickId, run);
@@ -365,10 +380,20 @@
         // a late answer never undoes what the person did while it was on its way
         brickQueue = brickQueue.then(async () => {
             if (!currentBot || currentBot.id !== botId) return;
+            // Taken template parts this page has not read yet: saving the line or the Personality now would put the old
+            // text back over them, so it waits until they are read
+            let read = true;
+            if (templateParts.waitsFor(["description", "instructions"])) {
+                read = await templateParts.sync();
+                if (!currentBot || currentBot.id !== botId) return;
+            }
             const now = brickSavedOf(currentBot);
             const change = brickChangeBetween(brickSaved, now);
             if (Object.keys(change).length === 0) return;
-            const saved = await saveBrick(change);
+            // When Orbit could not be reached to read the taken parts, nothing is sent, and that is said like a refused
+            // save: the typed text stays on the page, flagged unsaved, and the next change tries again
+            const saved = read ? await saveBrick(change) : false;
+            if (!read) noteBrickSave(change, false);
             if (currentBot?.id !== botId) return;
             if (saved) {
                 brickSaved = brickSavedAfter(brickSaved, now, change);
@@ -576,6 +601,34 @@
         // Also trigger the onSave callback for consistency
         onSave();
     }
+
+    /**
+     * The owner took parts of a template's update (game #2008): Orbit has them now, so the page shows them and counts them as
+     * saved. A part the person is editing right now (it differs from what was saved) is theirs to keep.
+     */
+    async function takeFromTemplate(taken: UpdateField[]) {
+        templateParts.add(taken);
+        if (!(await templateParts.sync())) warningMessageStore.addWarningMessage($LL.chat.brick.templates.syncFailed());
+    }
+
+    /**
+     * Parts taken from a template that this page has not read yet (Orbit could not be reached): until they are read, what the
+     * person types in the line or the Personality is not saved over what Orbit now has (see flushBrickFields).
+     */
+    const templateParts = templateSync(
+        async () => {
+            const id = currentBot?.id;
+            if (!id) throw new Error("No Brick is open");
+            return { id, bot: await botApiService.getBot(id) };
+        },
+        (fresh, parts) => {
+            // Another Brick's page is open now: what was read is not for it
+            if (!currentBot || currentBot.id !== fresh.id) return;
+            const after = brickAfterTemplate(currentBot, brickSaved, fresh.bot, parts);
+            currentBot = after.bot;
+            brickSaved = after.saved;
+        }
+    );
 
     /** A Brick's look, saved on the tap that picks it (no Save): true once Orbit has it. */
     async function pickBrickLook(textureId: string): Promise<boolean> {
@@ -894,10 +947,27 @@
             <p class="bp-error" role="alert" data-testid="brick-save-error">{brickError}</p>
         {/if}
 
+        {#if brick && currentBot.id}
+            <!-- A Brick made from a template says what it still needs and where it came from (game #2008) -->
+            {#key currentBot.id}
+                <BrickMadeFrom
+                    brickId={currentBot.id}
+                    name={currentBot.name || "Brick"}
+                    onConnect={(label) => brick?.openApps?.(label)}
+                    refreshKey={`${openGroup}:${computerOn}`}
+                    onTaken={takeFromTemplate}
+                    onOpenGroup={(id) => {
+                        openGroup = id;
+                        lastOpenGroup = id;
+                    }}
+                />
+            {/key}
+        {/if}
+
         <div class="bp-groups">
             {#if brick}
                 <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Computer, Memory, Files, Permissions
-                     and Companion are here. Usage, Apps, Goals and tasks and Template come with their own issues -->
+                     and Companion are here. Usage, Apps and Goals and tasks come with their own issues; Template (#2008) is the last group before Advanced settings -->
                 <MindGroup
                     bot={currentBot}
                     open={openGroup === "mind"}
@@ -959,6 +1029,17 @@
                     link
                     onToggle={() => (editingCompanion = true)}
                 />
+                <!-- Share this Brick so other people can make their own from it (game #2008) -->
+                {#if currentBot?.id}
+                    {#key currentBot.id}
+                        <BrickTemplateGroup
+                            brickId={currentBot.id}
+                            name={currentBot.name || "Brick"}
+                            open={openGroup === "template"}
+                            onToggle={toggleGroup}
+                        />
+                    {/key}
+                {/if}
             {:else}
                 {#if askedUsage && currentBot}
                     <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />

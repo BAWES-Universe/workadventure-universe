@@ -1304,19 +1304,33 @@ export class BotApiService {
     }
 
     /**
-     * The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts, which is
-     * `undefined` (no screen to show). A request that did not go through (Orbit down, too slow, refused) is "failed", so the
-     * screen can tell the two apart and ask again soon.
+     * A ticket for the screen of the person's own computer, to open on the bot server within a minute. Watch by default; input is only
+     * for the person who has taken over. Never wakes a machine: a resting computer, or input before a take over, answers 409, which is
+     * `undefined` (nothing to show now). A request that did not go through is "failed", so the screen can ask again soon.
      */
-    async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined | "failed"> {
+    async screenTicketForBrick(
+        brickId: string,
+        mode: "watch" | "input"
+    ): Promise<{ ticket: string } | undefined | "failed"> {
         try {
-            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/watch`, {
+            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/screen`, {
                 method: "POST",
-            })) as { url?: unknown };
-            return typeof data.url === "string" ? { url: data.url } : undefined;
+                body: JSON.stringify({ mode }),
+            })) as { ticket?: unknown; resting?: unknown; notTakenOver?: unknown };
+            if (typeof data.ticket === "string") return { ticket: data.ticket };
+            return data.resting === true || data.notTakenOver === true ? undefined : "failed";
         } catch (error) {
             return (error as { status?: number }).status === 409 ? undefined : "failed";
         }
+    }
+
+    /** Where the screen socket is on the bot server for a ticket (wss on a secure page), or null when the bot server's address was refused. */
+    screenSocketUrl(ticket: string): string | null {
+        const base = this.getBotServerUrl();
+        if (!base) return null;
+        return `${base.replace(/^http/, "ws").replace(/\/+$/, "")}/computer/screen?ticket=${encodeURIComponent(
+            ticket
+        )}`;
     }
 
     /**
@@ -1394,6 +1408,22 @@ export class BotApiService {
         })) as { id?: unknown; name?: unknown } | undefined;
         if (typeof answer?.id !== "string" || !answer.id) throw new Error("The key was not saved");
         return { id: answer.id, name: typeof answer.name === "string" ? answer.name : "" };
+    }
+
+    /** "Add your own app": connects an app by its link. No Brick uses it until the person lets one. Answers `{ id, name }`. */
+    async addMyApp(app: {
+        name: string;
+        serverUrl: string;
+        authType: "none" | "bearer" | "api-key" | "oauth";
+        authConfig?: string;
+        headers?: Record<string, string>;
+    }): Promise<unknown> {
+        return await this.appsCall("/api/me/apps", { method: "POST", body: JSON.stringify(app) });
+    }
+
+    /** What an app of the person's can do, listed from the app itself once it is connected: `{ things: string[] }`. */
+    async getMyAppThings(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/things`);
     }
 
     /** One of the person's apps: its Bricks, where it is lent, and the universes it could still be lent to. */
@@ -1587,6 +1617,77 @@ export class BotApiService {
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
     async undoMyBrick(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
+    }
+
+    /* ---- Brick templates (game #2008). Every call has a Brick's deadline, so no button waits for good. ---- */
+
+    /** "Start from a template": the person's starred ones, a few picks, and Bricks they met that share one. */
+    async getTemplateLists(): Promise<unknown> {
+        return await this.brickWrite("/api/brick-templates", {});
+    }
+
+    /** The look before creating a Brick from a template (`{ template }`). Rejects with status 404 when it is not there. */
+    async getTemplatePreview(templateId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}`, {});
+    }
+
+    /** "Create Brick": the person's own new Brick from a template. Answers with its card and where it came from. */
+    async useTemplate(templateId: string, name?: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}/use`, {
+            method: "POST",
+            body: JSON.stringify(name ? { name } : {}),
+        });
+    }
+
+    /** Star keeps a template for later; starring twice is the same star. */
+    async starTemplate(templateId: string, starred: boolean): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}/star`, {
+            method: starred ? "PUT" : "DELETE",
+        });
+    }
+
+    /** The template on the card of a Brick someone meets (`{ template }`, null when it shares none). */
+    async getTemplateOfBrick(botId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/for-brick/${encodeURIComponent(botId)}`, {});
+    }
+
+    /** A Brick's own "Template" group, for its owner. */
+    async getMakerTemplate(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, {});
+    }
+
+    /** The look before sharing: exactly what would go with the template. Writes nothing. */
+    async lookAtTemplate(brickId: string, choices: Record<string, unknown>): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template/look`, {
+            method: "POST",
+            body: JSON.stringify(choices),
+        });
+    }
+
+    /** "Share as a template" / "Share your latest changes": shares exactly the look the `token` names. */
+    async shareTemplate(brickId: string, request: Record<string, unknown>): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, {
+            method: "PUT",
+            body: JSON.stringify(request),
+        });
+    }
+
+    /** "Stop sharing": nobody new can use it; no Brick is touched. */
+    async stopSharingTemplate(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, { method: "DELETE" });
+    }
+
+    /** A Brick made from a template: where it came from, what it still needs, and a "Template updated" to review. */
+    async getMadeFrom(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/made-from`, {});
+    }
+
+    /** "Template updated": the owner takes some parts, all or none of what the maker changed. */
+    async takeTemplateUpdate(brickId: string, version: number, take: string[]): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/made-from/update`, {
+            method: "POST",
+            body: JSON.stringify({ version, take }),
+        });
     }
 
     /**
@@ -2365,6 +2466,10 @@ export class BotApiService {
         clientSecret?: string;
         scopesSupported?: string[];
         registrationStatus?: string;
+        /** The name the app's address gives it, and who runs its sign-in page, for "Add your own app" */
+        name?: string;
+        signsInWith?: string;
+        revocationUrl?: string | null;
     }> {
         if (!this.isInitialized()) throw new Error("BotApiService not initialized");
         const response = await this.fetch(

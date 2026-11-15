@@ -128,9 +128,9 @@ describe("AIService: PostHog and Sentry", () => {
 
             expect(chunks.some((chunk) => chunk.content === "Hello there.")).toBe(true);
             expect(hoisted.captureAiGeneration).toHaveBeenCalledTimes(1);
-            expect(hoisted.captureAiGeneration.mock.calls[0][0]).toMatchObject({ input: expect.stringContaining("my secret plan"), output: "Hello there.", playerId: "42", space: "space-1" });
+            expect(hoisted.captureAiGeneration.mock.calls[0][0]).toMatchObject({ playerId: "42", space: "space-1" });
             expect(hoisted.captureAiTrace).toHaveBeenCalledTimes(1);
-            expect(hoisted.captureAiTrace.mock.calls[0][0]).toMatchObject({ input: "my secret plan", output: "Hello there.", sessionId: "conversation-bot-1-player-42" });
+            expect(hoisted.captureAiTrace.mock.calls[0][0]).toMatchObject({ sessionId: "conversation-bot-1-player-42" });
             expect(hoisted.flushPostHog).toHaveBeenCalled();
             expect(hoisted.scope.setConversationId).toHaveBeenCalledWith("conversation-bot-1-player-42");
             expect(attributeNames()).toEqual(expect.arrayContaining(["bot.player_id", "bot.universe", "bot.world", "bot.room", "bot.provider", "bot.model", "bot.space"]));

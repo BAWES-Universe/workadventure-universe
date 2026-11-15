@@ -1,6 +1,14 @@
 import type { PostHog } from "posthog-js";
 import { POSTHOG_API_KEY, POSTHOG_URL } from "../Enum/EnvironmentVariable";
 import type { Emoji } from "../Stores/Utils/emojiSchema";
+import {
+    isEmailIdentity,
+    isSafeAnalyticsId,
+    keepPrivate,
+    maskedNetworkRequest,
+    maskedReplayAddress,
+    withoutQueryOrHash,
+} from "./AnalyticsPrivacy";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare let window: any;
 
@@ -17,7 +25,31 @@ class AnalyticsClient {
         const postHogApiKey = POSTHOG_API_KEY;
         if (postHogApiKey && POSTHOG_URL) {
             this.posthogPromise = import("posthog-js").then(({ default: posthog }) => {
-                posthog.init(postHogApiKey, { api_host: POSTHOG_URL });
+                posthog.init(postHogApiKey, {
+                    api_host: POSTHOG_URL,
+                    // Only people who were identified (by Orbit's id) get a profile.
+                    person_profiles: "identified_only",
+                    // Clicks carry no text: what people read or type is never in an event.
+                    mask_all_text: true,
+                    // The last check on every event before it leaves the browser (see keepPrivate).
+                    before_send: (event) => keepPrivate(event),
+                    // Console lines may hold anything: they are never recorded, whatever the project says.
+                    enable_recording_console_log: false,
+                    // A browser an earlier version identified by email starts again as an anonymous one: PostHog keeps
+                    // that id in the browser, and every event would carry it. This runs before PostHog's first request
+                    // (the feature flags one reads the saved id and skips before_send). Past events stay as they are.
+                    loaded: (loadedPosthog) => {
+                        if (isEmailIdentity(loadedPosthog.get_distinct_id())) loadedPosthog.reset();
+                    },
+                    session_recording: {
+                        // Replays show every input and every piece of text as asterisks, and no request bodies.
+                        maskAllInputs: true,
+                        maskTextSelector: "*",
+                        maskCapturedNetworkRequestFn: (request) => maskedNetworkRequest(request),
+                        // The page address in a replay (it carries chat room ids in its hash)
+                        maskNetworkRequestFn: (request) => maskedReplayAddress(request),
+                    },
+                });
                 //the posthog toolbar need a reference in window to be able to work
                 window.posthog = posthog;
                 return posthog;
@@ -25,10 +57,26 @@ class AnalyticsClient {
         }
     }
 
-    identifyUser(uuid: string, email: string | null): void {
+    /**
+     * Tells PostHog who this is: Orbit's id for the person (their page in Orbit is /admin/users/<id>), and nothing
+     * else about them. Never the email, which is also the game's `uuid` for somebody who signed in. Without an id
+     * the person stays anonymous.
+     */
+    identifyUser(orbitUserId: string | null | undefined): void {
+        if (!isSafeAnalyticsId(orbitUserId)) {
+            // No id from Orbit now: whoever this browser was identified as before is not this person
+            this.posthogPromise
+                ?.then((posthog) => {
+                    if (posthog.get_property("$user_state") === "identified") posthog.reset();
+                })
+                .catch((e) => console.error(e));
+            return;
+        }
         this.posthogPromise
             ?.then((posthog) => {
-                posthog.identify(uuid, { uuid, email, wa: true });
+                // The same person on the same browser is already known by this id.
+                if (posthog.get_distinct_id() === orbitUserId) return;
+                posthog.identify(orbitUserId, { wa: true });
             })
             .catch((e) => console.error(e));
     }
@@ -317,10 +365,22 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
+    /**
+     * The next person on this browser starts anonymous: not linked to the one who was here. Called when somebody signs
+     * out and when the game starts a new guest (a refused token, a first visit).
+     */
+    forgetPerson(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.reset();
+            })
+            .catch((e) => console.error(e));
+    }
+
     openedWebsite(url: URL): void {
         this.posthogPromise
             ?.then((posthog) => {
-                posthog.capture("wa_opened_website", { url: url.toString() });
+                posthog.capture("wa_opened_website", { url: withoutQueryOrHash(url.toString()) });
             })
             .catch((e) => console.error(e));
     }
@@ -511,10 +571,11 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    addNewParticipant(peerId: string, userId: string, uuid: string): void {
+    addNewParticipant(): void {
         this.posthogPromise
             ?.then((posthog) => {
-                posthog.capture("wa_spontaneous_discussion", { peerId, userId, uuid });
+                // Nothing about the other person: their uuid is their email once they have signed in.
+                posthog.capture("wa_spontaneous_discussion");
             })
             .catch((e) => console.error(e));
     }
