@@ -187,7 +187,7 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
 
     describe("what a row says", () => {
         it("says when it runs", () => {
-            const when = (cadence: unknown) => plain(sayWhen(item({ cadence }), NOW, ll(), "en-US"));
+            const when = (cadence: unknown) => plain(sayWhen(item({ cadence }), NOW, ll(), "en-US", "Asia/Kuwait"));
             expect(when({ type: "daily", time: "08:00", days: [0, 1, 2, 3, 4, 5, 6] })).toBe("Daily, 8:00 AM");
             expect(when({ type: "daily", time: "07:30", days: [0, 1, 2, 3, 4] })).toBe("Sun to Thu, 7:30 AM");
             expect(when({ type: "daily", time: "17:00", days: [1, 3] })).toBe("Mon, Wed, 5:00 PM");
@@ -199,6 +199,21 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             expect(when({ type: "once", at: new Date(2026, 10, 20, 8, 0).toISOString() })).toMatch(
                 /^Fri 20 Nov, 8:00 AM$/
             );
+        });
+
+        it("names the clock of a daily time when it is not the viewer's own", () => {
+            const daily = item({
+                cadence: { type: "daily", time: "08:00", days: [0, 1, 2, 3, 4, 5, 6] },
+                timeZone: "Asia/Kuwait",
+            });
+            const say = (viewer: string) => plain(sayWhen(daily, NOW, ll(), "en-US", viewer));
+            expect(say("Asia/Kuwait")).toBe("Daily, 8:00 AM");
+            expect(say("Europe/London")).toBe("Daily, 8:00 AM Kuwait");
+            const utc = item({ cadence: { type: "daily", time: "08:00", days: [1, 2, 3] }, timeZone: "Etc/UTC" });
+            expect(plain(sayWhen(utc, NOW, ll(), "en-US", "UTC"))).toBe("Mon to Wed, 8:00 AM");
+            expect(plain(sayWhen(utc, NOW, ll(), "en-US", "America/New_York"))).toBe("Mon to Wed, 8:00 AM UTC");
+            const unknown = item({ cadence: { type: "daily", time: "08:00", days: [1] }, timeZone: "Mars/Base" });
+            expect(plain(sayWhen(unknown, NOW, ll(), "en-US", "Asia/Kuwait"))).toBe("Mon, 8:00 AM");
         });
 
         it("says how a goal stands in one line", () => {
@@ -218,7 +233,7 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
         it("says when a done one was done, and its result", () => {
             expect(
                 sayDone(
-                    item({ state: "done", doneAt: "2026-11-10T12:00:00.000Z", result: "visa saved" }),
+                    item({ state: "done", doneAt: new Date(2026, 10, 10, 12, 0).toISOString(), result: "visa saved" }),
                     ll(),
                     "en-US"
                 )

@@ -31,7 +31,7 @@ const row = (over: Record<string, unknown> = {}) => ({
     condition: null,
     outcome: null,
     cadence: { type: "once", at: "2099-11-15T13:00:00.000Z" },
-    timeZone: "Asia/Kuwait",
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     nextDueAt: "2099-11-15T13:00:00.000Z",
     waitingFor: null,
     statusLine: null,
@@ -125,7 +125,13 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
 
     it("shows a goal with its steps and one status line, and keeps the three parts in the mock's order", async () => {
         await show([
-            row({ id: "c", state: "done", doneAt: "2026-11-10T12:00:00.000Z", result: "visa saved", kind: "goal" }),
+            row({
+                id: "c",
+                state: "done",
+                doneAt: new Date(2026, 10, 10, 12, 0).toISOString(),
+                result: "visa saved",
+                kind: "goal",
+            }),
             row({ id: "r", words: "Pick up the car" }),
             goal(),
             row({
@@ -168,7 +174,9 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
         game.getBrickItems.mockResolvedValue({ items: [goal()] });
         await press("goalResume");
         expect(game.tapBrickItem).toHaveBeenLastCalledWith(BOT, "g1", "resume");
-        game.getBrickItems.mockResolvedValue({ items: [goal({ state: "done", doneAt: "2026-11-12T10:00:00.000Z" })] });
+        game.getBrickItems.mockResolvedValue({
+            items: [goal({ state: "done", doneAt: new Date(2026, 10, 12, 10, 0).toISOString() })],
+        });
         await press("goalDone");
         expect(game.tapBrickItem).toHaveBeenLastCalledWith(BOT, "g1", "done");
         expect(byId("goalCard")).toBeNull();
@@ -176,7 +184,9 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
     });
 
     it("reopens a done one", async () => {
-        await show([goal({ state: "done", doneAt: "2026-11-12T10:00:00.000Z", result: "visa saved" })]);
+        await show([
+            goal({ state: "done", doneAt: new Date(2026, 10, 12, 10, 0).toISOString(), result: "visa saved" }),
+        ]);
         expect(text(byId("goalDoneRow"))).toBe("Visa in hand before 12 DecDone 12 Nov · visa saved Reopen");
         game.getBrickItems.mockResolvedValue({ items: [goal()] });
         await press("goalReopen");
@@ -229,7 +239,9 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
     it("tells the person when Orbit refuses a tap, and shows the list as it really stands", async () => {
         await show([goal()]);
         game.tapBrickItem.mockRejectedValueOnce(new Error("wrong_state"));
-        game.getBrickItems.mockResolvedValue({ items: [goal({ state: "done", doneAt: "2026-11-12T10:00:00.000Z" })] });
+        game.getBrickItems.mockResolvedValue({
+            items: [goal({ state: "done", doneAt: new Date(2026, 10, 12, 10, 0).toISOString() })],
+        });
         await press("goalPause");
         expect(game.warn).toHaveBeenCalledWith("Couldn't do that. Try again.");
         expect(byId("goalCard")).toBeNull();
@@ -280,7 +292,7 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
                 kind: "goal",
                 words: `Goal ${n}`,
                 state: "done",
-                doneAt: `2026-11-0${n}T10:00:00.000Z`,
+                doneAt: new Date(2026, 10, n, 10, 0).toISOString(),
             });
         await show([1, 2, 3, 4, 5, 6, 7].map(done));
         expect(all("goalDoneRow")).toHaveLength(5);

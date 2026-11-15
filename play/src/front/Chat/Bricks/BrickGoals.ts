@@ -47,6 +47,8 @@ export interface GoalItem {
     heldSince: number | null;
     /** The one question this goal has open for its person. */
     asking: GoalAsk | null;
+    /** The clock a daily time is read on (the zone it was set in), when Orbit says one the runtime knows. */
+    timeZone: string | null;
     /** For a check a goal set for itself: the goal it belongs to. It sits under Scheduled, "by" the Brick. */
     goalId: string | null;
 }
@@ -57,6 +59,27 @@ const time = (value: unknown): number | null => {
     return Number.isFinite(at) ? at : null;
 };
 const line = (value: unknown): string | null => (typeof value === "string" && value.trim() !== "" ? value : null);
+
+function knownZone(value: unknown): string | null {
+    if (typeof value !== "string" || value === "") return null;
+    try {
+        new Intl.DateTimeFormat("en-US", { timeZone: value });
+        return value;
+    } catch {
+        return null;
+    }
+}
+
+/** "UTC" and "Etc/UTC" are one clock. */
+const sameClock = (a: string, b: string) => a.replace(/^Etc\//, "") === b.replace(/^Etc\//, "");
+
+/** A zone by the name a person says: "Asia/Kuwait" is "Kuwait". */
+const zoneName = (zone: string) =>
+    zone
+        .replace(/^Etc\//, "")
+        .split("/")
+        .pop()
+        ?.replace(/_/g, " ") ?? zone;
 
 function parseCadence(value: unknown): ItemCadence {
     const one = (value ?? {}) as Record<string, unknown>;
@@ -114,6 +137,7 @@ function readItem(one: unknown, goalId: string | null): GoalItem | null {
         doneAt: time(row.doneAt),
         heldSince: time(row.heldSince),
         asking: row.asking === "unsure" || row.asking === "date_passed" ? row.asking : null,
+        timeZone: knownZone(row.timeZone),
         goalId,
     };
 }
@@ -214,19 +238,34 @@ export function sayNext(ms: number | null, now: number, ll: TranslationFunctions
 }
 
 /** How often and when it runs, in a few words: "Daily, 8:00 AM", "Sun to Thu, 7:30 AM", "Sun 15 Nov, 4:00 PM", "Every 6 hours". */
-export function sayWhen(item: GoalItem, now: number, ll: TranslationFunctions, locale?: string): string {
-    const when = whenWords(item, now, ll, locale);
+export function sayWhen(
+    item: GoalItem,
+    now: number,
+    ll: TranslationFunctions,
+    locale?: string,
+    viewerZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone
+): string {
+    const when = whenWords(item, now, ll, locale, viewerZone);
     return when ? when[0].toUpperCase() + when.slice(1) : "";
 }
 
-function whenWords(item: GoalItem, now: number, ll: TranslationFunctions, locale?: string): string {
+function whenWords(
+    item: GoalItem,
+    now: number,
+    ll: TranslationFunctions,
+    locale: string | undefined,
+    viewerZone: string
+): string {
     const c = item.cadence;
     switch (c.type) {
         case "once":
             return `${sayDay(c.at, now, ll, locale)}, ${at(c.at, locale)}`;
         case "daily": {
             const [h, m] = c.time.split(":").map(Number);
-            return `${sayDays(c.days, ll, locale)}, ${clock(h, m, locale)}`;
+            // A daily time is read on the clock it was set in: when that is not the viewer's, the label names it
+            const zone =
+                item.timeZone !== null && !sameClock(item.timeZone, viewerZone) ? ` ${zoneName(item.timeZone)}` : "";
+            return `${sayDays(c.days, ll, locale)}, ${clock(h, m, locale)}${zone}`;
         }
         case "every":
             return c.minutes % 60 === 0
