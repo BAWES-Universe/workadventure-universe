@@ -74,6 +74,8 @@ export class Space implements SpaceInterface {
     private readonly privateEventsObservables: PrivateEventsObservables = {};
     private _onLeaveSpace = new Subject<void>();
     public readonly onLeaveSpace = this._onLeaveSpace.asObservable();
+    private _reconnected = new Subject<void>();
+    public readonly reconnected = this._reconnected.asObservable();
     private _peerManager: SpacePeerManager;
     public allVideoStreamStore: MapStore<string, VideoBox> = new MapStore<string, VideoBox>();
     public allScreenShareStreamStore: MapStore<string, VideoBox> = new MapStore<string, VideoBox>();
@@ -743,6 +745,8 @@ export class Space implements SpaceInterface {
     private extendSpaceUser(user: SpaceUser): SpaceUserExtended {
         const extendedUser = {
             ...user,
+            // Always present, so the people list hears when it changes (a flag that is not there has no store to update)
+            onACall: user.onACall === true,
             pictureStore: readable<string | undefined>(undefined, (set) => {
                 CharacterLayerManager.wokaBase64(user.characterTextures)
                     .then((wokaBase64) => {
@@ -1132,6 +1136,8 @@ export class Space implements SpaceInterface {
             }
 
             console.log("Reconnected to space ", this.name);
+            // The server has a fresh copy of our user: whoever sets flags of their own on it must say them again.
+            this._reconnected.next();
         })().catch((e) => {
             if (e instanceof AbortError && !(e instanceof TimeoutError)) {
                 // Retry was aborted, do nothing

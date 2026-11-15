@@ -71,6 +71,8 @@ export abstract class Character extends Container implements OutlineableInterfac
     /** Centre of the raised hand badge, relative to the player, in game pixels. */
     private raisedHandBadgeY = playerNameY;
     public readonly playerName: string;
+    /** The small line under the name, when there is one (a Brick that walks beside someone: "Visiting with Khalid"). */
+    private caption: string | undefined;
     public sprites: Map<string, Sprite>;
     protected _lastDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
     //private teleportation: Sprite;
@@ -204,6 +206,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             this.usernameDisplay.setPlayerDepth(this.depth);
             this.usernameDisplay.setHighlighted(this.pointedByPointer || this.pointedByCharacter);
             this.usernameDisplay.setCustomColor(get(this.outlineColorStore));
+            this.usernameDisplay.setCaption(this.caption);
             this.usernameDisplay.setTalking(this.talking, true);
             this.placeAboveName();
 
@@ -516,6 +519,14 @@ export abstract class Character extends Container implements OutlineableInterfac
             this.sayStackElement.destroy();
             this.sayStackElement = undefined;
         }
+    }
+
+    /** Says a little more under the name, or nothing. */
+    public setCaption(caption: string | undefined): void {
+        if (this.caption === caption) return;
+        this.caption = caption;
+        this.usernameDisplay?.setCaption(caption);
+        this.scene.markDirty();
     }
 
     destroy(): void {

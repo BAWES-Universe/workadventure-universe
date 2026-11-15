@@ -99,9 +99,17 @@ const WORLD_SPACE = 'allWorldUser';
 /** What the pusher starts the space user id of a call-only connection with (it has no room number). */
 const CALL_ONLY_SPACE_USER_PREFIX = 'call_';
 
+/** A view wide enough for any map: the whole room. */
+const WHOLE_ROOM_RADIUS = 100_000;
+
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
+    /**
+     * The same, by room: user ids are only unique within a room, so "is this user a bot" about someone in a given room is
+     * answered from the bots that joined that room, never from the numbers of every room together.
+     */
+    private static botUserIdsByRoom: Map<string, Set<number>> = new Map();
     /** Max URLs extracted from a single chat message (bounds downstream classification/sniffing). */
     private static readonly MAX_CHAT_URLS = 10;
     
@@ -257,6 +265,13 @@ export class BotClient {
         return Array.from(BotClient.botUserIds);
     }
 
+    /** The tag that names the person a visiting Brick walks with, for the game's caption under its name (#2005). */
+    private visitingTag(): string[] {
+        const visiting = this.fullConfig?.brick?.visiting;
+        const name = visiting?.ownerName?.replace(/\s+/g, ' ').trim().slice(0, 40);
+        return name ? [`visiting:${name}`] : [];
+    }
+
     /**
      * Generate a JWT token for this bot
      */
@@ -269,7 +284,8 @@ export class BotClient {
             identifier: botIdentifier,
             username: this.config.name,
             // A voice bot is the only kind of bot the game opens an audio connection with
-            tags: this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot'],
+            // `visiting:<name>` makes the map say who a visiting Brick walks with (#2005)
+            tags: [...(this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot']), ...this.visitingTag()],
         };
         
         return jwt.sign(tokenData, SECRET_KEY, { expiresIn: '30d' });
@@ -387,6 +403,9 @@ export class BotClient {
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
+            const here = BotClient.botUserIdsByRoom.get(this.config.roomUrl);
+            here?.delete(this.userId);
+            if (here?.size === 0) BotClient.botUserIdsByRoom.delete(this.config.roomUrl);
         }
         
         if (this.ws) {
@@ -477,6 +496,8 @@ export class BotClient {
         person: Parameters<BotAccessGate['check']>[2]
     ): Promise<BotAccessVerdict> {
         try {
+            // A Brick that walks beside its owner (#2005) is asked about from the room it is in
+            if (this.fullConfig?.brick?.visiting) return await gate.check(this.config.botId, 'chat', person, this.config.name, this.config.roomUrl);
             return await gate.check(this.config.botId, 'chat', person, this.config.name);
         } catch (error) {
             // The gate does not throw; if that ever changes, a failed check must not let a chat through
@@ -2710,7 +2731,8 @@ export class BotClient {
         // Anybody in the room, whether or not they have come close enough to the bot to be in one of its spaces.
         const seenInRoom = [...this.players.values()].find((candidate) => candidate.uuid === uuid);
         const userId = seenInRoom?.userId ?? this.behavior?.getUserIdForUuid(uuid);
-        if (userId === undefined || BotClient.isBot(userId)) {
+        // A bot of this room only: the same number in another room is someone else (the numbers are per room)
+        if (userId === undefined || BotClient.botUserIdsByRoom.get(this.config.roomUrl)?.has(userId) === true) {
             return undefined;
         }
         const player = this.players.get(userId);
@@ -3468,6 +3490,7 @@ export class BotClient {
                 this.userId = message.roomJoinedMessage.currentUserId;
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
+                BotClient.botUserIdsByRoom.set(this.config.roomUrl, (BotClient.botUserIdsByRoom.get(this.config.roomUrl) ?? new Set()).add(this.userId));
                 this.markJoined();
                 this.startVoice();
                 for (const variable of message.roomJoinedMessage.areaPropertyVariable ?? []) {
@@ -4297,12 +4320,21 @@ export class BotClient {
         }
     }
 
-    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
+    /**
+     * Asks to be told about everyone in the room, wherever they stand, until the next move narrows the view again. A
+     * visiting Brick does it before it decides its person has left: a person can go further than the usual view in one
+     * hop on a large map, and is still in the room.
+     */
+    public lookAcrossTheRoom(): void {
+        const state = this.getState();
+        this.sendPosition(state.getPosition(), state.getDirection(), false, WHOLE_ROOM_RADIUS);
+    }
+
+    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean, viewportRadius = 2000): void {
         // Safety checks for undefined values
         const x = position?.x ?? 0;
         const y = position?.y ?? 0;
         // Update viewport to be centered on current position with large radius
-        const viewportRadius = 2000;
         const top = Math.max(0, y - viewportRadius);
         const bottom = y + viewportRadius;
         const left = Math.max(0, x - viewportRadius);

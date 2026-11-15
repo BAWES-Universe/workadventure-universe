@@ -285,4 +285,20 @@ describe('artifact tools in AIService', () => {
         expect(memory.turnMedia).toHaveLength(1);
         expect(older).toHaveLength(1);
     });
+
+    it("a reply for someone but the Brick's owner never runs an artifact tool, even one the model was not offered (CodeRabbit on #2023)", async () => {
+        const orbit = admin({ readArtifact: vi.fn() });
+        const calls = [make, { id: 't2', name: 'read_artifact', arguments: JSON.stringify({ id: 'x' }) }, { id: 't3', name: 'list_artifacts', arguments: '{}' }];
+        const results = await service({ userUuid: 'uuid-9', dmRoomId: '!dm:matrix.test', pendingArtifacts: [] })['executeToolCalls'](
+            calls, botClient() as never, orbit as never, undefined, 'uuid-9', 'bubble-1', 'bot1', 7, undefined, undefined, false, undefined, undefined, undefined, false, true
+        );
+        expect(results.map((r: { result: unknown }) => r.result)).toEqual([
+            { error: 'Unknown tool: make_artifact' },
+            { error: 'Unknown tool: read_artifact' },
+            { error: 'Unknown tool: list_artifacts' },
+        ]);
+        expect(orbit.makeArtifact).not.toHaveBeenCalled();
+        expect(orbit.readArtifact).not.toHaveBeenCalled();
+        expect(orbit.listArtifactsInChat).not.toHaveBeenCalled();
+    });
 });

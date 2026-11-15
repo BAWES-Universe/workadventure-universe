@@ -7,3 +7,4 @@ export { IdleBehavior, type IdleBehaviorConfig } from './IdleBehavior';
 export { SocialBehavior, type SocialBehaviorConfig } from './SocialBehavior';
 export { PatrolBehavior, type PatrolBehaviorConfig } from './PatrolBehavior';
 
+export { VisitingBrickBehavior, type VisitingBrickConfig } from './VisitingBrickBehavior';

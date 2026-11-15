@@ -27,6 +27,8 @@ export type ChatUser = {
     chatId: string;
     uuid?: string;
     availabilityStatus: Readable<AvailabilityStatus>;
+    /** On a call with a Brick right now (game #2004): a label next to the status, never a status. */
+    onACall?: Readable<boolean | undefined>;
     username: string | undefined;
     pictureStore: PictureStore | undefined;
     /** Their saved Woka, drawn only when shown: what a person who is away looks like, until they have a live one. */
@@ -50,6 +52,8 @@ export type AdminUser = {
     chatId?: string;
     uuid: string;
     availabilityStatus: Readable<AvailabilityStatus>;
+    /** On a call with a Brick right now (game #2004): a label next to the status, never a status. */
+    onACall?: Readable<boolean | undefined>;
     username: string | undefined;
     pictureStore: PictureStore | undefined;
     /** Their saved Woka, drawn only when shown: what a person who is away looks like, until they have a live one. */
