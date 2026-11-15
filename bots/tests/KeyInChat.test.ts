@@ -17,7 +17,7 @@ describe('holdsAKey', () => {
 
     it.each([
         'hello',
-        'sk_live_ is how Tap keys start',
+        'sk_live_ is how Example keys start',
         'what is a key?',
         'the sk-ill is good',
         'bearer of bad news',

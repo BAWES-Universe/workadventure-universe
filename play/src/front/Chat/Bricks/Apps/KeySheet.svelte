@@ -154,6 +154,15 @@
             {/if}
         </form>
         {#if form.check}<p class="ks-note">{text.keyChecked({ check: form.check })}</p>{/if}
+        {#if form.payments}
+            <p class="ks-note" data-testid="keySheetPayments">
+                {text.keyPayments({
+                    hosts: form.payments.checkoutHosts.join(", "),
+                    paid: form.payments.paidWhen.join(", "),
+                })}
+                {#if form.payments.testAndLive}{text.keyPaymentsModes()}{/if}
+            </p>
+        {/if}
         {#if confirming}
             <p class="ks-warn" data-testid="keySheetModeChange">{text.keyModeChange({ from: modeFrom, to: modeTo })}</p>
         {/if}

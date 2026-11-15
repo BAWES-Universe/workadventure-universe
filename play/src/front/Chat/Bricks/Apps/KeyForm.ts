@@ -4,7 +4,7 @@ import { openKeyFormSheet } from "./KeyFormLink";
 
 /**
  * The safe form for a key (Keys for Apps, game #2044). A Brick never takes a key in chat: it opens a link in its words,
- * `[Add your Tap key](#key-form=<id>)`, and this form is where the key is typed. The key goes to Orbit and nowhere else:
+ * `[Add your <service> key](#key-form=<id>)`, and this form is where the key is typed. The key goes to Orbit and nowhere else:
  * not into the chat, not into the Brick, not into memory, and it is never read back.
  */
 
@@ -23,6 +23,8 @@ export interface KeyFormView {
     source: string | null;
     differentSite: boolean;
     check: string | null;
+    /** Set when pages of this person can take payments through the service: where buyers pay, and the answers that count as paid */
+    payments: { checkoutHosts: string[]; paidWhen: string[]; testAndLive: boolean } | null;
     replacing: { keyLast4: string | null; mode: "test" | "live" | null } | null;
     triesLeft: number;
 }
@@ -32,6 +34,11 @@ const text = (value: unknown): string | null => (typeof value === "string" && va
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+const textList = (value: unknown): string[] =>
+    Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === "string" && item !== "").slice(0, 10)
+        : [];
 
 /** The form out of Orbit's answer, or nothing when it is not one. A link to a help page must be a plain https address. */
 export function parseKeyForm(value: unknown): KeyFormView | undefined {
@@ -56,6 +63,14 @@ export function parseKeyForm(value: unknown): KeyFormView | undefined {
         source: text(form.source),
         differentSite: form.differentSite === true,
         check: text(form.check),
+        payments:
+            isRecord(form.payments) && textList(form.payments.checkoutHosts).length > 0
+                ? {
+                      checkoutHosts: textList(form.payments.checkoutHosts),
+                      paidWhen: textList(form.payments.paidWhen),
+                      testAndLive: form.payments.testAndLive === true,
+                  }
+                : null,
         replacing: replacing
             ? {
                   keyLast4: text(replacing.keyLast4),

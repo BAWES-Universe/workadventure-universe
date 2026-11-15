@@ -19,7 +19,7 @@ const otherWindow = { postMessage: vi.fn() } as unknown as Window;
 function ask(
     payments: ReturnType<typeof pagePayments>,
     source: Window = frameWindow,
-    data: unknown = { universe: "use-app", app: "tap" }
+    data: unknown = { universe: "use-app", app: "examplepay" }
 ) {
     payments.onMessage({ source, data } as unknown as MessageEvent);
 }
@@ -50,10 +50,10 @@ describe("a page that takes payments, in the game's window", () => {
         });
 
     it("opens only plain https checkouts", () => {
-        expect(safeCheckout("https://checkout.tap.company/x?y=1")).toBe("https://checkout.tap.company/x?y=1");
-        expect(safeCheckout("http://checkout.tap.company/x")).toBeUndefined();
+        expect(safeCheckout("https://checkout.examplepay.com/x?y=1")).toBe("https://checkout.examplepay.com/x?y=1");
+        expect(safeCheckout("http://checkout.examplepay.com/x")).toBeUndefined();
         expect(safeCheckout("javascript:alert(1)")).toBeUndefined();
-        expect(safeCheckout("https://user:pw@checkout.tap.company/x")).toBeUndefined();
+        expect(safeCheckout("https://user:pw@checkout.examplepay.com/x")).toBeUndefined();
         expect(safeCheckout("not a url")).toBeUndefined();
         expect(safeCheckout(null)).toBeUndefined();
     });
@@ -62,7 +62,7 @@ describe("a page that takes payments, in the game's window", () => {
         const pay = vi.fn(() => Promise.resolve({} as ArtifactPay));
         const payments = make(pay);
         ask(payments, otherWindow);
-        ask(payments, frameWindow, { universe: "other", app: "tap" });
+        ask(payments, frameWindow, { universe: "other", app: "examplepay" });
         ask(payments, frameWindow, { universe: "use-app" });
         ask(payments, frameWindow, null);
         await flush();
@@ -73,15 +73,15 @@ describe("a page that takes payments, in the game's window", () => {
         const popup = { location: { href: "" }, close: vi.fn(), opener: {} } as unknown as Window;
         const pay = vi
             .fn()
-            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" })
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
             .mockResolvedValueOnce({ status: "checking", checkoutUrl: null, testPayment: false })
             .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: true });
         const payments = make(pay, () => popup);
-        ask(payments, frameWindow, { universe: "use-app", app: "tap", amount: "1.000", job: "x" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", amount: "1.000", job: "x" });
         await flush();
         // The message carried no amount and none is sent
         expect(pay).toHaveBeenNthCalledWith(1, "a1", undefined, { start: true });
-        expect(popup.location.href).toBe("https://checkout.tap.company/c1");
+        expect(popup.location.href).toBe("https://checkout.examplepay.com/c1");
         expect(popup.opener).toBeNull();
         expect(get(payments.line)).toMatchObject({ checking: true, resume: null });
         await vi.advanceTimersByTimeAsync(3_000);
@@ -97,13 +97,15 @@ describe("a page that takes payments, in the game's window", () => {
     });
 
     it("goes on in a new tab with the same checkout when the pop-up was blocked", async () => {
-        const pay = vi
-            .fn()
-            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" });
+        const pay = vi.fn().mockResolvedValueOnce({
+            orderId: "o1",
+            checkoutUrl: "https://checkout.examplepay.com/c1",
+            app: "Example",
+        });
         const payments = make(pay, () => null);
         ask(payments);
         await flush();
-        expect(get(payments.line).resume).toEqual({ url: "https://checkout.tap.company/c1", app: "Tap" });
+        expect(get(payments.line).resume).toEqual({ url: "https://checkout.examplepay.com/c1", app: "Example" });
         payments.destroy();
     });
 
@@ -126,7 +128,7 @@ describe("a page that takes payments, in the game's window", () => {
         expect(get(limited.line).problem).toBe("limit");
 
         const unsafe = make(
-            vi.fn().mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "http://x.example/c", app: "Tap" })
+            vi.fn().mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "http://x.example/c", app: "Example" })
         );
         ask(unsafe);
         await flush();
@@ -136,7 +138,7 @@ describe("a page that takes payments, in the game's window", () => {
     it("takes one payment at a time, and ends on a payment that did not go through", async () => {
         const pay = vi
             .fn()
-            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" })
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
             .mockResolvedValueOnce({ status: "not_paid", checkoutUrl: null, testPayment: false });
         const payments = make(pay, () => null);
         ask(payments);
@@ -155,7 +157,7 @@ describe("a page that takes payments, in the game's window", () => {
     it("says it could not confirm the payment when it is still not known after twenty minutes", async () => {
         const pay = vi
             .fn()
-            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" })
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
             .mockResolvedValue({ status: "checking" });
         const payments = make(pay, () => null);
         ask(payments);
@@ -168,7 +170,7 @@ describe("a page that takes payments, in the game's window", () => {
     it("stops asking when the window is closed", async () => {
         const pay = vi
             .fn()
-            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" })
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
             .mockResolvedValue({ status: "checking" });
         const payments = make(pay, () => null);
         ask(payments);

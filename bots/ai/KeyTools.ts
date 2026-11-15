@@ -1,7 +1,7 @@
 /**
  * Keys for Apps from a chat (game #2044): the two tools a person's own Brick has for Apps that use a key.
  *
- * `ask_for_key` leads the owner to the safe form: the Brick names a service Universe ships (Tap) or drafts one from the service's own
+ * `ask_for_key` leads the owner to the safe form: the Brick names a service from its note, or drafts one from the service's own
  * docs, Orbit opens the form for the owner alone, and the Brick gives them a link that opens it in the game. The key is typed into
  * that form and goes straight to Orbit: never into the chat, never through this server, never to the model.
  *
@@ -28,7 +28,7 @@ export function keyToolDefinitions(): ToolDefinition[] {
                 name: ASK_FOR_KEY_TOOL,
                 description:
                     'Lead the person to add a key for a service, on a safe form that opens in the game. Use it when they ask you to connect or use a service that works with a key ' +
-                    '(Tap payments, or any service with an API key), or when a job needs one they have not added. For a service in your "Apps with a key" note, give its service key. For any other service, ' +
+                    '(a payment gateway, a mail or data service, any service with an API key), or when a job needs one they have not added. For a service in your "Apps with a key" note, give its service key. For any other service, ' +
                     'read the service\'s own documentation first (read_web_page), then give a draft of how it works as data: its one https address, where the key goes, and the few operations you need. ' +
                     'The person sees where their key will be sent and confirms it themselves. NEVER ask them to type or paste a key into the chat, and never repeat one if they do: tell them to use the form. ' +
                     'After calling it, say in one short sentence that the form is ready, and give them the link exactly as the result says.',
@@ -41,7 +41,11 @@ export function keyToolDefinitions(): ToolDefinition[] {
                             description:
                                 'For a service not on the list: { version: 1, name, short, origin ("https://api.example.com", no path), placement: { in: "header", name: "Authorization", scheme: "Bearer" | "Basic" | "none" } or { in: "query", name }, ' +
                                 'operations: [{ id, label, method, path ("/v1/things/{id}"), params: [{ name, type: "string"|"number"|"boolean", in: "path"|"query"|"body", required?, maxLength?, description? }], body? (a JSON template, values { "$param": name }), ' +
-                                'returns: [dotted paths of the fields you need], category: "lookUp"|"make"|"change"|"deleteSend" }], check: { operation: id of one GET look-up, arguments } }. Only what the docs say.',
+                                'returns: [dotted paths of the fields you need], category: "lookUp"|"make"|"change"|"deleteSend" }], check: { operation: id of one GET look-up, arguments }, ' +
+                                'keyHint? (what the key looks like), helpUrl? (https page where the person finds their key), modes? { test: "key prefix", live: "key prefix" } when the service has test and real keys, ' +
+                                'payment? only for a payment gateway that gives a hosted checkout page: { create: { operation: id of the POST that makes a checkout, amount, currency, orderRef, idempotentKey, returnUrl, notifyUrl, customerName? (each the NAME of a parameter of that operation), idPath, checkoutUrlPath (dotted paths in its answer) }, ' +
+                                'checkoutHosts: [the public host names the buyer is sent to], lookup: { operation: id of the GET that reads one payment, idParam, statusPath, successStates: [only the states that mean completed and paid], pendingStates, failedStates, amountPath, currencyPath, orderPath, livePath? (boolean: real or test; required with modes) } }. ' +
+                                'Only what the docs say: never guess a state, a path or a host. If the docs do not make something clear, leave it out and tell the person to check the service\'s documentation or ask its support.',
                         },
                         source: { type: 'string', description: 'With a draft: the address of the documentation you read it from (https).' },
                     },

@@ -4,7 +4,7 @@ import type { Readable } from "svelte/store";
 /**
  * The link and the sheet's open state of the safe form for a key (Keys for Apps, game #2044), kept apart from the form's reading so
  * the chat's link handling stays light. A Brick never takes a key in chat: it opens a link in its words,
- * `[Add your Tap key](#key-form=<id>)`, and the form is where the key is typed.
+ * `[Add your Example key](#key-form=<id>)`, and the form is where the key is typed.
  */
 
 /** The link a Brick's words carry to the form: "#key-form=<id>". Followed here instead of leaving the game. */

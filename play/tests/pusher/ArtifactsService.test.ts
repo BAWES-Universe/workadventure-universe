@@ -52,8 +52,8 @@ describe("ArtifactsService", () => {
     it("asks for a page's checkout and an order's state as the viewer, and keeps only what the window may know (game #2044)", async () => {
         const answer = {
             orderId: "o1",
-            checkoutUrl: "https://checkout.tap.company/c1",
-            app: "Tap",
+            checkoutUrl: "https://checkout.examplepay.com/c1",
+            app: "Example",
             amount: "1.000",
             currency: "KWD",
             apiKey: "sk_live_never",
@@ -66,7 +66,7 @@ describe("ArtifactsService", () => {
             { viewer, start: true },
             { headers: { Authorization: "secret" } }
         );
-        expect(started).toEqual({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" });
+        expect(started).toEqual({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" });
         http.post.mockResolvedValueOnce({ data: { status: "paid", checkoutUrl: null, testPayment: true } } as never);
         expect(await service.pay(ID, { order: "o1" }, viewer)).toEqual({ status: "paid", checkoutUrl: null, testPayment: true });
         http.post.mockRejectedValueOnce(orbitError(429, { error: "limit" }));

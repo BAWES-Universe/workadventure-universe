@@ -10,27 +10,42 @@ import { isModeChange, keyProblemOf, parseKeyForm } from "../KeyForm";
 const form = {
     id: "f1",
     mode: "prefilled",
-    name: "Tap Payments",
-    short: "Tap",
-    keyLabel: "Tap key",
+    name: "Example Pay",
+    short: "Example",
+    keyLabel: "Example key",
     keyHint: "sk_test_…",
-    helpUrl: "https://developers.tap.company/keys",
-    host: "api.tap.company",
+    helpUrl: "https://docs.examplepay.com/keys",
+    host: "api.examplepay.com",
     hostReadable: null,
     source: null,
     differentSite: false,
     check: "Look up a charge",
+    payments: null,
     replacing: { keyLast4: "ab12", mode: "test" },
     triesLeft: 5,
 };
 
 describe("reading the safe form", () => {
     it("reads what Orbit shows, with or without its wrapper", () => {
-        expect(parseKeyForm({ form })?.short).toBe("Tap");
+        expect(parseKeyForm({ form })?.short).toBe("Example");
         const read = parseKeyForm(form);
-        expect(read?.host).toBe("api.tap.company");
+        expect(read?.host).toBe("api.examplepay.com");
         expect(read?.replacing).toEqual({ keyLast4: "ab12", mode: "test" });
         expect(read?.triesLeft).toBe(5);
+    });
+
+    it("reads where buyers pay and what counts as paid, and nothing when there is no payment", () => {
+        const payments = { checkoutHosts: ["examplepay.com"], paidWhen: ["CAPTURED"], testAndLive: true };
+        expect(parseKeyForm({ ...form, payments })?.payments).toEqual(payments);
+        expect(parseKeyForm({ ...form, payments: null })?.payments).toBeNull();
+        expect(parseKeyForm({ ...form, payments: { checkoutHosts: [], paidWhen: ["x"] } })?.payments).toBeNull();
+        expect(
+            parseKeyForm({ ...form, payments: { checkoutHosts: ["a.example", 3], paidWhen: [] } })?.payments
+        ).toEqual({
+            checkoutHosts: ["a.example"],
+            paidWhen: [],
+            testAndLive: false,
+        });
     });
 
     it("drops a help link that is not a plain https address", () => {

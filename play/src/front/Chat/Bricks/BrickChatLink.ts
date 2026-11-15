@@ -47,7 +47,7 @@ export function brickChatLinks(node: HTMLElement): { destroy: () => void } {
             return;
         }
         if (href?.startsWith(KEY_FORM_LINK)) {
-            // "[Add your Tap key](#key-form=<id>)": the safe form opens here. A broken one is never followed either.
+            // "[Add your Example key](#key-form=<id>)": the safe form opens here. A broken one is never followed either.
             event.preventDefault();
             const formId = keyFormLinkId(href);
             if (formId) openKeyFormSheet(formId);

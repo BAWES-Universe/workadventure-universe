@@ -1,5 +1,5 @@
 /**
- * Apps with a key (game #2044): an App the person connected by its service and a key (Tap, or any service they set up), used
+ * Apps with a key (game #2044): an App the person connected by its service and a key (a payment gateway, or any service they set up), used
  * by their own Brick. Orbit holds the key and does the request; this side only knows the operations, as tools, and carries
  * the model's choice of operation and arguments to Orbit. The model never sees an address, a header or the key.
  *

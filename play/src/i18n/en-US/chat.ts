@@ -1411,6 +1411,9 @@ const chat: BaseTranslation = {
             keyField: "Your {short:string} key",
             keyFind: "Where do I find it?",
             keyChecked: "Checked once with “{check:string}”. Nothing is sent or charged.",
+            keyPayments:
+                "Pages you make can take a payment through it: buyers are sent to {hosts:string} to pay, and a payment counts only when the service itself says {paid:string}.",
+            keyPaymentsModes: "A test key never counts as a real payment.",
             keyReplacing: "Replacing the key ending in {last4:string}.",
             keySave: "Save key",
             keyChecking: "Checking…",
