@@ -533,6 +533,15 @@ describe('setting a briefing, a watch or a goal', () => {
         expect(admin.setBrickItem).toHaveBeenCalledTimes(3);
     });
 
+    it('never takes two different asks for one because their words hold the same separator', async () => {
+        const { admin, context } = setUp();
+        const base = { repeat: 'every_hours', hours: 6 };
+        await runTaskTool(SET_WATCH_TOOL, { ...base, text: 'flight|price', speak_when: 'below 90' }, context);
+        await runTaskTool(SET_WATCH_TOOL, { ...base, text: 'flight', speak_when: 'price|below 90' }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(2);
+        expect(admin.setBrickItem.mock.calls[1][1]).toMatchObject({ words: 'flight', condition: 'price|below 90' });
+    });
+
     it('shows what a watch speaks for and what a goal is done when, and says "every 6 hours", in what it keeps', async () => {
         const { context } = setUp({
             items: [

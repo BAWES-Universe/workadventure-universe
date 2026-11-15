@@ -448,7 +448,7 @@ async function setReminder(args: Record<string, unknown>, settings: TaskSettings
     const minutes = repeatOf(args.repeat) === 'none' ? inMinutesOf(args) : null;
     const relative = minutes !== null ? `in ${minutes} min` : null;
     // The zone is part of what was asked when it is the one a daily time is read on
-    const key = `${context.botId}|${context.userId}|${words}|${relative ?? `${JSON.stringify(built.cadence)}|${timeZone}`}`;
+    const key = JSON.stringify(['reminder', context.botId, context.userId, words, relative ?? [built.cadence, timeZone]]);
     const before = justSet.get(key);
     const again = { note: 'Already set a moment ago, once. Do not set it again.' };
     if (before && now - before.at < JUST_SET_MS) return { ...before.result, ...again };
@@ -506,8 +506,9 @@ async function setTimed(kind: Timed, args: Record<string, unknown>, settings: Ta
     }
     const built = cadenceFrom(args, settings, timeZone, now);
     if ('problem' in built) return built.problem;
-    // Every few hours does not depend on their clock; a time of day does, so the zone is part of what was asked only then
-    const key = `${context.botId}|${context.userId}|${kind}|${words}|${condition}|${outcome}|${JSON.stringify(built.cadence)}|${repeat === 'every_hours' ? '' : timeZone}`;
+    // Every few hours does not depend on their clock; a time of day does, so the zone is part of what was asked only then. The key is a JSON
+    // array so words that hold the separator can never make two different asks one.
+    const key = JSON.stringify([kind, context.botId, context.userId, words, condition, outcome, built.cadence, repeat === 'every_hours' ? '' : timeZone]);
     const before = justSet.get(key);
     const again = { note: 'Already set a moment ago, once. Do not set it again.' };
     if (before && now - before.at < JUST_SET_MS) return { ...before.result, ...again };
