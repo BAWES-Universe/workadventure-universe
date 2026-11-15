@@ -70,12 +70,19 @@
     // GitHub's own page was opened to add a place: read again when the person comes back to this one
     let readOnReturn = false;
 
+    // Each reading of the page is numbered: only the latest one is shown, so a slow older answer (one started on coming back
+    // from GitHub, say) never lands over what a newer one already showed
+    let reading = 0;
+
     async function load() {
+        const mine = ++reading;
         try {
             const parsed = parseMyAppPage(await botApiService.getMyApp(appId));
+            if (mine !== reading) return;
             if (parsed) page = parsed;
             loadFailed = !parsed;
         } catch (error) {
+            if (mine !== reading) return;
             console.warn("Could not read the app", error);
             loadFailed = true;
         }

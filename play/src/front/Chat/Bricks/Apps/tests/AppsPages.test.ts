@@ -609,6 +609,30 @@ describe("the Apps pages (#2001)", () => {
             opened.mockRestore();
         });
 
+        it("never lets a slower reading from coming back to the page undo the key that was just saved", async () => {
+            const opened = vi.spyOn(window, "open").mockReturnValue(null);
+            await open();
+            await click("gitHubAddPlace");
+            let answerLate: (value: unknown) => void = () => undefined;
+            game.getMyApp.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerLate = resolve;
+                })
+            );
+            window.dispatchEvent(new Event("focus"));
+            await settle();
+            game.getMyApp.mockResolvedValue(github({ ownKey: true }));
+            await click("gitHubUseKey");
+            await type("ghp_abcdefghij1234");
+            await click("gitHubKeySave");
+            expect(words(byId("appPage"))).toContain("Your own key · @BAWES");
+            answerLate(github());
+            await settle();
+            expect(words(byId("appPage"))).toContain("Your own key · @BAWES");
+            expect(byId("gitHubKeyEverywhere")).not.toBeNull();
+            opened.mockRestore();
+        });
+
         it("shows the waiting sheet with the link to send, and goes on to the key from there", async () => {
             await open();
             await click("gitHubWaiting");
