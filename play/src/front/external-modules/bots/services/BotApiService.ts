@@ -1704,19 +1704,40 @@ export class BotApiService {
         if (!this.botServerUrl || !roomId) return undefined;
         const generation = this.visitRecheckGeneration;
         try {
-            const response = await this.fetchBotServer("/api/bricks/visit/sync", {
-                method: "POST",
-                body: JSON.stringify({
-                    roomId,
-                    ...(position ?? {}),
-                    ...(options?.ending
-                        ? { ending: true }
-                        : this.enteredRoomAt !== null
-                        ? { enteredAt: this.enteredRoomAt, clientId: this.pageLoadId }
-                        : {}),
-                }),
+            // With a deadline over the request and the body, like Orbit's visit calls: the Brick page's buttons wait for this,
+            // so a bot server that never answers must not leave them disabled
+            const stop = new AbortController();
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const late = new Promise<never>((_resolve, reject) => {
+                timer = setTimeout(() => {
+                    stop.abort();
+                    reject(new Error("The bot server did not answer in time"));
+                }, BRICK_WRITE_TIMEOUT_MS);
             });
-            const answer = (await response.json()) as { present?: unknown; reason?: unknown } | null;
+            let answer: { present?: unknown; reason?: unknown } | null;
+            try {
+                const reply = (async () => {
+                    const response = await this.fetchBotServer("/api/bricks/visit/sync", {
+                        method: "POST",
+                        signal: stop.signal,
+                        body: JSON.stringify({
+                            roomId,
+                            ...(position ?? {}),
+                            ...(options?.ending
+                                ? { ending: true }
+                                : this.enteredRoomAt !== null
+                                ? { enteredAt: this.enteredRoomAt, clientId: this.pageLoadId }
+                                : {}),
+                        }),
+                    });
+                    return (await response.json()) as { present?: unknown; reason?: unknown } | null;
+                })();
+                // (a reply that fails after the deadline has been given up on is not reported again)
+                reply.catch(() => undefined);
+                answer = await Promise.race([reply, late]);
+            } finally {
+                clearTimeout(timer);
+            }
             const present = typeof answer?.present === "boolean" ? answer.present : undefined;
             // "Not now" rather than "none": the person is not in the game's list of the room yet, Orbit or the place for it
             // could not be had for a moment. A later check may find the Brick; a plain "none" means there is nothing to bring

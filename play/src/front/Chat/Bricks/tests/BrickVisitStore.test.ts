@@ -259,4 +259,32 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         await expect(bringBrickAlong(A)).resolves.toBe("not_taken");
         expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
     });
+
+    it("tries the page's visit read once more when it failed, so the controls do not stay hidden (CodeRabbit on #2023)", async () => {
+        vi.useFakeTimers();
+        try {
+            api.getBrickVisit.mockRejectedValueOnce(new Error("Orbit did not answer in time"));
+            api.getBrickVisit.mockResolvedValueOnce({ state: "none", place: "Universe" });
+            const loading = loadBrickVisit(A);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(get(brickVisitStore)).toBeUndefined();
+            await vi.advanceTimersByTimeAsync(3000);
+            await loading;
+            expect(api.getBrickVisit).toHaveBeenCalledTimes(2);
+            expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
+
+            // Only once, and not for a page that has moved on
+            api.getBrickVisit.mockReset();
+            api.getBrickVisit.mockRejectedValue(new Error("down"));
+            const again = loadBrickVisit(A);
+            await vi.advanceTimersByTimeAsync(0);
+            api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
+            await loadBrickVisit(B);
+            await vi.advanceTimersByTimeAsync(3000);
+            await again;
+            expect(api.getBrickVisit.mock.calls.filter(([id]) => id === A)).toHaveLength(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

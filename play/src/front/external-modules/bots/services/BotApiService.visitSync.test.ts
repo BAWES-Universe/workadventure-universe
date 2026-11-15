@@ -269,4 +269,20 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
         await vi.advanceTimersByTimeAsync(20_000);
         await Promise.all(outcomes);
     });
+
+    it("gives up on a sync the bot server never answers, so bring along and end visit do not wait for good (CodeRabbit on #2023)", async () => {
+        const api = signedIn();
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        fetchMock.mockImplementation(
+            () =>
+                new Promise<Response>(() => {
+                    // never answers
+                })
+        );
+        const sync = api.syncVisitingBrick({ x: 1, y: 1 });
+        const ending = api.syncVisitingBrick(undefined, { ending: true });
+        await vi.advanceTimersByTimeAsync(20_000);
+        await expect(sync).resolves.toBeUndefined();
+        await expect(ending).resolves.toBeUndefined();
+    });
 });
