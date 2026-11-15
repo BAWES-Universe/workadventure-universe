@@ -249,4 +249,36 @@ describe("a Brick's reply is asked about by who it is for, wherever this server 
         // Someone Orbit never served as the owner is still told it cannot answer
         expect(await service.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, OTHER)).toBe("");
     });
+
+    it("an answer Orbit gives after the Brick moved to another room is used for that reply only and is not kept for the next (CodeRabbit on #2023)", async () => {
+        const { admin, memory } = build(OTHER, () => null);
+        let release: (value: unknown) => void = () => {};
+        admin.getBotAiCredentials = vi.fn()
+            .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+            .mockResolvedValue(served({ forOthers: true }));
+        mockGetOrCreateProvider.mockReturnValue({ generate: vi.fn(async () => ({ content: "ok" })) });
+        const service = new AIService(memory, admin, "http://admin.local");
+        service.noteBrick("brick-1", ownersBrick);
+        service.noteRoomBrick("brick-1", { ownerUuid: OWNER, ownerName: "Khalid", roomUrl: "https://play/_/room-a" });
+        const late = service.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, OTHER);
+        // the Brick walks on to room B while room A's question is still with Orbit
+        service.noteRoomBrick("brick-1", { ownerUuid: OWNER, ownerName: "Khalid", roomUrl: "https://play/_/room-b" });
+        release(served({ forOthers: false }));
+        await late;
+        await service.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, OTHER);
+        // the second reply asked Orbit afresh: it did not reuse room A's late answer
+        expect(admin.getBotAiCredentials).toHaveBeenCalledTimes(2);
+    });
+
+    it("what Orbit said for one room is not reused in another", async () => {
+        const { admin, memory } = build(OTHER, () => served({ forOthers: true }));
+        const service = openToolGate(new AIService(memory, admin, "http://admin.local"));
+        service.noteBrick("brick-1", ownersBrick);
+        const ask = (roomUrl: string) => service["resolveProvider"]("universe-ai", "brick-1", { asker: OTHER, roomUrl });
+        await ask("https://play/_/room-a");
+        await ask("https://play/_/room-a");
+        await ask("https://play/_/room-b");
+        expect(admin.getBotAiCredentials).toHaveBeenCalledTimes(2);
+        expect(admin.getBotAiCredentials).toHaveBeenLastCalledWith("brick-1", { asker: OTHER, roomUrl: "https://play/_/room-b" });
+    });
 });

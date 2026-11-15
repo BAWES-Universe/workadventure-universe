@@ -251,6 +251,8 @@ export class AIService {
      * key can go down or be pulled, and each of those must reach the bot's next reply, not the next hour.
      */
     private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number; staleUntil: number }> = new Map();
+    /** Counts each time a Brick's credential answers were thrown away (it moved rooms), so a lookup that began before cannot be kept. */
+    private botCredentialVersion: Map<string, number> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
     /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
     private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
@@ -522,8 +524,10 @@ export class AIService {
     private async resolveProvider(providerId: string, botId?: string, forOthers?: { asker: string; roomUrl?: string }): Promise<ResolvedProvider> {
         if (botId && needsBotRoute(providerId)) {
             // A Brick that stands in a room (#2005) is answered by who is asking, so each asker has their own answer
-            const cacheKey = `${botId}:${providerId}${forOthers ? `:${forOthers.asker}` : ''}`;
+            // and in which room: a Brick that moved on is asked about again, never answered from the room it left
+            const cacheKey = `${botId}:${providerId}${forOthers ? `:${forOthers.asker}:${forOthers.roomUrl ?? ''}` : ''}`;
             const cached = this.botCredentialCache.get(cacheKey);
+            const versionAtAsk = this.botCredentialVersion.get(botId) ?? 0;
             if (cached && Date.now() < cached.expiresAt) {
                 return cached.resolved;
             }
@@ -548,11 +552,14 @@ export class AIService {
             if (!answer && forOthers && forOthers.asker !== this.ownerRefOf(botId) && !orbitServedThemAsOwner) return { resting: true, line: KEY_NOT_LENT_LINE };
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
-                this.botCredentialCache.set(cacheKey, {
-                    resolved,
-                    expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
-                    staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
-                });
+                // The Brick moved rooms (or changed hands) while Orbit was answering: that answer serves this one reply only
+                if ((this.botCredentialVersion.get(botId) ?? 0) === versionAtAsk) {
+                    this.botCredentialCache.set(cacheKey, {
+                        resolved,
+                        expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
+                        staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
+                    });
+                }
                 if (!resolved.resting && resolved.config.limits) {
                     this.botLimits.set(botId, resolved.config.limits);
                     if (this.botLimits.get(botId)?.files === true) this.orbitKeepsFiles = true;
@@ -1914,7 +1921,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
                             const sharedLineIds = sharedLineIdsOf(toolResults);
@@ -3519,6 +3526,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (brick) this.roomBricks.set(botId, brick);
         else this.roomBricks.delete(botId);
         // What Orbit answered for one asker is not the answer for the next
+        this.botCredentialVersion.set(botId, (this.botCredentialVersion.get(botId) ?? 0) + 1);
         for (const key of [...this.botCredentialCache.keys()]) if (key.startsWith(`${botId}:`)) this.botCredentialCache.delete(key);
     }
 
@@ -4026,7 +4034,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** Set when other people read the reply (#1993): everyone else who is there, by who they are. */
         present?: readonly string[],
         /** This reply was offered the reminder tools (#2002): a call to one of them from a reply that was not offered them is not run. */
-        taskToolsOffered = false
+        taskToolsOffered = false,
+        /** The reply is for someone but the Brick's owner (#2005): a call to anything of the owner's is not run, whatever the model asks for. */
+        forOthers = false
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -4051,7 +4061,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
+                // A visitor's turn never runs the owner's artifacts, files, computer, Apps or reminders, even if the model calls one it was not offered
+                const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isTaskTool(toolCall.name);
+                switch ((forOthers && ownersOnly) || (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4422,7 +4434,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     default: {
                         // Check if this is an MCP tool (not a hardcoded one)
-                        const mcpServerConfig = toolServerMap?.get(toolCall.name);
+                        // (a visitor's turn has no Apps: its list is empty, and a name from it is refused here as well)
+                        const mcpServerConfig = forOthers ? undefined : toolServerMap?.get(toolCall.name);
                         if (mcpServerConfig) {
                             // One check right before the call starts (#1656): the model's list is only a convenience
                             const verdict = botId

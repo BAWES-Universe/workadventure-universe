@@ -1664,10 +1664,12 @@ export class BotApiService {
      * answers only its owner. Throws when it refuses or can't be reached.
      */
     async getBrickVisit(brickId: string, roomUrl: string): Promise<unknown> {
-        const response = await this.fetch(
-            `/api/bricks/${encodeURIComponent(brickId)}/visit?roomUrl=${encodeURIComponent(roomUrl)}`
+        // With the deadline brickWrite gives, like the Brick controls beside it: a read or a button that never hears back fails
+        // instead of leaving the visit controls hidden or disabled until the page is reloaded
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/visit?roomUrl=${encodeURIComponent(roomUrl)}`,
+            {}
         );
-        return response.json();
     }
 
     /**
@@ -1676,17 +1678,15 @@ export class BotApiService {
      * switched off.
      */
     async startBrickVisit(brickId: string, roomUrl: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/visit`, {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/visit`, {
             method: "POST",
             body: JSON.stringify({ roomUrl }),
         });
-        return response.json();
     }
 
     /** "End visit" (game #2005): the Brick goes home. Only the visit goes; nothing of the Brick changes. */
     async endBrickVisit(brickId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/visit`, { method: "DELETE" });
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/visit`, { method: "DELETE" });
     }
 
     /**
@@ -1698,10 +1698,11 @@ export class BotApiService {
      */
     async syncVisitingBrick(
         position?: { x: number; y: number },
-        options?: { ending?: boolean; recheck?: boolean }
+        options?: { ending?: boolean; recheck?: boolean; entry?: boolean }
     ): Promise<boolean | undefined> {
         const roomId = this.roomId;
         if (!this.botServerUrl || !roomId) return undefined;
+        const generation = this.visitRecheckGeneration;
         try {
             const response = await this.fetchBotServer("/api/bricks/visit/sync", {
                 method: "POST",
@@ -1715,12 +1716,25 @@ export class BotApiService {
                         : {}),
                 }),
             });
-            const answer = (await response.json()) as { present?: unknown } | null;
+            const answer = (await response.json()) as { present?: unknown; reason?: unknown } | null;
             const present = typeof answer?.present === "boolean" ? answer.present : undefined;
+            // "Not now" rather than "none": the person is not in the game's list of the room yet, Orbit or the place for it
+            // could not be had for a moment. A later check may find the Brick; a plain "none" means there is nothing to bring
+            const maybeLater =
+                answer?.reason === "not_seen" ||
+                answer?.reason === "orbit_unavailable" ||
+                answer?.reason === "no_position";
             // While a Brick walks with its person here it is looked after: a Brick that dropped off the map (its connection
             // broke, the bot server restarted) is put back by the next sync, and Orbit hears the person is still here
             if (options?.ending) this.stopVisitRecheck();
+            // An answer to a sync sent before the room or the visit changed: it says nothing about now (the looking after was
+            // stopped since), so it neither stops the new room's looking after nor starts one for a visit that ended
+            else if (generation !== this.visitRecheckGeneration) return present;
             else if (present === true) {
+                this.visitRecheckMisses = 0;
+                this.startVisitRecheck();
+            } else if (present === false && options?.entry && maybeLater) {
+                // Walking into a room, the Brick could not be put on the map yet: it is looked for again in a minute
                 this.visitRecheckMisses = 0;
                 this.startVisitRecheck();
             } else if (present === false) {
@@ -1748,6 +1762,8 @@ export class BotApiService {
     /** "Not here" this many times in a row from the looking after, and it stops (about three minutes). */
     private static readonly VISIT_RECHECK_MISSES = 3;
     private visitRecheckMisses = 0;
+    /** Counts each stop of the looking after, so a sync answered after a stop cannot change it. */
+    private visitRecheckGeneration = 0;
 
     private startVisitRecheck(): void {
         if (this.visitRecheck !== undefined) return;
@@ -1759,6 +1775,7 @@ export class BotApiService {
     }
 
     private stopVisitRecheck(): void {
+        this.visitRecheckGeneration += 1;
         this.visitRecheckMisses = 0;
         if (this.visitRecheck === undefined) return;
         clearInterval(this.visitRecheck);

@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { parseBrickVisit, type BrickVisit, type BringAlongOutcome } from "./BrickVisit";
@@ -33,21 +33,33 @@ export function provideOwnPosition(read: () => Position | undefined): void {
     ownPosition = read;
 }
 
+/**
+ * Reads what a Brick's page says about visiting. The answer is kept only while that Brick is still the one the page shows
+ * (a read for a Brick the person has since left changes nothing, not even which read counts as newest), and only if nothing
+ * newer was written. Gives the answer it read, or undefined when it could not be read.
+ */
+async function readBrickVisit(brickId: string): Promise<BrickVisit | undefined> {
+    const roomUrl = botApiService.getRoomId();
+    if (!roomUrl) return undefined;
+    const shown = forBrick === brickId;
+    const mine = shown ? ++newest : newest;
+    try {
+        const answer = parseBrickVisit(await botApiService.getBrickVisit(brickId, roomUrl));
+        if (shown && forBrick === brickId && mine === newest) visit.set(answer);
+        return answer;
+    } catch (error) {
+        console.warn("Could not read whether a Brick visits", error);
+        return undefined;
+    }
+}
+
 /** Reads what the Brick's page says about visiting. Resolves either way; a failure leaves the page with nothing to say. */
 export async function loadBrickVisit(brickId: string): Promise<void> {
     if (forBrick !== brickId) {
         forBrick = brickId;
         visit.set(undefined);
     }
-    const roomUrl = botApiService.getRoomId();
-    if (!roomUrl) return;
-    const mine = ++newest;
-    try {
-        const answer = parseBrickVisit(await botApiService.getBrickVisit(brickId, roomUrl));
-        if (forBrick === brickId && mine === newest) visit.set(answer);
-    } catch (error) {
-        console.warn("Could not read whether a Brick visits", error);
-    }
+    await readBrickVisit(brickId);
 }
 
 /**
@@ -78,8 +90,8 @@ export async function bringBrickAlong(brickId: string): Promise<BringAlongOutcom
         const status = (error as { status?: number } | undefined)?.status;
         if (status === 409) {
             // The place stopped taking visits, or the Brick was switched off, since the page was read
-            await loadBrickVisit(brickId);
-            return get(visit)?.state === "blocked" ? "not_taken" : "off";
+            const answer = await readBrickVisit(brickId);
+            return answer?.state === "blocked" ? "not_taken" : "off";
         }
         console.warn("Could not bring a Brick along", error);
         return "failed";
@@ -91,7 +103,7 @@ export async function endBrickVisit(brickId: string): Promise<boolean> {
     try {
         await botApiService.endBrickVisit(brickId);
         // Read again rather than guess: the answer to an ended visit names no place, and the page says where it would walk
-        await loadBrickVisit(brickId);
+        await readBrickVisit(brickId);
         // The visit is over in Orbit; the Brick is taken off the map, asked once more when the bot server did not answer
         if ((await botApiService.syncVisitingBrick(undefined, { ending: true })) === undefined) {
             await botApiService.syncVisitingBrick(undefined, { ending: true });

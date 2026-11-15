@@ -380,6 +380,9 @@ export class DmReplyService extends BaseBehavior {
         if (!config.aiProviderRef || !this.aiService || !text.trim()) return '';
         const instructions = `${instructionsFor(config)}\n\n${RESTING_PROMPT}`;
         try {
+            // A Brick is known before it is asked about someone: the first direct message after a restart can be this line, and
+            // a Brick not yet known would reach Orbit with no asker, bypassing who it is for
+            this.aiService.noteBrick?.(config.botId, config.brick);
             // With the bot id, so a bot on Universe AI or on a lent key reaches its key the way its replies do
             const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId, undefined, asker);
             return parseEmotionsFromResponse(line).cleanedResponse.trim().slice(0, 300);

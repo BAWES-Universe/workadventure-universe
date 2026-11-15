@@ -62,4 +62,20 @@ describe('BotClient.getPlayerPositionByUuid', () => {
         });
         expect(bot.getPlayerPositionByUuid('uuid-9')).toEqual({ x: 900, y: 700 });
     });
+
+    it("is not put off by a bot of another room that has the same number (CodeRabbit on #2023)", () => {
+        const sets = (BotClient as unknown as { botUserIdsByRoom: Map<string, Set<number>>; botUserIds: Set<number> });
+        sets.botUserIds.add(7);
+        sets.botUserIdsByRoom.set('http://play.example.test/_/other/room.tmj', new Set([7]));
+        try {
+            const bot = botThatSees([{ userId: 7, uuid: 'uuid-7', x: 320, y: 240 }]);
+            expect(bot.getPlayerPositionByUuid('uuid-7')).toEqual({ x: 320, y: 240 });
+            // A bot of this very room is still never returned
+            sets.botUserIdsByRoom.set('http://play.example.test/_/global/maps.example.test/lobby.tmj', new Set([7]));
+            expect(bot.getPlayerPositionByUuid('uuid-7')).toBeUndefined();
+        } finally {
+            sets.botUserIds.delete(7);
+            sets.botUserIdsByRoom.clear();
+        }
+    });
 });

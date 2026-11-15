@@ -359,7 +359,8 @@ describe('putting the Brick on the map', () => {
         // Orbit answers 409 for a late sync from a room the person left: it reaches the bot server as an error, and the Brick
         // standing on the map stays exactly as it is
         orbit.fail = true;
-        expect(await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID }, AT, true, { at: T - 1_000, clientId: 'page-laptop-0001' })).toEqual({ botId: 'brick-1' });
+        // (the Brick is in ROOM_A: for ROOM_B's map the answer is that there is none, said as "not now")
+        expect(await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID }, AT, true, { at: T + 1_000, clientId: 'page-laptop-0001' })).toEqual({ botId: null, reason: 'orbit_unavailable' });
         expect(despawn).not.toHaveBeenCalled();
         expect(internals.bots.has('brick-1')).toBe(true);
     });
@@ -466,6 +467,43 @@ describe('putting the Brick on the map', () => {
         rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
         vi.spyOn(botManager as unknown as { queryWorkAdventureRooms: () => Promise<Map<string, number>> }, 'queryWorkAdventureRooms').mockResolvedValue(new Map([[ROOM_A, 3]]));
         vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).not.toHaveBeenCalledWith('room-bot');
+        expect(rooms.has(ROOM_A)).toBe(true);
+    });
+
+    it('a held-up sync for a room the person left before does not take the Brick off the map of the room they are in (CodeRabbit on #2023)', async () => {
+        const { botManager, orbit, spawn, despawn, internals } = manager();
+        const page = 'page-laptop-0001';
+        const T = Date.now();
+        orbit.answer = [visitingConfig('brick-1', ROOM_B)];
+        // Room A was entered first, room B later; B's sync ran first, A's arrives after it
+        await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID }, AT, true, { at: T, clientId: page });
+        expect(spawn).toHaveBeenCalledTimes(1);
+        const asked = (botManager as unknown as { adminApiService: { getVisitingBricks: ReturnType<typeof vi.fn> } }).adminApiService.getVisitingBricks.mock.calls.length;
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT, true, { at: T - 4_000, clientId: page })).toEqual({ botId: null });
+        expect(despawn).not.toHaveBeenCalled();
+        expect(internals.bots.has('brick-1')).toBe(true);
+        // Nothing was asked of Orbit for a sync that is already out of date
+        expect((botManager as unknown as { adminApiService: { getVisitingBricks: ReturnType<typeof vi.fn> } }).adminApiService.getVisitingBricks.mock.calls.length).toBe(asked);
+        // A later sync from another page load, or without a time, is not told apart this way and goes to Orbit as before
+        orbit.answer = [];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT, true, { at: T - 4_000, clientId: 'page-phone-00002' });
+        expect(despawn).toHaveBeenCalledWith('brick-1');
+    });
+
+    it('leaves a room alone this time when a visiting Brick came or went while the game was asked who is in it (CodeRabbit on #2023)', async () => {
+        const { botManager, orbit, despawn, internals } = manager();
+        internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
+        rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        // The game saw one person and the room's bot (2); the person's Brick joins while it is being asked
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        vi.spyOn(botManager as unknown as { queryWorkAdventureRooms: () => Promise<Map<string, number>> }, 'queryWorkAdventureRooms').mockImplementation(async () => {
+            await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+            return new Map([[ROOM_A, 2]]);
+        });
         await botManager.verifyRoomOccupancy();
         expect(despawn).not.toHaveBeenCalledWith('room-bot');
         expect(rooms.has(ROOM_A)).toBe(true);

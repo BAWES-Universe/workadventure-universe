@@ -812,7 +812,7 @@ function putVisitingBrickBeside(): void {
         stopWaitingForPlace?.();
         stopWaitingForPlace = waitForPlace(ownPlace, (place) => {
             stopWaitingForPlace = undefined;
-            void botApiService.syncVisitingBrick(place);
+            void botApiService.syncVisitingBrick(place, { entry: true });
         });
     };
     // One wait at a time: a room entered again replaces the wait of the one before

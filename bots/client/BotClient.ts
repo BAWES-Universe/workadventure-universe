@@ -104,6 +104,11 @@ const WHOLE_ROOM_RADIUS = 100_000;
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
+    /**
+     * The same, by room: user ids are only unique within a room, so "is this user a bot" about someone in a given room is
+     * answered from the bots that joined that room, never from the numbers of every room together.
+     */
+    private static botUserIdsByRoom: Map<string, Set<number>> = new Map();
     /** Max URLs extracted from a single chat message (bounds downstream classification/sniffing). */
     private static readonly MAX_CHAT_URLS = 10;
     
@@ -397,6 +402,9 @@ export class BotClient {
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
+            const here = BotClient.botUserIdsByRoom.get(this.config.roomUrl);
+            here?.delete(this.userId);
+            if (here?.size === 0) BotClient.botUserIdsByRoom.delete(this.config.roomUrl);
         }
         
         if (this.ws) {
@@ -2721,7 +2729,8 @@ export class BotClient {
         // Anybody in the room, whether or not they have come close enough to the bot to be in one of its spaces.
         const seenInRoom = [...this.players.values()].find((candidate) => candidate.uuid === uuid);
         const userId = seenInRoom?.userId ?? this.behavior?.getUserIdForUuid(uuid);
-        if (userId === undefined || BotClient.isBot(userId)) {
+        // A bot of this room only: the same number in another room is someone else (the numbers are per room)
+        if (userId === undefined || BotClient.botUserIdsByRoom.get(this.config.roomUrl)?.has(userId) === true) {
             return undefined;
         }
         const player = this.players.get(userId);
@@ -3479,6 +3488,7 @@ export class BotClient {
                 this.userId = message.roomJoinedMessage.currentUserId;
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
+                BotClient.botUserIdsByRoom.set(this.config.roomUrl, (BotClient.botUserIdsByRoom.get(this.config.roomUrl) ?? new Set()).add(this.userId));
                 this.markJoined();
                 this.startVoice();
                 for (const variable of message.roomJoinedMessage.areaPropertyVariable ?? []) {

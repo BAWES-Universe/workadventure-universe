@@ -142,8 +142,11 @@ export interface VisitSince {
 /** What a visit sync answers: the Brick now on the map, or why none was put there. */
 export interface VisitSyncAnswer {
     botId: string | null;
-    /** Set when a Brick was to be put on the map and there was no place for it to start from */
-    reason?: 'no_position';
+    /**
+     * Why no Brick is there, when it may be only for now: no place for it to start from, or Orbit could not be asked. A plain
+     * "none" (nothing to bring along here) has no reason.
+     */
+    reason?: 'no_position' | 'orbit_unavailable';
 }
 
 export class BotManager {
@@ -151,7 +154,7 @@ export class BotManager {
      * The Brick that walks beside each signed-in person on this server (#2005), by their game uuid: which Brick, and in
      * which room it was put on the map. One per person: bringing another along swaps them.
      */
-    private visitors: Map<string, { botId: string; roomUrl: string }> = new Map();
+    private visitors: Map<string, { botId: string; roomUrl: string; since?: VisitSince }> = new Map();
     private bots: Map<string, BotInstance> = new Map();
     /**
      * Every bot spawned since this server started. Its memory stays held here after it despawns (to come back when it
@@ -1031,13 +1034,22 @@ export class BotManager {
     private visitSyncs: Map<string, Promise<VisitSyncAnswer | void>> = new Map();
 
     private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true, since?: VisitSince): Promise<VisitSyncAnswer> {
+        // A sync for a room the person came into before the room the Brick now stands in (it was held up on the way) says
+        // nothing about where they are: it must not take down, or hold off, the newer placement. Times are only compared from
+        // the same page load of the game, like Orbit does.
+        const placed = this.visitors.get(uuid);
+        if (placed && placed.roomUrl !== roomUrl && since && placed.since && placed.since.clientId === since.clientId && since.at < placed.since.at) {
+            return { botId: null };
+        }
         let configs: BotConfiguration[];
         try {
             configs = await (since === undefined ? this.adminApiService.getVisitingBricks(roomUrl, [uuid]) : this.adminApiService.getVisitingBricks(roomUrl, [uuid], since));
         } catch (error) {
             // Orbit cannot answer: what is on the map stays as it is
             console.warn('[BotManager] Could not ask Orbit for the visiting Brick:', error instanceof Error ? error.message : error);
-            return { botId: this.visitors.get(uuid)?.botId ?? null };
+            // (a Brick standing in another room is not on the map of this one)
+            const standing = this.visitors.get(uuid);
+            return standing && standing.roomUrl === roomUrl ? { botId: standing.botId } : { botId: null, reason: 'orbit_unavailable' };
         }
         const mine = configs.find((config) => config.brick?.visiting?.ownerUuid === uuid);
         const current = this.visitors.get(uuid);
@@ -1053,6 +1065,8 @@ export class BotManager {
         if (running && running.status === 'connected' && this.visitors.get(uuid)?.botId === mine.botId) {
             running.config = { ...running.config, ...mine };
             running.client.setFullConfig(running.config);
+            const standing = this.visitors.get(uuid);
+            if (standing && since && standing.roomUrl === roomUrl) standing.since = since;
             return { botId: mine.botId };
         }
         // Its own chat is the owner's: a Brick that is also somewhere else as a room Brick (#2005, home) stands there too
@@ -1063,7 +1077,7 @@ export class BotManager {
         // map's corner, to walk across the whole room): the caller says "no position yet" and tries again with one
         if (!start) return { botId: null, reason: 'no_position' };
         await this.spawnBot(mine.botId, mine, { position: start });
-        this.visitors.set(uuid, { botId: mine.botId, roomUrl });
+        this.visitors.set(uuid, { botId: mine.botId, roomUrl, ...(since ? { since } : {}) });
         return { botId: mine.botId };
     }
 
@@ -1621,6 +1635,10 @@ export class BotManager {
             return; // No rooms to verify
         }
 
+        // What the game counts in a room and what this server counts must be of the same moment: a visiting Brick put on the
+        // map, or taken off, while the game was asked is a count from two moments, and the room is left alone this time
+        const visitingBefore = new Map<string, number>();
+        for (const roomId of this.roomsWithBots.keys()) visitingBefore.set(roomId, this.visitingBrickCount(roomId));
         const waRooms = await this.queryWorkAdventureRooms();
         console.log(`[BotManager] WA rooms query returned ${waRooms.size} rooms`);
         
@@ -1633,6 +1651,10 @@ export class BotManager {
             const waUserCount = waRooms.get(roomId) || 0;
             // A visiting Brick is in the game's count of the room too, and is no person
             const visiting = this.visitingBrickCount(roomId);
+            if (visiting !== (visitingBefore.get(roomId) ?? 0)) {
+                console.log(`[BotManager] Room ${roomId}: a visiting Brick came or went while the game was asked. Checking again next time.`);
+                continue;
+            }
             const ourBotCount = roomState.botIds.size + visiting;
 
             // If WA reports at or below our bot count, room is empty of real players

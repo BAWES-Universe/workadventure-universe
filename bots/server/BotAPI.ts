@@ -1263,7 +1263,8 @@ export class BotAPI {
             }
             try {
                 if (!ending && !(await this.botManager.hasPlayersIn(roomId, 3, 1000))) {
-                    res.json({ present: false });
+                    // Not in the game's list of the room yet (it can lag a person who just came in): a later sync may find them
+                    res.json({ present: false, reason: 'not_seen' });
                     return;
                 }
                 // One Brick per person, in a room that exists and whose universe takes visits (Orbit says), and it goes by

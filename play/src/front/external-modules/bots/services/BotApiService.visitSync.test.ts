@@ -147,6 +147,77 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
             expect(fetchMock).toHaveBeenCalledTimes(start + 6);
         });
 
+        const answerWith = (body: Record<string, unknown>) =>
+            fetchMock.mockImplementation(() =>
+                Promise.resolve(
+                    new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } })
+                )
+            );
+
+        it("looks again in a minute when walking into a room the Brick could not be put in yet, and only then (CodeRabbit on #2023)", async () => {
+            const api = signedIn();
+            api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));
+            // Not in the game's list of the room yet, or Orbit could not be asked: a later check may place the Brick
+            answerWith({ present: false, reason: "not_seen" });
+            await api.syncVisitingBrick({ x: 1, y: 1 }, { entry: true });
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            answerWith({ present: true });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            await api.syncVisitingBrick(undefined, { ending: true });
+
+            // Nothing to bring along (no reason), or bringing along / ending rather than walking in: no looking after
+            const quiet = signedIn();
+            quiet.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));
+            fetchMock.mockClear();
+            answerWith({ present: false });
+            await quiet.syncVisitingBrick({ x: 1, y: 1 }, { entry: true });
+            answerWith({ present: false, reason: "orbit_unavailable" });
+            await quiet.syncVisitingBrick({ x: 1, y: 1 });
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        });
+
+        it("ignores the answer to a sync that was sent before the room changed or the visit ended (CodeRabbit on #2023)", async () => {
+            const api = signedIn();
+            api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));
+            const reply = (body: Record<string, unknown>) =>
+                new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+            let late: (response: Response) => void = () => undefined;
+            const held = () =>
+                fetchMock.mockImplementationOnce(
+                    () =>
+                        new Promise<Response>((resolve) => {
+                            late = resolve;
+                        })
+                );
+
+            // A "here" that arrives after the visit was ended does not start the looking after again
+            held();
+            const sync = api.syncVisitingBrick({ x: 1, y: 1 });
+            await api.syncVisitingBrick(undefined, { ending: true });
+            late(reply({ present: true }));
+            await sync;
+            const afterEnd = fetchMock.mock.calls.length;
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(fetchMock).toHaveBeenCalledTimes(afterEnd);
+
+            // A "not here" that arrives after the player walked into the next room does not stop that room's looking after
+            answerWith({ present: true });
+            enter(api, ROOM_B);
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            held();
+            const oldSync = api.syncVisitingBrick({ x: 1, y: 1 });
+            enter(api, ROOM_A);
+            answerWith({ present: true });
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            late(reply({ present: false }));
+            await oldSync;
+            const before = fetchMock.mock.calls.length;
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(fetchMock).toHaveBeenCalledTimes(before + 1);
+        });
+
         it("never starts for someone with no Brick on the map, and stops when the Brick is gone, the visit ends or the room changes", async () => {
             const api = signedIn();
             api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));
@@ -180,5 +251,22 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
             await vi.advanceTimersByTimeAsync(180_000);
             expect(fetchMock).toHaveBeenCalledTimes(afterMove);
         });
+    });
+
+    it("gives up on the visit calls that never answer, so the Brick page's controls recover (CodeRabbit on #2023)", async () => {
+        const api = signedIn();
+        fetchMock.mockImplementation(
+            () =>
+                new Promise<Response>(() => {
+                    // never answers
+                })
+        );
+        const outcomes = [
+            expect(api.getBrickVisit("brick-1", ROOM_A)).rejects.toThrow("Orbit did not answer in time"),
+            expect(api.startBrickVisit("brick-1", ROOM_A)).rejects.toThrow("Orbit did not answer in time"),
+            expect(api.endBrickVisit("brick-1")).rejects.toThrow("Orbit did not answer in time"),
+        ];
+        await vi.advanceTimersByTimeAsync(20_000);
+        await Promise.all(outcomes);
     });
 });

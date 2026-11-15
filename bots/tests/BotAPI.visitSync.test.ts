@@ -84,6 +84,11 @@ describe('POST /api/bricks/visit/sync', () => {
         expect(await (await sync()).json()).toEqual({ present: false });
     });
 
+    it('says why when Orbit could not be asked, so the front looks again later', async () => {
+        botManager.syncVisitingBrick.mockResolvedValue({ botId: null, reason: 'orbit_unavailable' });
+        expect(await (await sync()).json()).toEqual({ present: false, reason: 'orbit_unavailable' });
+    });
+
     it('says why when there was no place to put the Brick from, so the front tries again with one', async () => {
         botManager.syncVisitingBrick.mockResolvedValue({ botId: null, reason: 'no_position' });
         expect(await (await sync()).json()).toEqual({ present: false, reason: 'no_position' });
@@ -93,7 +98,8 @@ describe('POST /api/bricks/visit/sync', () => {
         botManager.hasPlayersIn.mockResolvedValue(false);
         const answer = await sync({ roomId: 'http://play.test/@/someone/else/private' });
         expect(answer.status).toBe(200);
-        expect(await answer.json()).toEqual({ present: false });
+        // "Not seen yet", not "none": the game's list of the room can lag a person who just came in, so the front looks again
+        expect(await answer.json()).toEqual({ present: false, reason: 'not_seen' });
         expect(botManager.syncVisitingBrick).not.toHaveBeenCalled();
     });
 
