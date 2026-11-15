@@ -381,6 +381,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
             if (result.kind === 'look') {
+                // A turn the agent has taken is not sent again: the next try reconnects to it (a turn that is gone says so there)
+                if (accepted.turn) input = null;
                 await sleep(timing.waitMs, signal);
                 continue;
             }

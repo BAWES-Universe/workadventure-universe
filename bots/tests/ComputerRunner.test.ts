@@ -281,6 +281,16 @@ describe('a stop or a failed start that must not cost the job its words', () => 
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
+    it('does not send the job’s words again when the turn was taken and only the reconnection failed: it reconnects', async () => {
+        const broke: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'text', text: 'Half ' }, { type: 'failed', code: 'stream_broke', message: 'broke' }];
+        // the first turn is taken and breaks; the reconnect cannot be made (look); the next try must reconnect, not send the job again
+        const { orbit, seen } = fakeOrbit([broke, { ok: false, reason: 'unreachable' } as unknown as TurnOpened, done('[[done]]')]);
+        await runJob(orbit);
+        expect(seen.turns).toEqual([jobPrompt(JOB)]);
+        expect(seen.streams).toBe(2);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
     it('keeps the job’s own words through a take-over that came before the first turn was taken', async () => {
         let looks = 0;
         const { orbit, seen } = fakeOrbit([done('[[done]]')], () => {
