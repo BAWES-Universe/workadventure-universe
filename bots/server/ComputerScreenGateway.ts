@@ -92,7 +92,7 @@ export function createInputFilter(mode: ScreenMode): InputFilter {
                     if (buffer.length < 12) break;
                     const hello = buffer.subarray(0, 12).toString('ascii');
                     if (!/^RFB 003\.00[3-8]\n$/.test(hello)) return { forward, close: true };
-                    forward.push(buffer.subarray(0, 12));
+                    forward.push(Buffer.from(buffer.subarray(0, 12)));
                     buffer = buffer.subarray(12);
                     // Version 3.3 has no choice of security: the machine decides
                     phase = hello === 'RFB 003.003\n' ? 'hello' : 'security';
@@ -100,12 +100,12 @@ export function createInputFilter(mode: ScreenMode): InputFilter {
                     if (buffer.length < 1) break;
                     // The machine offers "none" only; a viewer that picks anything else is not talking to it
                     if (buffer[0] !== 1) return { forward, close: true };
-                    forward.push(buffer.subarray(0, 1));
+                    forward.push(Buffer.from(buffer.subarray(0, 1)));
                     buffer = buffer.subarray(1);
                     phase = 'hello';
                 } else if (phase === 'hello') {
                     if (buffer.length < 1) break;
-                    forward.push(buffer.subarray(0, 1));
+                    forward.push(Buffer.from(buffer.subarray(0, 1)));
                     buffer = buffer.subarray(1);
                     phase = 'messages';
                 } else {
@@ -146,9 +146,12 @@ export function createInputFilter(mode: ScreenMode): InputFilter {
                     // differently (ExtendedMouseButtons, QEMU pointer motion) is never passed on, so the machine never turns it on
                     if (type === 2) message = withoutFramingEncodings(message);
                     // Watch: nothing the viewer types, moves, pastes or resizes is sent on (keys 4 and 255, pointer 5, clipboard 6, size 251)
-                    if (mode === 'input' || (type !== 4 && type !== 5 && type !== 6 && type !== 251 && type !== 255)) forward.push(message);
+                    // A kept message is a copy of its own size: a view would hold the whole chunk it came out of in memory until it was sent
+                    if (mode === 'input' || (type !== 4 && type !== 5 && type !== 6 && type !== 251 && type !== 255)) forward.push(Buffer.from(message));
                 }
             }
+            // The same for what waits for the rest of its message: only those bytes are kept, never the large chunk they arrived in
+            buffer = Buffer.from(buffer);
             return { forward, close: false };
         },
     };

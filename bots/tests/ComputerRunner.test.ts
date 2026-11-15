@@ -247,6 +247,52 @@ describe('a stop, an Orbit that cannot be asked, and a turn that was cut off', (
     });
 });
 
+describe('a stop or a failed start that must not cost the job its words', () => {
+    const createRunner = (orbit: RunnerOrbit) => createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+
+    it('ends nothing when the stop came during the last try to get the machine ready', async () => {
+        const { orbit, seen, setPrepare } = fakeOrbit([]);
+        const runner = createRunner(orbit);
+        let tries = 0;
+        setPrepare(() => {
+            tries += 1;
+            // the third try is the last one: it fails, and the stop arrives while Orbit is being asked
+            if (tries === 3) runner.stop();
+            return { ok: false, reason: 'failed' };
+        });
+        await runner.tick();
+        await runner.idle();
+        expect(tries).toBe(3);
+        expect(finished(seen)).toEqual([]);
+    });
+
+    it('does not take an ending from words said before a connection that cannot be picked up again: the turn is gone, not proved over', async () => {
+        const broke: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'text', text: 'All done [[done]]' }, { type: 'failed', code: 'stream_broke', message: 'broke' }];
+        const { orbit, seen } = fakeOrbit([broke, { ok: false, reason: 'no_turn' }, done('[[done]]')]);
+        await runJob(orbit);
+        expect(seen.turns).toEqual([jobPrompt(JOB), CONTINUE_PROMPT]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
+    it('sends the job’s own words again when the agent could not take the first turn, not only a nudge to carry on', async () => {
+        const { orbit, seen } = fakeOrbit([{ ok: false, reason: 'failed' }, done('[[done]]')]);
+        await runJob(orbit);
+        expect(seen.turns).toEqual([jobPrompt(JOB), jobPrompt(JOB)]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
+    it('keeps the job’s own words through a take-over that came before the first turn was taken', async () => {
+        let looks = 0;
+        const { orbit, seen } = fakeOrbit([done('[[done]]')], () => {
+            looks += 1;
+            // the person has it first, then hands it back
+            return looks === 1 ? { status: 'waiting', control: 'person' } : { status: 'running', control: 'brick' };
+        });
+        await runJob(orbit);
+        expect(seen.turns).toEqual([jobPrompt(JOB)]);
+    });
+});
+
 describe('the person’s part', () => {
     it('asks again when the handover did not go through, and does not take the job back as if the person had finished', async () => {
         const { orbit, seen, failHandovers } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);

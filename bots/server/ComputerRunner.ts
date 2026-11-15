@@ -205,6 +205,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         for (let attempt = 0; ; attempt++) {
             if (signal.aborted) return 'stopped';
             const answer = await orbit.prepare(job.jobId, relay).catch(() => ({ ok: false as const, reason: 'failed' }));
+            // A stop that came while Orbit was being asked is no failure of the job: nothing is ended on it
+            if (signal.aborted) return 'stopped';
             if (!('reason' in answer)) return 'ready';
             // The job is not Brick's to work on now (taken over, over, no machine awake): look at it again, do not retry
             if (answer.reason !== 'failed') return 'look';
@@ -218,8 +220,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         nextAt: number;
     }
 
+    /** Whether the agent has taken a turn of this job yet: until it has, the job's own first words are still the ones to send. */
+    interface Accepted {
+        turn: boolean;
+    }
+
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
-    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing): Promise<TurnResult> {
+    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted): Promise<TurnResult> {
         // A stop that came while the machine was being made ready has already fired: its listener would never be told
         if (signal.aborted) return { kind: 'stopped' };
         const turnController = new AbortController();
@@ -278,6 +285,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 return opened.reason === 'failed' ? { kind: 'ended', words: '', failed: true, fenced: false } : { kind: 'look' };
             }
 
+            accepted.turn = true;
             let reconnects = 0;
             for (;;) {
                 let terminal: { failed: boolean; fenced: boolean; code: string } | null = null;
@@ -310,7 +318,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 await sleep(timing.reconnectMs[reconnects], turnController.signal);
                 reconnects += 1;
                 const again = await orbit.stream(job.jobId, turnController.signal);
-                if ('reason' in again) return again.reason === 'no_turn' ? { kind: 'ended', words, failed: false, fenced: false } : { kind: 'look' };
+                // A turn that is gone without its end having been seen is not a turn that ended well: what was said before is not taken as its ending
+                if ('reason' in again) return again.reason === 'no_turn' ? { kind: 'ended', words, failed: true, fenced: false } : { kind: 'look' };
                 opened = again;
             }
         } finally {
@@ -326,8 +335,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             await finish(job, 'failed');
             return;
         }
-        let input: string | null = job.hasTurn ? null : jobPrompt(job);
+        // The job's own first words stay the ones to send until the agent has taken a turn: a turn that could not be started, or a take-over
+        // before it, must not leave the agent with only "carry on" and no brief
+        let pending: string | null = job.hasTurn ? null : jobPrompt(job);
+        let input: string | null = pending;
+        const follow = (prompt: string) => pending ?? prompt;
         const renewing: Renewing = { nextAt: 0 };
+        const accepted: Accepted = { turn: false };
         let turns = 0;
         let bad = 0;
         for (;;) {
@@ -342,7 +356,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (state.status !== 'running' || state.control !== 'brick') {
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;
-                input = RESUME_PROMPT;
+                input = follow(RESUME_PROMPT);
                 continue;
             }
             if (++turns > RUNNER_GUARDS.maxTurns) {
@@ -363,7 +377,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 return;
             }
 
-            const result = await oneTurn(job, input, signal, renewing);
+            const result = await oneTurn(job, input, signal, renewing, accepted);
+            if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
             if (result.kind === 'look') {
                 await sleep(timing.waitMs, signal);
@@ -379,19 +394,19 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             }
             if (signal.aborted) return;
             if (after === undefined) {
-                input = CONTINUE_PROMPT;
+                input = follow(CONTINUE_PROMPT);
                 continue;
             }
             if (after === null || over(after.status)) return;
             if (after.status !== 'running' || after.control !== 'brick') {
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;
-                input = RESUME_PROMPT;
+                input = follow(RESUME_PROMPT);
                 bad = 0;
                 continue;
             }
             if (result.fenced) {
-                input = RESUME_PROMPT;
+                input = follow(RESUME_PROMPT);
                 continue;
             }
 
@@ -425,7 +440,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 }
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;
-                input = RESUME_PROMPT;
+                input = follow(RESUME_PROMPT);
                 continue;
             }
             // No ending said: carry on, but not for ever when turns keep going wrong
@@ -435,7 +450,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 await finish(job, 'failed');
                 return;
             }
-            input = CONTINUE_PROMPT;
+            input = follow(CONTINUE_PROMPT);
         }
     }
 

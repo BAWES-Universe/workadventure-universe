@@ -45,6 +45,20 @@ describe('what a viewer may send', () => {
         }
     });
 
+    it('keeps only what it passes on or waits for, never the large chunk it came in', () => {
+        const filter = createInputFilter('watch');
+        shake(filter);
+        // A big clipboard that is dropped, a small update request that is kept, and the start of a message that waits for the rest
+        const big = cutText('x'.repeat(900_000));
+        const half = Buffer.from([2, 0, 0, 1000 >> 8]);
+        const result = filter.push(joined([big, update, half]));
+        expect(joined(result.forward)).toEqual(update);
+        for (const part of result.forward) expect(part.buffer.byteLength).toBeLessThan(100_000);
+        // and the part that waits is still completed by what follows
+        const rest = filter.push(Buffer.alloc(0));
+        expect(rest.close).toBe(false);
+    });
+
     it('input sends everything on', () => {
         const filter = createInputFilter('input');
         shake(filter);
