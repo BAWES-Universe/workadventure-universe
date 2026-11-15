@@ -47,7 +47,7 @@
     let connectListFailed = false;
     let query = "";
     let connectingKey: string | undefined;
-    let connectNote: "stopped" | "blocked" | undefined;
+    let connectNote: "stopped" | "blocked" | "unchecked" | undefined;
     // A card in a chat that opens the Apps page with a word already in Search apps ("calendar"): taken once
     $: if ($appsSearchStart !== undefined) {
         query = $appsSearchStart;
@@ -57,7 +57,10 @@
     $: connectedApps = mine.filter(isConnectedApp);
     $: another = connectable ? toConnectAnother(connectable, mine) : [];
     $: searching = query.trim() !== "";
-    $: shownConnected = connectedApps.filter((app) => matchesSearch(query, app.name));
+    // A connected app's line lives on the catalog entry it was made from, so Search finds it by that line too
+    const blurbOf = (list: Connectable[] | undefined, id: string) =>
+        (list ?? []).find((app) => app.connectionId === id)?.blurb ?? "";
+    $: shownConnected = connectedApps.filter((app) => matchesSearch(query, app.name, blurbOf(connectable, app.id)));
     $: shownAnother = another.filter((app) => matchesSearch(query, app.name, app.blurb));
 
     // Both lists may hold the same key: the kind tells them apart
@@ -73,30 +76,38 @@
                     console.warn("Could not read the apps to connect", error);
                     return undefined;
                 }),
-            // Orbit answers 404 while there are no ready-made apps to offer: that is an empty list, not a failure
+            // A 404 (none to offer) comes back as an empty list; any other failure is said below the list
             botApiService
                 .getReadyMadeApps()
                 .then(parseReadyMade)
-                .catch(() => []),
+                .catch((error: unknown) => {
+                    console.warn("Could not read the ready-made apps", error);
+                    return undefined;
+                }),
         ]);
-        connectListFailed = !listed;
-        connectable = listed ? [...listed, ...(readyMade ?? [])] : undefined;
+        connectListFailed = !listed || !readyMade;
+        // Whichever list came is shown: a failed one does not take the other's Connect buttons away
+        connectable = listed || readyMade ? [...(listed ?? []), ...(readyMade ?? [])] : undefined;
     }
 
     async function connect(app: Connectable) {
         if (connectingKey) return;
         connectingKey = keyOf(app);
         connectNote = undefined;
-        const result = await connectApp(app);
-        // eslint-disable-next-line require-atomic-updates
-        connectingKey = undefined;
-        if (result.status !== "connected") {
-            connectNote = result.status;
-            return;
+        try {
+            const result = await connectApp(app);
+            if (result.status !== "connected") {
+                connectNote = result.status;
+                return;
+            }
+            // It is theirs now: its own page opens to choose which of their Bricks use it. The other Connect buttons stay
+            // off until then, so a second sign-in cannot start under the page this one opens.
+            await loadMyApps(true);
+            openAppId = result.appId;
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            connectingKey = undefined;
         }
-        // It is theirs now: its own page opens to choose which of their Bricks use it
-        await loadMyApps(true);
-        openAppId = result.appId;
     }
 
     function load() {
@@ -198,7 +209,11 @@
             {/each}
             {#if connectNote}
                 <p class="ap-bad" data-testid="appsConnectNote">
-                    {connectNote === "blocked" ? text.connectBlocked() : text.connectStopped()}
+                    {connectNote === "blocked"
+                        ? text.connectBlocked()
+                        : connectNote === "unchecked"
+                        ? text.connectUnchecked()
+                        : text.connectStopped()}
                 </p>
             {/if}
             {#if connectListFailed}

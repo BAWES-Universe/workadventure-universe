@@ -101,7 +101,7 @@ function showDirectChatFailure(error: unknown, chatID: string): void {
     Sentry.captureException(error);
 }
 
-function showRoom(room: ChatRoom): void {
+export function showRoom(room: ChatRoom): void {
     selectedRoomStore.set(room);
     navChat.switchToChat();
     openChat("person");

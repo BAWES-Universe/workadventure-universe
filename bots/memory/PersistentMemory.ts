@@ -11,7 +11,8 @@
 import { ConversationMemory, type BotPlayerMemory, type ConversationMessage, type EmotionalState, type PersonalInfo } from './ConversationMemory';
 import { copyHeard, type Heard } from './Heard';
 import { MemoryStorage } from './MemoryStorage';
-import type { MemoryForgetNotice } from './ForgetNotice';
+import type { ItemForgetNotice, MemoryForgetNotice } from './ForgetNotice';
+import { dropItems } from './MemoryItems';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -37,6 +38,15 @@ export class PersistentMemory extends ConversationMemory {
     private appliedForgets: Map<string, number> = new Map();
     /** Forgets being reported to Orbit right now, by "botId|<id>" */
     private reporting: Set<string> = new Set();
+    /**
+     * Things a person asked us to forget that Orbit has not yet taken (it was unreachable), by "botId|uuid|key". Each is
+     * told again before the next save and by a timer, so a thing never comes back for want of one failed call.
+     */
+    private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string; since: number; first: number }> = new Map();
+    private unreportedRetryTimer: NodeJS.Timeout | null = null;
+    private static readonly UNREPORTED_RETRY_MS = 30 * 1000;
+    /** A retry safety guard, not a limit anyone sees: a forget Orbit has not taken in a day is let go, so a report it will never take is not tried for ever. */
+    private static readonly UNREPORTED_GIVE_UP_MS = 24 * 60 * 60 * 1000;
     /** An older Orbit repeats a Forget for a minute: longer than that plus one 30-second privacy check */
     private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
     /**
@@ -61,6 +71,7 @@ export class PersistentMemory extends ConversationMemory {
         });
         // Orbit answers a save with the people a manager asked the bot to forget (#435)
         this.memoryStorage.setForgetHandler((botId, notice) => this.forget(botId, notice));
+        this.memoryStorage.setItemForgetHandler((botId, items) => this.forgetItems(botId, items));
     }
 
     /**
@@ -73,6 +84,151 @@ export class PersistentMemory extends ConversationMemory {
         this.dropForgotten(botId, notice);
         // Every Forget with an id in this notice gets reported, the new ones and the ones a lost report left behind
         if (notice.rows && notice.rows.length > 0) this.reportForgotten(botId, notice.rows.map((row) => row.id));
+    }
+
+    /**
+     * Drop things a person forgot one at a time (#2003) from everything held for them: what is active, what was loaded
+     * for them to join later and any save still waiting, with what was built from each. A thing is dropped once per
+     * Forget (Orbit repeats it until we report it), and a thing the person said again after they forgot it stays.
+     * Reported to Orbit when done, which stops it being repeated.
+     */
+    forgetItems(botId: string, items: ItemForgetNotice[]): void {
+        const now = Date.now();
+        const fresh = items.filter((item) => !this.appliedForgets.has(`${botId}|item:${item.id}`));
+        const byPerson = new Map<string, { keys: Set<string>; at: Map<string, number> }>();
+        for (const item of fresh) {
+            const one = byPerson.get(item.userUuid) ?? { keys: new Set<string>(), at: new Map<string, number>() };
+            one.keys.add(item.itemKey);
+            // A forget with no time (0) takes the thing whenever it was said, and no other forget of it can put that back
+            const seen = one.at.get(item.itemKey);
+            one.at.set(item.itemKey, item.at <= 0 || seen === 0 ? 0 : Math.max(item.at, seen ?? 0));
+            byPerson.set(item.userUuid, one);
+            this.appliedForgets.set(`${botId}|item:${item.id}`, now + PersistentMemory.FORGET_UNREPORTED_KEEP_MS);
+        }
+        if (byPerson.size > 0) {
+            const prefix = `${botId}_`;
+            for (const [key, memory] of this.getAllMemories().entries()) {
+                if (!key.startsWith(prefix)) continue;
+                const one = byPerson.get(this.personOf(key, memory));
+                if (one) dropItems(memory, one.keys, one.at);
+            }
+            for (const [key, memory] of this.loadedMemoriesByUuid) {
+                const one = key.startsWith(prefix) ? byPerson.get(key.slice(prefix.length)) : undefined;
+                if (one) dropItems(memory, one.keys, one.at);
+            }
+            // A save waiting holds the memory itself; a copy kept for a save is dropped from too
+            for (const [key, memory] of this.pendingSaves) {
+                const one = key.startsWith(prefix) ? byPerson.get(this.personOf(key, memory)) : undefined;
+                if (one) dropItems(memory, one.keys, one.at);
+            }
+        }
+        // Every Forget in this notice gets reported, the new ones and the ones a lost report left behind
+        this.reportForgottenItems(botId, items.map((item) => item.id));
+    }
+
+    /** Who a memory is about: the uuid tracked for the chat, else the one it carries ("temp-<id>" until it is known). */
+    private personOf(key: string, memory: BotPlayerMemory): string {
+        return this.uuidTracking.get(key)?.userUuid ?? memory.userUuid ?? '';
+    }
+
+    private reportForgottenItems(botId: string, ids: string[]): void {
+        const pending = ids.filter((id) => !this.reporting.has(`${botId}|item:${id}`));
+        if (pending.length === 0) return;
+        for (const id of pending) this.reporting.add(`${botId}|item:${id}`);
+        this.memoryStorage
+            .acknowledgeItemForgets(botId, pending)
+            .then((reported) => {
+                if (!reported) return;
+                const keepUntil = Date.now() + PersistentMemory.FORGET_REPEAT_WINDOW_MS;
+                for (const id of pending) {
+                    if (this.appliedForgets.has(`${botId}|item:${id}`)) this.appliedForgets.set(`${botId}|item:${id}`, keepUntil);
+                }
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                for (const id of pending) this.reporting.delete(`${botId}|item:${id}`);
+            });
+    }
+
+    /**
+     * A person asked the bot to forget these things in the chat ("forget that"): they are dropped from memory now, with
+     * what was built from them, and Orbit is told by key so it keeps them gone whatever it has saved. Returns how many
+     * things went.
+     */
+    async forgetThings(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<number> {
+        return (await this.forgetThingsReported(botId, playerId, keys, kinds)).went;
+    }
+
+    /** As forgetThings, and how many of the things Orbit has not taken yet (they are tried again, but only while this process runs). */
+    async forgetThingsReported(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number }> {
+        const memory = this.getMemory(botId, playerId);
+        if (!memory || keys.size === 0) return { went: 0, waiting: 0 };
+        const userUuid = this.personOf(`${botId}_${playerId}`, memory);
+        const removed = dropItems(memory, keys);
+        // The snapshots of this person are dropped from too, so joining again does not bring a thing back
+        const snapshot = this.loadedMemoriesByUuid.get(`${botId}_${userUuid}`);
+        if (snapshot) dropItems(snapshot, keys);
+        for (const [key, other] of this.getAllMemories()) {
+            if (key.startsWith(`${botId}_`) && other !== memory && this.personOf(key, other) === userUuid) dropItems(other, keys);
+        }
+        // A person who is not known to Orbit yet (no uuid) has nothing there to forget
+        let waiting = 0;
+        if (!userUuid.startsWith('temp-')) {
+            const askedAt = Date.now();
+            const reported = await Promise.all(
+                [...keys].map((itemKey) => this.memoryStorage.reportForgottenItem(botId, userUuid, itemKey, kinds.get(itemKey) ?? 'fact', askedAt))
+            );
+            [...keys].forEach((itemKey, index) => {
+                if (!reported[index]) {
+                    waiting++;
+                    this.keepToReport({ botId, userUuid, itemKey, kind: kinds.get(itemKey) ?? 'fact', since: askedAt });
+                }
+            });
+        }
+        if (removed > 0) this.scheduleDebouncedSave(botId, playerId);
+        return { went: removed, waiting };
+    }
+
+    /** Orbit did not take this forget: keep it, and tell Orbit again soon. */
+    private keepToReport(entry: { botId: string; userUuid: string; itemKey: string; kind: string; since?: number; first?: number }): void {
+        const mapKey = `${entry.botId}|${entry.userUuid}|${entry.itemKey}`;
+        const before = this.unreportedItemForgets.get(mapKey);
+        const now = Date.now();
+        // "since" is when the person last asked for it to go, and is what Orbit is told: a later ask must not be reported as
+        // an earlier one, or what they said in between would be kept. "first" is when it first failed, so one that Orbit
+        // never takes is let go after a day rather than tried for ever.
+        this.unreportedItemForgets.set(mapKey, { ...entry, since: Math.max(entry.since ?? now, before?.since ?? 0), first: before?.first ?? entry.first ?? entry.since ?? now });
+        this.armUnreportedRetry();
+    }
+
+    /** Try the forgets Orbit has not taken again soon, once (a timer already running is left alone). */
+    private armUnreportedRetry(): void {
+        if (this.unreportedRetryTimer) return;
+        this.unreportedRetryTimer = setTimeout(() => {
+            this.unreportedRetryTimer = null;
+            void this.reportUnreportedForgets();
+        }, PersistentMemory.UNREPORTED_RETRY_MS);
+        this.unreportedRetryTimer.unref?.();
+    }
+
+    /** Tell Orbit again every forget it has not yet taken (for one bot, or for all). Those it takes now are let go. */
+    private async reportUnreportedForgets(botId?: string): Promise<void> {
+        const waiting = [...this.unreportedItemForgets].filter(([, entry]) => !botId || entry.botId === botId);
+        await Promise.all(
+            waiting.map(async ([mapKey, entry]) => {
+                const taken = await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind, entry.since);
+                // A later ask for the same thing may have been kept while Orbit was answering (it carries a later time): only the
+                // ask Orbit just answered is let go. Compared by that time, not by the object, which a re-arming may have copied.
+                const ownIt = this.unreportedItemForgets.get(mapKey)?.since === entry.since;
+                if (taken) {
+                    if (ownIt) this.unreportedItemForgets.delete(mapKey);
+                } else if (ownIt && Date.now() - entry.first > PersistentMemory.UNREPORTED_GIVE_UP_MS) {
+                    console.warn(`[PersistentMemory] Orbit has not taken a forget for bot ${entry.botId} in a day; letting it go`);
+                    this.unreportedItemForgets.delete(mapKey);
+                }
+            })
+        );
+        if (this.unreportedItemForgets.size > 0) this.armUnreportedRetry();
     }
 
     private dropForgotten(botId: string, notice: MemoryForgetNotice): void {
@@ -252,10 +408,15 @@ export class PersistentMemory extends ConversationMemory {
                     const prefsFrom = live.preferences && live.preferences.length > 0 ? live : saved;
                     const factsFrom = live.facts.size > 0 ? live : saved;
                     const heard: Record<string, Heard> = {};
+                    // And when it was said (#2003), from the same side
+                    const drawnFrom: Record<string, number> = {};
                     const keep = (from: PersonalInfo, mine: (key: string) => boolean) => {
                         for (const [key, stamp] of Object.entries(from.heard ?? {})) {
                             const copy = mine(key) ? copyHeard(stamp) : undefined;
                             if (copy) heard[key] = copy;
+                        }
+                        for (const [key, at] of Object.entries(from.drawnFrom ?? {})) {
+                            if (mine(key)) drawnFrom[key] = at;
                         }
                     };
                     keep(live.name ? live : saved, (key) => key === 'name');
@@ -269,6 +430,7 @@ export class PersistentMemory extends ConversationMemory {
                         facts: factsFrom === live ? live.facts : new Map(saved.facts),
                         lastInfoUpdate: live.lastInfoUpdate,
                         ...(Object.keys(heard).length > 0 ? { heard } : {}),
+                        ...(Object.keys(drawnFrom).length > 0 ? { drawnFrom } : {}),
                     };
                     // Relationship: take the best of both (max conversations, earliest firstMet, latest lastMet)
                     existingOrNew.relationship = {
@@ -620,6 +782,7 @@ export class PersistentMemory extends ConversationMemory {
 
         // Save to storage (periodic save for conversation history)
         try {
+            await this.reportUnreportedForgets(botId);
             await this.memoryStorage.saveMemory(botId, memory, 'periodic');
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -653,6 +816,7 @@ export class PersistentMemory extends ConversationMemory {
             }
             
             // Use "immediate" saveType for emotion-only updates
+            await this.reportUnreportedForgets(botId);
             await this.memoryStorage.saveMemory(botId, memory, 'immediate');
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -826,6 +990,7 @@ export class PersistentMemory extends ConversationMemory {
                 ...(memory.personalInfo.heard
                     ? { heard: Object.fromEntries(Object.entries(memory.personalInfo.heard).map(([key, stamp]) => [key, copyHeard(stamp)!])) }
                     : {}),
+                ...(memory.personalInfo.drawnFrom ? { drawnFrom: { ...memory.personalInfo.drawnFrom } } : {}),
             },
             relationship: {
                 ...memory.relationship,

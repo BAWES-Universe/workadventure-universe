@@ -8,6 +8,7 @@
     import { parseAvailableApps, type AvailableApp } from "./Apps";
     import { appIcon } from "./AppIcon";
     import AppRow from "./AppRow.svelte";
+    import { refusalWords } from "./AppWords";
 
     /**
      * "More apps it can use here" (game #2001), inside a room bot's Apps group, under the bot's own apps: the apps lent to its
@@ -43,7 +44,7 @@
             onLet();
         } catch (error) {
             console.warn("Could not let the bot use the app", error);
-            warningMessageStore.addWarningMessage(text.workFailed());
+            warningMessageStore.addWarningMessage(refusalWords(error, text.workFailed()));
         } finally {
             // eslint-disable-next-line require-atomic-updates
             busyId = undefined;

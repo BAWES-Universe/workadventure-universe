@@ -1006,7 +1006,7 @@ const mapEditor: BaseTranslation = {
                         "Free for you. Each person gets up to {replies:number} voice replies every {hours:number} hours.",
                     notAllowedTitle: "Voice bots are off in this universe",
                     notAllowedLine:
-                        "An Admin can turn on Allow voice bots in Universe settings. {bot:string} keeps chatting in text.",
+                        "An Admin can turn on Allow voice bots in Universe settings. {bot:string} keeps chatting in text. Bots still hear voice notes.",
                     universeSettings: "Universe settings",
                     noServiceTitle: "No voice is set up here yet",
                     noServiceLine:

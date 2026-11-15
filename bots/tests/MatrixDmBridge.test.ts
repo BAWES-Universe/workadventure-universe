@@ -1237,7 +1237,11 @@ describe('MatrixDmBridge', () => {
             deps.uploadAttachment = vi.fn(async () => 'https://files.test/note.m4a');
             deps.noteHearing = {
                 canHear: vi.fn(async () => true),
-                hear: vi.fn(async () => ({ ok: true, text: ' Remind me   about the\nmeeting ', provider: 'soniox', timings: {} })),
+                // "Listening…" is shown when hearing starts (the note was reserved and is on its way to the provider)
+                hear: vi.fn(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                    onStart?.();
+                    return { ok: true, text: ' Remind me   about the\nmeeting ', provider: 'soniox', timings: {} };
+                }),
                 limits: { maxSeconds: 300, maxBytes: 1e6, maxChars: 4000 },
             };
             await bridge.onEvent(invite());
@@ -1245,7 +1249,8 @@ describe('MatrixDmBridge', () => {
 
         it('shows Listening, then the words under the note, and gives the bot the words', async () => {
             await bridge.onEvent(note);
-            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ filename: 'Voice message.m4a', seconds: 4 }));
+            // Counted on the person who sent it
+            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ filename: 'Voice message.m4a', seconds: 4 }), { userId: 'uuid-alice', isGuest: false }, expect.any(Function));
             const [listening, heard] = transcripts();
             expect(listening['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'listening' });
             expect(heard['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'heard', text: 'Remind me about the meeting' });
@@ -1253,10 +1258,27 @@ describe('MatrixDmBridge', () => {
         });
 
         it('says it could not listen, and the bot is not made to answer a file it cannot read', async () => {
-            deps.noteHearing.hear.mockResolvedValue({ ok: false, reason: 'failed' });
+            deps.noteHearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                onStart?.();
+                return { ok: false, reason: 'failed' };
+            });
             await bridge.onEvent(note);
             expect(transcripts().at(-1)['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'failed' });
             expect(deps.reply).not.toHaveBeenCalled();
+        });
+
+        it('shows no row for a note refused before it was heard, and says so under it', async () => {
+            deps.noteHearing.hear.mockResolvedValue({ ok: false, reason: 'busy' });
+            await bridge.onEvent(note);
+            expect(transcripts().map((content: any) => content['universe.transcript'] ?? content['m.new_content']['universe.transcript'])).toEqual([{ v: 1, for: '$note1', state: 'failed' }]);
+            expect(deps.reply).not.toHaveBeenCalled();
+        });
+
+        it('leaves a note whose sender has no replies left to the reply path, which shows the usual limit card, and never says Listening', async () => {
+            deps.noteHearing.hear.mockResolvedValue({ ok: false, reason: 'reply-limit', allowance: { limit: 'universe-ai', resetsAt: 'soon', who: 'member' } });
+            await bridge.onEvent(note);
+            expect(transcripts()).toEqual([]);
+            expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), '', [expect.objectContaining({ mediaType: 'audio' })], expect.anything());
         });
 
         it('promises nothing to a bot that cannot hear: no row, and the note reaches it as the file', async () => {
@@ -1275,7 +1297,7 @@ describe('MatrixDmBridge', () => {
 
             deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
             await bridge.checkWaiting();
-            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ seconds: 4 }));
+            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ seconds: 4 }), expect.anything(), expect.any(Function));
             expect(deps.reply.mock.calls.at(-1)[2]).toBe('[Voice note] Remind me about the meeting');
         });
 

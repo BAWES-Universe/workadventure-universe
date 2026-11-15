@@ -36,6 +36,16 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMyAppThings: game.getMyAppThings,
     },
 }));
+// A Brick wearing a WOKA is drawn by the game's picture loader, and the person's Bricks come from their own store: neither
+// has anything to do with this page, and the picture loader reaches code the tests cannot load
+vi.mock("../../BrickLookPicture", async () => {
+    const store = await import("svelte/store");
+    return { brickPicture: () => store.readable(undefined) };
+});
+vi.mock("../../MyBricksStore", async () => {
+    const store = await import("svelte/store");
+    return { myBricksStore: store.writable([]), loadMyBricks: vi.fn(() => Promise.resolve()) };
+});
 vi.mock("../../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: vi.fn() } }));
 vi.mock("../../../../Stores/MenuStore", async () => {
     const store = await import("svelte/store");
@@ -103,7 +113,7 @@ describe("Add your own app on the Apps page (#2001)", () => {
     it("has the row under the apps, before the note, and says 'Not here?' under a search that found nothing", async () => {
         page = new AppsPage({ target, props: { onBack: vi.fn() } });
         await settle();
-        expect(words(byId("appsAddOwn"))).toBe("Add your own app Paste its MCP link, like Firecrawl");
+        expect(words(byId("appsAddOwn"))).toBe("Add your own app Paste its link, like Firecrawl");
         const row = byId("appsAddOwn");
         const note = byId("appsSignInNote");
         expect(row && note && row.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -111,7 +121,7 @@ describe("Add your own app on the Apps page (#2001)", () => {
         input.value = "zzz";
         input.dispatchEvent(new Event("input", { bubbles: true }));
         await settle();
-        expect(words(byId("appsAddOwn"))).toBe("Not here? Add your own app Paste its MCP link, like Firecrawl");
+        expect(words(byId("appsAddOwn"))).toBe("Not here? Add your own app Paste its link, like Firecrawl");
         byId("appsAddOwn")?.click();
         await settle();
         expect(byId("addAppSheet")).not.toBeNull();

@@ -17,6 +17,7 @@ const game = vi.hoisted(() => ({
     openDirectChatRoom: vi.fn<(chatId: string) => Promise<unknown>>(),
     openChatRoom: vi.fn<(roomId: string) => Promise<void>>(),
     warn: vi.fn<(message: string) => void>(),
+    openGuestBrickChat: vi.fn<() => unknown>(),
 }));
 vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore: { getChatId: () => "@omar:chat.test" } }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
@@ -31,6 +32,7 @@ vi.mock("../../../Phaser/Game/GameManager", () => ({
 }));
 vi.mock("../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
 vi.mock("../../Utils", () => ({ openChatRoom: game.openChatRoom, openDirectChatRoom: game.openDirectChatRoom }));
+vi.mock("../GuestBrickStore", () => ({ openGuestBrickChat: game.openGuestBrickChat }));
 
 import type { ChatConnectionInterface } from "../../Connection/ChatConnection";
 import type { BrickCard } from "../Brick";
@@ -165,6 +167,14 @@ describe("opening a Brick's chat from the game", () => {
         vi.clearAllMocks();
         game.openDirectChatRoom.mockImplementation((chatId) => Promise.resolve({ id: `chat with ${chatId}` }));
         game.openChatRoom.mockResolvedValue(undefined);
+    });
+
+    it("opens the Brick for guests from the chat this device keeps, and asks no server", async () => {
+        const room = { id: "guest-brick" };
+        game.openGuestBrickChat.mockReturnValue(room);
+        await expect(openBrickChat("guest-brick")).resolves.toBe(room);
+        expect(game.askDirectChat).not.toHaveBeenCalled();
+        expect(game.openDirectChatRoom).not.toHaveBeenCalled();
     });
 
     it("asks the bot server who makes the chat, with the Brick and the person's own address", async () => {

@@ -19,22 +19,31 @@
     import { brickHello } from "./BrickHello";
     import { openBrickChat, openingBrickChats } from "./BrickChat";
     import { brickPicture } from "./MyBricksStore";
+    import { GUEST_BRICK_ID } from "./GuestBrick";
+    import { guestBrickOnline, guestBrickRoom } from "./GuestBrickStore";
     import { IconLoader } from "@wa-icons";
 
     /**
      * A person's own Brick in Chats before they ever opened its chat (game #1995): the Brick is just there, with its
      * hello as the line under its name and no unread badge, and nothing was sent to anyone. Laid out as a direct chat's
-     * row (Room.svelte), which takes its place once the chat exists. A tap opens the chat.
+     * row (Room.svelte), which takes its place once the chat exists. A tap opens the chat. The Brick for guests (#1997)
+     * is drawn the same way: always online, and the line under its name is the last thing said in the chat their device keeps.
      */
     export let brick: BrickCard;
+
+    const forGuest = brick.id === GUEST_BRICK_ID;
+    const guestLast = forGuest ? guestBrickRoom().last : readable(undefined);
 
     const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
         ? getContext(PERSON_COLOUR_CONTEXT)
         : readable(() => undefined);
     const myChatId = localUserStore.getChatId();
 
-    $: state = botStatusCache.store(brick.id);
+    $: state = forGuest ? guestBrickOnline : botStatusCache.store(brick.id);
     $: opening = $openingBrickChats.has(brick.id);
+    $: preview = forGuest
+        ? $guestLast?.text ?? $LL.chat.brick.guest.hello()
+        : brickHello(brick.name, $LL, gameManager.getPlayerName(), brick.hello);
     $: chunks = highlightWords({ text: brick.name, query: $chatSearchBarValue });
     $: timeLabel = formatRowTime(brickMadeAt(brick), $minuteClock, $locale, {
         justNow: $LL.chat.oneList.justNow(),
@@ -88,9 +97,7 @@
             {/if}
         </div>
         <div class="flex min-w-0 items-center gap-2 text-xs text-white/60">
-            <span class="min-w-0 grow truncate" data-testid="roomRowPreview"
-                >{brickHello(brick.name, $LL, gameManager.getPlayerName(), brick.hello)}</span
-            >
+            <span class="min-w-0 grow truncate" data-testid="roomRowPreview">{preview}</span>
         </div>
     </div>
     {#if opening}

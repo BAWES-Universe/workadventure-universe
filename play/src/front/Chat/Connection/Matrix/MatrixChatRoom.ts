@@ -44,7 +44,7 @@ import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds 
 import { readBotSteps } from "../../Bots/BotSteps";
 import { readNoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
 import { BOT_ASK_ANSWER_EVENT, botAskAnswerContent, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
-import { BRICK_MAKE_KEY, STARTER_KEY, type BrickOffer } from "../../Bricks/Brick";
+import { APP_CONNECTED_EVENT, BRICK_MAKE_KEY, STARTER_KEY, type BrickOffer } from "../../Bricks/Brick";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -773,6 +773,21 @@ export class MatrixChatRoom
             formatted_body: message,
             [BRICK_MAKE_KEY]: { topic, name, line, instructions },
         } as RoomMessageEventContent);
+    }
+
+    /**
+     * The person connected an App from a Brick's card (#2001). No message of theirs goes with it: the event only tells the
+     * Brick to carry on with what they asked, and to say what it may do with the App.
+     */
+    async sendAppConnected(app: { app: string; name: string }): Promise<void> {
+        await this.matrixRoom.client.sendEvent(
+            this.matrixRoom.roomId,
+            APP_CONNECTED_EVENT as never,
+            {
+                app: app.app,
+                name: app.name,
+            } as never
+        );
     }
 
     sendMessage(message: string) {

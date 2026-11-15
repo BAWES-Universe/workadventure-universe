@@ -9,7 +9,17 @@ import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readAnsweredNearby } from "../../Bots/PrivateAnswer";
-import { readBrickIdeas, readBrickMade, readBrickOffer, type BrickOffer, type MadeBrick } from "../../Bricks/Brick";
+import {
+    readAppOffer,
+    readBrickIdeas,
+    readBrickMade,
+    readBrickOffer,
+    readGuestChat,
+    type AppOffer,
+    type BrickOffer,
+    type GuestChatLine,
+    type MadeBrick,
+} from "../../Bricks/Brick";
 import { LL } from "../../../../i18n/i18n-svelte";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
@@ -74,6 +84,10 @@ export class MatrixChatMessage implements ChatMessage {
     readonly brickMade: MadeBrick[];
     /** A Brick's suggestion of a Brick for a job that keeps coming back (#1996). */
     readonly brickOffer: BrickOffer | undefined;
+    /** A Brick's offer to connect an App (#2001): "Connect your calendar?". */
+    readonly appOffer: AppOffer | undefined;
+    /** The chat someone had with the Brick for guests, brought along when they signed in (#1997). */
+    readonly guestChat: GuestChatLine[];
     /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
     readonly ask: Writable<BotAsk | undefined>;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
@@ -105,6 +119,8 @@ export class MatrixChatMessage implements ChatMessage {
         this.brickIdeas = readBrickIdeas(event.getSender(), event.getOriginalContent());
         this.brickMade = readBrickMade(event.getSender(), event.getOriginalContent());
         this.brickOffer = readBrickOffer(event.getSender(), event.getOriginalContent());
+        this.appOffer = readAppOffer(event.getSender(), event.getOriginalContent());
+        this.guestChat = readGuestChat(event.getSender(), event.getOriginalContent());
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.transcriptOf = readNoteTranscript(event.getSender(), this.stepsContent());
         this.transcriptNotice = this.transcriptOf !== undefined;

@@ -46,6 +46,9 @@
     import { inputFormFocusStore } from "../Stores/UserInputStore";
     import { isExploringTheRoom, leaveExploreTheRoom } from "../Phaser/Game/MapEditor/ExploreTheRoom";
     import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
+    import CallFloatingBar from "../Chat/Bricks/Call/CallFloatingBar.svelte";
+    import CallWalkUpHost from "../Chat/Bricks/Call/CallWalkUpHost.svelte";
+    import { botCallStore } from "../Chat/Bricks/Call/CallStore";
     import { expressTrayStore } from "../Stores/ExpressStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import EditMode from "./MapEditor/EditMode/EditMode.svelte";
@@ -166,7 +169,8 @@
             $actionsMenuStore !== undefined ||
             $showReportScreenStore !== userReportEmpty ||
             $popupStore.some((popup) => popup.uuid === "popupFollow" || popup.uuid === NEW_DEVICE_POPUP_ID) ||
-            $incomingRingStore !== undefined);
+            $incomingRingStore !== undefined ||
+            $botCallStore?.state.walkUp !== undefined);
     $: inFrontOfChat = windowMaximised || windowOverChat || cardOverChatSheet;
 </script>
 
@@ -328,6 +332,8 @@
             {/if}
 
             <RingOverlay />
+            <CallFloatingBar />
+            <CallWalkUpHost />
 
             <ExternalComponents zone="popup" />
             {#if $requestVisitCardsStore || $wokaMenuStore || $actionsMenuStore}

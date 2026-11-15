@@ -12,7 +12,7 @@ const FETCH_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 5;
 
 /** The picture type its first bytes say, for a server that labels a picture as plain bytes. */
-function sniffedType(bytes: Uint8Array): string | null {
+export function sniffedType(bytes: Uint8Array): string | null {
     const starts = (...signature: number[]) => signature.every((byte, i) => bytes[i] === byte);
     if (starts(0x89, 0x50, 0x4e, 0x47)) return 'image/png';
     if (starts(0xff, 0xd8, 0xff)) return 'image/jpeg';

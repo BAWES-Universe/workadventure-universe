@@ -15,7 +15,7 @@ describe("captureAiGeneration and the cache figures", () => {
         process.env.POSTHOG_API_KEY = "phc_test";
     });
 
-    const base = { distinctId: "bot-1", traceId: "t", sessionId: "s", model: "m", provider: "anthropic", input: "hi", output: "yo", inputTokens: 3025, outputTokens: 7 };
+    const base = { distinctId: "bot-1", traceId: "t", sessionId: "s", model: "m", provider: "anthropic", inputTokens: 3025, outputTokens: 7 };
 
     it("keeps the cached count when only cache writes are reported on top", async () => {
         const { captureAiGeneration } = await import("../ai/PostHogClient");

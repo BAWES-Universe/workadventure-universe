@@ -113,7 +113,7 @@ describe('every use of an App on a connection', () => {
         for (const reason of ['limit_reached', 'not_lent', 'incomplete', 'gone'] as const) {
             const [result] = await call(service(async () => ({ allowed: false, reason })));
             expect(result.result.error).toContain('Carry on without it');
-            expect(result.result.outcome).toBe('notSent');
+            expect(result.result.outcome).toBe('not_sent');
         }
         expect(execute).not.toHaveBeenCalled();
     });
@@ -197,6 +197,165 @@ describe('a ready-made App', () => {
         const listing = sent.find((b) => b.message.method === 'tools/list');
         expect(listing).toMatchObject({ botId: 'bot-y', serverId: 's4', forOwner: true });
         expect(listing).not.toHaveProperty('callId');
+    });
+
+    it('is not taken as never sent when the turn is cancelled after the call went to Orbit', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        const controller = new AbortController();
+        vi.spyOn(axios, 'post').mockImplementation(async (_url: string, body: any) => {
+            if (body.message.method === 'initialize') return { data: { status: 200, contentType: 'application/json', sessionId: 'sess-2', body: '{}' } };
+            if (body.message.method === 'notifications/initialized') return { data: { status: 202, contentType: null, sessionId: null, body: '' } };
+            // The call is out: the turn is cancelled while Orbit may still be running it
+            controller.abort();
+            throw new axios.CanceledError('canceled');
+        });
+        const ai = service(async () => ({ allowed: true }));
+        const [result] = await ai['executeToolCalls']([{ id: 'call-10', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-x', 7, controller.signal);
+        expect(result.result).toMatchObject({ outcome: 'uncertain' });
+    });
+
+    describe('a kept session that went idle', () => {
+        const callWith = async (ai: ReturnType<typeof service>, id: string) =>
+            (await ai['executeToolCalls']([{ id, name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-idle', 7))[0];
+        const link = (sessions: { live: Set<string>; made: string[] }, sent: any[]) => async (_url: string, body: any) => {
+            sent.push(body);
+            const method = body.message.method;
+            if (method === 'initialize') {
+                const id = `sess-${sessions.made.length + 1}`;
+                sessions.made.push(id);
+                sessions.live.add(id);
+                return { data: { status: 200, contentType: 'application/json', sessionId: id, body: '{}' } };
+            }
+            if (method === 'notifications/initialized') return { data: { status: 202, contentType: null, sessionId: null, body: '' } };
+            // The link answers 404 to a session it no longer knows
+            if (!sessions.live.has(body.sessionId)) return { data: { status: 404, contentType: null, sessionId: null, body: '' } };
+            if (method === 'tools/list') return { data: { status: 200, contentType: 'application/json', sessionId: null, body: JSON.stringify({ jsonrpc: '2.0', id: 'check', result: { tools: [] } }) } };
+            return { data: { status: 200, contentType: 'application/json', sessionId: null, body: JSON.stringify(json({ content: [{ type: 'text', text: 'sent' }] })) } };
+        };
+
+        it('is checked before the call and replaced when the link dropped it, so the call goes out once', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            MCPConnector.clearCache();
+            vi.useFakeTimers({ toFake: ['Date'] });
+            try {
+                const sessions = { live: new Set<string>(), made: [] as string[] };
+                const sent: any[] = [];
+                vi.spyOn(axios, 'post').mockImplementation(link(sessions, sent) as never);
+                const ai = service(async () => ({ allowed: true }));
+                expect((await callWith(ai, 'first')).result).toEqual([{ type: 'text', text: 'sent' }]);
+                // A minute later the link has forgotten the session
+                vi.setSystemTime(Date.now() + 60_000);
+                sessions.live.clear();
+                sent.length = 0;
+                expect((await callWith(ai, 'second')).result).toEqual([{ type: 'text', text: 'sent' }]);
+                expect(sent.map((b) => b.message.method)).toEqual(['tools/list', 'initialize', 'notifications/initialized', 'tools/call']);
+                // Exactly one call for this id reached Orbit, and on the new session
+                const calls = sent.filter((b) => b.message.method === 'tools/call');
+                expect(calls).toHaveLength(1);
+                expect(calls[0]).toMatchObject({ callId: 'second', sessionId: 'sess-2' });
+                // The check is a listing, which carries no call id
+                expect(sent[0]).not.toHaveProperty('callId');
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('is not checked again while it is in use', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            MCPConnector.clearCache();
+            const sessions = { live: new Set<string>(), made: [] as string[] };
+            const sent: any[] = [];
+            vi.spyOn(axios, 'post').mockImplementation(link(sessions, sent) as never);
+            const ai = service(async () => ({ allowed: true }));
+            await callWith(ai, 'one');
+            sent.length = 0;
+            await callWith(ai, 'two');
+            expect(sent.map((b) => b.message.method)).toEqual(['tools/call']);
+        });
+
+        it('sends no call and keeps no session when the check is refused for another reason than a gone session', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            MCPConnector.clearCache();
+            vi.useFakeTimers({ toFake: ['Date'] });
+            try {
+                const sessions = { live: new Set<string>(), made: [] as string[] };
+                const sent: any[] = [];
+                const spy = vi.spyOn(axios, 'post').mockImplementation(link(sessions, sent) as never);
+                const ai = service(async () => ({ allowed: true }));
+                await callWith(ai, 'first');
+                vi.setSystemTime(Date.now() + 60_000);
+                sent.length = 0;
+                // The link now refuses everything: its key is no longer good
+                spy.mockImplementation((async (_url: string, body: any) => {
+                    sent.push(body);
+                    return { data: { status: 401, contentType: null, sessionId: null, body: '' } };
+                }) as never);
+                const result = (await callWith(ai, 'second')).result as { outcome: string };
+                expect(result.outcome).toBe('not_sent');
+                expect(sent.map((b) => b.message.method)).toEqual(['tools/list']);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('sends no call and says nothing ran when the check cannot reach Orbit', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            MCPConnector.clearCache();
+            vi.useFakeTimers({ toFake: ['Date'] });
+            try {
+                const sessions = { live: new Set<string>(), made: [] as string[] };
+                const sent: any[] = [];
+                const spy = vi.spyOn(axios, 'post').mockImplementation(link(sessions, sent) as never);
+                const ai = service(async () => ({ allowed: true }));
+                await callWith(ai, 'first');
+                vi.setSystemTime(Date.now() + 60_000);
+                sent.length = 0;
+                spy.mockRejectedValue(Object.assign(new Error('timeout of 60000ms exceeded'), { isAxiosError: true, code: 'ECONNABORTED' }));
+                const result = (await callWith(ai, 'second')).result as { outcome: string };
+                expect(result.outcome).toBe('not_sent');
+                expect(sent.some((b) => b.message.method === 'tools/call')).toBe(false);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
+
+    it('sends no call and says nothing ran when the link will not open a session', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        MCPConnector.clearCache();
+        const sent: any[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (_url: string, body: any) => {
+            sent.push(body);
+            // Orbit answers 200 with what the link said: 401, its key is no longer good
+            return { data: { status: 401, contentType: null, sessionId: null, body: '' } };
+        });
+        const ai = service(async () => ({ allowed: true }));
+        const [result] = await ai['executeToolCalls']([{ id: 'c-401', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-401', 7);
+        expect(result.result.outcome).toBe('not_sent');
+        expect(sent.map((b) => b.message.method)).toEqual(['initialize']);
+        // Nothing was kept: the next call opens a session again
+        sent.length = 0;
+        await ai['executeToolCalls']([{ id: 'c-401b', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-401', 7);
+        expect(sent.map((b) => b.message.method)).toEqual(['initialize']);
+    });
+
+    it('sends no call and keeps no session when the link refuses the "initialized" message', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        MCPConnector.clearCache();
+        const sent: any[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (_url: string, body: any) => {
+            sent.push(body);
+            if (body.message.method === 'initialize') return { data: { status: 200, contentType: 'application/json', sessionId: 'sess-r', body: '{}' } };
+            return { data: { status: 500, contentType: null, sessionId: null, body: '' } };
+        });
+        const ai = service(async () => ({ allowed: true }));
+        const [result] = await ai['executeToolCalls']([{ id: 'c-init', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-init', 7);
+        expect(result.result.outcome).toBe('not_sent');
+        expect(sent.map((b) => b.message.method)).toEqual(['initialize', 'notifications/initialized']);
+        sent.length = 0;
+        await ai['executeToolCalls']([{ id: 'c-init2', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-init', 7);
+        expect(sent[0].message.method).toBe('initialize');
     });
 
     it('is not run when Orbit says no, and tells the bot nothing about why', async () => {

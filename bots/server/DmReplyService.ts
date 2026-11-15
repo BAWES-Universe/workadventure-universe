@@ -22,7 +22,7 @@ import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
-import type { BrickNote, BrickOfferNote } from '../ai/BrickTools';
+import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
@@ -129,6 +129,8 @@ export interface DmReplyHooks {
     pointedArtifactIds?: string[];
     /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
     note?: boolean;
+    /** The App the person just connected from a Brick's card (game #2001): the reply's steps line starts with "Connected {name}". */
+    connectedApp?: { app: string; name: string };
     /** The person tapped this starter under a Brick's hello (#1995): the message is the starter's own words. */
     starter?: string;
     /** The person tapped "Make it" on a Brick's suggestion (#1996): the Brick the card described. Their message is the button's own words. */
@@ -160,6 +162,8 @@ export interface DmReply {
      * as Orbit keeps it, or null to leave the card out. Asks once however often it is called.
      */
     claimOffer?: () => Promise<string | null>;
+    /** The same for an App offer's card (game #2001). */
+    claimApp?: () => Promise<string | null>;
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -188,6 +192,34 @@ export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
     private waiting = new Map<string, { texts: string[]; pointed: string[]; note: boolean; starter: boolean; answer: Promise<DmReply | null> }>();
+    /**
+     * What a model reads of the files a guest sent the Brick for guests (plan v3 section 5): the same reading every bot does (the
+     * text of each file, then the pictures for a model that sees them), from bytes the caller already read and checked. Nothing
+     * else is fetched while it reads, so a document that names other addresses never reaches the network.
+     */
+    async readCheckedFiles(text: string, files: { url: string; type: string; bytes: ArrayBuffer }[], readChars: number): Promise<{ text: string; images: string[] }> {
+        const [primary, ...gallery] = files;
+        if (!primary) return { text, images: [] };
+        const { FileParser } = await import('../services/FileParser');
+        const loaded = new Map(files.map((file) => [file.url, { bytes: file.bytes, type: file.type }]));
+        const mediaOf = (type: string) => (type.startsWith('image/') ? 'image' : type.startsWith('audio/') ? 'audio' : type.startsWith('video/') ? 'video' : 'file');
+        return FileParser.withLoadedFiles(loaded, async () => {
+            const galleryUrls = gallery.map((file) => file.url);
+            const read = await this.formatParsedAttachment(text, primary.url, primary.type, mediaOf(primary.type), galleryUrls, undefined, undefined, readChars);
+            const pictures = await this.collectImageUrls(primary.url, mediaOf(primary.type), primary.type, galleryUrls);
+            // The model gets each picture from its checked bytes, never its stored link: a signed link runs out long before its receipt
+            const { sniffedType } = await import('../ai/providers/inlineImages');
+            const images = pictures.map((url) => {
+                const file = loaded.get(url);
+                if (!file) return url;
+                const bytes = Buffer.from(file.bytes);
+                const type = file.type.startsWith('image/') ? file.type : (sniffedType(bytes) ?? 'image/png');
+                return `data:${type};base64,${bytes.toString('base64')}`;
+            });
+            return { text: read, images };
+        });
+    }
+
     /** Bricks whose settings must be read again before their next answer (#1996): one that was just deleted stops at once. */
     forgetConfig(botId: string): void {
         this.configCache.delete(botId);
@@ -243,7 +275,8 @@ export class DmReplyService extends BaseBehavior {
         const waiting = this.waiting.get(key);
         // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently.
         // Nor is a starter they tapped (#1995): its answer is fixed words, which would leave what they typed unanswered
-        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered) {
+        // Nor an App they just connected: each one gets its own steps line ("Connected Notion"), which one batch cannot show twice
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered && !hooks.connectedApp) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -254,7 +287,7 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered } as {
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered || !!hooks.connectedApp } as {
             texts: string[];
             pointed: string[];
             note: boolean;
@@ -527,6 +560,15 @@ export class DmReplyService extends BaseBehavior {
         const showStepsNow = async () => {
             if (steps && hooks.onSteps) await hooks.onSteps(steps.field(), steps.text());
         };
+        // The App the person just connected is the first thing the line says, shown whatever the bot's tool-calls switch says
+        // (it is what they did, not a call the bot made), as in the mock: "Connected Google Calendar · Used Find Events"
+        if (hooks.connectedApp && hooks.onSteps) {
+            const id = `app-connected-${hooks.connectedApp.app}`;
+            steps = new ReplySteps();
+            steps.start([{ id, doing: `Connecting ${hooks.connectedApp.name}`, done: `Connected ${hooks.connectedApp.name}`, group: id }]);
+            steps.finish([{ id, ok: true }]);
+            await showStepsNow();
+        }
         const stopSteps = async () => {
             if (!steps) return;
             steps.stop();
@@ -676,8 +718,9 @@ export class DmReplyService extends BaseBehavior {
         const madeOne = bricks.find((note) => note.kind === 'made');
         if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
         // A suggestion goes out only with words, and Orbit is asked about it only as its card is sent (claimOffer)
-        if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer');
+        if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer' && note.kind !== 'app');
         const claimOffer = this.offerClaim(bricks, botId, person.uuid);
+        const claimApp = this.appClaim(bricks, botId, person.uuid);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -704,6 +747,7 @@ export class DmReplyService extends BaseBehavior {
             ...(artifacts.length ? { artifacts } : {}),
             ...(bricks.length ? { bricks } : {}),
             ...(claimOffer ? { claimOffer } : {}),
+            ...(claimApp ? { claimApp } : {}),
         };
     }
 
@@ -724,6 +768,27 @@ export class DmReplyService extends BaseBehavior {
                 .then((claim) => (claim.show ? claim.topic : null))
                 .catch((error: unknown) => {
                     console.warn('[DmReplyService] Could not ask Orbit about a Brick suggestion:', error instanceof Error ? error.message : error);
+                    return null;
+                }));
+    }
+
+    /**
+     * The same for an App offer (game #2001): one the person asked for by name needs no asking, and any other is shown once per
+     * person and App, as Orbit keeps it, so "Not now" holds on every device.
+     */
+    private appClaim(bricks: BrickNote[], botId: string, userId: string): (() => Promise<string | null>) | undefined {
+        const offer = bricks.find((note): note is AppOfferNote => note.kind === 'app');
+        const admin = this.adminApiService;
+        if (!offer) return undefined;
+        if (offer.asked) return () => Promise.resolve(offer.topic);
+        if (!admin) return undefined;
+        let asked: Promise<string | null> | undefined;
+        return () =>
+            (asked ??= admin
+                .claimBrickOffer(botId, userId, offer.topic)
+                .then((claim) => (claim.show ? claim.topic : null))
+                .catch((error: unknown) => {
+                    console.warn('[DmReplyService] Could not ask Orbit about an App offer:', error instanceof Error ? error.message : error);
                     return null;
                 }));
     }

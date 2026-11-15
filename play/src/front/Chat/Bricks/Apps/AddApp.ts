@@ -31,6 +31,9 @@ export interface Discovery {
     registration: "auto" | "manual" | undefined;
 }
 
+/** How long the sheet waits for an app to say how it signs in before it asks the person instead */
+export const DISCOVERY_DEADLINE_MS = 20_000;
+
 export const NO_DISCOVERY: Discovery = {
     discovered: false,
     name: undefined,

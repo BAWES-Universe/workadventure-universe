@@ -44,6 +44,7 @@ vi.mock("../Reconnect", () => ({ signInInPopup: game.reconnect }));
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
 import AddAppSheet from "../AddAppSheet.svelte";
+import { DISCOVERY_DEADLINE_MS } from "../AddApp";
 import { forgetMyApps } from "../AppsStore";
 
 const ZAPIER = "https://mcp.zapier.com/api/mcp/mcp";
@@ -135,7 +136,7 @@ describe("Add your own app (#2001, mock Part 13)", () => {
     it("starts with only the link, and Next waits for a link", async () => {
         await open();
         expect(words(byId("addAppSheet"))).toContain("Add your own app");
-        expect(words(byId("addAppSheet"))).toContain("Paste the app's MCP link. Universe checks how it signs in.");
+        expect(words(byId("addAppSheet"))).toContain("Paste the app's link. Universe checks how it signs in.");
         expect(byId("addAppName")).toBeNull();
         expect((byId("addAppNext") as HTMLButtonElement).disabled).toBe(true);
         await type("addAppLink", "not a link");
@@ -419,12 +420,69 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(game.disconnectMyApp).not.toHaveBeenCalled();
     });
 
+    it("keeps a connected app when the sheet is closed while the list of what it can do is still loading", async () => {
+        game.getMyAppThings.mockImplementationOnce(() => new Promise(() => {}));
+        await open();
+        await paste(ZAPIER);
+        void click("addAppSignIn");
+        await settle();
+        expect(game.getMyAppThings).toHaveBeenCalledTimes(1);
+        await click("addAppCancel");
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(game.disconnectMyApp).not.toHaveBeenCalled();
+    });
+
+    it("asks how the app signs in when the app never answers the check", async () => {
+        game.discoverMcpOAuthEndpoints.mockImplementationOnce(() => new Promise(() => {}));
+        await open();
+        vi.useFakeTimers();
+        try {
+            const input = byId("addAppLink") as HTMLInputElement;
+            input.value = ZAPIER;
+            input.dispatchEvent(new InputEvent("input", { inputType: "insertFromPaste", bubbles: true }));
+            await vi.advanceTimersByTimeAsync(1);
+            expect(words(byId("addAppSheet"))).toContain("Checking how it signs in");
+            await vi.advanceTimersByTimeAsync(DISCOVERY_DEADLINE_MS);
+        } finally {
+            vi.useRealTimers();
+        }
+        await settle();
+        expect(words(byId("addAppSheet"))).toContain("How does it sign in?");
+        expect(words(byId("addAppSheet"))).not.toContain("Checking how it signs in");
+    });
+
     it("says so when the window can't open", async () => {
         game.reconnect.mockResolvedValueOnce("blocked");
         await open();
         await paste(ZAPIER);
         await click("addAppSignIn");
         expect(words(byId("addAppBlocked"))).toContain("Couldn't open the sign-in page");
+    });
+
+    it("stays busy until Orbit has made the app when the window can't open, so a second tap does not make a second app", async () => {
+        let answer: (value: unknown) => void = () => {};
+        game.addMyApp.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        // a blocked window answers at once, before the app exists
+        game.reconnect.mockResolvedValueOnce("blocked");
+        await open();
+        await paste(ZAPIER);
+        void click("addAppSignIn");
+        await settle();
+        void click("addAppSignIn");
+        await settle();
+        expect(game.addMyApp).toHaveBeenCalledTimes(1);
+        answer({ id: "app-1" });
+        await settle();
+        expect(words(byId("addAppBlocked"))).toContain("Couldn't open the sign-in page");
+        // the next tap reuses the app that was made
+        await click("addAppSignIn");
+        expect(game.addMyApp).toHaveBeenCalledTimes(1);
+        expect(byId("addAppConnected")).not.toBeNull();
     });
 
     it("takes an app that never got signed in away again when the sheet closes", async () => {
@@ -472,11 +530,27 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(game.addMyApp).not.toHaveBeenCalled();
         expect(game.reconnect).not.toHaveBeenCalled();
         await type("addAppHeaderName", "X-Team");
+        // the line about the refused header goes as soon as the header is renamed
+        expect(byId("addAppReserved")).toBeNull();
         expect(words(byId("addAppExtra"))).toBe("Extra headers 1 header");
         await click("addAppSignIn");
         expect((game.addMyApp.mock.calls[0][0] as { headers: unknown }).headers).toEqual({
             "X-Team": "Bearer x",
         });
+    });
+
+    it("drops the line about a refused header when that header is removed", async () => {
+        await open();
+        await paste(ZAPIER);
+        await click("addAppExtra");
+        await click("addAppAddHeader");
+        await type("addAppHeaderName", "Cookie");
+        await click("addAppSignIn");
+        expect(byId("addAppReserved")).not.toBeNull();
+        document.querySelector<HTMLElement>(".hdr-x")?.click();
+        await settle();
+        expect(byId("addAppReserved")).toBeNull();
+        expect(game.addMyApp).not.toHaveBeenCalled();
     });
 
     it("never writes the key into the page's words", async () => {

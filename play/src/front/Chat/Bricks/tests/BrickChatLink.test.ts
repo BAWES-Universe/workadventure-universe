@@ -20,6 +20,8 @@ const { bricks, openBrickChat, loadMyBricks } = vi.hoisted(() => {
         loadMyBricks: vi.fn(() => Promise.resolve()),
     };
 });
+const { openAppsPage } = vi.hoisted(() => ({ openAppsPage: vi.fn() }));
+vi.mock("../Apps/OpenApps", () => ({ APPS_LINK: "#apps", openAppsPage }));
 vi.mock("../BrickChat", () => ({ openBrickChat }));
 vi.mock("../MyBricksStore", () => ({ myBricksStore: bricks, loadMyBricks }));
 
@@ -117,5 +119,26 @@ describe("a link to a Brick's chat inside an answer", () => {
         brickChatLinks(list);
         expect(tap(link).defaultPrevented).toBe(false);
         expect(openBrickChat).not.toHaveBeenCalled();
+    });
+});
+
+describe("the Apps link in what a Brick says after connecting an App", () => {
+    it("opens the Apps page here on a tap, and is never followed", () => {
+        const { list, link } = listWithLink("#apps");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(true);
+        expect(openAppsPage).toHaveBeenCalledTimes(1);
+        expect(openBrickChat).not.toHaveBeenCalled();
+        action.destroy();
+    });
+
+    it("leaves any other address alone", () => {
+        const { list, link } = listWithLink("#apps-and-more");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(false);
+        expect(openAppsPage).not.toHaveBeenCalled();
+        action.destroy();
     });
 });

@@ -11,6 +11,7 @@ import {
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
+import type { GuestChatLine } from "../../../Chat/Bricks/Brick";
 import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { readBotUsage, type BotUsage, type UsageRange } from "../usageModel";
 import {
@@ -34,6 +35,7 @@ import {
     type VoiceListPart,
 } from "../voiceModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
+import { classifyCallFailure, type CallResult } from "./callFailure";
 
 interface AuthError extends Error {
     isAuthError: boolean;
@@ -52,6 +54,9 @@ const PERMISSIONS_TIMEOUT_MS = 20000;
 const HELLO_TIMEOUT_MS = 60000;
 /** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
 const DM_STATUS_TIMEOUT_MS = 10000;
+// A guest's answer from the Brick for guests: writing it can take a while; past this it is not coming, and the next turn goes on.
+// The bot server never lets the model take longer than 90 s for one (GUEST_REPLY_CEILING_MS), and this leaves room for its calls to Orbit.
+const GUEST_REPLY_TIMEOUT_MS = 130000;
 /** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
 const DIRECT_CHAT_TIMEOUT_MS = 5000;
 /** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
@@ -163,6 +168,7 @@ export class BotApiService {
         if (this.accessToken !== nextAccessToken) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
+            this.resetTimeZoneKept();
         }
         this.accessToken = nextAccessToken;
         if (!userAccessToken) this.gameToken = null;
@@ -178,6 +184,7 @@ export class BotApiService {
         if (this.adminUrl !== previousAdminUrl) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
+            this.resetTimeZoneKept();
         }
 
         try {
@@ -515,6 +522,63 @@ export class BotApiService {
         }
 
         return response;
+    }
+
+    private timeZoneKept = false;
+    private timeZoneTries = 0;
+    private timeZoneSending = false;
+
+    /**
+     * Counts the times `initialize()` moved to another Orbit or account: an answer that belongs to an older count says
+     * nothing about the current one. A token renewed in the middle of a send does not change it.
+     */
+    private timeZoneGeneration = 0;
+
+    private resetTimeZoneKept(): void {
+        this.timeZoneGeneration++;
+        this.timeZoneKept = false;
+        this.timeZoneTries = 0;
+        this.timeZoneSending = false;
+    }
+
+    /**
+     * Tells Orbit the time zone this player's own device is in (preference `timeZone`), so a Brick reads "tomorrow at
+     * 9" on their clock without ever asking where they are (game #2002). Once per page load for a signed-in player,
+     * tried again on the next asks while it fails (a session still being set up), three times at most, and never
+     * loudly: when it cannot be sent the Brick simply asks once.
+     */
+    async keepTimeZone(): Promise<void> {
+        if (
+            this.timeZoneKept ||
+            this.timeZoneSending ||
+            this.timeZoneTries >= 3 ||
+            !this.adminUrl ||
+            !this.accessToken
+        ) {
+            return;
+        }
+        let zone: string | undefined;
+        try {
+            zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch {
+            return;
+        }
+        if (typeof zone !== "string" || zone.length === 0 || zone.length > 64) return;
+        const generation = this.timeZoneGeneration;
+        this.timeZoneSending = true;
+        this.timeZoneTries++;
+        try {
+            await this.fetch("/api/me/preferences", {
+                method: "PUT",
+                body: JSON.stringify({ key: "timeZone", value: zone }),
+            });
+            // An answer from an Orbit or an account the player has since left says nothing about the new one
+            if (this.timeZoneGeneration === generation) this.timeZoneKept = true;
+        } catch {
+            // Not kept this time
+        } finally {
+            if (this.timeZoneGeneration === generation) this.timeZoneSending = false;
+        }
     }
 
     /**
@@ -1240,19 +1304,33 @@ export class BotApiService {
     }
 
     /**
-     * The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts, which is
-     * `undefined` (no screen to show). A request that did not go through (Orbit down, too slow, refused) is "failed", so the
-     * screen can tell the two apart and ask again soon.
+     * A ticket for the screen of the person's own computer, to open on the bot server within a minute. Watch by default; input is only
+     * for the person who has taken over. Never wakes a machine: a resting computer, or input before a take over, answers 409, which is
+     * `undefined` (nothing to show now). A request that did not go through is "failed", so the screen can ask again soon.
      */
-    async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined | "failed"> {
+    async screenTicketForBrick(
+        brickId: string,
+        mode: "watch" | "input"
+    ): Promise<{ ticket: string } | undefined | "failed"> {
         try {
-            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/watch`, {
+            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/screen`, {
                 method: "POST",
-            })) as { url?: unknown };
-            return typeof data.url === "string" ? { url: data.url } : undefined;
+                body: JSON.stringify({ mode }),
+            })) as { ticket?: unknown; resting?: unknown; notTakenOver?: unknown };
+            if (typeof data.ticket === "string") return { ticket: data.ticket };
+            return data.resting === true || data.notTakenOver === true ? undefined : "failed";
         } catch (error) {
             return (error as { status?: number }).status === 409 ? undefined : "failed";
         }
+    }
+
+    /** Where the screen socket is on the bot server for a ticket (wss on a secure page), or null when the bot server's address was refused. */
+    screenSocketUrl(ticket: string): string | null {
+        const base = this.getBotServerUrl();
+        if (!base) return null;
+        return `${base.replace(/^http/, "ws").replace(/\/+$/, "")}/computer/screen?ticket=${encodeURIComponent(
+            ticket
+        )}`;
     }
 
     /**
@@ -1472,9 +1550,14 @@ export class BotApiService {
         return await this.appsCall("/api/me/apps/catalog");
     }
 
-    /** The ready-made apps. Orbit answers 404 (a throw here) while there are none to offer, exactly like a route that is not there. */
+    /** The ready-made apps. Orbit answers 404 while there are none to offer, exactly like a route that is not there: that is an empty list. */
     async getReadyMadeApps(): Promise<unknown> {
-        return await this.appsCall("/api/me/apps/ready-made");
+        try {
+            return await this.appsCall("/api/me/apps/ready-made");
+        } catch (error) {
+            if ((error as { status?: number }).status === 404) return { apps: [] };
+            throw error;
+        }
     }
 
     /** "Connect" on a ready-made app: the person's connection and the address of the app's own sign-in page, unless already signed in. */
@@ -1503,9 +1586,109 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
     }
 
+    /**
+     * What a bot remembers about the signed-in person (game #2003), one thing at a time. Only their own list: Orbit
+     * never answers this for anyone else, whoever owns or manages the bot.
+     */
+    async getMyMemory(botId: string): Promise<unknown> {
+        // With the deadline brickWrite gives: a read that never answers shows Retry instead of loading for good
+        return await this.brickWrite(`/api/bots/${encodeURIComponent(botId)}/my-memory`, {});
+    }
+
+    /** The person makes a bot forget one thing from their list, or everything it remembers about them. */
+    async forgetMyMemory(botId: string, what: { itemId: string } | { everything: true }): Promise<unknown> {
+        return await this.brickWrite(`/api/bots/${encodeURIComponent(botId)}/my-memory/forget`, {
+            method: "POST",
+            body: JSON.stringify(what),
+        });
+    }
+
+    /** A Brick's files for its owner (game #2003): what it made, what they sent it, and what is on its computer. */
+    async getBrickFiles(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files`, {});
+    }
+
+    /** Deletes a file the owner sent their Brick: the one change the files list allows. */
+    async deleteBrickFile(brickId: string, fileId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files/${encodeURIComponent(fileId)}`, {
+            method: "DELETE",
+        });
+    }
+
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
     async undoMyBrick(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
+    }
+
+    /* ---- Brick templates (game #2008). Every call has a Brick's deadline, so no button waits for good. ---- */
+
+    /** "Start from a template": the person's starred ones, a few picks, and Bricks they met that share one. */
+    async getTemplateLists(): Promise<unknown> {
+        return await this.brickWrite("/api/brick-templates", {});
+    }
+
+    /** The look before creating a Brick from a template (`{ template }`). Rejects with status 404 when it is not there. */
+    async getTemplatePreview(templateId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}`, {});
+    }
+
+    /** "Create Brick": the person's own new Brick from a template. Answers with its card and where it came from. */
+    async useTemplate(templateId: string, name?: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}/use`, {
+            method: "POST",
+            body: JSON.stringify(name ? { name } : {}),
+        });
+    }
+
+    /** Star keeps a template for later; starring twice is the same star. */
+    async starTemplate(templateId: string, starred: boolean): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}/star`, {
+            method: starred ? "PUT" : "DELETE",
+        });
+    }
+
+    /** The template on the card of a Brick someone meets (`{ template }`, null when it shares none). */
+    async getTemplateOfBrick(botId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/for-brick/${encodeURIComponent(botId)}`, {});
+    }
+
+    /** A Brick's own "Template" group, for its owner. */
+    async getMakerTemplate(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, {});
+    }
+
+    /** The look before sharing: exactly what would go with the template. Writes nothing. */
+    async lookAtTemplate(brickId: string, choices: Record<string, unknown>): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template/look`, {
+            method: "POST",
+            body: JSON.stringify(choices),
+        });
+    }
+
+    /** "Share as a template" / "Share your latest changes": shares exactly the look the `token` names. */
+    async shareTemplate(brickId: string, request: Record<string, unknown>): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, {
+            method: "PUT",
+            body: JSON.stringify(request),
+        });
+    }
+
+    /** "Stop sharing": nobody new can use it; no Brick is touched. */
+    async stopSharingTemplate(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, { method: "DELETE" });
+    }
+
+    /** A Brick made from a template: where it came from, what it still needs, and a "Template updated" to review. */
+    async getMadeFrom(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/made-from`, {});
+    }
+
+    /** "Template updated": the owner takes some parts, all or none of what the maker changed. */
+    async takeTemplateUpdate(brickId: string, version: number, take: string[]): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/made-from/update`, {
+            method: "POST",
+            body: JSON.stringify({ version, take }),
+        });
     }
 
     /**
@@ -1530,6 +1713,105 @@ export class BotApiService {
             method: "POST",
             body: JSON.stringify({ topic }),
         });
+    }
+
+    /**
+     * What the Brick for guests answers a guest's message (game #1997). The guest and the place are the game token's and
+     * this room's: the request names neither. Answers with what the bot server said, `{ kind: "reply" | "limit" | "busy" | "failed" }`;
+     * throws when it could not be asked at all (no bot server, no answer).
+     */
+    async guestBrickReply(request: {
+        turnId: string;
+        roomUrl: string;
+        message: string;
+        history: { from: "guest" | "brick"; text: string }[];
+        saidNeedsAccount: boolean;
+        files?: string[];
+        note?: string;
+    }): Promise<unknown> {
+        // The request and the reading of the answer both stop at the deadline: a call that hangs would hold back every later turn
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), GUEST_REPLY_TIMEOUT_MS);
+        try {
+            const response = await this.fetchBotServer("/api/guest-brick/reply", {
+                method: "POST",
+                body: JSON.stringify(request),
+                signal: stop.signal,
+            });
+            return (await response.json()) as unknown;
+        } catch (error) {
+            // A guest who must wait, or an answer that failed, comes with its own kind: it is the answer, not a fault
+            const body = (error as { body?: unknown }).body;
+            if (body && typeof body === "object" && "kind" in body) return body;
+            throw error;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /** What the Brick for guests takes now (plan v3): files, and voice notes. Nothing when it can't say. */
+    async guestBrickTakes(): Promise<{ files: boolean; notes: boolean }> {
+        try {
+            const response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+            const data = (await response.json()) as { files?: unknown; notes?: unknown } | null;
+            return { files: data?.files === true, notes: data?.notes === true };
+        } catch {
+            return { files: false, notes: false };
+        }
+    }
+
+    /**
+     * Whether the bot server takes a guest's chat in parts after sign-in (plan v3 section 7). False for a bot server from before,
+     * which takes it as one message. Throws when the bot server can't be asked.
+     */
+    async botServerCarriesParts(): Promise<boolean> {
+        let response: Response;
+        try {
+            response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+        } catch (error) {
+            // A bot server from before has no such route at all
+            if ((error as { status?: number }).status === 404) return false;
+            throw error;
+        }
+        const data = (await response.json().catch(() => null)) as { carryParts?: unknown } | null;
+        return data?.carryParts === true;
+    }
+
+    /** This device has the answer to a guest's voice note: its kept copy is deleted. */
+    async guestBrickDelivered(delivery: string): Promise<void> {
+        await this.fetchBotServer("/api/guest-brick/delivered", { method: "POST", body: JSON.stringify({ delivery }) });
+    }
+
+    /**
+     * After signing in: asks Orbit whether the chat this device had as a guest was handed to this account (once, and only
+     * to the device that held that guest id). `true` when it is this device's to bring along. Throws when Orbit could not be asked.
+     */
+    async takeGuestChat(guestId: string): Promise<boolean> {
+        const response = await this.fetch("/api/bricks/default/guest-chat", {
+            method: "POST",
+            body: JSON.stringify({ guestId }),
+        });
+        return ((await response.json()) as { carried?: unknown } | null)?.carried === true;
+    }
+
+    /**
+     * Has the bot server say one part of a guest's chat in the person's own chat with their Brick (game #1997, plan v3 section
+     * 7), once. Answers `sent`, `already` (it was said already) or `wait` (their chat is not there yet: ask again in a moment).
+     */
+    async carryGuestChat(
+        brickId: string,
+        chatId: string,
+        carryId: string,
+        lines: GuestChatLine[],
+        part?: { from: number; to: number; last: boolean }
+    ): Promise<"sent" | "already" | "wait"> {
+        const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/carried-chat`, {
+            method: "POST",
+            body: JSON.stringify({ chatId, carryId, lines, ...(part ? { part } : {}) }),
+        });
+        const result = ((await response.json()) as { result?: unknown } | null)?.result;
+        if (result === "sent" || result === "already" || result === "wait") return result;
+        throw new Error("The bot server answered with something the game does not understand");
     }
 
     /**
@@ -1634,10 +1916,13 @@ export class BotApiService {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
-        // Room enter/leave, Summon and "may I?" are for every player, guests included: the game token is enough for them.
+        // Room enter/leave, Summon, "may I?" and the Brick for guests are for every player, guests included: the game token is enough for them.
         const isPublicRoomLifecycle =
             endpoint === "/api/bots/room-enter" ||
             endpoint === "/api/bots/room-leave" ||
+            endpoint === "/api/guest-brick/reply" ||
+            endpoint === "/api/guest-brick/media" ||
+            endpoint === "/api/guest-brick/delivered" ||
             /^\/api\/bots\/[^/]+\/(summon|access)$/.test(endpoint);
         const gameToken = this.getGameToken();
         if (gameToken) {
@@ -1883,6 +2168,47 @@ export class BotApiService {
     }
 
     /**
+     * Call a bot (game #2004): the bot server opens the bot's call-only connection and joins the call's private space,
+     * and answers with the space's name for this browser to join. The owner's "Call" rule is checked there (Orbit).
+     * Never throws: a refusal comes back as `failure`, so the caller can tell the person why.
+     */
+    async startCall(botId: string, playerUuid: string): Promise<CallResult> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call`, {
+                method: "POST",
+                body: JSON.stringify({ playerUuid }),
+            });
+            const body = (await response.json()) as { started?: unknown; spaceName?: unknown } | null;
+            if (body?.started === true && typeof body.spaceName === "string" && body.spaceName !== "") {
+                return { started: true, spaceName: body.spaceName };
+            }
+            return { started: false, failure: "failed" };
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error calling bot:", error);
+            }
+            const failure = classifyCallFailure(error);
+            if ((failure === "not_allowed" || failure === "cannot_check") && error instanceof Error) {
+                return { started: false, failure, reason: error.message };
+            }
+            return { started: false, failure };
+        }
+    }
+
+    /** The person hangs up: the bot leaves the call. Never throws: the bot also leaves when this browser does. */
+    async endCall(botId: string, playerUuid: string): Promise<boolean> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call/end`, {
+                method: "POST",
+                body: JSON.stringify({ playerUuid }),
+            });
+            return ((await response.json()) as { ended?: unknown } | null)?.ended === true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * Get available AI providers (for bot editor UI)
      */
     async getAvailableAIProviders(enabled: boolean = true): Promise<
@@ -1949,7 +2275,11 @@ export class BotApiService {
         });
     }
 
-    async getBotAccess(botId: string, action: "summon" | "chat" | "dm", playerUuid?: string): Promise<BotAccessAnswer> {
+    async getBotAccess(
+        botId: string,
+        action: "summon" | "chat" | "dm" | "call",
+        playerUuid?: string
+    ): Promise<BotAccessAnswer> {
         // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1966,7 +2296,7 @@ export class BotApiService {
 
     private async askBotAccess(
         botId: string,
-        action: "summon" | "chat" | "dm",
+        action: "summon" | "chat" | "dm" | "call",
         playerUuid: string | undefined,
         signal: AbortSignal
     ): Promise<BotAccessAnswer> {

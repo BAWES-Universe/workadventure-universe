@@ -5,7 +5,8 @@ const game = vi.hoisted(() => ({
     getBrickComputer: vi.fn<(brickId: string) => Promise<unknown>>(),
     brickComputerAction:
         vi.fn<(brickId: string, action: string, shown?: { what: string; where: string }) => Promise<unknown>>(),
-    watchBrickComputer: vi.fn<(brickId: string) => Promise<unknown>>(),
+    screenTicketForBrick: vi.fn<(brickId: string, mode: string) => Promise<unknown>>(),
+    screenSocketUrl: vi.fn<(ticket: string) => string | null>(),
     dismissBrickComputerNotice: vi.fn<(brickId: string, jobId: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
@@ -209,7 +210,6 @@ describe("a Brick's computer on screen (#2000)", () => {
     });
 
     it("shows the screen only for a working computer, and the one tap names exactly what goes in", async () => {
-        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
         game.getBrickComputer.mockResolvedValue(
             computer({
                 machine: "working",
@@ -224,7 +224,9 @@ describe("a Brick's computer on screen (#2000)", () => {
         await loadBrickComputer(BRICK);
         piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
         await settle();
-        expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/abc");
+        // The screen is the game's own viewer, opened with a ticket (not a frame on a link): it is in control for the person who took over
+        expect(byId("brickScreenView")).not.toBeNull();
+        expect(byId("brickScreenFrame")).toBeNull();
         expect(byId("brickScreenReady")?.textContent).toContain(
             "Your name and phone. One tap sends them to the booking form."
         );
@@ -238,52 +240,7 @@ describe("a Brick's computer on screen (#2000)", () => {
         });
     });
 
-    it("lets go of the screen link when the computer rests, and asks for a fresh one when it works again", async () => {
-        game.watchBrickComputer.mockResolvedValueOnce({ url: "https://screen.test/old" });
-        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
-        await loadBrickComputer(BRICK);
-        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-        await settle();
-        expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/old");
-        game.getBrickComputer.mockResolvedValue(computer());
-        await loadBrickComputer(BRICK);
-        await settle();
-        expect(byId("brickScreenFrame")).toBeNull();
-        game.watchBrickComputer.mockResolvedValueOnce({ url: "https://screen.test/new" });
-        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job({ id: "j2" }) }));
-        await loadBrickComputer(BRICK);
-        await settle();
-        expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/new");
-    });
-
-    it("drops a screen link that arrives after the job ended, and asks again when the next job works", async () => {
-        let late: (answer: unknown) => void = () => undefined;
-        game.watchBrickComputer.mockReturnValueOnce(
-            new Promise((resolve) => {
-                late = resolve;
-            })
-        );
-        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
-        await loadBrickComputer(BRICK);
-        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-        await settle();
-        // The job ends while the link is still on its way
-        game.getBrickComputer.mockResolvedValue(computer());
-        await loadBrickComputer(BRICK);
-        await settle();
-        late({ url: "https://screen.test/late" });
-        await settle();
-        expect(byId("brickScreenFrame")).toBeNull();
-        // The next job gets its own link, never the late one
-        game.watchBrickComputer.mockResolvedValueOnce({ url: "https://screen.test/next" });
-        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job({ id: "j2" }) }));
-        await loadBrickComputer(BRICK);
-        await settle();
-        expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/next");
-    });
-
     it("asks for a new tap when the next page needs details, one tap a page", async () => {
-        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
         const waiting = (ready: { what: string; where: string } | null) =>
             computer({
                 machine: "working",
@@ -306,7 +263,6 @@ describe("a Brick's computer on screen (#2000)", () => {
     });
 
     it("asks for a tap again when another job names the same details, even if no read saw the gap", async () => {
-        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
         const waiting = (id: string) =>
             computer({
                 machine: "working",
@@ -335,7 +291,6 @@ describe("a Brick's computer on screen (#2000)", () => {
     });
 
     it("keeps the tap for the job it was made for when the answer comes after a read moved on to another job", async () => {
-        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
         const waiting = (id: string) =>
             computer({
                 machine: "working",
@@ -371,7 +326,6 @@ describe("a Brick's computer on screen (#2000)", () => {
     });
 
     it("asks for a new tap when the same details come back on the same job while the answer to the tap is still on its way", async () => {
-        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
         const waiting = () =>
             computer({
                 machine: "working",
@@ -461,167 +415,12 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(game.getBrickComputer).toHaveBeenCalledWith(OTHER);
     });
 
-    describe("when asking for the screen does not go through", () => {
-        afterEach(() => {
-            vi.useRealTimers();
-        });
-
-        const working = () => computer({ machine: "working", job: job() });
-        const advance = async (ms: number) => {
-            await vi.advanceTimersByTimeAsync(ms);
-            await tick();
-        };
-
-        it("asks again soon, and shows the screen once it goes through", async () => {
-            vi.useFakeTimers();
-            game.watchBrickComputer
-                .mockResolvedValueOnce("failed")
-                .mockResolvedValueOnce("failed")
-                .mockResolvedValueOnce({ url: "https://screen.test/third" });
-            game.getBrickComputer.mockResolvedValue(working());
-            await loadBrickComputer(BRICK);
-            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-            await advance(0);
-            expect(byId("brickScreenFrame")).toBeNull();
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(1);
-            await advance(2000);
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(2);
-            expect(byId("brickScreenFrame")).toBeNull();
-            await advance(4000);
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(3);
-            expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/third");
-        });
-
-        it("keeps the screen it is showing as it is, and does not load the frame again when the link would have run out", async () => {
-            vi.useFakeTimers();
-            game.watchBrickComputer
-                .mockResolvedValueOnce({ url: "https://screen.test/first" })
-                .mockResolvedValue({ url: "https://screen.test/second" });
-            game.getBrickComputer.mockResolvedValue(working());
-            await loadBrickComputer(BRICK);
-            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-            await advance(0);
-            expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/first");
-            for (let i = 0; i < 3; i++) {
-                // eslint-disable-next-line no-await-in-loop
-                await advance(4 * 60 * 1000);
-                expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/first");
-            }
-            // The person takes over: still the same frame, so nothing they type is lost
-            game.getBrickComputer.mockResolvedValue(
-                computer({ machine: "working", job: job({ id: "j1", control: "person" }) })
-            );
-            await loadBrickComputer(BRICK);
-            for (let i = 0; i < 2; i++) {
-                // eslint-disable-next-line no-await-in-loop
-                await advance(4 * 60 * 1000);
-                expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/first");
-            }
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(1);
-        });
-
-        it("asks again when the time comes if it has no screen yet, even after it gave up", async () => {
-            vi.useFakeTimers();
-            game.watchBrickComputer.mockResolvedValueOnce("failed").mockResolvedValue("failed");
-            game.getBrickComputer.mockResolvedValue(working());
-            await loadBrickComputer(BRICK);
-            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-            await advance(40000);
-            const asked = game.watchBrickComputer.mock.calls.length;
-            expect(asked).toBe(5);
-            game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/later" });
-            await advance(4 * 60 * 1000);
-            expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/later");
-        });
-
-        it("has one request on its way at a time, however often the computer is read meanwhile", async () => {
-            vi.useFakeTimers();
-            game.watchBrickComputer.mockReturnValue(
-                new Promise(() => {
-                    // never answers
-                })
-            );
-            game.getBrickComputer.mockResolvedValue(working());
-            await loadBrickComputer(BRICK);
-            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-            await advance(0);
-            for (let i = 0; i < 6; i++) {
-                // eslint-disable-next-line no-await-in-loop
-                await loadBrickComputer(BRICK);
-            }
-            await advance(1000);
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(1);
-        });
-
-        it("stops asking a computer that keeps having no screen, after a minute or so of reads", async () => {
-            vi.useFakeTimers();
-            game.watchBrickComputer.mockResolvedValue(undefined);
-            game.getBrickComputer.mockResolvedValue(working());
-            await loadBrickComputer(BRICK);
-            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-            await advance(0);
-            for (let i = 0; i < 40; i++) {
-                // eslint-disable-next-line no-await-in-loop
-                await loadBrickComputer(BRICK);
-                // eslint-disable-next-line no-await-in-loop
-                await advance(0);
-            }
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(15);
-            // A new job asks afresh
-            game.getBrickComputer.mockResolvedValue(computer());
-            await loadBrickComputer(BRICK);
-            await advance(0);
-            game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/next" });
-            game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job({ id: "j2" }) }));
-            await loadBrickComputer(BRICK);
-            await advance(0);
-            expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/next");
-        });
-
-        it("has one request on its way after one that found no screen, however often the computer is read", async () => {
-            vi.useFakeTimers();
-            game.watchBrickComputer.mockResolvedValueOnce(undefined).mockReturnValue(
-                new Promise(() => {
-                    // the next one never answers
-                })
-            );
-            game.getBrickComputer.mockResolvedValue(working());
-            await loadBrickComputer(BRICK);
-            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-            await advance(0);
-            for (let i = 0; i < 6; i++) {
-                // eslint-disable-next-line no-await-in-loop
-                await loadBrickComputer(BRICK);
-                // eslint-disable-next-line no-await-in-loop
-                await advance(0);
-            }
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(2);
-        });
-
-        it("stops asking after a few tries, however often the computer is read", async () => {
-            vi.useFakeTimers();
-            game.watchBrickComputer.mockResolvedValue("failed");
-            game.getBrickComputer.mockResolvedValue(working());
-            await loadBrickComputer(BRICK);
-            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
-            await advance(60_000);
-            // The first ask and four more, not one per read of the computer
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(5);
-            await loadBrickComputer(BRICK);
-            await loadBrickComputer(BRICK);
-            await advance(1000);
-            expect(game.watchBrickComputer).toHaveBeenCalledTimes(5);
-            expect(byId("brickScreenNone")).not.toBeNull();
-        });
-    });
-
     it("shows no screen for a computer that is resting, and does not ask for one to be woken", async () => {
-        game.watchBrickComputer.mockResolvedValue(undefined);
         game.getBrickComputer.mockResolvedValue(computer());
         await loadBrickComputer(BRICK);
         piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
         await settle();
-        expect(byId("brickScreenFrame")).toBeNull();
+        expect(byId("brickScreenView")).toBeNull();
         expect(byId("brickScreenNone")).not.toBeNull();
         expect(game.brickComputerAction).not.toHaveBeenCalled();
     });
