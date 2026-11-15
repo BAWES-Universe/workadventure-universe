@@ -695,7 +695,8 @@ describe('MatrixDmBridge', () => {
         deps.getBotConfig.mockResolvedValue(resting as never);
         await bridge.onEvent(message('Are you around?'));
         expect(deps.reply).not.toHaveBeenCalled();
-        expect(deps.restingLine).toHaveBeenCalledWith(resting, 'Are you around?');
+        // Who is asking goes with it, so a Brick's line is never made on its owner's key for someone else (#2005)
+        expect(deps.restingLine).toHaveBeenCalledWith(resting, 'Are you around?', 'uuid-alice');
         expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'The ship is in the harbour, come back later!');
         expect(noteStates()).toEqual(['resting']);
         expect(client.sendMessage.mock.calls[0][2].body).toBe(
@@ -2437,7 +2438,7 @@ describe('DmReplyService resting line', () => {
         const config = { botId: BOT, name: 'Mira', aiProviderRef: 'p', chatInstructions: 'You are a pirate.' } as never;
         expect(await service.restingLine(config, 'Are you around?')).toBe('Not now, sailor!');
         // With the bot id, so a bot on Universe AI or a lent key reaches its key
-        expect(quickGenerate).toHaveBeenCalledWith('p', expect.stringContaining('You are a pirate.'), 'Are you around?', BOT);
+        expect(quickGenerate).toHaveBeenCalledWith('p', expect.stringContaining('You are a pirate.'), 'Are you around?', BOT, undefined, undefined);
         quickGenerate.mockRejectedValueOnce(new Error('provider down'));
         expect(await service.restingLine(config, 'hi')).toBe('');
         expect(await service.restingLine({ botId: BOT } as never, 'hi')).toBe('');

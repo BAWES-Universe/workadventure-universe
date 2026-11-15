@@ -10,7 +10,10 @@ vi.mock("../../../Administration/AnalyticsClient", () => ({ analyticsClient: { c
 vi.mock("../../../Chat/Stores/PeopleCardReturnStore", () => ({ peopleCardReturn: { dismissCard: vi.fn() } }));
 vi.mock("../../../../i18n/i18n-svelte", async () => (await import("../../Woka/tests/i18nStub")).i18nStub);
 // What the card reads from the running game
-vi.mock("../personCardContext", () => ({ worldUsersStore: () => readable(undefined) }));
+const worldUsers = writable<Map<string, { uuid: string; spaceUserId: string; tags: string[]; reactiveUser: unknown }>>(
+    new Map()
+);
+vi.mock("../personCardContext", () => ({ worldUsersStore: () => worldUsers }));
 vi.mock("../../../Stores/MediaStore", () => ({ availabilityStatusStore: readable(1) }));
 vi.mock("../../../Connection/LocalUserStore", () => ({
     localUserStore: { getLocalUser: () => ({ uuid: "me-uuid" }) },
@@ -171,5 +174,60 @@ describe("WokaMenu: the buttons", () => {
         wokaMenuStore.initialize("Khalid", 1, "me-uuid", undefined, true);
         await settle();
         expect(target.textContent).toContain('chat.personCard.youSuffix {"status":"chat.status.online"}');
+    });
+});
+
+describe("WokaMenu: a Brick that walks beside someone (#2005)", () => {
+    let target: HTMLElement;
+    let component: WokaMenu | undefined;
+
+    function openBrick(tags: string[]) {
+        worldUsers.set(
+            new Map([
+                [
+                    "bot-brick",
+                    {
+                        uuid: "bot-brick",
+                        spaceUserId: "space_9",
+                        tags,
+                        reactiveUser: { availabilityStatus: readable(undefined) },
+                    },
+                ],
+            ])
+        );
+        wokaMenuStore.initialize("Brick", 9, "bot-brick", undefined);
+        botInfo.set({ loading: false, description: "Your everyday helper", emotions: null });
+    }
+
+    beforeEach(() => {
+        target = document.createElement("div");
+        document.body.appendChild(target);
+        component = new WokaMenu({ target });
+    });
+
+    afterEach(() => {
+        component?.$destroy();
+        wokaMenuStore.clear();
+        worldUsers.set(new Map());
+        target.remove();
+    });
+
+    it("says whose it is and who it is with, and what it never does for someone else", async () => {
+        openBrick(["bot", "visiting:Khalid"]);
+        await settle();
+        expect(target.textContent).toContain(
+            'chat.brick.madeBy {"name":"Khalid"} · chat.brick.visitingWith {"name":"Khalid"}'
+        );
+        expect(target.querySelector('[data-testid="visitingBrickLine"]')?.textContent?.trim()).toBe(
+            'chat.brick.visitingCardLine {"name":"Khalid"}'
+        );
+    });
+
+    it("says nothing of the kind about a bot that is not visiting", async () => {
+        openBrick(["bot"]);
+        await settle();
+        expect(target.textContent).not.toContain("chat.brick.visitingWith");
+        expect(target.querySelector('[data-testid="visitingBrickLine"]')).toBeNull();
+        expect(target.textContent).toContain("chat.botStatus.online");
     });
 });

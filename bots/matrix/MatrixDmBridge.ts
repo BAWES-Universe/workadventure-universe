@@ -179,7 +179,7 @@ export interface MatrixDmBridgeDeps {
     /** Hearing for voice notes (#1979 follow-up): without it a note reaches the bot as the audio file it always was. */
     noteHearing?: Pick<NoteHearingService, 'hear' | 'canHear' | 'limits'>;
     /** One short in-character "not now" from a resting bot, or '' to leave only the plain note. */
-    restingLine?(config: BotConfiguration, text: string): Promise<string>;
+    restingLine?(config: BotConfiguration, text: string, asker?: string): Promise<string>;
     /** The bot's Woka as a PNG for its chat picture, or null when it has none. Without it bots keep no picture. */
     wokaPicture?(config: BotConfiguration): Promise<Buffer | null>;
     /**
@@ -1254,7 +1254,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (config.enabled === false) {
             // Resting again is not a failed answer, so a message already tried keeps its count.
             await this.rememberWaiting(botId, event, attemptsOf(event));
-            if (!catchUp) await this.sayResting(botId, event, config, language);
+            if (!catchUp) await this.sayResting(botId, event, config, language, user.uuid);
             return;
         }
         if (!config.aiProviderRef) {
@@ -1494,10 +1494,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** A resting bot says "not now" in its own voice now and then, and the plain note says why. */
-    private async sayResting(botId: string, event: MatrixEvent, config: BotConfiguration, language: NoteLanguage): Promise<void> {
+    private async sayResting(botId: string, event: MatrixEvent, config: BotConfiguration, language: NoteLanguage, asker?: string): Promise<void> {
         const roomId = event.room_id;
         if (this.deps.restingLine && !this.recentlySent(this.lastRestingLine, roomId, RESTING_LINE_REPEAT_MS)) {
-            const line = await this.deps.restingLine(config, String(event.content?.body ?? '')).catch(() => '');
+            const line = await this.deps.restingLine(config, String(event.content?.body ?? ''), asker).catch(() => '');
             const sent = line
                 ? await this.client.sendText(this.botUserId(botId), roomId, line).then(
                       () => true,
