@@ -1247,6 +1247,21 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("brickBringAlong")).toBeNull();
         });
 
+        it("shows no home on the page of another Brick whose home could not be read, never the last one's (Sentry on #2055)", async () => {
+            game.getBrickHome.mockImplementation((id: string) =>
+                id === MADE ? Promise.resolve({ home: HOME }) : Promise.reject(new Error("offline"))
+            );
+            await openMade();
+            expect(byId("brickTakeOut")).not.toBeNull();
+            byId("edit-panel-back")?.click();
+            await settle();
+            rows()[0].click();
+            await settle();
+            expect(game.getBrickHome).toHaveBeenCalledWith(BRICK);
+            expect(byId("brickTakeOut")).toBeNull();
+            expect(byId("brickHomeLine")).toBeNull();
+        });
+
         it("points the camera at it on Show on map", async () => {
             const find = vi.fn<(brickId: string) => boolean>().mockReturnValue(true);
             provideBrickLocator(find);

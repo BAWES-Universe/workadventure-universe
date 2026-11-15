@@ -39,15 +39,17 @@
     let loadedFor: string | undefined;
     let visitBusy = false;
 
-    // What the page says about visiting (#2005), for the room the person is in: read again for each Brick it opens on
-    $: visit = $brickVisitStore;
+    // What the page says about visiting (#2005), for the room the person is in: read again for each Brick it opens on.
+    // The read comes first: it clears the last Brick's answer at once, and the line after it must see that, not the old one
     $: loadBrickVisit(brick.id).catch((error) => console.error(error));
+    $: visit = $brickVisitStore;
 
     // Where it lives (#2005): "Show on map" and "Take it out" when it lives in the room the person is in
     let homeBusy = false;
+    // The read comes first, for the same reason: a read that fails must not leave the last Brick's home on this page
+    $: loadBrickHome(brick.id).catch((error) => console.error(error));
     $: home = $brickHomeStore;
     $: here = livesHere(home, botApiService.getRoomId());
-    $: loadBrickHome(brick.id).catch((error) => console.error(error));
 
     $: if (brick.id !== loadedFor) load(brick);
 
