@@ -4,6 +4,7 @@ import {
     headersBody,
     looksLikeLink,
     newAppBody,
+    newRequestKey,
     oauthConfig,
     oauthFieldsDone,
     parseDiscovery,
@@ -156,6 +157,12 @@ describe("Add your own app: the rules (#2001)", () => {
         expect(oauth.authType).toBe("oauth");
         expect(oauth.headers).toEqual({ "X-Team": "a" });
         expect(JSON.parse(oauth.authConfig ?? "{}")).toMatchObject({ authorizeUrl: "https://x.example.com/a" });
+    });
+
+    it("makes a fresh random request key each time, within the 1 to 200 characters Orbit takes", () => {
+        const keys = new Set(Array.from({ length: 50 }, () => newRequestKey()));
+        expect(keys.size).toBe(50);
+        for (const key of keys) expect(key).toMatch(/^[0-9a-f]{32}$/);
     });
 
     it("never sends a key for an app with no sign-in, and keeps no key for an app that signs in on a page", () => {

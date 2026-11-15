@@ -8,6 +8,7 @@
         NO_DISCOVERY,
         looksLikeLink,
         newAppBody,
+        newRequestKey,
         oauthFieldsDone,
         parseDiscovery,
         parseNewAppId,
@@ -16,6 +17,7 @@
         signsInByItself,
         type Discovery,
         type HeaderRow,
+        type NewApp,
         type OAuthFields,
         type SentAs,
         type SignIn,
@@ -69,6 +71,18 @@
     let createdId: string | undefined;
     /** What that app was made from: if the person changes any of it before trying again, the old app is replaced */
     let createdFrom = "";
+    /**
+     * The key Orbit uses to tell that a try is a repeat of an earlier one, and what it was made for. Every try at the same app
+     * carries the same key, so a try that timed out and then went through is answered with that app, never made a second time.
+     */
+    let requestKey = "";
+    let keyFrom = "";
+    /**
+     * A try whose answer never came (the 20 s wait ran out, the connection dropped, Orbit failed): Orbit may have made the app
+     * all the same, and the sheet holds no id for it. Kept so that it is found, with the same key, and taken away before the
+     * person's changed form makes another app, or when the sheet goes away.
+     */
+    let uncertain: NewApp[] = [];
     /** The sheet was closed: an app that is still being made is taken away again when Orbit answers */
     let closed = false;
     /** The app is connected: from here on closing the sheet keeps it, even while the list of what it can do is still loading */
@@ -96,6 +110,7 @@
         if (checkTimer) clearTimeout(checkTimer);
         checkAbort?.abort();
         dropUnfinished();
+        void settleUncertain();
     });
 
     function forgetCheck() {
@@ -111,15 +126,43 @@
         const id = createdId;
         createdId = undefined;
         createdFrom = "";
-        if (!id || signedIn || phase === "connected") return;
+        if (!id) return;
+        // The next app is a new one for Orbit too (the key of an app being taken away would still answer with it)
+        keyFrom = "";
+        if (signedIn || phase === "connected") return;
         botApiService
             .disconnectMyApp(id)
             .catch((error: unknown) => console.warn("Could not drop the unfinished app", error));
     }
 
+    /**
+     * Finds the app an unanswered try may have made, by trying again with its own key (Orbit answers that with the app it
+     * made, or makes it now), and takes it away. Never throws: when Orbit still does not answer there is nothing more to do.
+     */
+    async function settleUncertain(): Promise<void> {
+        const pending = uncertain;
+        uncertain = [];
+        if (pending.length === 0) return;
+        // Those keys are about to be freed (their apps taken away): a form that goes back to the same content makes a new app with a new key
+        keyFrom = "";
+        await Promise.all(
+            pending.map(async (body) => {
+                try {
+                    const id = parseNewAppId(await botApiService.addMyApp(body));
+                    if (id) await botApiService.disconnectMyApp(id);
+                } catch (error) {
+                    console.warn("Could not find out whether the earlier try made an app", error);
+                    // Orbit did not answer: the try stays to be found the next time the sheet settles (a change, closing it)
+                    uncertain = [...uncertain, body];
+                }
+            })
+        );
+    }
+
     function onLinkInput(event: Event) {
         forgetCheck();
         dropUnfinished();
+        void settleUncertain();
         discovery = NO_DISCOVERY;
         phase = "empty";
         trouble = "";
@@ -203,14 +246,23 @@
         const from = JSON.stringify(body);
         if (createdId && createdFrom === from) return Promise.resolve(createdId);
         dropUnfinished();
-        return create(body, from);
+        // Changed since an unanswered try: that try's app is found and taken away first, then this one is made with a new key
+        const settled = keyFrom !== from ? settleUncertain() : Promise.resolve();
+        if (keyFrom !== from) {
+            requestKey = newRequestKey();
+            keyFrom = from;
+        }
+        const sent = { ...body, requestKey };
+        return settled.then(async () => await create(sent, from));
     }
 
     /** Makes the app in Orbit, with the way in the person gave */
-    async function create(body: ReturnType<typeof appBody>, from: string): Promise<string> {
+    async function create(body: NewApp, from: string): Promise<string> {
+        let known = false;
         try {
             const id = parseNewAppId(await botApiService.addMyApp(body));
             if (!id) throw new Error("Orbit did not say which app it made");
+            known = true;
             if (closed) {
                 // The sheet was closed while Orbit was making it: nobody is left to finish it
                 botApiService
@@ -220,10 +272,23 @@
             }
             createdId = id;
             createdFrom = from;
+            uncertain = uncertain.filter((earlier) => earlier.requestKey !== body.requestKey);
             return id;
         } catch (error) {
             console.warn("Could not add the app", error);
-            if (!closed) trouble = "failed";
+            const status = (error as { status?: number } | null)?.status;
+            // Orbit says this key was used for another app: the next try starts with a fresh one
+            if (status === 409) keyFrom = "";
+            // Orbit refusing (a 4xx) made nothing with this try; an answer that never came, or an Orbit that failed, may have made the app.
+            // A refused repeat try (too many requests, say) says nothing about an earlier unanswered try with the same key: that one stays
+            // to be found.
+            const refused = status !== undefined && status < 500;
+            const others = uncertain.filter((earlier) => earlier.requestKey !== body.requestKey);
+            if (known || status === 409) uncertain = others;
+            else if (!refused) uncertain = [...others, body];
+            // A closed sheet has nobody left to try again: look for it now
+            if (closed) void settleUncertain();
+            else trouble = "failed";
             throw error;
         }
     }
@@ -296,6 +361,7 @@
         closed = true;
         forgetCheck();
         dropUnfinished();
+        void settleUncertain();
         onClose();
     }
 

@@ -147,6 +147,15 @@ export interface NewApp {
     authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
     headers?: Record<string, string>;
+    /** Orbit answers a repeat of the same key with the app it first made, so a try that timed out is never made twice */
+    requestKey?: string;
+}
+
+/** A fresh random key for one app being added (Orbit takes 1 to 200 characters) */
+export function newRequestKey(): string {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /** The body of `POST /api/me/apps` for each way in. The key goes straight to Orbit and nowhere else. */
