@@ -428,7 +428,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                             waitingFor: ending.waitingFor,
                             ...(ending.waitingFor === 'details' && ending.what && ending.where ? { ready: { what: ending.what, where: ending.where } } : {}),
                         })
-                        .then(() => true)
+                        // An answer that says it was refused (ok false) is no handover
+                        .then((answer) => answer.ok !== false)
                         .catch((error) => {
                             say('Could not hand over:', error);
                             return false;

@@ -302,6 +302,23 @@ describe('the person’s part', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
+    it('does not count a handover Orbit answered with a refusal as made', async () => {
+        const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
+        const original = orbit.action;
+        let refusals = RUNNER_GUARDS.maxBadTurns - 1;
+        orbit.action = async (botId, jobId, body) => {
+            const answer = await original(botId, jobId, body);
+            if (body.action === 'handover' && refusals > 0) {
+                refusals--;
+                return { ok: false, reason: 'not_running' };
+            }
+            return answer;
+        };
+        await runJob(orbit);
+        expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
     it('ends the job as failed when the handover never goes through, without resuming it', async () => {
         const { orbit, seen, failHandovers } = fakeOrbit([done('[[handover signin]]')]);
         failHandovers(50);
