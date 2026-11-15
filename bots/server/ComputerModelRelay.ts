@@ -229,7 +229,13 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
 
     router.get('/v1/models', async (req: Request, res: Response) => {
         const token = bearerOf(req);
-        const who = token ? await deps.orbit.identify(token).catch(() => null) : null;
+        let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
+        try {
+            who = token ? await deps.orbit.identify(token) : null;
+        } catch {
+            // An Orbit that cannot be reached is no proof that the key is wrong
+            return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+        }
         if (!who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         // One name: Hermes never chooses the model, the Brick's own AI does
         res.json({ object: 'list', data: [{ id: 'universe-ai', object: 'model', created: 0, owned_by: 'universe' }] });

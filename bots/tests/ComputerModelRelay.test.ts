@@ -102,6 +102,11 @@ describe('who may call', () => {
         expect((await ask({ messages })).status).toBe(503);
     });
 
+    it('says the service is busy, not that the key is wrong, when Orbit cannot be reached while a client asks what models there are', async () => {
+        orbit.identify.mockRejectedValue(new Error('down'));
+        expect((await fetch(`${relayBase}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status).toBe(503);
+    });
+
     it('lists one model name, for a client that asks what there is', async () => {
         const answer = await fetch(`${relayBase}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } });
         expect((await answer.json()).data.map((model: { id: string }) => model.id)).toEqual(['universe-ai']);
