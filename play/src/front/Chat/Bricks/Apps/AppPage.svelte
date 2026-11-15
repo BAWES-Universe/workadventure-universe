@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onDestroy, onMount } from "svelte";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import ConfirmSheet from "../../../external-modules/bots/components/page/ConfirmSheet.svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
@@ -11,6 +11,9 @@
     import { dayOf, parseMyAppPage, THINGS, type Lend, type MyAppPage, type Thing } from "./Apps";
     import { appIcon } from "./AppIcon";
     import AppBrickScreen from "./AppBrickScreen.svelte";
+    import type { GitHubWhere } from "./GitHub";
+    import GitHubKeySheet from "./GitHubKeySheet.svelte";
+    import GitHubWaitingSheet from "./GitHubWaitingSheet.svelte";
     import AppRow from "./AppRow.svelte";
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
@@ -19,13 +22,26 @@
     import { mayLine, thingLabel } from "./AppWords";
     import LendSheet from "./LendSheet.svelte";
     import { reconnectApp } from "./Reconnect";
-    import { IconAlertTriangle, IconLock, IconPlanet, IconPlus, IconUsers, IconX } from "@wa-icons";
+    import {
+        IconAlertTriangle,
+        IconBrandGithub,
+        IconBuilding,
+        IconKey,
+        IconLock,
+        IconPlanet,
+        IconPlus,
+        IconUser,
+        IconUsers,
+        IconX,
+    } from "@wa-icons";
 
     /**
      * One of the person's own apps (game #2001): who it is connected as, the Bricks that can use it (Remove, or Let it use),
      * and, for an app added with a link and a key, "Lent to": the universes where bots may use it, with what they may do and how
      * many uses a day, and a way to lend it to another. An app signed in as the person says "Only for you" and has no
      * "Lent to" at all: nothing in it is safe to hand to other people. Disconnect stops every Brick and bot at once.
+     * GitHub (game #2041) also says where it works: the account and organizations it was added to, the ones waiting for an
+     * owner's OK, and the person's own key as the way round a wait.
      */
     export let appId: string;
     export let onBack: () => void;
@@ -40,6 +56,8 @@
         | { kind: "change"; lend: Lend }
         | { kind: "takeBack"; lend: Lend }
         | { kind: "disconnect" }
+        | { kind: "gitHubWaiting"; account: string }
+        | { kind: "gitHubKey" }
         | undefined;
     let signingIn = false;
     // A Brick of the person's whose way of using this app is open (right away, asks first or off), over the page
@@ -48,13 +66,24 @@
     $: app = page?.app;
     // The pictures of the person's Bricks: a Brick not in the list yet has an empty place, so nothing jumps when it comes
     $: looks = new Map(($myBricksStore ?? []).map((card) => [card.id, card.characterTextureId]));
+    $: github = page?.github;
+    $: gitText = $LL.chat.brick.apps.github;
+    // GitHub's own page was opened to add a place: read again when the person comes back to this one
+    let readOnReturn = false;
+
+    // Each reading of the page is numbered: only the latest one is shown, so a slow older answer (one started on coming back
+    // from GitHub, say) never lands over what a newer one already showed
+    let reading = 0;
 
     async function load() {
+        const mine = ++reading;
         try {
             const parsed = parseMyAppPage(await botApiService.getMyApp(appId));
+            if (mine !== reading) return;
             if (parsed) page = parsed;
             loadFailed = !parsed;
         } catch (error) {
+            if (mine !== reading) return;
             console.warn("Could not read the app", error);
             loadFailed = true;
         }
@@ -145,6 +174,51 @@
         await Promise.all([load(), loadMyApps(true)]);
     }
 
+    /** "Your account · all repos", "All repos", "3 repos" */
+    function reposOf(place: GitHubWhere["places"][number]): string {
+        const repos = place.repos === "all" ? gitText.allRepos() : gitText.someRepos({ count: place.repos });
+        return place.type === "User" ? gitText.yourAccount({ repos: repos.toLowerCase() }) : repos;
+    }
+
+    function openGitHubPage(url: string) {
+        readOnReturn = true;
+        window.open(url, "_blank", "noopener");
+    }
+
+    function cameBack() {
+        if (!readOnReturn) return;
+        readOnReturn = false;
+        load().catch((error) => console.error(error));
+    }
+
+    async function saveKey(key: string): Promise<"saved" | "refused" | "failed"> {
+        try {
+            await botApiService.saveGitHubKey(key);
+        } catch (error) {
+            const code = (error as { code?: unknown } | undefined)?.code;
+            console.warn("The GitHub key was not saved", error);
+            return code === "refused" ? "refused" : "failed";
+        }
+        sheet = undefined;
+        await Promise.all([load(), loadMyApps(true)]);
+        return "saved";
+    }
+
+    /** "Switch back to GitHub sign-in": GitHub's sign-in opens; once it is done, the pasted key is gone from Universe. */
+    async function switchBack() {
+        if (signingIn) return;
+        signingIn = true;
+        const result = await reconnectApp(appId);
+        if (result === "done") {
+            // The new sign-in already replaced the key; this makes sure no key is left behind
+            await botApiService.dropGitHubKey().catch((error) => console.warn("Could not drop the GitHub key", error));
+        }
+        // eslint-disable-next-line require-atomic-updates
+        signingIn = false;
+        if (result === "blocked") warningMessageStore.addWarningMessage(text.reconnectFailed());
+        await Promise.all([load(), loadMyApps(true)]);
+    }
+
     function mayOf(lend: Lend): string {
         return lend.things === null
             ? text.botsMayDoAll({ count: THINGS.length })
@@ -156,7 +230,9 @@
     onMount(() => {
         load().catch((error) => console.error(error));
         loadMyBricks().catch((error) => console.error(error));
+        window.addEventListener("focus", cameBack);
     });
+    onDestroy(() => window.removeEventListener("focus", cameBack));
 </script>
 
 {#if brickScreen && app}
@@ -195,7 +271,9 @@
                 <div class="pg-tx">
                     <span class="pg-cap">{app.reconnectRequired ? text.reconnectEndedTitle() : text.connected()}</span>
                     <span class="pg-mid" data-testid={app.kind === "direct" ? "appKeyEnds" : undefined}
-                        >{#if app.kind === "direct"}{app.keyLast4
+                        >{#if github?.login}{github.ownKey
+                                ? gitText.ownKeyAs({ login: github.login })
+                                : gitText.signedInAs({ login: github.login })}{:else if app.kind === "direct"}{app.keyLast4
                                 ? text.keyEnds({ last4: app.keyLast4 })
                                 : text.addedByYouCard()}{app.keyMode
                                 ? ` · ${app.keyMode === "live" ? text.keyKindLive() : text.keyKindTest()}`
@@ -229,6 +307,56 @@
                 </div>
             {/if}
 
+            {#if github}
+                <AppSection title={gitText.whereItWorks()} testId="gitHubWhere" />
+                {#if github.ownKey}
+                    <AppRow
+                        title={gitText.keyEverywhere()}
+                        hint={gitText.keyEverywhereLine()}
+                        icon={IconKey}
+                        testId="gitHubKeyEverywhere"
+                    />
+                    <AppRow
+                        title={gitText.switchBack()}
+                        hint={gitText.switchBackLine()}
+                        icon={IconBrandGithub}
+                        onTap={() => void switchBack()}
+                        testId="gitHubSwitchBack"
+                    />
+                {:else}
+                    {#each github.places as place (place.account)}
+                        <AppRow
+                            title={place.account}
+                            hint={reposOf(place)}
+                            icon={place.type === "User" ? IconUser : IconBuilding}
+                            testId="gitHubPlace"
+                        />
+                    {/each}
+                    {#each github.waiting as waiting (waiting.account)}
+                        <AppRow
+                            title={waiting.account}
+                            hint={gitText.waitingForOwner()}
+                            icon={waiting.type === "User" ? IconUser : IconBuilding}
+                            warn
+                            onTap={() => (sheet = { kind: "gitHubWaiting", account: waiting.account })}
+                            testId="gitHubWaiting"
+                        />
+                    {/each}
+                    {#if !github.known}
+                        <PageNote>{gitText.notKnown()}</PageNote>
+                    {:else if github.places.length === 0 && github.waiting.length === 0}
+                        <PageNote>{gitText.nowhereYet()}</PageNote>
+                    {/if}
+                    <AppRow
+                        title={gitText.addPlace()}
+                        hint={gitText.opensGitHub()}
+                        icon={IconPlus}
+                        onTap={() => openGitHubPage(github?.addPlaceUrl ?? "")}
+                        testId="gitHubAddPlace"
+                    />
+                {/if}
+            {/if}
+
             <AppSection title={text.bricksThatCanUse()} />
             {#each app.bricks as brick (brick.botId)}
                 <AppRow
@@ -255,11 +383,19 @@
             {/each}
             {#if app.bricks.length > 0}<PageNote>{text.brickMayNote()}</PageNote>{/if}
 
+            {#if github}
+                <PageNote
+                    >{github.login
+                        ? gitText.worksAsYou({ login: github.login })
+                        : gitText.worksAsYouNoLogin()}</PageNote
+                >
+            {/if}
+
             <AppSection title={text.otherPeople()} />
             {#if !app.lendable}
                 <AppRow
                     title={text.onlyForYou()}
-                    hint={text.onlyForYouLine({ app: app.name })}
+                    hint={github ? gitText.onlyForYouLine() : text.onlyForYouLine({ app: app.name })}
                     icon={IconLock}
                     testId="appOnlyForYou"
                 />
@@ -326,6 +462,16 @@
                 {/if}
             {/if}
 
+            {#if github && !github.ownKey}
+                <AppRow
+                    title={gitText.useOwnKey()}
+                    hint={gitText.useOwnKeyLine()}
+                    icon={IconKey}
+                    onTap={() => (sheet = { kind: "gitHubKey" })}
+                    testId="gitHubUseKey"
+                />
+            {/if}
+
             <div class="pg-off">
                 <PageButton
                     tall
@@ -334,7 +480,7 @@
                     testId="appDisconnect"
                     on:click={() => (sheet = { kind: "disconnect" })}>{text.disconnect({ app: app.name })}</PageButton
                 >
-                <span class="pg-cn">{text.disconnectLine({ app: app.name })}</span>
+                <span class="pg-cn">{github ? gitText.disconnectLine() : text.disconnectLine({ app: app.name })}</span>
             </div>
         {/if}
     </AppsShell>
@@ -365,6 +511,15 @@
         onConfirm={() => void takeBack(lendOf)}
         testId="appTakeBackSheet"
     />
+{:else if github && sheet?.kind === "gitHubWaiting"}
+    <GitHubWaitingSheet
+        account={sheet.account}
+        installUrl={github.installUrl}
+        onUseKey={() => (sheet = { kind: "gitHubKey" })}
+        onClose={() => (sheet = undefined)}
+    />
+{:else if github && sheet?.kind === "gitHubKey"}
+    <GitHubKeySheet ownKeyPage={github.ownKeyPage} onSave={saveKey} onClose={() => (sheet = undefined)} />
 {:else if app && sheet?.kind === "disconnect"}
     <ConfirmSheet
         title={text.disconnectTitle({ app: app.name })}

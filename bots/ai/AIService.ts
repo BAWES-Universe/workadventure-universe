@@ -356,6 +356,14 @@ export class AIService {
         return found.toolServerMap.get(toolName) ?? null;
     }
 
+    /** The tools a bot's Apps give, as the model is offered them, and where each lives. Read from the cached list: no model is asked. Throws when they cannot be listed. */
+    async appToolsOf(botId: string): Promise<{ tools: any[]; servers: Map<string, ToolServerEntry> }> {
+        const adminApiToken = this.adminApiService?.['adminApiToken'];
+        if (!adminApiToken) return { tools: [], servers: new Map() };
+        const found = await MCPConnector.discoverToolsWithMapping(botId, this.adminApiUrl, adminApiToken, process.env.BOT_SERVICE_TOKEN || '');
+        return { tools: sortToolsByName(found.tools), servers: found.toolServerMap };
+    }
+
     /** Runs a tool call a person approved on a card (#1657), the way a reply would, with the bot's own Patience. */
     async runApprovedTool(
         botId: string,
