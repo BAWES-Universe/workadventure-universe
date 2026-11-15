@@ -39,6 +39,9 @@ const game = vi.hoisted(() => ({
     endBrickVisit: vi.fn<(brickId: string) => Promise<unknown>>(),
     syncVisitingBrick:
         vi.fn<(position?: { x: number; y: number }, options?: { ending?: boolean }) => Promise<boolean | undefined>>(),
+    getBrickHome: vi.fn<(brickId: string) => Promise<unknown>>(),
+    takeBrickOut: vi.fn<(brickId: string) => Promise<unknown>>(),
+    notifyRoomEnter: vi.fn<(roomUrl: string) => Promise<void>>(),
     getBotAiOptions: vi.fn<(target: { botId?: string }) => Promise<unknown>>(),
     getAvailableAIProviders: vi.fn<(all?: boolean) => Promise<unknown[]>>(),
     getMyAiKeys: vi.fn<() => Promise<unknown>>(),
@@ -83,6 +86,9 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         startBrickVisit: game.startBrickVisit,
         endBrickVisit: game.endBrickVisit,
         syncVisitingBrick: game.syncVisitingBrick,
+        getBrickHome: game.getBrickHome,
+        takeBrickOut: game.takeBrickOut,
+        notifyRoomEnter: game.notifyRoomEnter,
         getBotAiOptions: game.getBotAiOptions,
         getAvailableAIProviders: game.getAvailableAIProviders,
         getMyAiKeys: game.getMyAiKeys,
@@ -185,6 +191,7 @@ import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { bricksPageOpenStore } from "../../Stores/ChatStore";
 import { forgetMyBricks } from "../MyBricksStore";
+import { forgetBrickHome, provideBrickLocator } from "../BrickHomeStore";
 import { forgetBrickVisit, provideOwnPosition } from "../BrickVisitStore";
 import { forgetMyUsage } from "../UsageStore";
 import { openUsagePage } from "../OpenUsage";
@@ -233,6 +240,10 @@ describe("the Bricks page (#1995)", () => {
         vi.clearAllMocks();
         forgetMyBricks();
         forgetBrickVisit();
+        forgetBrickHome();
+        provideBrickLocator(() => false);
+        game.getBrickHome.mockResolvedValue({ home: null });
+        game.notifyRoomEnter.mockResolvedValue(undefined);
         provideOwnPosition(() => ({ x: 320, y: 480 }));
         // A room, and a place that has not heard of visits yet: nothing about visiting is shown until Orbit says so
         game.getRoomId.mockReturnValue("/@/team/universe/room");
@@ -1173,6 +1184,126 @@ describe("the Bricks page (#1995)", () => {
             await click("brickBringAlong");
             expect(game.warn).toHaveBeenCalledWith("Couldn't bring Recipe Brick along. Try again.");
             expect(byId("brickVisitBlocked")?.textContent).toContain("Universe doesn't take visiting Bricks.");
+        });
+    });
+    describe("a Brick that lives in a room (#2005)", () => {
+        const HOME = {
+            roomUrl: "/@/team/universe/room",
+            roomName: "Reception",
+            universeName: "Universe",
+        };
+        const click = async (id: string) => {
+            byId(id)?.click();
+            await settle();
+        };
+        const openMade = async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            await open();
+            rows()[1].click();
+            await settle();
+        };
+
+        it("says nothing about a home for a Brick that lives nowhere, and keeps Bring along", async () => {
+            await openMade();
+            expect(game.getBrickHome).toHaveBeenCalledWith(MADE);
+            expect(byId("brickTakeOut")).toBeNull();
+            expect(byId("brickShowOnMap")).toBeNull();
+            expect(byId("brickHomeLine")).toBeNull();
+            expect(byId("brickBringAlong")).not.toBeNull();
+        });
+
+        it("says nothing when Orbit could not tell where it lives", async () => {
+            game.getBrickHome.mockRejectedValue(new Error("offline"));
+            await openMade();
+            expect(byId("brickTakeOut")).toBeNull();
+            expect(byId("brickHomeLine")).toBeNull();
+        });
+
+        it("offers Show on map and Take it out of this room when it lives in the room the person is in", async () => {
+            game.getBrickHome.mockResolvedValue({ home: HOME });
+            await openMade();
+            expect(byId("brickShowOnMap")?.textContent?.trim()).toBe("Show on map");
+            expect(byId("brickTakeOut")?.textContent?.trim()).toBe("Take it out of this room");
+            expect(byId("brickHomeLine")?.textContent?.trim()).toBe(
+                "Lives in Reception. Anyone in the room can talk to it. Your own chat with it carries on as before."
+            );
+            // A Brick that lives here is not also brought along
+            expect(byId("brickBringAlong")).toBeNull();
+        });
+
+        it("offers only Take it out of {room} when it lives in another room", async () => {
+            game.getBrickHome.mockResolvedValue({
+                home: { ...HOME, roomUrl: "/@/team/universe/studio", roomName: "Studio" },
+            });
+            await openMade();
+            expect(byId("brickShowOnMap")).toBeNull();
+            expect(byId("brickTakeOut")?.textContent?.trim()).toBe("Take it out of Studio");
+            // One place at a time: a Brick with a home anywhere is not brought along until it is taken out
+            expect(byId("brickBringAlong")).toBeNull();
+        });
+
+        it("says where it lives, and what to do first, when it was given a home since the page was read", async () => {
+            game.startBrickVisit.mockRejectedValue(
+                Object.assign(new Error("lives in a room"), { status: 409, reason: "lives_in", place: "Studio" })
+            );
+            await openMade();
+            expect(byId("brickBringAlong")).not.toBeNull();
+            game.getBrickHome.mockResolvedValue({
+                home: { ...HOME, roomUrl: "/@/team/universe/studio", roomName: "Studio" },
+            });
+            await click("brickBringAlong");
+            expect(game.warn).toHaveBeenCalledWith("It lives in Studio. Take it out first, or place it elsewhere.");
+            expect(game.syncVisitingBrick).not.toHaveBeenCalled();
+            expect(byId("brickTakeOut")?.textContent?.trim()).toBe("Take it out of Studio");
+            expect(byId("brickBringAlong")).toBeNull();
+        });
+
+        it("shows no home on the page of another Brick whose home could not be read, never the last one's (Sentry on #2055)", async () => {
+            game.getBrickHome.mockImplementation((id: string) =>
+                id === MADE ? Promise.resolve({ home: HOME }) : Promise.reject(new Error("offline"))
+            );
+            await openMade();
+            expect(byId("brickTakeOut")).not.toBeNull();
+            byId("edit-panel-back")?.click();
+            await settle();
+            rows()[0].click();
+            await settle();
+            expect(game.getBrickHome).toHaveBeenCalledWith(BRICK);
+            expect(byId("brickTakeOut")).toBeNull();
+            expect(byId("brickHomeLine")).toBeNull();
+        });
+
+        it("points the camera at it on Show on map", async () => {
+            const find = vi.fn<(brickId: string) => boolean>().mockReturnValue(true);
+            provideBrickLocator(find);
+            game.getBrickHome.mockResolvedValue({ home: HOME });
+            await openMade();
+            await click("brickShowOnMap");
+            expect(find).toHaveBeenCalledWith(MADE);
+            expect(game.warn).not.toHaveBeenCalled();
+        });
+
+        it("takes it out, tells the bot server, and goes back to offering Bring along", async () => {
+            game.getBrickHome.mockResolvedValue({ home: HOME });
+            game.takeBrickOut.mockResolvedValue({ ok: true });
+            await openMade();
+            await click("brickTakeOut");
+            expect(game.takeBrickOut).toHaveBeenCalledWith(MADE);
+            expect(game.notifyRoomEnter).toHaveBeenCalledWith("/@/team/universe/room");
+            expect(byId("brickTakeOut")).toBeNull();
+            expect(byId("brickHomeLine")).toBeNull();
+            expect(byId("brickBringAlong")).not.toBeNull();
+            expect(game.warn).not.toHaveBeenCalled();
+        });
+
+        it("says so, and keeps it where it is, when it could not be taken out", async () => {
+            game.getBrickHome.mockResolvedValue({ home: HOME });
+            game.takeBrickOut.mockRejectedValue(new Error("offline"));
+            await openMade();
+            await click("brickTakeOut");
+            expect(game.warn).toHaveBeenCalledWith("Couldn't take Recipe Brick out. Try again.");
+            expect(byId("brickTakeOut")).not.toBeNull();
+            expect(game.notifyRoomEnter).not.toHaveBeenCalled();
         });
     });
 

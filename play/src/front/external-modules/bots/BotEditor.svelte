@@ -12,6 +12,7 @@
     } from "../../Stores/EditModeStore";
     import { mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
+    import { warningMessageStore } from "../../Stores/ErrorStore";
     import BotList from "./components/BotList.svelte";
     import BotDetailView from "./components/BotDetailView.svelte";
     import NewBotView from "./components/NewBotView.svelte";
@@ -33,6 +34,7 @@
         selectBot,
         startPlacingBot,
         cancelPlacement,
+        onBrickPlaced,
         loadBotPreviews,
         queueBotSave,
         redoRouteChange,
@@ -51,6 +53,7 @@
     import { ruleName } from "./accessModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
+    import { placeBrickHere } from "./stores/RoomBricksStore";
     import { IconMapPin } from "@wa-icons";
 
     let detailView: BotDetailView | undefined;
@@ -785,6 +788,35 @@
         cancelPlacement();
     }
 
+    /** "Add here" on one of the person's own Bricks (game #2005): they pick its spot on the map as for any room bot. */
+    function handleAddBrickHere(brick: { id: string; name: string; description: string | null; look: string | null }) {
+        startPlacingBot({
+            id: brick.id,
+            botId: brick.id,
+            name: brick.name,
+            description: brick.description ?? undefined,
+            characterTexture: brick.look ?? "",
+            characterTextureIds: brick.look ? [brick.look] : [],
+            behaviorType: "idle",
+            behaviorConfig: { behaviorType: "idle", assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } },
+            enabled: true,
+            brickHome: true,
+        });
+    }
+
+    // The spot was picked: the Brick gets its home there, and the room's list shows it
+    const stopHearingBricks = onBrickPlaced((brick, spot) => {
+        placeBrickHere(brick, spot)
+            .then((placed) => {
+                const ll = get(LL);
+                if (!placed.ok)
+                    warningMessageStore.addWarningMessage(ll.chat.brick.placeFailed({ name: brick.name ?? "" }));
+                else if (placed.keyNotLent)
+                    warningMessageStore.addWarningMessage(ll.chat.brick.keyNotLent({ name: brick.name ?? "" }));
+            })
+            .catch((e) => console.error(e));
+    });
+
     function handleLocateBot(botId: string) {
         botEditorTool.panToBot(botId);
     }
@@ -996,6 +1028,7 @@
     }
 
     onDestroy(() => {
+        stopHearingBricks();
         hideBottomBar();
         editPanelBackStore.set(undefined);
     });
@@ -1033,7 +1066,12 @@
             </div>
         </div>
     {:else if currentMode === "list" || currentMode === "placing"}
-        <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
+        <BotList
+            {bots}
+            onSelectBot={handleSelectBot}
+            onCreateBot={handleCreateBot}
+            onAddBrickHere={handleAddBrickHere}
+        />
     {:else if currentMode === "create"}
         <NewBotView
             busy={isLoading}

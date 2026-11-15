@@ -1072,12 +1072,36 @@ const chat: BaseTranslation = {
         endVisitLine: "It walks with you from room to room, and goes when you leave or end the visit.",
         notTaken: "{place} doesn't take visiting Bricks. {name} still answers in your direct messages here.",
         bringAlongFailed: "Couldn't bring {name} along. Try again.",
+        bringAlongLivesIn: "It lives in {room}. Take it out first, or place it elsewhere.",
         bringAlongNotYet: "{name} isn't on the map yet. It joins you when you walk into the next room.",
         endVisitFailed: "Couldn't end the visit. Try again.",
         visitingWith: "Visiting with {name}",
         madeBy: "Made by {name}",
         visitingCardLine:
             "You chat with it on your own usage. It never uses {name}'s apps for you, and it keeps what {name} told it to itself.",
+        // A Brick that lives in a room (#2005): the map editor's list, the sheet, and the Brick's page
+        addOwn: "Add one of your Bricks",
+        addOwnLine: "It gets a home in this room and stays yours",
+        addSheetLine:
+            "It stands at a spot you choose in {room}. Anyone in the room can talk to it. Your own chat with it carries on as before.",
+        addSheetLineNoRoom:
+            "It stands at a spot you choose in this room. Anyone in the room can talk to it. Your own chat with it carries on as before.",
+        addHere: "Add here",
+        moveHere: "Move here",
+        addFoot: "With other people it never uses apps signed in as you, and it keeps what you told it to itself.",
+        noOtherBricks: "You have no Bricks to add. Make one from the Bricks page.",
+        placedByOthers: "Placed by others",
+        takeOut: "Take out",
+        ownedBy: "{name}'s Brick",
+        ownedBySince: "{name}'s Brick · here since {day}",
+        placeFailed: "Couldn't add {name} here. Try again.",
+        takeOutFailed: "Couldn't take {name} out. Try again.",
+        keyNotLent:
+            "{name} answers other people here with Universe AI: the key it runs on isn't lent to this universe.",
+        homeLine: "Lives in {room}. Anyone in the room can talk to it. Your own chat with it carries on as before.",
+        showOnMap: "Show on map",
+        takeItOutHere: "Take it out of this room",
+        takeItOutOf: "Take it out of {room}",
         // A Brick leads you to connect an App (#2001), on the question card. The App is always called an App.
         appCard: {
             // "Connect Notion?" when they asked for it by name; the Brick's own question ("Connect your calendar?") otherwise

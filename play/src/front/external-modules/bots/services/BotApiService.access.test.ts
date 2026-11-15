@@ -312,6 +312,10 @@ describe("an Orbit that does not answer about who may use a bot", () => {
             (api) => api.brickComputerAction("b1", "fill-details", { what: "x", where: "y" }),
         ],
         ["dismissing a computer notice", (api) => api.dismissBrickComputerNotice("b1", "j1")],
+        ["reading the Bricks of a room", (api) => api.getRoomBricks("/@/team/universe/room")],
+        ["giving a Brick a home", (api) => api.placeBrickHome("b1", "/@/team/universe/room", {})],
+        ["reading where a Brick lives", (api) => api.getBrickHome("b1")],
+        ["taking a Brick out of its room", (api) => api.takeBrickOut("b1")],
     ];
 
     it.each(brickWrites)("fails %s in time when Orbit never answers", async (_name, call) => {

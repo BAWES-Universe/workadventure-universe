@@ -3555,8 +3555,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     noteRoomBrick(botId: string, brick: { ownerUuid: string; ownerName: string | null; roomUrl: string } | undefined): void {
         const known = this.roomBricks.get(botId);
         if (known?.ownerUuid === brick?.ownerUuid && known?.roomUrl === brick?.roomUrl && known?.ownerName === brick?.ownerName) return;
-        if (brick) this.roomBricks.set(botId, brick);
-        else this.roomBricks.delete(botId);
+        if (brick) {
+            this.roomBricks.set(botId, brick);
+            // Once a Brick has stood on a map it stays a Brick here: a turn still under way when it is taken out or the room is
+            // read again asks Orbit about who it is for, and never falls back to the owner's key for someone else
+            this.knownBricks.add(botId);
+        } else this.roomBricks.delete(botId);
         // What Orbit answered for one asker is not the answer for the next
         this.botCredentialVersion.set(botId, (this.botCredentialVersion.get(botId) ?? 0) + 1);
         for (const key of [...this.botCredentialCache.keys()]) if (key.startsWith(`${botId}:`)) this.botCredentialCache.delete(key);

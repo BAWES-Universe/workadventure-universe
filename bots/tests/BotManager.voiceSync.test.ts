@@ -12,6 +12,7 @@ function manager(orbit: { answer: Config[]; delay?: number }) {
     const syncs = { running: 0, peak: 0 };
     const admin = {
         isConfigured: () => false,
+        getHomedBricks: vi.fn(async () => []),
         getBotConfigurations: vi.fn(async () => {
             syncs.running++;
             syncs.peak = Math.max(syncs.peak, syncs.running);

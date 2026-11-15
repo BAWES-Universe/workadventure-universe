@@ -1,5 +1,6 @@
 import type { BotData, BotUser } from "../../external-modules/bots/types";
 import { botIdFromChatId } from "../Bots/BotChatStatus";
+import { NAME_MAX } from "../../external-modules/bots/roomBricksModel";
 
 /**
  * A person's own Brick (game #1995): a bot that lives in its owner's chats instead of a room on the map. Everyone who is
@@ -34,7 +35,6 @@ export const STARTER_IDEAS = "ideas";
 /** The bot server marks its fixed "what I can do" answer, so the game shows the ideas under it. */
 export const BRICK_IDEAS_KEY = "universe.brick_ideas";
 
-const NAME_MAX = 100;
 const LINE_MAX = 300;
 
 export function parseBrickCard(value: unknown): BrickCard | undefined {
