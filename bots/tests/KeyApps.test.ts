@@ -13,6 +13,7 @@ const http = vi.mocked(axios, true);
 http.isAxiosError.mockImplementation((err: unknown) => (err as { isAxiosError?: boolean })?.isAxiosError === true);
 
 const ORBIT = 'https://orbit.test';
+const WAIT = 90_000;
 const SCHEMA = { type: 'object', properties: { chargeId: { type: 'string', maxLength: 80 } }, required: ['chargeId'], additionalProperties: false };
 const op = (id: string, extra: Record<string, unknown> = {}) => ({ id, label: `Do ${id}`, category: 'lookUp', heading: 'looksUp', verified: true, inputSchema: SCHEMA, tool: `example_${id.toLowerCase()}`, fingerprint: `fp-${id}`, ...extra });
 const APP = {
@@ -114,28 +115,28 @@ describe('a call', () => {
 
     it('goes to Orbit with the operation, the arguments, the version and who asked, and nothing else', async () => {
         http.post.mockResolvedValueOnce({ status: 200, data: { ok: true, httpStatus: 200, data: { id: 'chg_1', status: 'CAPTURED' }, truncated: false } });
-        const result = await callKeyApp(where, entryFor('example_lookuppayment'), { chargeId: 'chg_1' }, use);
+        const result = await callKeyApp(where, entryFor('example_lookuppayment'), { chargeId: 'chg_1' }, use, undefined, WAIT);
         expect(result).toEqual({ id: 'chg_1', status: 'CAPTURED' });
         expect(http.post).toHaveBeenCalledWith(`${ORBIT}/api/bots/bot-1/key-apps/grant-1/call`, { callId: 'call-1', operation: 'lookUpPayment', arguments: { chargeId: 'chg_1' }, definitionHash: 'a'.repeat(64), requesterKey: 'sara-uuid' }, expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer svc' }) }));
     });
 
     it('says it works for its owner on its own only when told so', async () => {
         http.post.mockResolvedValueOnce({ status: 200, data: { ok: true, data: {} } });
-        await callKeyApp(where, entryFor('example_lookuppayment'), {}, { botId: 'bot-1', callId: 'c', forOwner: true });
+        await callKeyApp(where, entryFor('example_lookuppayment'), {}, { botId: 'bot-1', callId: 'c', forOwner: true }, undefined, WAIT);
         expect(http.post.mock.calls[0][1]).toMatchObject({ forOwner: true });
         expect(http.post.mock.calls[0][1]).not.toHaveProperty('requesterKey');
     });
 
     it('is never sent for a tool that is not a key app, or without a token', async () => {
-        expect(await callKeyApp(where, { serverId: 's', serverUrl: 'https://x.test', authType: 'none' }, {}, use)).toMatchObject({ outcome: 'not_sent' });
-        expect(await callKeyApp({ adminApiUrl: ORBIT, serviceToken: '' }, entryFor('example_lookuppayment'), {}, use)).toMatchObject({ outcome: 'not_sent' });
+        expect(await callKeyApp(where, { serverId: 's', serverUrl: 'https://x.test', authType: 'none' }, {}, use, undefined, WAIT)).toMatchObject({ outcome: 'not_sent' });
+        expect(await callKeyApp({ adminApiUrl: ORBIT, serviceToken: '' }, entryFor('example_lookuppayment'), {}, use, undefined, WAIT)).toMatchObject({ outcome: 'not_sent' });
         expect(http.post).not.toHaveBeenCalled();
     });
 
     it('sends nothing when the turn was stopped first, and says so as proof it did not run', async () => {
         const stopped = new AbortController();
         stopped.abort();
-        const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, stopped.signal)) as { error: string; outcome?: string };
+        const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, stopped.signal, WAIT)) as { error: string; outcome?: string };
         expect(result.outcome).toBe('not_sent');
         expect(http.post).not.toHaveBeenCalled();
     });
@@ -147,22 +148,22 @@ describe('a call', () => {
             turn.abort();
             throw Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' });
         });
-        const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, turn.signal)) as { error: string; outcome?: string };
+        const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, turn.signal, WAIT)) as { error: string; outcome?: string };
         expect(result.error).toMatch(/couldn't tell whether/);
         expect(result.outcome).toBeUndefined();
     });
 
-    it('waits as long as the bot’s Patience says, and a minute when it has none', async () => {
+    it('waits as long as it was told to: the bot’s Patience, or the default the other tools have', async () => {
         http.post.mockResolvedValue({ status: 200, data: { ok: true, data: {} } });
-        await callKeyApp(where, entryFor('example_lookuppayment'), {}, use);
-        await callKeyApp(where, entryFor('example_lookuppayment'), {}, { ...use, callId: 'c2' }, undefined, 15_000);
-        expect(http.post.mock.calls[0][2]).toMatchObject({ timeout: 60_000 });
-        expect(http.post.mock.calls[1][2]).toMatchObject({ timeout: 15_000 });
+        await callKeyApp(where, entryFor('example_lookuppayment'), {}, use, undefined, 300_000);
+        await callKeyApp(where, entryFor('example_lookuppayment'), {}, { ...use, callId: 'c2' }, undefined, 90_000);
+        expect(http.post.mock.calls[0][2]).toMatchObject({ timeout: 300_000 });
+        expect(http.post.mock.calls[1][2]).toMatchObject({ timeout: 90_000 });
     });
 
     it('does not claim it did not run when Orbit could not be reached', async () => {
         http.post.mockRejectedValueOnce(new Error('timeout'));
-        const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use)) as { error: string; outcome?: string };
+        const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, undefined, WAIT)) as { error: string; outcome?: string };
         expect(result.error).toMatch(/couldn't tell whether/);
         expect(result.outcome).toBeUndefined();
     });

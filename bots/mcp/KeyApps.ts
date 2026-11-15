@@ -37,8 +37,6 @@ export interface KeyApp {
 }
 
 const TIMEOUT_MS = 8_000;
-/** A use waits as long as the service may: Orbit's own limit for one request is smaller than this. */
-const CALL_TIMEOUT_MS = 60_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
@@ -165,8 +163,8 @@ export async function callKeyApp(
     use: KeyAppUse,
     /** The turn's stop signal: a turn that was stopped while it waited sends nothing */
     abortSignal?: AbortSignal,
-    /** How long the bot waits for the answer ("Patience"); a minute when the bot has none set */
-    timeoutMs?: number
+    /** How long the bot waits for the answer: its Patience, or the same default as for every other tool */
+    timeoutMs: number
 ): Promise<unknown> {
     if (!entry.keyApp || !where.adminApiUrl || !where.serviceToken) return { error: "That App can't be used right now. This was not done.", outcome: 'not_sent' };
     // Stopped before anything was sent: that is proof it did not run. Stopped after, it is not (see the catch below).
@@ -183,7 +181,7 @@ export async function callKeyApp(
     try {
         response = await axios.post(`${where.adminApiUrl}/api/bots/${encodeURIComponent(use.botId)}/key-apps/${encodeURIComponent(entry.serverId)}/call`, body, {
             headers: { Authorization: `Bearer ${where.serviceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-            timeout: timeoutMs ?? CALL_TIMEOUT_MS,
+            timeout: timeoutMs,
             validateStatus: () => true,
             ...(abortSignal ? { signal: abortSignal } : {}),
         });

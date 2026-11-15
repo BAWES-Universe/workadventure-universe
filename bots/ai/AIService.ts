@@ -23,7 +23,7 @@ import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { sanitizedError } from '../utils/sanitizedError';
-import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -399,8 +399,8 @@ export class AIService {
                     args,
                     { botId: use?.botId ?? '', callId: use?.callId ?? '', ...(use?.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use?.forOwner ? { forOwner: true } : {}) },
                     abortSignal,
-                    // The bot's Patience, as for every other tool
-                    toolTimeoutMs(toolTimeoutSeconds)
+                    // The bot's Patience, with the default every other tool has
+                    toolTimeoutMs(toolTimeoutSeconds) ?? REQUEST_TIMEOUT
                 );
             }
             // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
