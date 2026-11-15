@@ -22,9 +22,12 @@ const { bricks, openBrickChat, loadMyBricks } = vi.hoisted(() => {
 });
 const { openAppsPage } = vi.hoisted(() => ({ openAppsPage: vi.fn() }));
 vi.mock("../Apps/OpenApps", () => ({ APPS_LINK: "#apps", openAppsPage }));
+const { openUsagePage } = vi.hoisted(() => ({ openUsagePage: vi.fn() }));
+vi.mock("../OpenUsage", () => ({ openUsagePage }));
 vi.mock("../BrickChat", () => ({ openBrickChat }));
 vi.mock("../MyBricksStore", () => ({ myBricksStore: bricks, loadMyBricks }));
 
+import { usageLinkRequest } from "../UsageLink";
 import { BRICK_CHAT_LINK, brickChatLinkId, brickChatLinks, linksBrickChat, openBrickChatLink } from "../BrickChatLink";
 
 const flush = () =>
@@ -139,6 +142,45 @@ describe("the Apps link in what a Brick says after connecting an App", () => {
         const event = tap(link.querySelector("b")!);
         expect(event.defaultPrevented).toBe(false);
         expect(openAppsPage).not.toHaveBeenCalled();
+        action.destroy();
+    });
+});
+
+describe("the Usage link under a Brick's answer after a paid task", () => {
+    it("is read from its address, with or without a task, and from nothing else", () => {
+        expect(usageLinkRequest("#usage")).toEqual({ receiptId: undefined });
+        expect(usageLinkRequest("#usage=act_1")).toEqual({ receiptId: "act_1" });
+        expect(usageLinkRequest("#usage=")).toEqual({ receiptId: undefined });
+        // Not a plain id: the page opens, and no receipt is looked for
+        expect(usageLinkRequest("#usage=a/../b")).toEqual({ receiptId: undefined });
+        expect(usageLinkRequest("#usage-and-more")).toBeUndefined();
+        expect(usageLinkRequest("https://example.com/#usage")).toBeUndefined();
+        expect(usageLinkRequest(null)).toBeUndefined();
+    });
+
+    it("opens the Usage page here on that receipt, and is never followed", () => {
+        const { list, link } = listWithLink("#usage=act_1");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(true);
+        expect(openUsagePage).toHaveBeenCalledWith({ receiptId: "act_1" });
+        expect(openBrickChat).not.toHaveBeenCalled();
+        action.destroy();
+    });
+
+    it("opens the page alone for a link with no task, and a middle click does the same", () => {
+        const { list, link } = listWithLink("#usage");
+        const action = brickChatLinks(list);
+        expect(tap(link, "auxclick").defaultPrevented).toBe(true);
+        expect(openUsagePage).toHaveBeenCalledWith({ receiptId: undefined });
+        action.destroy();
+    });
+
+    it("leaves any other address alone", () => {
+        const { list, link } = listWithLink("#usage-and-more");
+        const action = brickChatLinks(list);
+        expect(tap(link.querySelector("b")!).defaultPrevented).toBe(false);
+        expect(openUsagePage).not.toHaveBeenCalled();
         action.destroy();
     });
 });

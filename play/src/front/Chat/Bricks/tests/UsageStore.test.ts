@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
     getMyUsage: vi.fn<() => Promise<unknown>>(),
-    askForMoreUsage: vi.fn<() => Promise<unknown>>(),
+    askForMoreUsage: vi.fn<(category?: string) => Promise<unknown>>(),
+    reportActivityProblem: vi.fn<(id: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: api }));
 vi.mock("../../../Stores/MenuStore", async () => {
@@ -17,9 +18,11 @@ import {
     askMyUsageForMore,
     forgetMyUsage,
     loadMyUsage,
+    refreshMyUsage,
     myUsageFailed,
     myUsageSettled,
     myUsageStore,
+    reportMyActivity,
 } from "../UsageStore";
 
 const out = {
@@ -107,5 +110,93 @@ describe("a person's usage in the game (#1999)", () => {
         expect(await askMyUsageForMore()).toBe(false);
         warn.mockRestore();
         expect(get(myUsageStore)?.computer).toMatchObject({ asked: false, canAskForMore: true });
+    });
+
+    const money = (over: Record<string, unknown> = {}) => ({
+        kind: "oneoff",
+        availableMicros: 0,
+        totalMicros: 2_000_000,
+        canAskForMore: true,
+        ...over,
+    });
+
+    it("asks for more of the Instant Apps credit, and shows it asked at once", async () => {
+        api.getMyUsage.mockResolvedValue({ ...out, version: 5, apps: money() });
+        await loadMyUsage();
+        expect(await askMyUsageForMore("apps")).toBe(true);
+        expect(api.askForMoreUsage).toHaveBeenCalledWith("apps");
+        expect(get(myUsageStore)?.apps).toMatchObject({ asked: true, canAskForMore: false });
+        // The computer's request is its own
+        expect(get(myUsageStore)?.computer).toMatchObject({ asked: false, canAskForMore: true });
+    });
+
+    it("asks for the computer's by default, as it always did, and its dollars show it asked too", async () => {
+        api.getMyUsage.mockResolvedValue({
+            ...out,
+            computer: { ...out.computer, ...money({ availableMicros: 0 }) },
+        });
+        await loadMyUsage();
+        expect(await askMyUsageForMore()).toBe(true);
+        expect(api.askForMoreUsage).toHaveBeenCalledWith("computer");
+        expect(get(myUsageStore)?.computer?.money).toMatchObject({ asked: true, canAskForMore: false });
+    });
+
+    it("never lets an older answer replace a newer one", async () => {
+        api.getMyUsage.mockResolvedValueOnce({ ...out, version: 20, storage: { bytes: 20 } });
+        await loadMyUsage();
+        api.getMyUsage.mockResolvedValueOnce({ ...out, version: 10, storage: { bytes: 10 } });
+        await loadMyUsage();
+        expect(get(myUsageStore)?.storageBytes).toBe(20);
+        // A newer one, and one with no stamp, do replace it
+        api.getMyUsage.mockResolvedValueOnce({ ...out, version: 30, storage: { bytes: 30 } });
+        await loadMyUsage();
+        expect(get(myUsageStore)?.storageBytes).toBe(30);
+        api.getMyUsage.mockResolvedValueOnce({ ...out, storage: { bytes: 40 } });
+        await loadMyUsage();
+        expect(get(myUsageStore)?.storageBytes).toBe(40);
+    });
+
+    it('says what "Didn\'t work?" came to, and reads anything unknown as sent', async () => {
+        api.reportActivityProblem.mockResolvedValueOnce({ outcome: "refunded" });
+        expect(await reportMyActivity("act_1")).toBe("refunded");
+        expect(api.reportActivityProblem).toHaveBeenCalledWith("act_1");
+        api.reportActivityProblem.mockResolvedValueOnce({ outcome: "free money" });
+        expect(await reportMyActivity("act_1")).toBe("sent");
+        api.reportActivityProblem.mockResolvedValueOnce(null);
+        expect(await reportMyActivity("act_1")).toBe("sent");
+    });
+
+    it("says nothing was sent when Orbit refused", async () => {
+        api.reportActivityProblem.mockRejectedValue(new Error("404"));
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        expect(await reportMyActivity("act_9")).toBeUndefined();
+        warn.mockRestore();
+    });
+
+    it("reads again from a request that begins after the call, and ignores the answer already on its way", async () => {
+        let answerOld: (answer: unknown) => void = () => undefined;
+        api.getMyUsage
+            .mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerOld = resolve;
+                })
+            )
+            .mockResolvedValueOnce({ ...out, storage: { bytes: 222 } });
+        const first = loadMyUsage();
+        const refreshed = refreshMyUsage();
+        // One read waits for the one in flight; asking again does not add another
+        expect(refreshMyUsage()).toBe(refreshed);
+        expect(api.getMyUsage).toHaveBeenCalledTimes(1);
+        answerOld({ ...out, storage: { bytes: 111 } });
+        await first;
+        await refreshed;
+        expect(api.getMyUsage).toHaveBeenCalledTimes(2);
+        expect(get(myUsageStore)?.storageBytes).toBe(222);
+    });
+
+    it("starts the read at once when none is out", async () => {
+        await refreshMyUsage();
+        expect(api.getMyUsage).toHaveBeenCalledTimes(1);
+        expect(get(myUsageStore)?.computer?.canAskForMore).toBe(true);
     });
 });
