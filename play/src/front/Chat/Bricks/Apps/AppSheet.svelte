@@ -82,13 +82,15 @@
         on:click|stopPropagation
     >
         {#if closeLabel}
-            <button
-                type="button"
-                class="u-close sh-x"
-                aria-label={closeLabel}
-                data-testid="appSheetClose"
-                on:click={onClose}><IconX font-size="20" /></button
-            >
+            <div class="sh-xrow">
+                <button
+                    type="button"
+                    class="u-close sh-x"
+                    aria-label={closeLabel}
+                    data-testid="appSheetClose"
+                    on:click={onClose}><IconX font-size="20" /></button
+                >
+            </div>
         {/if}
         <h2 class="sh-title" class:with-x={!!closeLabel}>{title}</h2>
         {#if sub}<p class="sh-sub">{sub}</p>{/if}
@@ -135,10 +137,18 @@
     .sh-sheet {
         position: relative;
     }
+    /* Takes no room, and stays at the top of the sheet while a long sheet scrolls under it */
+    .sh-xrow {
+        position: sticky;
+        top: -6px;
+        z-index: 1;
+        height: 0;
+        margin: -6px 0;
+    }
     .sh-x {
         position: absolute;
-        top: 14px;
-        inset-inline-end: 14px;
+        top: 0;
+        inset-inline-end: -6px;
     }
     .sh-title.with-x {
         padding-inline-end: 40px;
@@ -149,6 +159,13 @@
         margin: 4px -20px -20px;
         padding: 12px 20px 20px;
         background: linear-gradient(rgba(21, 18, 31, 0), #15121f 30%);
+    }
+    @media (max-width: 640px) {
+        /* The sheet's bottom padding grows by the home-indicator inset, so the buttons' own padding does too */
+        .sh-btns.stick {
+            margin-bottom: calc(-20px - env(safe-area-inset-bottom));
+            padding-bottom: calc(20px + env(safe-area-inset-bottom));
+        }
     }
     .sh-title {
         margin: 0;
