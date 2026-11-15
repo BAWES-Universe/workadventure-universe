@@ -219,7 +219,7 @@ export class ToolApprovals {
     /** A call the gate says needs an OK: a remembered approval that covers it, or a card. Never throws. */
     async propose(input: ProposeInput): Promise<Proposed> {
         // The same call asked for twice at the same moment (a model repeating itself in one round) is one question
-        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null]);
+        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null, input.task?.itemId ?? null]);
         const running = this.proposing.get(key);
         if (running) return running;
         const run = this.proposeNow(input).finally(() => {

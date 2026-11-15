@@ -213,3 +213,13 @@ describe('the card a goal puts up', () => {
         expect(sent).toHaveLength(1);
     });
 });
+
+describe('two asks at the same moment', () => {
+    it('are one card only when they are for the same goal', async () => {
+        const approvals = make(orbit, sent);
+        const other = '7c1d2e3f-1111-4222-8333-944455556666';
+        await Promise.all([approvals.propose(input()), approvals.propose(input()), approvals.propose(input({ task: { itemId: other } }))]);
+        expect([...orbit.actions.values()].map((a) => a.conversationKey).sort()).toEqual([`task:${other}`, `task:${ITEM}`].sort());
+        expect(sent).toHaveLength(2);
+    });
+});
