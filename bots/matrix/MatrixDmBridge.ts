@@ -775,7 +775,23 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
      */
     async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer> {
-        // "No chat" and "not allowed" are said only when the answer was certain; a look that failed is "could not tell"
+        const room = await this.roomToSpeakIn(botId, matrixUserId);
+        if ('reason' in room) return { ok: false, reason: room.reason };
+        try {
+            const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text }, transactionId);
+            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+    }
+
+    /**
+     * The direct chat a Brick may speak in to this person right now, for what is said on a run (a message, or the card a goal puts up): the
+     * chat the two share alone, and only for someone Orbit says may message the bot. It never makes a chat. "No chat" and "not allowed" are
+     * said only when the answer was certain; a look that failed is "could not tell".
+     */
+    async roomToSpeakIn(botId: string, matrixUserId: string): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' }> {
         let looked: { roomId: string | null; unsure: boolean };
         try {
             looked = await this.lookUpDirectRoom(botId, matrixUserId);
@@ -796,13 +812,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!mayChat(access)) return { ok: false, reason: 'not_allowed' };
         // Asked while this waited: someone else may have joined the room meanwhile, and then nothing goes there (the next try looks again and finds it is not theirs)
         if (!this.stillTheirs(looked.roomId, this.botUserId(botId), matrixUserId)) return { ok: false, reason: 'unsure' };
-        try {
-            const eventId = await this.client.sendMessage(this.botUserId(botId), looked.roomId, { msgtype: 'm.text', body: text }, transactionId);
-            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
-        } catch (error: any) {
-            console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
-            return { ok: false, reason: 'unsure' };
-        }
+        return { ok: true, roomId: looked.roomId };
     }
 
     /**
@@ -849,6 +859,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const members = this.roomMembers.get(roomId);
         if (!members) return true;
         return members.size === 2 && members.has(botUserId) && members.has(matrixUserId);
+    }
+
+    /** Whether this room is still only the bot's and this person's, by what the bot was last told (asked right before a card goes into it). */
+    roomStillTheirs(botId: string, roomId: string, matrixUserId: string): boolean {
+        return this.stillTheirs(roomId, this.botUserId(botId), matrixUserId);
     }
 
     private botUserId(botId: string): string {
