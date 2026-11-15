@@ -26,7 +26,12 @@ export type TaskResult =
     | { kind: 'nothing_new'; progress: TaskProgress }
     | { kind: 'tell'; message: string; needsYou: boolean; progress: TaskProgress }
     | { kind: 'reached'; message: string; evidence: string; progress: TaskProgress }
+    | { kind: 'ask'; ask: GoalAsk; message: string; progress: TaskProgress }
     | { kind: 'cannot'; reason: string };
+
+/** What a goal can ask its person once: it is not sure it reached the outcome, or the date it cared about has passed. */
+export type GoalAsk = 'unsure' | 'date_passed';
+export const GOAL_ASKS: readonly GoalAsk[] = ['unsure', 'date_passed'];
 
 export interface TaskProgress {
     statusLine?: string | null;
@@ -52,12 +57,13 @@ export function taskToolDefinitions(): ToolDefinition[] {
                 name: FINISH_CHECK_TOOL,
                 description:
                     'End this check. Call it once, when you know the result, and nothing after it. result is nothing_new (nothing to tell them), tell_them (something to say: put exactly what they will read in message), ' +
-                    'reached (a goal reached the outcome they named: say so in message, and put the evidence in evidence), or cannot (a step cannot be done: say what and why in reason).',
+                    'reached (a goal reached the outcome they named: say so in message, and put the evidence in evidence), ask_them (a goal only: you cannot tell if it reached the outcome, or the date they cared about has passed: say what you found in message and put which in ask), or cannot (a step cannot be done: say what and why in reason).',
                 parameters: {
                     type: 'object',
                     properties: {
-                        result: { type: 'string', enum: ['nothing_new', 'tell_them', 'reached', 'cannot'] },
-                        message: { type: 'string', description: 'What they will read, in your own voice, short and plain. For tell_them and reached.' },
+                        result: { type: 'string', enum: ['nothing_new', 'tell_them', 'reached', 'ask_them', 'cannot'] },
+                        message: { type: 'string', description: 'What they will read, in your own voice, short and plain. For tell_them, reached and ask_them (what you found and why you ask; the three answers are added for you).' },
+                        ask: { type: 'string', enum: ['unsure', 'date_passed'], description: 'ask_them: unsure (you cannot tell if the outcome is reached) or date_passed (the date they cared about has passed).' },
                         needs_you: { type: 'boolean', description: 'tell_them: true when you need them to do or decide something.' },
                         evidence: { type: 'string', description: 'reached: what shows the outcome is reached (the thing itself, not that something was submitted).' },
                         reason: { type: 'string', description: 'cannot: what could not be done, and why, in plain words.' },
@@ -119,12 +125,18 @@ export function readFinish(args: Record<string, unknown>, kind: DueRun['kind']):
         if (!message || !evidence) return { ok: false, error: 'A goal that reached its outcome says so in message and shows the evidence in evidence (the thing itself: a submitted application is not an issued visa). Call finish_check again.' };
         return { ok: true, result: { kind: 'reached', message, evidence, progress: progressOf(args, kind) } };
     }
+    if (result === 'ask_them') {
+        if (kind !== 'goal') return { ok: false, error: 'Only a goal asks its person this. Use tell_them or nothing_new.' };
+        const ask = GOAL_ASKS.find((one) => one === args.ask);
+        if (!ask || !message) return { ok: false, error: 'ask_them needs ask (unsure or date_passed) and message (what you found and why you ask). Call finish_check again.' };
+        return { ok: true, result: { kind: 'ask', ask, message, progress: progressOf(args, kind) } };
+    }
     if (result === 'cannot') {
         const reason = clean(args.reason, 300);
         if (!reason) return { ok: false, error: 'cannot needs the reason, in plain words. Call finish_check again.' };
         return { ok: true, result: { kind: 'cannot', reason } };
     }
-    return { ok: false, error: 'result is nothing_new, tell_them, reached or cannot. Call finish_check again.' };
+    return { ok: false, error: 'result is nothing_new, tell_them, reached, ask_them or cannot. Call finish_check again.' };
 }
 
 // --- what the model is told -----------------------------------------------------------------------------------------------------------
@@ -184,7 +196,7 @@ export function taskPrompt(run: Pick<DueRun, 'kind' | 'words' | 'condition' | 'o
     if (run.kind === 'goal') {
         lines.push(
             '- A goal speaks only when something material changed or they must act (needs_you true). Otherwise nothing_new, with an updated status_line and steps.',
-            '- A goal is reached only on evidence of the outcome itself, not of a step toward it (a submitted application is not an issued visa). Then use reached. If you are not sure, say what you found in tell_them with needs_you and keep going.'
+            '- A goal is reached only on evidence of the outcome itself, not of a step toward it (a submitted application is not an issued visa). Then use reached. If you cannot tell whether it is reached, or the date they cared about has passed, use ask_them (ask unsure or date_passed) and say what you found: they are asked once, with the answers close it, keep going or change it. Never ask_them and reached together, and do not ask again once you asked.'
         );
     }
     return lines.join('\n');

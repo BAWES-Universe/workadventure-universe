@@ -16,7 +16,7 @@
  * call asks only for the kinds run here (RUNNABLE_KINDS), so Orbit never hands out, and never burns tries of, a run nothing here will try.
  */
 
-import type { TaskResult } from './BrickTaskRun';
+import type { GoalAsk, TaskResult } from './BrickTaskRun';
 
 /** A run Orbit handed out, as far as this part needs it (POST /api/bricks/items/due). */
 export interface DueRun {
@@ -57,6 +57,8 @@ export interface RunReport {
     progress?: { statusLine?: string | null; steps?: { text: string; state: 'todo' | 'doing' | 'done' }[]; waitingFor?: string | null };
     /** A goal that reached the outcome the person named; the evidence is in `result`. */
     reached?: boolean;
+    /** A goal that cannot tell if it reached the outcome, or whose date passed: Orbit says whether its person is to be asked (once). */
+    ask?: GoalAsk;
 }
 
 /** How a run that said something was to be reported, kept with where its message went so a run handed out again after a restart reports that. */
@@ -65,6 +67,8 @@ export type KeptReport = Pick<RunReport, 'outcome' | 'result' | 'progress' | 're
 /** What Orbit answered to a report: whether the person is to be told of a row of failures. */
 export interface ReportAnswer {
     tellPerson: boolean;
+    /** The question this run's report is to ask the person, once (Orbit says none when one is open or was answered "keep going"). */
+    askPerson?: GoalAsk | null;
 }
 
 /** A goal or task that waits because its owner's usage for goals and tasks is used up: said once per wait. */
@@ -91,6 +95,8 @@ export interface BrickRunnerApi {
     report(runId: string, report: RunReport): Promise<ReportAnswer | null>;
     /** The person was told about a row of failures (the report said so). Only after it went out. */
     keepTold(runId: string): Promise<boolean>;
+    /** The person was asked the goal's question (the report said `askPerson`). Only after it went out. */
+    keepAsked?(runId: string): Promise<boolean>;
     /** The person was told their goal or task waits for usage. Only after it went out. */
     keepHeldTold(itemId: string, waitId: string): Promise<boolean>;
 }
@@ -224,6 +230,11 @@ export function heldText(notice: Pick<HeldNotice, 'words' | 'resumesAt' | 'timeZ
 /** A run that did not work, said once to the person (Orbit says when): what it was, and why. */
 export function failedText(run: Pick<DueRun, 'words'>, error: string): string {
     return `I couldn't do "${run.words.trim()}": ${error.trim().replace(/[.!?]+$/, '')}. I'll try again at the next time, or ask me any time.`;
+}
+
+/** The goal's one question, as the person reads it: what the goal found, and the three answers. */
+export function askedText(message: string): string {
+    return `${message.trim()}\n\nYou can tell me: close it, keep going, or change it.`;
 }
 
 export const transactionIdOfTold = (runId: string) => `brick-told:${runId}`;
@@ -449,6 +460,10 @@ export class BrickRunner {
         }
         // Something to say: nothing goes out for a run that was changed while the model worked
         if (!(await permit())) return;
+        if (result.kind === 'ask') {
+            await this.askPerson(run, result);
+            return;
+        }
         const reached = result.kind === 'reached';
         const report: RunReport = {
             attempt: run.attempt,
@@ -464,6 +479,32 @@ export class BrickRunner {
         if (said === 'left' || said === 'failed') return;
         // It is already said: when Orbit did not take the report, it is kept to be reported whole when the run is handed out again
         if ((await this.api.report(run.runId, report)) === null) this.keepUnreported(run.runId, report);
+    }
+
+    /**
+     * A goal that cannot tell if it reached its outcome, or whose date passed. Reported first: Orbit says whether this run is the one that
+     * asks (one question is open at a time, and "keep going" is never asked again), and only then is it said, so a goal never asks twice.
+     * Confirmed to Orbit only after it went out; one that did not is asked for again by the next run that asks the same thing.
+     */
+    private async askPerson(run: DueRun, result: Extract<TaskResult, { kind: 'ask' }>): Promise<void> {
+        const answer = await this.api.report(run.runId, {
+            attempt: run.attempt,
+            state: 'done',
+            outcome: 'waiting',
+            result: result.message.slice(0, RESULT_MAX),
+            ask: result.ask,
+            ...(Object.keys(result.progress).length > 0 ? { progress: result.progress } : {}),
+        });
+        // Orbit did not take it (the run is handed out again), or it says this run does not ask: nothing is said
+        if (!answer?.askPerson) return;
+        // Said straight, not through say(): the run is already reported, and a question nobody could be asked is not a failure of the run
+        if (!run.matrixUserId) return;
+        const spoke = await this.speaker.say(run.brickId, run.matrixUserId, askedText(result.message), transactionIdOfRun(run.runId));
+        if (!('eventId' in spoke)) {
+            this.log.warn(`[BrickRunner] Could not ask the person of run ${run.runId} just now (${spoke.reason}); the next check that asks will ask`);
+            return;
+        }
+        if (!(await this.api.keepAsked?.(run.runId))) this.log.warn(`[BrickRunner] Orbit did not keep that the goal of run ${run.runId} asked; it is asked again by the next check that asks`);
     }
 
     private keepUnreported(runId: string, report: RunReport): void {

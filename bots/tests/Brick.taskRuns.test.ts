@@ -26,7 +26,7 @@ import {
     type TaskOutcome,
 } from '../server/BrickRunner';
 import { ModelTaskRunner, type TaskBrick } from '../server/BrickTaskModel';
-import { FINISH_CHECK_TOOL, READ_PAGE_TOOL, clockWords, readFinish, taskPrompt, taskToolDefinitions } from '../server/BrickTaskRun';
+import { FINISH_CHECK_TOOL, READ_PAGE_TOOL, clockWords, readFinish, taskPrompt, taskToolDefinitions, type TaskResult } from '../server/BrickTaskRun';
 
 const run = (over: Partial<DueRun> = {}): DueRun => ({
     runId: 'run-1',
@@ -74,6 +74,16 @@ describe('how a check ends', () => {
         expect(readFinish({ result: 'cannot', reason: 'I cannot use your calendar yet' }, 'schedule')).toMatchObject({ ok: true, result: { kind: 'cannot' } });
         expect(readFinish({ result: 'cannot' }, 'schedule')).toMatchObject({ ok: false });
         expect(readFinish({ result: 'explode' }, 'goal')).toMatchObject({ ok: false });
+    });
+
+    it('lets only a goal ask its person once, and only with what it found and which question it is', () => {
+        expect(readFinish({ result: 'ask_them', ask: 'unsure', message: 'Is it done?' }, 'watch')).toMatchObject({ ok: false });
+        expect(readFinish({ result: 'ask_them', ask: 'unsure' }, 'goal')).toMatchObject({ ok: false });
+        expect(readFinish({ result: 'ask_them', ask: 'sometime', message: 'Is it done?' }, 'goal')).toMatchObject({ ok: false });
+        expect(readFinish({ result: 'ask_them', ask: 'date_passed', message: 'The date passed.', status_line: 'Past the date' }, 'goal')).toMatchObject({
+            ok: true,
+            result: { kind: 'ask', ask: 'date_passed', message: 'The date passed.', progress: { statusLine: 'Past the date' } },
+        });
     });
 
     it('lets only a goal reach an outcome, and only with the evidence', () => {
@@ -139,7 +149,7 @@ describe('what Orbit hands out for a model', () => {
 
 // --- the runner, with a fake model ----------------------------------------------------------------------------------------------------------
 
-function setUp(due: DueRun[], model: BrickTaskModel['run'], over: { say?: BrickSpeaker['say']; check?: () => Promise<{ ok: boolean; reason?: string }>; held?: HeldNotice[]; tell?: boolean } = {}) {
+function setUp(due: DueRun[], model: BrickTaskModel['run'], over: { say?: BrickSpeaker['say']; check?: () => Promise<{ ok: boolean; reason?: string }>; held?: HeldNotice[]; tell?: boolean; askPerson?: 'unsure' | 'date_passed' | null; keepAsked?: boolean } = {}) {
     const reports: Array<{ runId: string; report: RunReport }> = [];
     const api: BrickRunnerApi = {
         claimDue: vi.fn(async (_kinds: readonly string[]) => ({ runs: due, held: over.held ?? [] })),
@@ -147,9 +157,10 @@ function setUp(due: DueRun[], model: BrickTaskModel['run'], over: { say?: BrickS
         keepDelivered: vi.fn(async () => true),
         keepTold: vi.fn(async () => true),
         keepHeldTold: vi.fn(async () => true),
+        keepAsked: vi.fn(async () => over.keepAsked !== false),
         report: vi.fn(async (runId, report) => {
             reports.push({ runId, report });
-            return { tellPerson: over.tell === true };
+            return { tellPerson: over.tell === true, ...(over.askPerson !== undefined ? { askPerson: over.askPerson } : {}) };
         }),
     };
     const say = vi.fn(over.say ?? (async (_b: string, _u: string, _t: string, _x: string) => ({ ok: true as const, eventId: '$e1' })));
@@ -206,6 +217,66 @@ describe('a watch, a briefing or a goal runs on a model', () => {
         await runner.idle();
         expect(say.mock.calls[0][2]).toBe('Your visa is approved.');
         expect(reports[0].report).toMatchObject({ state: 'done', outcome: 'spoke', reached: true, result: 'The site shows Issued and the PDF is attached' });
+    });
+
+    describe('a goal that asks its person once', () => {
+        const asks = (over: Partial<Extract<TaskResult, { kind: 'ask' }>> = {}): TaskOutcome => ({
+            kind: 'result',
+            result: { kind: 'ask', ask: 'unsure', message: 'The site shows Pending, not Issued. Is the visa in hand?', progress: { statusLine: 'Waiting on the decision' }, ...over },
+        });
+
+        it('reports first, then asks in the person’s chat with the three answers, then keeps that it asked', async () => {
+            const { runner, say, api, reports } = setUp([run({ kind: 'goal' })], result(asks()), { askPerson: 'unsure' });
+            await runner.tick();
+            await runner.idle();
+            expect(reports[0].report).toMatchObject({ state: 'done', outcome: 'waiting', ask: 'unsure', result: 'The site shows Pending, not Issued. Is the visa in hand?', progress: { statusLine: 'Waiting on the decision' } });
+            expect(say).toHaveBeenCalledTimes(1);
+            expect(say).toHaveBeenCalledWith('brick-1', '@sara:matrix.test', 'The site shows Pending, not Issued. Is the visa in hand?\n\nYou can tell me: close it, keep going, or change it.', 'brick-run:run-1');
+            expect(api.keepAsked).toHaveBeenCalledWith('run-1');
+            const order = [(api.report as any).mock.invocationCallOrder[0], say.mock.invocationCallOrder[0], (api.keepAsked as any).mock.invocationCallOrder[0]];
+            expect(order).toEqual([...order].sort((a, b) => a - b));
+            // Never as a plain "said": nothing is kept as delivered
+            expect(api.keepDelivered).not.toHaveBeenCalled();
+        });
+
+        it('says nothing when Orbit says this run does not ask (a question is open, or the person said keep going)', async () => {
+            for (const askPerson of [null, undefined]) {
+                const { runner, say, api, reports } = setUp([run({ kind: 'goal' })], result(asks({ ask: 'date_passed' })), { askPerson });
+                await runner.tick();
+                await runner.idle();
+                expect(reports[0].report).toMatchObject({ outcome: 'waiting', ask: 'date_passed' });
+                expect(say).not.toHaveBeenCalled();
+                expect(api.keepAsked).not.toHaveBeenCalled();
+            }
+        });
+
+        it('says nothing, and keeps nothing, when Orbit did not take the report', async () => {
+            const { runner, say, api } = setUp([run({ kind: 'goal' })], result(asks()), { askPerson: 'unsure' });
+            (api.report as any).mockResolvedValueOnce(null);
+            await runner.tick();
+            await runner.idle();
+            expect(say).not.toHaveBeenCalled();
+            expect(api.keepAsked).not.toHaveBeenCalled();
+        });
+
+        it('does not keep that it asked when it could not be said, and does not turn that into a failed run', async () => {
+            const { runner, api, reports, warn } = setUp([run({ kind: 'goal' })], result(asks()), { askPerson: 'unsure', say: async () => ({ ok: false as const, reason: 'unsure' as const }) });
+            await runner.tick();
+            await runner.idle();
+            expect(api.keepAsked).not.toHaveBeenCalled();
+            expect(reports).toHaveLength(1);
+            expect(reports[0].report.state).toBe('done');
+            expect(warn).toHaveBeenCalled();
+        });
+
+        it('says it even when Orbit would not take the confirmation, so the person is never left unasked', async () => {
+            const { runner, say, api, warn } = setUp([run({ kind: 'goal' })], result(asks()), { askPerson: 'unsure', keepAsked: false });
+            await runner.tick();
+            await runner.idle();
+            expect(say).toHaveBeenCalledTimes(1);
+            expect(api.keepAsked).toHaveBeenCalledTimes(1);
+            expect(warn).toHaveBeenCalled();
+        });
     });
 
     it('reports a step it cannot do as a failure, and tells the person once when Orbit says so, keeping that only after it went out', async () => {

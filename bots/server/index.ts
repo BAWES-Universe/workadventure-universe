@@ -260,6 +260,7 @@ async function setupMatrix(): Promise<void> {
             keepDelivered: (runId, eventId, report) => adminApiService.keepItemDelivered(runId, eventId, report),
             report: (runId, report) => adminApiService.reportItemRun(runId, report),
             keepTold: (runId) => adminApiService.keepItemTold(runId),
+            keepAsked: (runId) => adminApiService.keepItemAsked(runId),
             keepHeldTold: (itemId, waitId) => adminApiService.keepItemHeldTold(itemId, waitId),
         },
         { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) },
