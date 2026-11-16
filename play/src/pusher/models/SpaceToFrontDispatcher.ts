@@ -18,6 +18,26 @@ import { forgetSpeakInvitation, recordSpeakInvitation } from "./MegaphoneRights"
 import type { EventProcessor } from "./EventProcessor";
 import type { SpaceUserExtended, Space, PartialSpaceUser } from "./Space";
 
+/**
+ * The one person a bot's reply is for (#1993): set by a bot when it writes to someone who is alone with it, on the reply
+ * itself and on what it sends with it (a picture, a file, a card). Only a bot's word counts. From anyone else the event
+ * goes to everyone in the space, as it always did.
+ */
+export function onlyReaderOf(
+    event: NonNullable<PublicEvent["spaceEvent"]>["event"],
+    sender: Pick<SpaceUser, "tags" | "uuid"> | undefined
+): string | undefined {
+    const onlyFor =
+        event?.$case === "spaceStreamMessage"
+            ? event.spaceStreamMessage.onlyFor
+            : event?.$case === "spaceMessage"
+            ? event.spaceMessage.onlyFor
+            : undefined;
+    if (!onlyFor) return undefined;
+    const fromBot = !!sender && (sender.tags.includes("bot") || (sender.uuid ?? "").startsWith("bot-"));
+    return fromBot ? onlyFor : undefined;
+}
+
 export interface SpaceToFrontDispatcherInterface {
     handleMessage(message: BackToPusherSpaceMessage): void;
     notifyMe(watcher: Socket, subMessage: SubMessage): void;
@@ -329,22 +349,29 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
 
         const sender = this._space.users.get(message.senderUserId);
 
-        this.notifyAllUsers(
-            {
-                message: {
-                    $case: "publicEvent",
-                    publicEvent: {
-                        senderUserId: message.senderUserId,
-                        spaceEvent: {
-                            event: this.eventProcessor.processPublicEvent(spaceEvent.event, sender),
-                        },
-                        // The name of the space in the browser is the local name (i.e. the name without the "world" prefix)
-                        spaceName: this._space.localName,
+        const subMessage: SubMessage = {
+            message: {
+                $case: "publicEvent",
+                publicEvent: {
+                    senderUserId: message.senderUserId,
+                    spaceEvent: {
+                        event: this.eventProcessor.processPublicEvent(spaceEvent.event, sender),
                     },
+                    // The name of the space in the browser is the local name (i.e. the name without the "world" prefix)
+                    spaceName: this._space.localName,
                 },
             },
-            message.senderUserId
-        );
+        };
+
+        // A bot's reply to someone who was alone with it is for that person and nobody else (#1993): someone who walks up
+        // while it is being written is never sent any of it
+        const onlyReader = onlyReaderOf(spaceEvent.event, sender);
+        if (onlyReader !== undefined) {
+            this.notifyOnly(subMessage, onlyReader);
+            return;
+        }
+
+        this.notifyAllUsers(subMessage, message.senderUserId);
     }
 
     private sendPrivateEvent(message: NonUndefinedFields<PrivateEventBackToPusher>) {
@@ -414,6 +441,15 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
             },
         });
     }
+    /** Notify one user of this space and nobody else, when they are connected to this pusher. */
+    private notifyOnly(subMessage: SubMessage, spaceUserId: string) {
+        for (const [socket, spaceUser] of this._space._localConnectedUserWithSpaceUser.entries()) {
+            if (spaceUser.spaceUserId === spaceUserId) {
+                socket.getUserData().emitInBatch(subMessage);
+            }
+        }
+    }
+
     /**
      * Notify all users in this space expect the sender. Notification is done despite users watching or not.
      * It is used solely for public events.

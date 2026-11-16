@@ -625,6 +625,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     },
     inviteFooter: {
         button: "Inviter quelqu'un",
+        buttonShort: "Inviter",
         title: "Inviter quelqu'un",
         hint: "Avec le lien, on entre directement dans cette salle. Rien à installer, pas besoin de compte.",
         hintRoom: "Avec le lien, on entre directement dans {room}. Rien à installer, pas besoin de compte.",
