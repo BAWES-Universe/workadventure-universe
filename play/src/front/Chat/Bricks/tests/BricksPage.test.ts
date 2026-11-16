@@ -100,6 +100,7 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         isInitialized: () => true,
         getBrickItems: () => Promise.resolve({ items: [] }),
         getAllBrickItems: game.getAllBrickItems,
+        onIdentityChange: () => () => undefined,
         tapBrickItem: game.tapBrickItem,
         getMyMemory: () => Promise.resolve({ items: [] }),
         getBrickFiles: () => Promise.resolve({}),

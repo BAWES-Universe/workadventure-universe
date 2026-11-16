@@ -10,7 +10,11 @@ const game = vi.hoisted(() => ({
 // eslint-disable-next-line svelte/no-svelte-internal
 vi.mock("svelte", async () => await import("svelte/internal"));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
-    botApiService: { getAllBrickItems: game.getAllBrickItems, tapBrickItem: game.tapBrickItem },
+    botApiService: {
+        getAllBrickItems: game.getAllBrickItems,
+        tapBrickItem: game.tapBrickItem,
+        onIdentityChange: () => () => undefined,
+    },
 }));
 // The pictures are not what these tests are about
 vi.mock(

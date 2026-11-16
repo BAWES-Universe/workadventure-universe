@@ -354,16 +354,27 @@ export interface BrickGoalsList {
     items: Readable<GoalItem[]>;
     state: Readable<GoalsState>;
     load(): Promise<void>;
+    /** Forgets what shows and drops any read still on its way: the list belongs to somebody else now. */
+    reset(): void;
     /** Sends a tap. The list is read again afterwards, whatever Orbit said: it is the one that knows. */
     tap(itemId: string, action: GoalTap): Promise<GoalTapResult>;
 }
 
 /** One Brick's goals and tasks. A read that fails says so; it never shows a list it did not read. */
 export function brickGoalsList(brickId: string): BrickGoalsList {
-    return goalsList(
+    const own = goalsList(
         async () => parseGoalItems(await botApiService.getBrickItems(brickId), brickId),
         (item, action) => botApiService.tapBrickItem(brickId, item.id, action)
     );
+    return {
+        ...own,
+        async tap(itemId, action) {
+            const result = await own.tap(itemId, action);
+            // The row and page across all Bricks show this too: read them again once Orbit has taken the tap, even if this page was left meanwhile
+            myGoalsList.load().catch((error) => console.error(error));
+            return result;
+        },
+    };
 }
 
 /**
@@ -371,10 +382,25 @@ export function brickGoalsList(brickId: string): BrickGoalsList {
  * list, read once for the row and the page it opens. Each row says its Brick; a tap goes to that Brick's own route.
  */
 export function allGoalsList(): BrickGoalsList {
-    return goalsList(
+    const list = goalsList(
         async () => parseGoalItems(await botApiService.getAllBrickItems()),
         (item, action) => botApiService.tapBrickItem(item.brickId, item.id, action)
     );
+    let watching = false;
+    return {
+        ...list,
+        async load() {
+            // This list outlives the page: when the account or Orbit changes in place, it must not show the one before
+            if (!watching) {
+                watching = true;
+                botApiService.onIdentityChange(() => {
+                    list.reset();
+                    list.load().catch((error) => console.error(error));
+                });
+            }
+            await list.load();
+        },
+    };
 }
 
 /** The one list the Bricks page and its Goals and tasks page share. */
@@ -407,6 +433,11 @@ function goalsList(
     return {
         items: { subscribe: items.subscribe },
         state: { subscribe: state.subscribe },
+        reset() {
+            reads++;
+            items.set([]);
+            state.set("loading");
+        },
         async load() {
             // A list that shows stays while it is read again (the page opened from its row); one that never came says it is coming
             if (get(state) !== "ready") state.set("loading");

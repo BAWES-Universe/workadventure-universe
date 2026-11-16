@@ -5,6 +5,7 @@ const orbit = vi.hoisted(() => ({
     getBrickItems: vi.fn<(brickId: string) => Promise<unknown>>(),
     getAllBrickItems: vi.fn<() => Promise<unknown>>(),
     tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string) => Promise<unknown>>(),
+    onIdentityChange: vi.fn<(listener: () => void) => () => void>(() => () => undefined),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: orbit }));
 
@@ -313,6 +314,17 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             expect(get(list.items)[0].state).toBe("done");
         });
 
+        it("reads the list across all Bricks again once a tap on one Brick has been taken", async () => {
+            orbit.getBrickItems.mockResolvedValue({ items: [row()] });
+            orbit.getAllBrickItems.mockClear();
+            orbit.getAllBrickItems.mockResolvedValue({ items: [] });
+            const list = brickGoalsList(BRICK);
+            await list.load();
+            orbit.tapBrickItem.mockResolvedValueOnce({});
+            await list.tap("i1", "pause");
+            await vi.waitFor(() => expect(orbit.getAllBrickItems).toHaveBeenCalledTimes(1));
+        });
+
         it("keeps the list it has, and says it is stale, when the read after a tap fails", async () => {
             orbit.getBrickItems.mockResolvedValueOnce({ items: [row()] });
             const list = brickGoalsList(BRICK);
@@ -387,6 +399,46 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             finish({ items: [] });
             await again;
             expect(get(list.items)).toHaveLength(0);
+        });
+    });
+
+    describe("when the account or Orbit changes in place", () => {
+        it("forgets the list and drops a read that started before, then reads for the new account", async () => {
+            let changed: () => void = () => undefined;
+            orbit.onIdentityChange.mockImplementation((listener) => {
+                changed = listener;
+                return () => undefined;
+            });
+            orbit.getAllBrickItems.mockResolvedValueOnce({ items: [row({ words: "First account's" })] });
+            const list = allGoalsList();
+            await list.load();
+            expect(get(list.items)).toHaveLength(1);
+
+            let finishOld: (value: unknown) => void = () => undefined;
+            orbit.getAllBrickItems.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    finishOld = resolve;
+                })
+            );
+            const old = list.load();
+            orbit.getAllBrickItems.mockResolvedValueOnce({ items: [row({ id: "n1", words: "Second account's" })] });
+            changed();
+            // Nothing of the first account shows, not even for a moment
+            expect(get(list.items)).toEqual([]);
+            expect(get(list.state)).toBe("loading");
+            finishOld({ items: [row({ words: "First account's, late" })] });
+            await old;
+            await vi.waitFor(() => expect(get(list.state)).toBe("ready"));
+            expect(get(list.items).map((one) => one.words)).toEqual(["Second account's"]);
+        });
+
+        it("watches only once, however often the list is read", async () => {
+            orbit.onIdentityChange.mockClear();
+            orbit.getAllBrickItems.mockResolvedValue({ items: [] });
+            const list = allGoalsList();
+            await list.load();
+            await list.load();
+            expect(orbit.onIdentityChange).toHaveBeenCalledTimes(1);
         });
     });
 
