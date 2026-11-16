@@ -7,6 +7,8 @@ import {
     createComputerRunner,
     endingOf,
     jobPrompt,
+    GIT_RULE,
+    GIT_RULE_READ_ONLY,
     relayUrlFromEnv,
     runnerOrbitFor,
     type RunnableJob,
@@ -103,6 +105,18 @@ describe('how the agent says its turn ended', () => {
         expect(prompt).toContain('[[done]]');
         expect(prompt).not.toContain('only to look');
         expect(jobPrompt({ ...JOB, writes: false, brief: null })).toContain('only to look');
+    });
+
+    it('tells the agent git already works as the person, what a push may do, and that no key is there to find; a look-only job may only read', () => {
+        const prompt = jobPrompt(JOB);
+        expect(prompt).toContain(GIT_RULE);
+        expect(prompt).toContain('git clone https://github.com/OWNER/REPO');
+        expect(prompt).toMatch(/force push.*refused/);
+        expect(prompt).toMatch(/no key or token on this computer/);
+        const lookOnly = jobPrompt({ ...JOB, writes: false });
+        expect(lookOnly).toContain(GIT_RULE_READ_ONLY);
+        expect(lookOnly).not.toContain(GIT_RULE);
+        expect(lookOnly).toContain('Pushing is refused');
     });
 });
 
