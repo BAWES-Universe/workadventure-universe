@@ -4,7 +4,14 @@ import { describe, expect, it } from "vitest";
 import type { ChatRoom, RoomFolder } from "../../../Connection/ChatConnection";
 import { InvitationClock } from "../OneListOrder";
 import type { OneListEntry } from "../OneListStore";
-import { OrderFreeze, createOneListStore, freezeWhileHeld } from "../OneListStore";
+import {
+    OrderFreeze,
+    brickEntry,
+    createOneListStore,
+    directRoomsWith,
+    directRoomsWithStore,
+    freezeWhileHeld,
+} from "../OneListStore";
 
 type FakeRoom = ChatRoom & {
     messagesStore: Writable<readonly unknown[]>;
@@ -237,6 +244,63 @@ describe("createOneListStore", () => {
         expect(list.ids()).toEqual(["Design"]);
     });
 
+    it('finds every chat with a bot when "Bot" or "Brick" is searched, whatever the bot is named (#1995)', () => {
+        const list = setup();
+        const withBot = fakeRoom("Melody", 3, {
+            type: "direct",
+            members: writable([{ id: "@me:chat.test" }, { id: "@bot_0b7c1d2e-1111-4222-8333-944455556666:chat.test" }]),
+        } as unknown as Partial<ChatRoom>);
+        const withSara = fakeRoom("Sara", 2, {
+            type: "direct",
+            members: writable([{ id: "@me:chat.test" }, { id: "@sara:chat.test" }]),
+        } as unknown as Partial<ChatRoom>);
+        const group = fakeRoom("Design", 1);
+        list.directRooms.set([withBot, withSara]);
+        list.rooms.set([group]);
+        for (const word of ["bot", "Bots", "brick", " Bricks "]) {
+            list.search.set(word);
+            expect(list.ids()).toEqual(["Melody"]);
+        }
+        // Part of the word is a name being typed: nobody extra is listed
+        list.search.set("bo");
+        expect(list.ids()).toEqual([]);
+        list.search.set("sar");
+        expect(list.ids()).toEqual(["Sara"]);
+        list.search.set("");
+        expect(list.ids()).toEqual(["Melody", "Sara", "Design"]);
+    });
+
+    it('finds a direct chat by "Bot" once its bot member arrives, and a folder that holds a chat with a bot', () => {
+        const list = setup();
+        const members = writable([{ id: "@me:chat.test" }]);
+        const late = fakeRoom("Melody", 3, { type: "direct", members } as unknown as Partial<ChatRoom>);
+        const inFolder = fakeRoom("Helper", 2, {
+            members: writable([{ id: "@me:chat.test" }, { id: "@bot_1c8d2e3f-2222-4333-8444-a55566667777:chat.test" }]),
+        } as unknown as Partial<ChatRoom>);
+        list.directRooms.set([late]);
+        list.folders.set([fakeFolder("Team", [inFolder])]);
+        list.search.set("bot");
+        expect(list.ids()).toEqual(["Team"]);
+        members.set([{ id: "@me:chat.test" }, { id: "@bot_0b7c1d2e-1111-4222-8333-944455556666:chat.test" }]);
+        expect(list.ids()).toEqual(["Melody", "Team"]);
+    });
+
+    it('lists a folder by "Bot" once a bot joins one of its chats, after the search started', () => {
+        const list = setup();
+        const members = writable([{ id: "@me:chat.test" }, { id: "@sara:chat.test" }]);
+        const inFolder = fakeRoom("Helper", 2, { members } as unknown as Partial<ChatRoom>);
+        list.folders.set([fakeFolder("Team", [inFolder])]);
+        list.search.set("bot");
+        expect(list.ids()).toEqual([]);
+        // Nothing else of the chat changes: only who is in it
+        members.set([
+            { id: "@me:chat.test" },
+            { id: "@sara:chat.test" },
+            { id: "@bot_1c8d2e3f-2222-4333-8444-a55566667777:chat.test" },
+        ]);
+        expect(list.ids()).toEqual(["Team"]);
+    });
+
     it("drops every room subscription when unsubscribed", () => {
         const list = setup();
         const room = fakeRoom("a", 1);
@@ -377,5 +441,113 @@ describe("freezeWhileHeld", () => {
         freeze.release(menu);
         expect(get(freeze.held)).toBe(false);
         unsubscribe();
+    });
+});
+
+describe("the row of a person's own Brick before its chat exists (#1995)", () => {
+    const brick = {
+        id: "0b7c1d2e-1111-4222-8333-944455556666",
+        name: "Recipe Brick",
+        description: null,
+        characterTextureId: "brick-orange",
+        enabled: true,
+        isDefault: false,
+        createdAt: "2026-11-11T10:00:00.000Z",
+        hello: null,
+    };
+
+    it("is sorted in by when the Brick was made, and is never unread", () => {
+        expect(brickEntry(brick, "")).toEqual({
+            id: "brick:0b7c1d2e-1111-4222-8333-944455556666",
+            kind: "brick",
+            name: "Recipe Brick",
+            timestamp: Date.parse("2026-11-11T10:00:00.000Z"),
+            unreadCount: 0,
+            hasUnread: false,
+            item: brick,
+        });
+    });
+
+    it('is listed with the chats, and found by its name, by "Brick" and by "Bot"', () => {
+        const extraEntries = writable<OneListEntry[]>([]);
+        const search = writable("");
+        const store = createOneListStore(
+            {
+                directRooms: writable<ChatRoom[]>([
+                    fakeRoom("Sara", Date.parse("2026-11-11T11:00:00.000Z"), { type: "direct" }),
+                ]),
+                rooms: writable<ChatRoom[]>([]),
+                invitations: writable<ChatRoom[]>([]),
+                folders: writable<RoomFolder[]>([]),
+                hiddenRoomIds: writable<ReadonlySet<string>>(new Set()),
+                search,
+                extraEntries,
+            },
+            new InvitationClock(() => 50),
+            (callback) => callback()
+        );
+        let current: OneListEntry[] = [];
+        const stop = store.subscribe((value) => (current = value));
+        const show = (text: string) => {
+            search.set(text);
+            extraEntries.set([brickEntry({ ...brick, name: "Melody" }, text)]);
+            return current.map((entry) => entry.id);
+        };
+        expect(show("")).toEqual(["Sara", "brick:0b7c1d2e-1111-4222-8333-944455556666"]);
+        expect(show("mel")).toEqual(["brick:0b7c1d2e-1111-4222-8333-944455556666"]);
+        expect(show("Brick")).toEqual(["brick:0b7c1d2e-1111-4222-8333-944455556666"]);
+        expect(show("bot")).toEqual(["brick:0b7c1d2e-1111-4222-8333-944455556666"]);
+        expect(show("bri")).toEqual([]);
+        expect(show("sara")).toEqual(["Sara"]);
+        stop();
+    });
+});
+
+describe("the chat of a Brick its owner deleted (#1996)", () => {
+    const withMembers = (id: string, ...members: string[]) =>
+        ({ id, members: writable(members.map((member) => ({ id: member }))) } as unknown as ChatRoom);
+    const studio = "@bot_2d9e3f40-3333-4444-8555-b66677778888:chat.test";
+    const rooms = [
+        withMembers("!studio", "@me:chat.test", studio),
+        withMembers("!sara", "@me:chat.test", "@sara:chat.test"),
+        { id: "!bare" } as unknown as ChatRoom,
+    ];
+
+    it("is out of Chats while the Brick waits under Deleted, and nobody else's chat is", () => {
+        expect(directRoomsWith(rooms, new Set([studio]))).toEqual(["!studio"]);
+    });
+
+    it("is back as soon as nothing is deleted", () => {
+        expect(directRoomsWith(rooms, new Set())).toEqual([]);
+    });
+
+    it("is out of Chats when someone put it in a folder, also in a folder inside one, and back with Undo", () => {
+        const inner = fakeFolder("inner", [withMembers("!nested", "@me:chat.test", studio)]);
+        const outer = fakeFolder("outer", [], []);
+        const folders = writable<RoomFolder[]>([outer]);
+        const deleted = writable<ReadonlySet<string>>(new Set([studio]));
+        let hidden: string[] = [];
+        const stop = directRoomsWithStore(writable([]), deleted, folders).subscribe((ids) => (hidden = ids));
+        expect(hidden).toEqual([]);
+        // The folder gets a folder with the Brick's chat in it after the list was read
+        outer.foldersStore.set([inner]);
+        expect(hidden).toEqual(["!nested"]);
+        deleted.set(new Set());
+        expect(hidden).toEqual([]);
+        stop();
+    });
+
+    it("is out of Chats as soon as its members arrive, after the chat itself", () => {
+        const members = writable([{ id: "@me:chat.test" }]);
+        const late = { id: "!late", members } as unknown as ChatRoom;
+        const deleted = writable<ReadonlySet<string>>(new Set([studio]));
+        let hidden: string[] = [];
+        const stop = directRoomsWithStore(writable([late]), deleted).subscribe((ids) => (hidden = ids));
+        expect(hidden).toEqual([]);
+        members.set([{ id: "@me:chat.test" }, { id: studio }]);
+        expect(hidden).toEqual(["!late"]);
+        deleted.set(new Set());
+        expect(hidden).toEqual([]);
+        stop();
     });
 });

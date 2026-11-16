@@ -842,6 +842,7 @@ const mapEditor: BaseTranslation = {
                     spot: "Its spot",
                     spotHint: "Drag the bot on the map to move it",
                     spotNote: "After a chat, it walks back to its spot.",
+                    brickNote: "These settings apply when you bring {name:string} along.",
                     facing: "Default facing direction",
                     facingHint: "Where it looks when nobody's around",
                     facingDown: "Down",
@@ -892,6 +893,11 @@ const mapEditor: BaseTranslation = {
                     keyHosted: "Your key, lent to {universe:string}. You pay.",
                     keyComputer: "Your computer, lent to {universe:string}.",
                     keyUnlent: "Your key, no longer lent here.",
+                    // A Brick's page: its keys are its owner's own, lent to no universe
+                    keyHostedBrick: "Your key. You pay.",
+                    keyComputerBrick: "Your computer.",
+                    makerHintBrick: "Your own AI keys show here.",
+                    noKeysHintBrick: "Add an AI key in AI keys to run {bot:string} on it.",
                     downNow: "Down now",
                     downUseUniverseAi: ", so Universe AI answers until it’s back.",
                     downStops: ", so this bot rests until it’s back.",
@@ -1000,7 +1006,7 @@ const mapEditor: BaseTranslation = {
                         "Free for you. Each person gets up to {replies:number} voice replies every {hours:number} hours.",
                     notAllowedTitle: "Voice bots are off in this universe",
                     notAllowedLine:
-                        "An Admin can turn on Allow voice bots in Universe settings. {bot:string} keeps chatting in text.",
+                        "An Admin can turn on Allow voice bots in Universe settings. {bot:string} keeps chatting in text. Bots still hear voice notes.",
                     universeSettings: "Universe settings",
                     noServiceTitle: "No voice is set up here yet",
                     noServiceLine:
@@ -1085,6 +1091,18 @@ const mapEditor: BaseTranslation = {
                     universeAiPeople: "People use their own voice replies",
                     universeAiListens: "Free for people talking with it",
                     keyYouPay: "You pay · lent to this universe",
+                    // A Brick's page: its keys are its owner's own, lent to no universe
+                    brick: {
+                        keyYouPay: "You pay",
+                        pausedGone: "Paused · {key:string} is not available",
+                        keyGoneTitle: "{key:string} isn’t there any more",
+                        keyGoneLine:
+                            "{bot:string} answers in text. Add the key again in AI keys, or pick a Universe AI voice.",
+                        noServiceLine:
+                            "Universe AI has no voice here yet. Add a voice key in AI keys: one key from a company that listens and speaks is enough, or use two companies. {bot:string} keeps chatting in text until then.",
+                        moreVoicesLine:
+                            "Add a voice key from any company this server offers in AI keys. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
+                    },
                     keyOwnerPays: "{owner:string} pays · lent to this universe",
                     language: "Language",
                     languageFollow: "Each person’s language",
@@ -1167,27 +1185,30 @@ const mapEditor: BaseTranslation = {
                     speechServerSilent: "{server:string} didn’t answer. Is it running and the tunnel up?",
                 },
                 tools: {
-                    title: "Tools",
+                    title: "Apps",
                     none: "None yet",
+                    // How many tools sit under a heading on an app's screens, as before
                     count: "{count:number} tool{{s}}",
+                    // How many apps a bot has, on its page
+                    apps: "{count:number} app{{s}}",
                     waits: "waits {patience:string}",
                     patience: "Patience",
-                    patienceHint: "How long it waits for a tool to answer",
+                    patienceHint: "How long it waits for an app to answer",
                     longestReply: "Longest reply",
                     longestReplyHint: "In tokens. 32k fits a full app. Lower keeps this bot short.",
                     steps: "Steps in one reply",
-                    stepsHint: "Tools it may use before it answers.",
+                    stepsHint: "How many times it may use an app before it answers.",
                     keysLimit: "Key's limit",
                     keysLimitIs: "Key's limit · {limit:string}",
                     modelsLimitIs: "Model's limit · {limit:string}",
                     modelStops: "{model:string} writes up to {limit:string} tokens, so this bot stops there.",
                     modelStopsKey:
                         "{model:string} writes up to {limit:string} tokens, so this bot stops there. The key allows {key:string}.",
-                    showToolCalls: "Show tool calls",
-                    showToolCallsOff: "Tool calls stay hidden",
-                    showToolCallsOn: "Shows tool names in chat",
+                    showToolCalls: "Show app use",
+                    showToolCallsOff: "App use stays hidden",
+                    showToolCallsOn: "Shows which app it used in chat",
                     // The Tools screens: a server, a heading, Asking for approvals (game #1655)
-                    servers: "{count:number} MCP server{{s}}",
+                    servers: "{count:number} app{{s}}",
                     notChecked: "Not checked yet",
                     toCheck: "{count:number} to check",
                     sorted: "{server:string}'s {tools:string} are sorted by what they do. For each heading, pick whether {bot:string} uses those tools right away, asks first, or never.",
@@ -1360,6 +1381,11 @@ const mapEditor: BaseTranslation = {
                     briefOpenRules: "Public · own rules for {names:string}",
                     briefPrivateRules: "Private · own rules for {names:string}",
                     briefOpen: "Public",
+                    // A Brick not on a map: nobody but its owner can reach it (a visiting Brick has no rules of its own, Orbit #927)
+                    brickBrief: "Only you",
+                    brickTitle: "Only you for now",
+                    brickLine:
+                        "{name:string} talks with you and nobody else. When you bring {name:string} along, the place’s rules decide who can talk with {name:string}.",
                     briefPrivate: "Private",
                     briefMore: "{first:string}, {second:string} and {count:number} more",
                     briefLoading: "…",
@@ -1426,10 +1452,10 @@ const mapEditor: BaseTranslation = {
                         summonHint: "Bring this bot to you, anywhere in this bot's room",
                         change: "Have this bot change things",
                         changeHint:
-                            "With this bot's tools under Makes new things and Changes things, like adding a Linear issue",
+                            "With this bot's apps under Makes new things and Changes things, like adding a Linear issue",
                         deleteOrSend: "Have this bot delete or send",
                         deleteOrSendHint:
-                            "With this bot's tools under Deletes or sends out, like sending an email or deleting a page",
+                            "With this bot's apps under Deletes or sends out, like sending an email or deleting a page",
                         manage: "Manage this bot",
                         manageHint: "Change what this bot says and where this bot stands",
                         /** The short names a row's line on the bot page uses */

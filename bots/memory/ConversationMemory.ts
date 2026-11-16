@@ -71,6 +71,11 @@ export interface PersonalInfo {
      * entry is from before this was kept, or its place is not known: private.
      */
     heard?: Record<string, Heard>;
+    /**
+     * When the person's line a thing above was drawn from was said (#2003), by the same keys as `heard`. This is what
+     * tells a thing said again after it was forgotten from the one that was forgotten. None: from before this was kept.
+     */
+    drawnFrom?: Record<string, number>;
 }
 
 export interface RelationshipContext {
@@ -147,12 +152,20 @@ export interface BotPlayerMemory {
     // turn is in. Runtime only: nothing here is saved.
     pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
     dmRoomId?: string;
+    /** What a direct-message turn did about Bricks (game #1996): one it made, a suggestion to show. Goes out with the reply. Runtime only. */
+    pendingBricks?: import('../ai/BrickTools').BrickNote[];
     /** The artifacts the person pointed at by replying to their card in the turn being answered (game #1781), from the
      * chat app. Their pasted links come from the history. Started fresh with each turn. Runtime only. */
     pointedArtifacts?: string[];
     /** What make and change did in the turn being answered, by their arguments, so asking the model again for the same
      * turn (a repeated reply is regenerated) does not make a second copy. Cleared when the next turn starts. Runtime only. */
     artifactCalls?: Map<string, Record<string, unknown>>;
+    /** The Instant App runs of the turn being answered, by tool and arguments, so asking the model again for the same turn (a repeated
+     * reply is regenerated) never runs or pays a second time. Cleared when the next turn starts. Runtime only. */
+    instantCalls?: Map<string, Promise<Record<string, unknown>>>;
+    /** The Instant tasks of the turn being answered (the key their runs carry, their receipt, whether a rule ended them). Started fresh with each
+     * turn, kept for a repeat of the same one. The turn that started it holds it too, so a newer turn never ends an older one's tasks. Runtime only. */
+    instantTurn?: import('../ai/InstantTools').InstantTurn;
     /** The songs, images and videos of the turn being answered, by their short names ("m1"), that an artifact may carry
      * (#1510). Started fresh with each turn from its message, added to by its tools. Runtime only: nothing here is saved. */
     turnMedia?: Array<{ ref: string; url: string; kind: 'audio' | 'image' | 'video' | 'file'; by: 'person' | 'tool' }>;
@@ -218,7 +231,8 @@ export class ConversationMemory {
      * Stamps one thing known about a person with where it was said. A new value takes the new place (or none). The same
      * value said again adds whoever heard it this time: they have all heard it now.
      */
-    private stampInfo(info: PersonalInfo, key: string, heard: Heard | undefined, changed: boolean): void {
+    private stampInfo(info: PersonalInfo, key: string, heard: Heard | undefined, changed: boolean, at: number): void {
+        (info.drawnFrom ??= {})[key] = at;
         const stamps = (info.heard ??= {});
         const next = changed ? copyHeard(heard) : heardAlso(stamps[key], heard);
         if (next) stamps[key] = next;
@@ -327,9 +341,18 @@ export class ConversationMemory {
         
         // Extract personal information (birthday, name, preferences, facts)
         if (sender === 'person' && learn) {
-            this.extractPersonalInfo(botId, playerId, withoutFileNotes(message), heard);
+            this.extractPersonalInfo(botId, playerId, withoutFileNotes(message), heard, now);
         }
     }
+
+    /**
+     * Drops things a person asked this bot to forget in the chat (#2003), by key, with what was built from them, and tells
+     * Orbit. Only a memory that is kept with Orbit has it (PersistentMemory); a memory held in this process alone does not,
+     * and the bot then has no tool for it. Returns how many things went.
+     */
+    forgetThings?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<number>;
+    /** As forgetThings, and how many of them Orbit has not taken yet: those are tried again, but not if this process restarts. */
+    forgetThingsReported?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number }>;
 
     /**
      * A reply only this person read, in a space where other people were (#1993): kept as said with nobody else there,
@@ -453,7 +476,7 @@ export class ConversationMemory {
      * `where` is the space the message was said in (or where it was heard, when the caller already knows): each thing
      * learned is stamped with it (#1993). Without it, what is learned counts as private.
      */
-    extractPersonalInfo(botId: string, playerId: number, message: string, where?: string | Heard): void {
+    extractPersonalInfo(botId: string, playerId: number, message: string, where?: string | Heard, at: number = Date.now()): void {
         const memory = this.getOrCreateMemory(botId, playerId);
         const lowerMessage = message.toLowerCase();
         const heard = typeof where === 'string' ? this.heardIn(botId, playerId, where) : copyHeard(where);
@@ -468,7 +491,7 @@ export class ConversationMemory {
             /(?:my )?birthday (?:is )?today/i.test(lowerMessage))) {
             // Today is their birthday!
             const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
-            this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== today);
+            this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== today, at);
             memory.personalInfo.birthday = today;
             memory.personalInfo.lastInfoUpdate = Date.now();
             memory.personalInfo.facts.set('birthday_today', 'true');
@@ -484,7 +507,7 @@ export class ConversationMemory {
             for (const pattern of birthdayPatterns) {
                 const match = message.match(pattern);
                 if (match && match[1]) {
-                    this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== match[1]);
+                    this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== match[1], at);
                     memory.personalInfo.birthday = match[1];
                     memory.personalInfo.lastInfoUpdate = Date.now();
                     this.addImportantEvent(memory, 'birthday_mentioned', `Player mentioned birthday: ${match[1]}`, heard);
@@ -502,7 +525,7 @@ export class ConversationMemory {
         for (const pattern of namePatterns) {
             const match = message.match(pattern);
             if (match && match[1] && match[1].length > 1 && match[1].length < 20) {
-                this.stampInfo(info, 'name', heard, memory.personalInfo.name !== match[1]);
+                this.stampInfo(info, 'name', heard, memory.personalInfo.name !== match[1], at);
                 memory.personalInfo.name = match[1];
                 memory.personalInfo.lastInfoUpdate = Date.now();
                 break;
@@ -519,7 +542,7 @@ export class ConversationMemory {
                 }
                 const preference = likeMatch[1].trim();
                 const known = memory.personalInfo.preferences.includes(preference);
-                this.stampInfo(info, `pref:${preference}`, heard, !known);
+                this.stampInfo(info, `pref:${preference}`, heard, !known, at);
                 if (!known) {
                     memory.personalInfo.preferences.push(preference);
                     memory.personalInfo.lastInfoUpdate = Date.now();
@@ -538,7 +561,7 @@ export class ConversationMemory {
             const match = message.match(pattern);
             if (match && match[1]) {
                 const state = match[1].toLowerCase();
-                this.stampInfo(info, 'fact:current_state', heard, memory.personalInfo.facts.get('current_state') !== state);
+                this.stampInfo(info, 'fact:current_state', heard, memory.personalInfo.facts.get('current_state') !== state, at);
                 memory.personalInfo.facts.set('current_state', state);
                 memory.personalInfo.facts.set(`${state}_mentioned_at`, Date.now().toString());
                 memory.personalInfo.lastInfoUpdate = Date.now();

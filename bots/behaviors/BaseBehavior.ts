@@ -1944,7 +1944,7 @@ export abstract class BaseBehavior {
                     `Say one short, natural line that genuinely moves the conversation forward — ` +
                     `a new thought, a question, or a fresh angle. Do NOT repeat anything you already said. ` +
                     `No emojis, no apologies for repeating.`;
-                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt, botId);
+                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt, botId, undefined, this.userIdToUuid.get(playerId) ?? 'unknown');
                 if (fallbackMessage.trim()) {
                     processedMessage = fallbackMessage.trim();
                 }
@@ -2178,7 +2178,7 @@ export abstract class BaseBehavior {
 
         let result: { action: InterruptionAction; message: string };
         try {
-            result = await this.classifyInterruption(currentTask, originalMessage);
+            result = await this.classifyInterruption(currentTask, originalMessage, senderId);
         } catch {
             await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt, heard);
             return 'queued';
@@ -2256,12 +2256,12 @@ export abstract class BaseBehavior {
      * Uses the bot's own configured provider so classification works for
      * bots on any provider (not just DeepSeek).
      */
-    private async classifyInterruption(currentTask: string, newMessage: string): Promise<{ action: InterruptionAction; message: string }> {
+    private async classifyInterruption(currentTask: string, newMessage: string, senderId?: number): Promise<{ action: InterruptionAction; message: string }> {
         if (!this.aiService) return { action: 'queue', message: '' };
         const botConfig = this.bot?.getFullConfig();
         const providerId = botConfig?.aiProviderRef;
         if (!providerId) return { action: 'queue', message: '' };
-        return this.aiService.quickClassify(providerId, currentTask, newMessage, botConfig?.botId);
+        return this.aiService.quickClassify(providerId, currentTask, newMessage, botConfig?.botId, senderId !== undefined ? (this.userIdToUuid.get(senderId) ?? 'unknown') : undefined);
     }
 
     private async enqueueMessage(
@@ -2552,10 +2552,12 @@ export abstract class BaseBehavior {
         /** The bot reading it, for a caller with no bot client (a direct message). */
         botId?: string,
         /** Filled with what was read from each link (null when reading it failed), for keeping the files (#1508). */
-        found?: Map<string, ParsedFile | null>
+        found?: Map<string, ParsedFile | null>,
+        /** How much of each file is read, for a caller with no bot (the Brick for guests). */
+        readCharsOverride?: number
     ): Promise<string> {
         const allUrls = [...new Set([url, ...(galleryUrls || [])])];
-        const readChars = this.aiService?.readCharsFor(botId ?? this.bot?.getBotId());
+        const readChars = readCharsOverride ?? this.aiService?.readCharsFor(botId ?? this.bot?.getBotId());
         let augmentedMessage = message;
 
         // Hoist dynamic import and load all files in parallel

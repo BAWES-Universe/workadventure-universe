@@ -10,8 +10,8 @@
 
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer } from '../server/AdminApiService';
-import { reachFor } from '../server/AdminApiService';
+import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer, InstantListing } from '../server/AdminApiService';
+import { KEY_NOT_LENT_LINE, reachFor } from '../server/AdminApiService';
 import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
@@ -22,11 +22,13 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
-import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { sanitizedError } from '../utils/sanitizedError';
+import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
+import { appNotUsedLine, type AppUseAnswer, type AppUseCheck, type AppUseRequest } from '../mcp/AppUse';
 import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
@@ -35,7 +37,7 @@ import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
 import { mayUse, SOMEONE_UNKNOWN, viewFor } from '../memory/Heard';
 import { MarkerWatch, PrivateAnswers, answeredPrivatelyLine, continuedIn, emotionBlockOf, onlyForThemRule, othersHereRule, privateAnswerRule, privateBodyOf, type PrivateAnswerCopies } from './PrivateAnswers';
-import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
+import { describeStep, resultOf, showsAsStep, stepDetails, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
 import { normalizeWebUrl } from '../utils/chatLinks';
@@ -102,7 +104,7 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
-import { buildRecentFilesLine, buildSystemPromptWithEnds } from './systemPrompt';
+import { buildRecentFilesLine, buildSystemPromptWithEnds, visitingRule } from './systemPrompt';
 import type { FileStore, MadeWith } from '../services/ChatFiles';
 import { replyProblem } from './replyProblem';
 import { providerErrorText } from './providers/ownKeyHttp';
@@ -125,9 +127,36 @@ import {
 } from './ArtifactTools';
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
+import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
+import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
+import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
+import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
+import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
+import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
+import {
+    InstantOffers,
+    endInstantTask,
+    formatInstantResult,
+    instantReceiptTitle,
+    instantToolDefinitions,
+    instantToolsNote,
+    isInstantTool,
+    newInstantTask,
+    instantTaskPending,
+    openInstantReceipt,
+    type InstantTask,
+    type InstantTurn,
+    runInstantTool,
+    stableJson,
+} from './InstantTools';
+import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
+import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
+
+/** The case an Instant App's run is sent to in the tool switch: its tool names are made from Orbit's list, so none is known ahead. */
+const INSTANT_RUN_CASE = '\u0000instant-run';
 
 /** How long after someone joins a space the game has said who they are (the cards wait as long, see NearbyAsks). */
 const PERSON_BACK_WAIT_MS = 1500;
@@ -179,10 +208,10 @@ function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefin
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 /** Where a reply was given and who it was for, sent with its usage (Orbit #491). */
-type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean; greeting?: boolean };
+type UsageTalker = { channel: 'dm' | 'nearby' | 'task'; userId?: string; isGuest?: boolean; greeting?: boolean; runId?: string; eventId?: string };
 
 type ResolvedProvider =
-    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
+    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key'; forOthers?: boolean }
     | { resting: true; line: string };
 
 /** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
@@ -230,6 +259,8 @@ interface CachedCredentials {
 const WORLD_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location
 - For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location`;
 const DM_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: You can't walk anywhere from a direct message. Invite them to come find you in your room by name instead`;
+/** The same for a bot with no room, a Brick (game #1995): there is nowhere to invite anyone. */
+const DM_NO_ROOM_FOLLOW_UP = `- For "take me to X" questions: You can't walk anywhere, and you have no room: you live in this person's chats. Say so in one plain sentence`;
 
 export class AIService {
     private adminApiService: AdminApiService;
@@ -242,7 +273,11 @@ export class AIService {
      * key can go down or be pulled, and each of those must reach the bot's next reply, not the next hour.
      */
     private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number; staleUntil: number }> = new Map();
+    /** Counts each time a Brick's credential answers were thrown away (it moved rooms), so a lookup that began before cannot be kept. */
+    private botCredentialVersion: Map<string, number> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
+    /** How each Brick's computer reaches its AI, kept for the same short time (relayRoute). */
+    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null; expiresAt: number }>();
     /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
     private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
     private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
@@ -264,6 +299,8 @@ export class AIService {
     /** The card a tool that asks first shows in a direct message (#1657). Without it such a call is not run. */
     private approvals?: ToolApprovals;
     private nearbyAsks?: BotAsksPort;
+    /** Asks Orbit before every use of an App on a connection (#2001). Without it such an App is not used. */
+    private appUse?: AppUseCheck;
     /** The replies only one person saw, where other people were (#1993). */
     private readonly privateAnswers = new PrivateAnswers();
 
@@ -320,6 +357,11 @@ export class AIService {
         this.approvals = approvals;
     }
 
+    /** Where the check before every use of an App on a connection is asked (#2001). */
+    useAppUse(check: AppUseCheck): void {
+        this.appUse = check;
+    }
+
     /** Where an answer only one person saw in nearby chat is found again: their direct messages with the bot (#1993). */
     keepPrivateAnswersIn(copies: PrivateAnswerCopies | undefined): void {
         this.privateAnswers.keepCopiesIn(copies);
@@ -333,9 +375,26 @@ export class AIService {
         return found.toolServerMap.get(toolName) ?? null;
     }
 
+    /** The tools a bot's Apps give, as the model is offered them, and where each lives. Read from the cached list: no model is asked. Throws when they cannot be listed. */
+    async appToolsOf(botId: string): Promise<{ tools: any[]; servers: Map<string, ToolServerEntry> }> {
+        const adminApiToken = this.adminApiService?.['adminApiToken'];
+        if (!adminApiToken) return { tools: [], servers: new Map() };
+        const found = await MCPConnector.discoverToolsWithMapping(botId, this.adminApiUrl, adminApiToken, process.env.BOT_SERVICE_TOKEN || '');
+        return { tools: sortToolsByName(found.tools), servers: found.toolServerMap };
+    }
+
     /** Runs a tool call a person approved on a card (#1657), the way a reply would, with the bot's own Patience. */
-    async runApprovedTool(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, toolTimeoutSeconds?: number | null): Promise<unknown> {
-        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds);
+    async runApprovedTool(
+        botId: string,
+        entry: ToolServerEntry,
+        toolName: string,
+        args: Record<string, unknown>,
+        playerUuid: string,
+        toolTimeoutSeconds?: number | null,
+        /** The saved action's heading and this attempt's id, for the check on an App on a connection (#2001). */
+        use?: Pick<AppUseRequest, 'heading' | 'callId'>
+    ): Promise<unknown> {
+        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
     }
 
     /** One call to a tool server's tool, and what comes back made ready for the bot: blobs uploaded, errors as results. */
@@ -345,9 +404,30 @@ export class AIService {
         args: Record<string, unknown>,
         playerUuid: string | undefined,
         abortSignal?: AbortSignal,
-        toolTimeoutSeconds?: number | null
+        toolTimeoutSeconds?: number | null,
+        /** Who is asking, which call this is and what heading the tool is under: needed when the App sits on a connection (#2001). */
+        use?: AppUseRequest & { botId: string }
     ): Promise<any> {
         try {
+            // An App with a key (#2044) is used only through Orbit, which holds the key, checks the use again and answers with the fields
+            // the App lists: nothing here ever reaches the service
+            if (entry.keyApp) {
+                return await callKeyApp(
+                    { adminApiUrl: this.adminApiUrl, serviceToken: process.env.BOT_SERVICE_TOKEN || '' },
+                    entry,
+                    args,
+                    { botId: use?.botId ?? '', callId: use?.callId ?? '', ...(use?.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use?.forOwner ? { forOwner: true } : {}) },
+                    abortSignal,
+                    // The bot's Patience, with the default every other tool has
+                    toolTimeoutMs(toolTimeoutSeconds) ?? REQUEST_TIMEOUT
+                );
+            }
+            // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
+            // spent or a switch turned off stops it at once. No answer is a no.
+            if (entry.connectionId) {
+                const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, use) : { allowed: false, reason: 'unavailable' };
+                if (!answer.allowed) return { error: appNotUsedLine(answer.reason ?? 'gone'), outcome: 'not_sent' };
+            }
             const rawResult = await MCPConnector.executeToolCall(
                 entry.serverId,
                 entry.serverUrl,
@@ -358,7 +438,11 @@ export class AIService {
                 entry.headers,
                 playerUuid,
                 abortSignal,
-                toolTimeoutMs(toolTimeoutSeconds)
+                toolTimeoutMs(toolTimeoutSeconds),
+                // A ready-made App is reached only through Orbit, which holds the key its link needs
+                entry.readyMade && entry.orbitUrl && use
+                    ? { orbitUrl: entry.orbitUrl, botId: use.botId, serverId: entry.serverId, callId: use.callId, ...(use.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use.forOwner ? { forOwner: true } : {}) }
+                    : undefined
             );
             // Process MCP resource blobs (base64 binary data) by uploading to CDN
             // and returning CDN URLs so the AI can use send_image/send_audio/etc.
@@ -368,8 +452,11 @@ export class AIService {
             }
             return rawResult;
         } catch (mcpError: any) {
-            console.error(`[AIService] Error executing MCP tool ${toolName}:`, mcpError);
-            Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+            // The error's words can quote what was passed to the tool or what came back (an email, a file), and logs and
+            // Sentry keep what they are given: only the tool's name and the kind of error leave this function
+            const kind = mcpError instanceof Error ? mcpError.name : 'Error';
+            console.error(`[AIService] Error executing MCP tool ${toolName}: ${kind}`);
+            Sentry.captureException(sanitizedError(mcpError, `MCP tool ${toolName} failed (${kind})`), { tags: { area: 'bot-tools' } });
             return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
         }
     }
@@ -466,8 +553,12 @@ export class AIService {
      * provider, and every call without a bot id, is fetched by provider id exactly as before. A bot that is resting
      * has no provider to give, so this throws for it: the quick helper paths treat that as "unavailable".
      */
-    private async getProviderCredentials(providerId: string, botId?: string): Promise<AIProviderConfig> {
-        const resolved = await this.resolveProvider(providerId, botId);
+    private async getProviderCredentials(providerId: string, botId?: string, asker?: string): Promise<AIProviderConfig> {
+        // A small call for a named person on a Brick is answered for them, as a reply is (#2005): never on its owner's key for someone else
+        // Everything that is for a person names them, and a person present but not named is asked about as 'unknown'. With nobody
+        // named it is the Brick's own business (its owner's tool headings): asked as its owner, so Orbit never has to guess.
+        const who = asker ?? this.ownerRefOf(botId);
+        const resolved = await this.resolveProvider(providerId, botId, who ? this.brickAsk(botId, who) : undefined);
         if (resolved.resting) {
             throw new Error(`Bot ${botId} is resting: its AI key is down`);
         }
@@ -478,16 +569,19 @@ export class AIService {
      * Resolve a bot's provider. Orbit is asked by bot id only for Universe AI and a person's own key; if it does not
      * know the bot (or is an older Orbit without the route) the provider is fetched by id as before.
      */
-    private async resolveProvider(providerId: string, botId?: string): Promise<ResolvedProvider> {
+    private async resolveProvider(providerId: string, botId?: string, forOthers?: { asker: string; roomUrl?: string }): Promise<ResolvedProvider> {
         if (botId && needsBotRoute(providerId)) {
-            const cacheKey = `${botId}:${providerId}`;
+            // A Brick that stands in a room (#2005) is answered by who is asking, so each asker has their own answer
+            // and in which room: a Brick that moved on is asked about again, never answered from the room it left
+            const cacheKey = `${botId}:${providerId}${forOthers ? `:${forOthers.asker}:${forOthers.roomUrl ?? ''}` : ''}`;
             const cached = this.botCredentialCache.get(cacheKey);
+            const versionAtAsk = this.botCredentialVersion.get(botId) ?? 0;
             if (cached && Date.now() < cached.expiresAt) {
                 return cached.resolved;
             }
             let answer: BotAiCredentialsAnswer | null;
             try {
-                answer = await this.adminApiService.getBotAiCredentials(botId);
+                answer = forOthers ? await this.adminApiService.getBotAiCredentials(botId, forOthers) : await this.adminApiService.getBotAiCredentials(botId);
             } catch (error) {
                 // Orbit could not be reached: carry on with its last answer for a while, trying again soon, rather than
                 // failing every reply (and waiting out its timeout each time) for as long as the outage lasts
@@ -497,13 +591,23 @@ export class AIService {
                 }
                 throw error;
             }
+            // A Brick asked about for someone, and Orbit has nobody to serve (it is not visiting, or not anywhere that takes visits):
+            // it never falls back to a provider found by id, which could be its owner's. It cannot answer them, and says so.
+            // Its owner is not "someone": Orbit not knowing the Brick (an older Orbit without the route) is then what it always was,
+            // and the provider is found by id as before. The owner is told by the id this server knows them by (a map's) or, off a
+            // map, by Orbit's own last answer for this person, which did not say "for others" (the ids differ off a map).
+            const orbitServedThemAsOwner = !!cached && Date.now() < cached.staleUntil && !cached.resolved.resting && cached.resolved.forOthers !== true;
+            if (!answer && forOthers && forOthers.asker !== this.ownerRefOf(botId) && !orbitServedThemAsOwner) return { resting: true, line: KEY_NOT_LENT_LINE };
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
-                this.botCredentialCache.set(cacheKey, {
-                    resolved,
-                    expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
-                    staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
-                });
+                // The Brick moved rooms (or changed hands) while Orbit was answering: that answer serves this one reply only
+                if ((this.botCredentialVersion.get(botId) ?? 0) === versionAtAsk) {
+                    this.botCredentialCache.set(cacheKey, {
+                        resolved,
+                        expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
+                        staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
+                    });
+                }
                 if (!resolved.resting && resolved.config.limits) {
                     this.botLimits.set(botId, resolved.config.limits);
                     if (this.botLimits.get(botId)?.files === true) this.orbitKeepsFiles = true;
@@ -526,11 +630,33 @@ export class AIService {
      */
     async replySource(providerId: string, botId: string): Promise<'universe-ai' | 'provider' | 'own-key' | null> {
         try {
-            const resolved = await this.resolveProvider(providerId, botId);
+            // What a reply for its owner would run on (a Brick greets nobody else): asked as its owner
+            const owner = this.ownerRefOf(botId);
+            const resolved = await this.resolveProvider(providerId, botId, owner ? this.brickAsk(botId, owner) : undefined);
             return resolved.resting ? null : resolved.source;
         } catch {
             return null;
         }
+    }
+
+    /**
+     * How a Brick's computer reaches its AI (the model relay): the same answer a reply gets from Orbit, by Brick, with the key still
+     * encrypted. Null when Orbit does not know the Brick or its key is resting (nothing is called then). Kept for the same short
+     * time as a reply's, so a run of calls does not ask Orbit each time; a Brick moved to another AI is followed within seconds.
+     */
+    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null> {
+        const cacheKey = `relay:${botId}`;
+        const cached = this.relayRouteCache.get(cacheKey);
+        if (cached && Date.now() < cached.expiresAt) return cached.route;
+        const answer = await this.adminApiService.getBotAiCredentials(botId);
+        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null = null;
+        if (answer && answer.source !== 'resting') {
+            const resolved = this.resolvedFromAnswer(answer);
+            if ('config' in resolved) route = { config: resolved.config, source: resolved.source, keyOwnerId: answer.source === 'own-key' ? (answer.keyOwnerId ?? null) : null };
+        }
+        this.relayRouteCache.set(cacheKey, { route, expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL });
+        if (this.relayRouteCache.size > 500) this.relayRouteCache.delete(this.relayRouteCache.keys().next().value!);
+        return route;
     }
 
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
@@ -557,7 +683,7 @@ export class AIService {
             // Orbit always says; if it ever didn't, the safe reading is that the person typed the address
             config.ownKey = { addressTyped: answer.keyAddressTyped !== false };
         }
-        return { resting: false, config, source: answer.source };
+        return { resting: false, config, source: answer.source, ...(answer.forOthers ? { forOthers: true } : {}) };
     }
 
     private buildProviderConfig(credentialsData: AIProviderCredentials): AIProviderConfig {
@@ -731,7 +857,23 @@ export class AIService {
      * retry starts, and that the reply is checked (`releaseSpeech`) just before the held done, so a draft that is later
      * corrected, or an acknowledgement ahead of the work, is never said.
      */
-    async *generateBotResponseStream(
+    async *generateBotResponseStream(...args: Parameters<AIService['streamBotResponse']>): AsyncGenerator<AIStreamChunk> {
+        const [botId, playerId, , , , , , , adminApiService, , , , , , , isRetry] = args;
+        // The turn's Instant tasks are its own: a newer turn starting meanwhile never ends them, and this one never ends the newer turn's
+        const memory = playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : undefined;
+        const instantTurn = isRetry ? (memory ? (memory.instantTurn ??= { tasks: [] }) : undefined) : this.startInstantTurn(botId, memory, adminApiService);
+        // A reply written again is the same turn, running again
+        if (instantTurn) instantTurn.over = false;
+        try {
+            yield* this.streamBotResponse(...args);
+        } finally {
+            // However the turn ends, the Instant tasks it ran get their receipts closed once (game #2053)
+            await this.endInstantTurn(botId, memory?.userUuid, instantTurn, adminApiService);
+        }
+    }
+
+    /** The answer itself: `generateBotResponseStream` is this, followed by the end of the turn's Instant task. */
+    async *streamBotResponse(
         botId: string,
         playerId: number,
         message: string,
@@ -754,7 +896,8 @@ export class AIService {
         greeting = false
     ): AsyncGenerator<AIStreamChunk> {
         const turn: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
-        const hearing = spaceName !== undefined && botClient !== undefined ? { spaceName, botClient } : undefined;
+        // Direct messages have no bot on the map: their first answer passes no client, and their second try (after a repeat) a null one
+        const hearing = spaceName !== undefined && botClient ? { spaceName, botClient } : undefined;
         // A new turn starts with nothing held, whatever an earlier one that was cut short left behind
         if (!isRetry) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
         // Who else reads this reply (#1993). With other people in the bubble or meeting room it is built again from only
@@ -1062,6 +1205,7 @@ export class AIService {
         if (!isRetry && playerId !== undefined) {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
+            memory?.instantCalls?.clear();
             memory?.sentAgain?.clear();
             memory?.cardsAgain?.clear();
         }
@@ -1077,13 +1221,15 @@ export class AIService {
         let usageProviderId = providerId;
         // A reply through a person's own key tells Orbit how it went, so a key that keeps failing is marked Down
         let reportHealth = false;
-        // A private bot's failure is logged without the error's words, which could quote what was said (#1166). Until the
-        // bot is known not to be private, a failure counts as private.
-        let privateTurn = true;
 
         try {
+            // Who is talking comes first: a Brick that stands in a room (#2005) is served by who is asking
+            const talker = this.whoTalked(botId, playerId, channel);
+            const visit = this.roomBrickFor(botId, talker.userId);
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
-            const resolved = await this.resolveProvider(providerId, botId);
+            // Every reply of a Brick asks Orbit who it is for, whether or not this server has it on a map (a direct message, a restart,
+            // a Brick that was moved): the owner's key and things never serve anyone else on what this server happens to remember
+            const resolved = await this.resolveProvider(providerId, botId, this.brickAsk(botId, talker.userId, visit?.roomUrl));
             if (resolved.resting) {
                 // The key is down and its owner chose Stop replying: say the one fixed line, call no AI, track nothing
                 this.restingLines.add(resolved.line.trim());
@@ -1094,7 +1240,6 @@ export class AIService {
             // Reply limits (#1159): asked before any AI call, once the bot knows who is talking and what the reply
             // would run on. At a limit nothing is called and nothing is tracked; the caller shows the fixed card. A retry
             // makes the same reply again, already allowed, so it is never asked twice.
-            const talker = this.whoTalked(botId, playerId, channel);
             if (talker.userId && !isRetry && !greeting) {
                 const allowance = await (adminApiService || this.adminApiService).checkReplyAllowance?.(botId, {
                     userId: talker.userId,
@@ -1288,6 +1433,16 @@ export class AIService {
                 }
             }
 
+            // A Brick's own computer, in its owner's direct messages and only while it is on for them (game #2000)
+            const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService) : false;
+            // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
+            const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
+
+            // Anyone but the owner, in a Brick standing in a room: nothing of the owner's Apps goes into what the model is told (#2005)
+            const forOthers = visit?.forOthers === true || (resolved as { forOthers?: boolean }).forOthers === true;
+            // Instant Apps, in the owner's own Brick's direct messages: only what Orbit offers this Brick now (Apps its owner switched on for it), never to a visitor
+            const instantListing = !forOthers && !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.instantFor(botId, playerId, botClient, adminApiService) : null;
+
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
             // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
@@ -1301,8 +1456,21 @@ export class AIService {
                     // What waits from an earlier visit stays waiting while other people are here (#1993)
                     options?.shared || options?.onlyForThem ? '' : this.conversationMemory.getPendingMediaNotice(botId, playerId),
                     artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
+                    // A person's own first Brick, in their direct messages: it can make Bricks, and what it already suggested (#1996)
+                    channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
+                    // A person's own Brick can lead them to connect an App (game #2001)
+                    channel === 'dm' && botId && playerId !== undefined ? await this.appsNoteFor(botId, playerId, botClient, adminApiService) : '',
+                    channel === 'dm' && botId && playerId !== undefined && !forOthers ? await this.keyAppsNoteFor(botId, botClient, adminApiService) : '',
+                    // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
+                    channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
+                    computerOn ? computerToolsNote() : '',
+                    instantListing ? instantToolsNote() : '',
+                    // The owner, in their own Brick's direct messages: it can set reminders when they ask (#2002)
+                    taskSettings ? taskToolsNote(taskSettings, Date.now()) : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
+                // A direct message with a bot that lives in no room, a Brick (#1995)
+                noRoom: channel === 'dm' && !roomUrl,
                 recentFiles: await recentFiles,
                 // A voice bot with others in the bubble tells, by its own judgement, when this person is done talking with it (#1670)
                 endFollowUp: channel === 'world' && !!spaceName && playerId !== undefined && !!botClient?.mayEndFollowUp?.(spaceName, playerId),
@@ -1321,14 +1489,25 @@ export class AIService {
                       adminApiService || this.adminApiService,
                       channel,
                       providerId,
-                      this.gatePerson(botId, playerId, botClient, spaceName)
+                      this.gatePerson(botId, playerId, botClient, spaceName),
+                      computerOn,
+                      instantListing
                   );
+            // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
+            if (forOthers) {
+                for (let at = tools.length - 1; at >= 0; at--) {
+                    const name: string = tools[at]?.function?.name ?? '';
+                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
+                }
+                toolServerMap.clear();
+            }
+            if (taskSettings && !forOthers) this.offerTaskTools(tools, toolServerMap);
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -1340,9 +1519,8 @@ export class AIService {
             let completionTokens = 0;
             let error = false;
             let errorStatus: number | undefined;
-            // What the provider said when a call failed, and why the reply's call ended, for the line logged when a
-            // reply comes back with nothing (#1498)
-            let errorText: string | undefined;
+            // Why the reply's call ended, for the line logged when a reply comes back with nothing (#1498). What the
+            // provider said when a call failed is not kept: it can quote the conversation.
             let finishReason: string | undefined;
             let streamCompleted = false;
             let accumulatedContent = '';
@@ -1355,6 +1533,8 @@ export class AIService {
             let followUpStartTime = 0;
             let firstCallStartTime = 0;
             let hadToolCalls = false;
+            // Names of the tools this turn used, for the PostHog trace: names only, never what was passed or came back
+            const turnToolNames: string[] = [];
             let pendingToolCalls: ToolCall[] = [];
             let initialGenCaptured = false;
             let followUpGenCaptured = false;
@@ -1367,7 +1547,7 @@ export class AIService {
             let askedAgainForLength = false;
             // The error a failed call's $ai_generation carries, like the turn's trace does (#1498)
             const failedCall = (failed: boolean, status?: number) =>
-                failed ? { error: replyProblem({ error: true, errorStatus: status, errorText, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
+                failed ? { error: replyProblem({ error: true, errorStatus: status, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -1408,7 +1588,6 @@ export class AIService {
             // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
             // An answer only its person reads is kept out of them the same way (#1993)
             const privateBot = options?.onlyForThem === true || (await this.isPrivateBot(botId));
-            privateTurn = privateBot;
             // Every PostHog capture of this turn goes through here, so a private bot cannot miss one
             const captureGeneration: typeof captureAiGeneration = (params) => {
                 if (!privateBot) captureAiGeneration(params);
@@ -1611,7 +1790,6 @@ export class AIService {
                         if (chunk.metadata?.error) {
                             followUpFailedForHealth = true;
                             if (chunk.metadata.errorStatus) followUpErrorStatus = chunk.metadata.errorStatus;
-                            errorText ??= chunk.metadata.errorText;
                         }
 
                         // Capture $ai_generation for the initial LLM call NOW —
@@ -1629,8 +1807,7 @@ export class AIService {
                                 sessionId: `conversation-${botId}-player-${playerId}`,
                                 model: config.model,
                                 provider: config.type,
-                                input: userMessageForQwen,
-                                output: firstCallContent,
+                                toolNames: Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean),
                                 inputTokens: promptTokens,
                                 cachedInputTokens: cachedPromptTokens,
                                 outputTokens: completionTokens,
@@ -1723,7 +1900,6 @@ export class AIService {
                                     if (retryChunk.done && retryChunk.metadata?.error) {
                                         followUpFailedForHealth = true;
                                         if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
-                                        errorText ??= retryChunk.metadata.errorText;
                                     }
                                 }
                             } catch (retryError) {
@@ -1831,7 +2007,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
                             const sharedLineIds = sharedLineIdsOf(toolResults);
@@ -1840,7 +2016,13 @@ export class AIService {
                             // The steps line marks each shown call done or failed before the bot carries on (#1545)
                             const toolStepResults = toolResults
                                 .filter((tr) => showsAsStep(tr.name, toolServerMap.has(tr.name)))
-                                .map((tr) => resultOf(tr.id, tr.result));
+                                .map((tr) => {
+                                    const ended = { ...resultOf(tr.id, tr.result), ...(tr.endedAt ? { at: tr.endedAt } : {}) };
+                                    // In a direct message only the person reads it: a step can open to what it sent (#2061)
+                                    if (channel !== 'dm' || forOthers || !toolServerMap.has(tr.name)) return ended;
+                                    const shows = stepDetails(pendingToolCalls.find((call) => call.id === tr.id)?.arguments, ended.ok ? tr.result : undefined);
+                                    return shows ? { ...ended, shows } : ended;
+                                });
                             if (toolStepResults.length) yield {content: '', done: false, toolStepResults};
                             if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
 
@@ -1894,11 +2076,12 @@ export class AIService {
                                 followUpIterations,
                                 roundContent,
                                 pendingToolCalls,
-                                toolResults.map((r) => ({ id: r.id, name: r.name, text: this.formatToolResult(r, botId) })),
+                                toolResults.map((r) => ({ id: r.id, name: r.name, text: this.formatToolResult(r, botId, toolServerMap.has(r.name)) })),
                                 roundReasoning
                             );
                             stepRoom.add(step);
 
+                            turnToolNames.push(...pendingToolCalls.map(tc => tc.name).filter(Boolean));
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -1908,7 +2091,7 @@ export class AIService {
                             }
 
                             // Continue the reply after its steps, with how to carry on as the last line
-                            const followUpRules = `Continue this reply from the tool results above. Do NOT restate your intent or repeat anything you already said.\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n${channel === 'dm' ? DM_NAVIGATION_FOLLOW_UP : WORLD_NAVIGATION_FOLLOW_UP}\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
+                            const followUpRules = `Continue this reply from the tool results above. Do NOT restate your intent or repeat anything you already said.\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n${channel === 'dm' ? (roomUrl ? DM_NAVIGATION_FOLLOW_UP : DM_NO_ROOM_FOLLOW_UP) : WORLD_NAVIGATION_FOLLOW_UP}\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
                             // The whole turn's list every round: a song made two steps back must still be one it can put in a page
@@ -1930,7 +2113,6 @@ export class AIService {
                                 const errorBefore = followUpError;
                                 const failedBefore = followUpFailedForHealth;
                                 const errorStatusBefore = followUpErrorStatus;
-                                const errorTextBefore = errorText;
                                 let refusedForLength = false;
                                 for await (const resultChunk of sharedLine ? this.saySharedLine(sharedLine, sharedLineIds) : this.meteredStream(
                                     ledger,
@@ -1965,7 +2147,6 @@ export class AIService {
                                         followUpError = true;
                                         followUpFailedForHealth = true;
                                         if (resultChunk.metadata.errorStatus) followUpErrorStatus = resultChunk.metadata.errorStatus;
-                                        errorText ??= resultChunk.metadata.errorText;
                                     }
                                     // Accumulate content from follow-up response (same as main stream)
                                     if (resultChunk.content) {
@@ -2031,7 +2212,6 @@ export class AIService {
                                 followUpError = errorBefore;
                                 followUpFailedForHealth = failedBefore;
                                 followUpErrorStatus = errorStatusBefore;
-                                errorText = errorTextBefore;
                                 lastFollowUpDoneChunk = null;
                             }
 
@@ -2065,8 +2245,7 @@ export class AIService {
                                             sessionId: `conversation-${botId}-player-${playerId}`,
                                             model: config.model,
                                             provider: config.type,
-                                            input: followUpInput,
-                                            output: followUpContent,
+                                            toolNames: pendingToolCalls.map(tc => tc.name).filter(Boolean),
                                             inputTokens: followUpPromptTokens,
                                             cachedInputTokens: followUpCachedPromptTokens,
                                             outputTokens: followUpCompletionTokens,
@@ -2324,7 +2503,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (retryChunk.done && retryChunk.metadata?.error) {
                                             followUpFailedForHealth = true;
                                             if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
-                                            errorText ??= retryChunk.metadata.errorText;
                                         }
                                     }
                                 } catch (retryError) {
@@ -2435,8 +2613,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     sessionId: `conversation-${botId}-player-${playerId}`,
                                     model: config.model,
                                     provider: config.type,
-                                    input: followUpInput,
-                                    output: followUpContent,
                                     inputTokens: followUpPromptTokens,
                                     cachedInputTokens: followUpCachedPromptTokens,
                                     outputTokens: followUpCompletionTokens,
@@ -2506,7 +2682,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.error) {
                         error = true;
                         if (chunk.metadata.errorStatus) errorStatus = chunk.metadata.errorStatus;
-                        errorText ??= chunk.metadata.errorText;
                     }
                     if (chunk.done) {
                         streamCompleted = true;
@@ -2577,8 +2752,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                               // is no problem, and any call that ended the reply failing is, whatever was said before it
                               error: !!lastCall?.failed,
                               errorStatus: lastCall?.status,
-                              // A private bot's provider text can quote the conversation: only its status is kept
-                              errorText: privateBot ? 'details left out for a private bot' : lastCall?.errorText,
                               finishReason,
                               answered: !!accumulatedContent.trim() || hadToolCalls,
                               outputTokens: completionTokens,
@@ -2601,8 +2774,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: userMessageForQwen,
-                            output: firstCallContent,
                             inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
                             cachedInputTokens: followUpCachedPromptTokens !== undefined && cachedPromptTokens !== undefined ? cachedPromptTokens - followUpCachedPromptTokens : cachedPromptTokens,
                             outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
@@ -2633,8 +2804,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: followUpInput,
-                            output: followUpContent,
                             inputTokens: followUpPromptTokens,
                             cachedInputTokens: followUpCachedPromptTokens,
                             outputTokens: followUpCompletionTokens,
@@ -2659,14 +2828,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (!privateBot && streamCompleted && (accumulatedContent || error || problem)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
+                            toolNames: turnToolNames,
                             ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: message,
-                            output: accumulatedContent || '',
                             inputTokens: promptTokens,
                             cachedInputTokens: cachedPromptTokens,
                             outputTokens: completionTokens,
@@ -2795,7 +2963,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 console.error('[AIService] Error generating response:', error);
             }
             // Before this, a reply that broke here left no trace outside debug mode (#1498)
-            console.error(`[AIService] Bot ${botId} could not answer: ${privateTurn ? (error?.name ?? 'Error') : providerErrorText(error)}`);
+            console.error(`[AIService] Bot ${botId} could not answer: ${error?.name ?? 'Error'}`);
 
             // Track error. What an earlier answer to the same message cost is on the same ledger, so it is kept (#1993).
             if (options?.usage) options.usage.held = undefined;
@@ -3124,7 +3292,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false, instant: InstantListing | null = null): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
 
@@ -3320,6 +3488,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
         if (files) tools.push(...fileToolDefinitions({ artifacts: artifactsEnabled() }));
 
+        // Tools: make another Brick, and suggest one (game #1996). Only a person's own first Brick has them, in its owner's direct messages.
+        if (channel === 'dm' && this.brickToolsOn(botId, botClient, adminApiService)) tools.push(...brickToolDefinitions());
+
+        // Tool: offer to connect an App from the chat (game #2001). Any of a person's own Bricks, in its owner's direct messages.
+        if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...appToolDefinitions());
+        // Tools: lead the owner to add a key for a service, and make a page take a payment (game #2044). The same Bricks, in the same chats.
+        if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...keyToolDefinitions());
+
+        // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
+        if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
+        // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
+        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
+        // Tools: Instant Apps, exactly the list Orbit gave for this Brick. Owner only, in their Brick's direct messages.
+        if (channel === 'dm' && !botClient) {
+            if (instant) tools.push(...instantToolDefinitions(instant));
+        }
+
         // Add MCP tools
         if (botId && adminApiService) {
             try {
@@ -3330,11 +3515,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     process.env.BOT_SERVICE_TOKEN || '',
                     { suggest: this.toolSuggesterFor(providerId, botId) }
                 );
-                const mcpTools = mcpResult.tools;
+                // An Instant App's name is ours (`instant_app_<slug>`): when a tool server has a tool of that very name, the Instant App is the one
+                // offered and the one run, so the definition the model reads and the call that runs always belong together
+                const instantNames = new Set(tools.filter((tool) => isInstantTool(tool.function?.name ?? '')).map((tool) => tool.function.name));
+                const mcpTools = (mcpResult.tools as any[]).filter((tool) => !instantNames.has(tool.function?.name));
 
                 // Transfer tool→server mapping to the outer-scope map
                 for (const [key, value] of mcpResult.toolServerMap) {
-                    toolServerMap.set(key, value);
+                    if (!instantNames.has(key)) toolServerMap.set(key, value);
                 }
 
                 // Tools this person can't use are not offered to the model (#1656). The call is checked again when it is made.
@@ -3395,7 +3583,450 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return MCPConnector.refreshServerTools(botId, serverId, this.adminApiUrl, admin['adminApiToken'], this.toolSuggesterFor(providerId, botId));
     }
 
+    /** Every Brick this server has seen (a direct message, a map): a reply or a small call for one is always asked about by who it is for (#2005). */
+    private knownBricks = new Set<string>();
+    /** Whose each known Brick is, by their Orbit id (from the Brick's own settings): who its own small calls are asked as. */
+    private brickOwners = new Map<string, string>();
+
+    /** Who a Brick's own business is asked as: its owner, by the WorkAdventure id a map told us, else the Orbit id its settings carry. */
+    private ownerRefOf(botId: string | undefined): string | undefined {
+        if (!botId) return undefined;
+        return this.roomBricks.get(botId)?.ownerUuid ?? this.brickOwners.get(botId);
+    }
+
+    /**
+     * Who Orbit is asked about for a Brick's reply or small call: the person being answered, by their WorkAdventure id, or
+     * 'unknown' for someone who cannot be named (never taken for its owner). Undefined for a bot that is no Brick. A small call
+     * with nobody named never comes here (see getProviderCredentials).
+     */
+    private brickAsk(botId: string | undefined, asker: string | undefined, roomUrl?: string): { asker: string; roomUrl?: string } | undefined {
+        if (!botId || !(this.knownBricks.has(botId) || this.roomBricks.has(botId))) return undefined;
+        return { asker: asker ?? 'unknown', ...(roomUrl ? { roomUrl } : {}) };
+    }
+
+    /** The Bricks that stand in a room right now (#2005), with whose they are: set when one is put on a map, cleared when it leaves. */
+    private roomBricks = new Map<string, { ownerUuid: string; ownerName: string | null; roomUrl: string }>();
+
+    noteRoomBrick(botId: string, brick: { ownerUuid: string; ownerName: string | null; roomUrl: string } | undefined): void {
+        const known = this.roomBricks.get(botId);
+        if (known?.ownerUuid === brick?.ownerUuid && known?.roomUrl === brick?.roomUrl && known?.ownerName === brick?.ownerName) return;
+        if (brick) {
+            this.roomBricks.set(botId, brick);
+            // Once a Brick has stood on a map it stays a Brick here: a turn still under way when it is taken out or the room is
+            // read again asks Orbit about who it is for, and never falls back to the owner's key for someone else
+            this.knownBricks.add(botId);
+        } else this.roomBricks.delete(botId);
+        // What Orbit answered for one asker is not the answer for the next
+        this.botCredentialVersion.set(botId, (this.botCredentialVersion.get(botId) ?? 0) + 1);
+        for (const key of [...this.botCredentialCache.keys()]) if (key.startsWith(`${botId}:`)) this.botCredentialCache.delete(key);
+    }
+
+    /**
+     * A Brick that stands in a room, with who is talking to it: `asker` is who Orbit is asked about (a person it cannot
+     * name is never taken for its owner), `forOthers` whether it is anyone but its owner. Undefined for every other bot.
+     */
+    private roomBrickFor(botId: string | undefined, talkerId: string | undefined): { asker: string; roomUrl: string; ownerName: string | null; forOthers: boolean } | undefined {
+        const brick = botId ? this.roomBricks.get(botId) : undefined;
+        if (!brick) return undefined;
+        return { asker: talkerId ?? 'unknown', roomUrl: brick.roomUrl, ownerName: brick.ownerName, forOthers: talkerId !== brick.ownerUuid };
+    }
+
     /** Orbit keeps files in this bot's chats (it served their limits), so the file tools can be offered and run. */
+    /**
+     * The Bricks that are the one every account gets (game #1996): in its owner's direct messages such a Brick can make
+     * another Brick and suggest one. Told by whoever reads the bot's settings before a reply (DmReplyService).
+     */
+    private helperBricks = new Set<string>();
+
+    noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean; ownerId?: string } | undefined): void {
+        if (brick && !brick.deleted) this.knownBricks.add(botId);
+        else this.knownBricks.delete(botId);
+        if (brick && !brick.deleted && brick.ownerId) this.brickOwners.set(botId, brick.ownerId);
+        else this.brickOwners.delete(botId);
+        if (brick?.isDefault && !brick.deleted) this.helperBricks.add(botId);
+        else this.helperBricks.delete(botId);
+        if (brick && !brick.deleted) this.ownBricks.add(botId);
+        else this.ownBricks.delete(botId);
+    }
+
+    /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000) or reminders (#2002). */
+    private ownBricks = new Set<string>();
+    private computerOnCache = new Map<string, { on: boolean; at: number }>();
+
+    /**
+     * Whether this Brick's computer is on for the person in this direct message. Orbit answers; the answer is kept a short while so
+     * chat stays fast, and a failure means off. Never wakes anything.
+     */
+    private async computerOnFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<boolean> {
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (!this.ownBricks.has(botId) || !admin?.isConfigured?.() || !userId) return false;
+        const key = `${botId}|${userId}`;
+        const known = this.computerOnCache.get(key);
+        if (known && Date.now() - known.at < 30_000) return known.on;
+        const on = await admin.computerIsOn(botId, userId).catch(() => false);
+        this.computerOnCache.set(key, { on, at: Date.now() });
+        return on;
+    }
+
+    private instantOffers = new InstantOffers();
+    /**
+     * What Orbit offers this Brick's owner as Instant Apps right now, or null: not a person's own Brick, in a bubble, not its owner, nothing
+     * switched on for this Brick, Instant paused or not set up, or Orbit could not say. Kept a short while so chat stays fast.
+     */
+    private async instantFor(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<InstantListing | null> {
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (botClient || !this.ownBricks.has(botId) || !admin?.isConfigured?.() || !userId) return null;
+        return this.instantOffers.listingFor(admin, botId, userId);
+    }
+
+    /**
+     * Runs one Instant App for the person in this direct message: its Brick's owner, in their own Brick's chat. Orbit holds the credit, the price
+     * table and every limit; this carries the question with this attempt's own id. The same run asked again in the same turn (a repeated reply is
+     * regenerated) is the same run: its answer comes back, nothing is run or taken twice. Never throws.
+     */
+    private async runInstantToolCall(
+        name: string,
+        args: Record<string, unknown>,
+        where: { adminApiService?: AdminApiService; botClient?: BotClient; botId?: string; playerId?: number; spaceName?: string }
+    ): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        const userId = memory?.userUuid;
+        const gone = { success: false, outcome: 'not_sent', error: "That can't be done in this chat right now.", note: 'Nothing ran. Say so in one plain sentence.' };
+        if (!admin || !where.botId || where.playerId === undefined || !userId || where.botClient) return gone;
+        const botId = where.botId;
+        const playerId = where.playerId;
+
+        const repeatKey = `${name}:${stableJson(args)}`;
+        const earlier = memory?.instantCalls?.get(repeatKey);
+        if (earlier) return earlier;
+
+        const run = (async (): Promise<Record<string, unknown>> => {
+            // The turn this run belongs to, taken before anything is awaited: a newer turn starting meanwhile never lends its task or receipt to it
+            const turn = memory ? (memory.instantTurn ??= { tasks: [] }) : { tasks: [] as InstantTask[] };
+            // A rule they said in chat ended this task: nothing more is tried for it, and Orbit is not asked again
+            const stopped = turn.tasks.find((one) => one.stopped)?.stopped;
+            if (stopped) return stopped;
+            // Offered now, to the Brick's owner: a call from a reply that was not offered it, or after it was switched off or paused, is not run
+            const listing = await this.instantFor(botId, playerId, undefined, admin);
+            const tool = InstantOffers.toolNamed(listing, name);
+            if (!tool) return { success: false, outcome: 'not_sent', error: 'That Instant App is not available right now.', note: 'Nothing ran. Say so in one plain sentence and carry on another way. Do not try it again in this reply.' };
+            // One task for this turn: its receipt is opened before its first run, and its key goes with every run. A task whose receipt was
+            // closed is not used again (a reply written again runs under a task of its own)
+            let task = turn.tasks[turn.tasks.length - 1];
+            if (!task || task.closed) turn.tasks.push((task = newInstantTask()));
+            // A run in flight holds its task open: the receipt is not closed (and so not made final) until the run has landed and is counted
+            const mine = task;
+            mine.running = (mine.running ?? 0) + 1;
+            let ran: Awaited<ReturnType<typeof runInstantTool>>;
+            try {
+                const opened = await openInstantReceipt(admin, botId, userId, mine, instantReceiptTitle(tool));
+                ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: mine.key, receiptLink: opened?.link });
+                mine.ended.push(ran.ended);
+            } finally {
+                mine.running--;
+            }
+            // The turn this run belongs to ended while it was in flight (an update cut the reply short): nothing else will close its receipt
+            if (turn.over) void endInstantTask(admin, botId, userId, mine);
+            // What Orbit offers may change with a run (credit spent, a pause): read it again next time
+            if (ran.ended !== 'failed') this.instantOffers.forget(botId, userId);
+            if (ran.stop) mine.stopped = ran.result;
+            let result = ran.result;
+            if (ran.carryOn) {
+                // The credit ran out: one card asks how to carry on, whatever "asks which way to go" says, since this is a recovery
+                const asked = await this.askPerson(botId, { question: ran.carryOn.question, choices: ran.carryOn.choices, before: ran.carryOn.before }, playerId, undefined, where.spaceName, true).catch(() => ({ error: 'no card' }));
+                if (asked.error) result = { ...result, note: "Nothing ran and nothing was taken: their Instant Apps credit does not cover it. Say so in one plain sentence, add [Usage](#usage), and carry on another way." };
+            }
+            // A run that was not sent (refused) may be asked again in a later turn; one that ran, or may have run, is never asked again in this one
+            if (ran.notSent && !ran.stop && memory?.instantCalls?.get(repeatKey) === run) memory.instantCalls.delete(repeatKey);
+            return result;
+        })();
+        if (memory) (memory.instantCalls ??= new Map()).set(repeatKey, run);
+        return run;
+    }
+
+    /**
+     * A new turn has Instant tasks of its own, with their own receipts. The last turn's, when Orbit did not take the close of a receipt as that turn
+     * ended, are closed now, without holding this turn up: none is dropped with its receipt left open.
+     */
+    private startInstantTurn(botId: string, memory: { instantTurn?: InstantTurn; userUuid?: string } | undefined, adminApiService?: AdminApiService): InstantTurn | undefined {
+        if (!memory) return undefined;
+        const left = memory.instantTurn;
+        const turn: InstantTurn = { tasks: [] };
+        memory.instantTurn = turn;
+        const admin = adminApiService ?? this.adminApiService;
+        if (left && admin && memory.userUuid) {
+            left.over = true;
+            // Every task of the last turns whose close Orbit has not taken stays owed to this turn, until it is taken: none is dropped
+            const owing = [...(left.owed ?? []), ...left.tasks].filter(instantTaskPending);
+            for (const task of owing) void endInstantTask(admin, botId, memory.userUuid, task);
+            if (owing.length) turn.owed = owing;
+        }
+        return turn;
+    }
+
+    /**
+     * The turn is over (answered, cut short or failed): its Instant tasks get their receipts closed, once each, as what they ended as. Nothing happens
+     * when no Instant App was run. Never throws, and never waits for anything but Orbit's own answer.
+     */
+    private async endInstantTurn(botId: string, userId: string | undefined, turn: InstantTurn | undefined, adminApiService?: AdminApiService): Promise<void> {
+        try {
+            const admin = adminApiService ?? this.adminApiService;
+            if (!turn || !admin || !userId) return;
+            turn.over = true;
+            // What an earlier turn still owes is asked again without holding this reply up; this turn's own is awaited
+            for (const task of turn.owed ?? []) void endInstantTask(admin, botId, userId, task);
+            for (const task of [...turn.tasks]) await endInstantTask(admin, botId, userId, task);
+        } catch {
+            // A receipt is never in the way of a reply
+        }
+    }
+
+    /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
+    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; apps?: string[] }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
+        if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
+        const botId = where.botId;
+        const result = await runComputerTool(args, {
+            admin,
+            botId,
+            userId,
+            apps: where.apps,
+            onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
+        });
+        // A job started or queued changes what the bar says: read it fresh next time
+        this.computerOnCache.delete(`${botId}|${userId}`);
+        return result;
+    }
+
+    /** Whether this reply has the two Brick tools: a person's own first Brick, in a direct message, with Orbit to ask. */
+    private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /**
+     * One run of a goal or task that needs a model (#2002): its own context, never the person's chat, saving nothing into memory. Rounds of
+     * the model and its tools go on until `final` is called (that call ends it, after it ran), the model stops calling tools, or the steps
+     * are used up. Every model call is its own usage row on the task channel under the run's id, so what a run costs is on the books call by
+     * call. `permit` is asked before every model call and every tool: a run that was paused, finished, deleted or changed stops there.
+     */
+    async runBrickTask(opts: {
+        botId: string;
+        providerId: string;
+        system: string;
+        user: string;
+        tools: any[];
+        maxSteps: number;
+        signal?: AbortSignal;
+        permit: () => Promise<boolean>;
+        runTool: (name: string, args: Record<string, unknown>) => Promise<string>;
+        final: string;
+        usage: { runId: string; attempt: number; userId?: string };
+    }): Promise<{ ended: 'final' | 'no_tool' | 'steps' | 'not_permitted' | 'resting' | 'failed'; error?: string; status?: number }> {
+        const resolved = await this.resolveProvider(opts.providerId, opts.botId);
+        if (resolved.resting) return { ended: 'resting' };
+        const config = resolved.config;
+        const rounds: ReplySteps = { steps: [] };
+        // A model that answers in words instead of calling a tool is asked once more, then it is a no
+        let user = opts.user;
+        let nudged = false;
+        for (let round = 1; round <= opts.maxSteps; round++) {
+            if (opts.signal?.aborted) return { ended: 'failed', error: 'stopped' };
+            if (!(await opts.permit())) return { ended: 'not_permitted' };
+            // One ledger for each call: each is a usage row of its own
+            const ledger = new UsageLedger();
+            const startedAt = Date.now();
+            let content = '';
+            let reasoning: string | undefined;
+            let meta: AIStreamChunk['metadata'] | undefined;
+            const calls = new Map<string, { id: string; name: string; arguments: string }>();
+            let failed: string | null = null;
+            try {
+                for await (const chunk of this.meteredStream(ledger, config.providerId, opts.system, user, config, opts.tools, opts.signal, undefined, rounds.steps.length > 0 ? rounds : undefined)) {
+                    if (chunk.content) content += chunk.content;
+                    for (const call of chunk.toolCalls ?? []) {
+                        const known = call.id ? calls.get(call.id) : Array.from(calls.values()).pop();
+                        if (known) {
+                            if (call.arguments && call.arguments !== '{}') known.arguments += call.arguments;
+                            if (call.name) known.name = call.name;
+                        } else if (call.id) {
+                            calls.set(call.id, { id: call.id, name: call.name || '', arguments: call.arguments && call.arguments !== '{}' ? call.arguments : '' });
+                        }
+                    }
+                    if (chunk.done) {
+                        meta = chunk.metadata;
+                        if (chunk.reasoning) reasoning = chunk.reasoning;
+                    }
+                }
+            } catch (error) {
+                failed = providerErrorText(error);
+            }
+            const errored = failed !== null || !!meta?.error;
+            // The call's own row, whether it worked or not: a call that was made was paid for, and one that never started adds a zero
+            await this.trackUsage(
+                opts.botId,
+                config.providerId,
+                {
+                    tokensUsed: meta?.tokensUsed ?? 0,
+                    promptTokens: meta?.promptTokens ?? 0,
+                    completionTokens: meta?.completionTokens ?? 0,
+                    ...(meta?.cacheReadTokens || meta?.cacheWriteTokens ? { cacheReadTokens: meta.cacheReadTokens ?? 0, cacheWriteTokens: meta.cacheWriteTokens ?? 0 } : {}),
+                    latency: Date.now() - startedAt,
+                    error: errored,
+                },
+                ledger.summary(),
+                { channel: 'task', runId: opts.usage.runId, eventId: `${opts.usage.attempt}.${round}`, ...(opts.usage.userId ? { userId: opts.usage.userId } : {}) }
+            );
+            if (errored) return { ended: 'failed', error: failed ?? meta?.errorText ?? 'The model did not answer', ...(meta?.errorStatus ? { status: meta.errorStatus } : {}) };
+            const pending = Array.from(calls.values()).filter((call) => call.name.trim() !== '');
+            if (pending.length === 0) {
+                if (nudged || round >= opts.maxSteps) return { ended: 'no_tool' };
+                nudged = true;
+                user = `${opts.user}\n\nAnswer by calling a tool this time: end the check by calling ${opts.final}, not with plain words.`;
+                continue;
+            }
+            const results: { id: string; name: string; text: string }[] = [];
+            let finished = false;
+            for (const call of pending) {
+                if (!(await opts.permit())) return { ended: 'not_permitted' };
+                const args = this.safeParseToolArgs(call.arguments || '{}');
+                let text: string;
+                try {
+                    text = await opts.runTool(call.name, args);
+                } catch (error) {
+                    text = JSON.stringify({ error: 'That did not work just now.' });
+                    console.warn(`[AIService] A step of a goal or task failed (${call.name}):`, error instanceof Error ? error.message : error);
+                }
+                results.push({ id: call.id, name: call.name, text });
+                // The first finish that was accepted ends it: nothing after it in the same round runs or changes what it said
+                if (call.name === opts.final && !text.includes('"error"')) {
+                    finished = true;
+                    break;
+                }
+            }
+            if (finished) return { ended: 'final' };
+            rounds.steps.push(stepOf(round, content, pending, results, reasoning));
+        }
+        return { ended: 'steps' };
+    }
+
+    /**
+     * What Orbit says about this person and this Brick for reminders (#2002), or null: not the owner (a visitor, the Brick for guests), no
+     * Orbit, a room bot, or Orbit could not say. Only for the owner, in their own Brick's direct messages.
+     */
+    private async taskSettingsOf(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<TaskSettings | null> {
+        if (botClient || !this.ownBricks.has(botId)) return null;
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory?.userUuid) return null;
+        return taskSettingsFor(adminApiService ?? this.adminApiService, botId, memory.userUuid);
+    }
+
+    /**
+     * Adds the reminder tools to what this reply offers. An App's tool of the same name is not offered beside them, and is not
+     * run for them either: only a reply that offered ours runs ours, so the schema the model sees is the one that runs.
+     */
+    private offerTaskTools(tools: any[], toolServerMap: Map<string, ToolServerEntry>): void {
+        const ours = taskToolDefinitions();
+        const names = new Set<string>(ours.map((tool) => tool.function.name));
+        for (let i = tools.length - 1; i >= 0; i--) if (names.has(tools[i].function.name)) tools.splice(i, 1);
+        for (const name of names) toolServerMap.delete(name);
+        tools.push(...ours);
+    }
+
+    /** Whether Orbit lately said this person is the owner of this Brick: only then is a tool of a reminder's name ours, anywhere else it is a tool server's. */
+    private taskToolsOn(botId?: string, playerId?: number, botClient?: BotClient): boolean {
+        if (botClient || !botId || playerId === undefined) return false;
+        const uuid = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        return !!uuid && this.ownBricks.has(botId) && tasksAreOn(botId, uuid);
+    }
+
+    /** Runs a reminder tool for the person in this direct message (Orbit refuses anyone but the owner). */
+    private async runTaskToolCall(name: string, args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        return runTaskTool(name, args, { admin, botId: where.botId, userId: memory.userUuid });
+    }
+
+    /** Whether this reply has the two memory tools: a direct message, with a memory that can forget (one kept with Orbit). */
+    private memoryToolsOn(botId?: string, botClient?: BotClient): boolean {
+        return !botClient && !!botId && typeof this.conversationMemory?.forgetThings === 'function';
+    }
+
+    /** Runs what_i_remember or forget_memory for the person in this direct message. */
+    private async runMemoryToolCall(name: string, args: Record<string, unknown>, where: { botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const { botId, playerId } = where;
+        if (!botId || playerId === undefined) return { error: "That can't be done in this chat right now." };
+        return runMemoryTool(name, args, {
+            memory: this.conversationMemory.getMemory(botId, playerId),
+            forget: (keys, kinds) => (this.conversationMemory.forgetThingsReported ?? this.conversationMemory.forgetThings!).call(this.conversationMemory, botId, playerId, keys, kinds),
+        });
+    }
+
+    /** What such a Brick is told with its instructions: that it can make Bricks, and what it already suggested. */
+    private async brickNoteFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<string> {
+        if (!this.brickToolsOn(botId, undefined, adminApiService)) return '';
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        const offers = admin && userId ? await admin.brickOffersFor(botId, userId).catch(() => null) : null;
+        return brickToolsNote(offers);
+    }
+
+    /** Runs make_brick or suggest_brick for the person in this direct message. What the game shows for it waits with the reply. */
+    private async runBrickToolCall(name: string, args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        return runBrickTool(name, args, { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) });
+    }
+
+    /** Whether this reply has offer_app: any of a person's own Bricks (one that lives in no room), in a direct message, with Orbit to ask. */
+    private appToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return !botClient && !!botId && this.ownBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /** What such a Brick is told about the Apps it may offer, with what was already offered. Empty when there is nothing to offer or Orbit cannot say. */
+    private async appsNoteFor(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<string> {
+        if (!this.appToolsOn(botId, botClient, adminApiService)) return '';
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (!admin || !userId) return '';
+        const [apps, offers] = await Promise.all([
+            admin.appsOfferableFor(botId, userId).catch(() => null),
+            admin.brickOffersFor(botId, userId).catch(() => null),
+        ]);
+        return appsNote(apps, offers?.topics ?? []);
+    }
+
+    /** What such a Brick is told about Apps with a key: the services it can lead them to set up, and the ones they have. Empty when Orbit cannot say. */
+    private async keyAppsNoteFor(botId: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<string> {
+        if (!this.appToolsOn(botId, botClient, adminApiService)) return '';
+        const { apps, services } = await loadKeyAppList(botId, this.adminApiUrl, process.env.BOT_SERVICE_TOKEN || '');
+        return keyAppsNote(apps, services);
+    }
+
+    /** Runs ask_for_key or take_payments_on_page for the owner in this direct message. Never throws. */
+    private async runKeyToolCall(name: string, args: Record<string, unknown>, where: { botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        const side = { adminApiUrl: this.adminApiUrl, serviceToken: process.env.BOT_SERVICE_TOKEN || '' };
+        const { apps } = await loadKeyAppList(where.botId, side.adminApiUrl, side.serviceToken);
+        return runKeyTool(name, args, { where: side, botId: where.botId, userId: memory.userUuid, apps });
+    }
+
+    /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
+    private async runAppToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        return runAppTool(args, { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) });
+    }
+
     private filesOn(botId?: string, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !!botId && !!admin?.isConfigured?.() && this.keepsFiles(botId);
@@ -3730,8 +4361,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** This turn's media list (#1510), for an artifact to carry. */
         turnMedia?: TurnMedia[],
         /** Set when other people read the reply (#1993): everyone else who is there, by who they are. */
-        present?: readonly string[]
-    ): Promise<Array<{ id: string; name: string; result: any }>> {
+        present?: readonly string[],
+        /** This reply was offered the reminder tools (#2002): a call to one of them from a reply that was not offered them is not run. */
+        taskToolsOffered = false,
+        /** The reply is for someone but the Brick's owner (#2005): a call to anything of the owner's is not run, whatever the model asks for. */
+        forOthers = false
+    ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
         // Filter out invalid tool calls (empty name, undefined, etc.)
@@ -3754,7 +4389,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) ? '' : toolCall.name) {
+                // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
+                // An Instant App's name is made from its tool, so it has no case of its own: it is told apart here. A tool server's tool of the same name is
+                // never offered next to it (the Instant App is), so a name that is in the server map is that server's alone
+                const instantRun = isInstantTool(toolCall.name) && !toolServerMap?.has(toolCall.name);
+                // A visitor's turn never runs the owner's artifacts, files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
+                const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
+                switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4062,6 +4703,74 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         );
                         break;
 
+                    case SET_REMINDER_TOOL:
+                    case SET_BRIEFING_TOOL:
+                    case SET_WATCH_TOOL:
+                    case SET_GOAL_TOOL:
+                    case MY_TASKS_TOOL:
+                    case CHANGE_TASK_TOOL:
+                    case KEEP_WORKDAYS_TOOL:
+                        result = await this.runTaskToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case MAKE_BRICK_TOOL:
+                    case SUGGEST_BRICK_TOOL:
+                        result = await this.runBrickToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case ASK_FOR_KEY_TOOL:
+                    case PAYMENT_TOOL:
+                        result = await this.runKeyToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botId, playerId }
+                        );
+                        break;
+
+                    case OFFER_APP_TOOL:
+                        result = await this.runAppToolCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case WHAT_I_REMEMBER_TOOL:
+                    case FORGET_MEMORY_TOOL:
+                        result = await this.runMemoryToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botId, playerId }
+                        );
+                        break;
+
+                    case INSTANT_RUN_CASE:
+                        // A reply cut off by its length limit may carry half a request (the arguments are repaired to be read at all): nothing is run, or paid for, from it
+                        if (replyCutOff) {
+                            result = { success: false, outcome: 'not_sent', error: 'That request was cut off before it was complete.', note: 'Nothing ran and nothing was taken, because your request was cut off before it was whole. Say so in one plain sentence and, if they still want it, ask for it again in a shorter way.' };
+                            break;
+                        }
+                        result = await this.runInstantToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botClient, botId, playerId, spaceName }
+                        );
+                        break;
+
+                    case COMPUTER_TOOL:
+                        result = await this.runComputerToolCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
+                        );
+                        break;
+
                     case ASK_PERSON_TOOL:
                         result = await this.askPerson(
                             botId,
@@ -4082,7 +4791,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     default: {
                         // Check if this is an MCP tool (not a hardcoded one)
-                        const mcpServerConfig = toolServerMap?.get(toolCall.name);
+                        // (a visitor's turn has no Apps: its list is empty, and a name from it is refused here as well)
+                        const mcpServerConfig = forOthers ? undefined : toolServerMap?.get(toolCall.name);
                         if (mcpServerConfig) {
                             // One check right before the call starts (#1656): the model's list is only a convenience
                             const verdict = botId
@@ -4115,7 +4825,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 }
                                 release = counted.release;
                             }
-                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds);
+                            const asker = this.gatePerson(botId, playerId, botClient, spaceName);
+                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
+                                botId: botId!,
+                                callId: toolCall.id,
+                                ...(verdict.heading ? { heading: verdict.heading } : {}),
+                                ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
+                            });
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
                         } else {
@@ -4128,12 +4844,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     }
                 }
 
-                return { id: toolCall.id, name: toolCall.name, result };
+                // When this call settled, so a quick call is not timed with the slowest one it ran beside (#2061)
+                return { id: toolCall.id, name: toolCall.name, result, endedAt: Date.now() };
             } catch (error: any) {
                 return {
                     id: toolCall.id,
                     name: toolCall.name,
                     result: { error: error.message || 'Tool execution failed' },
+                    endedAt: Date.now(),
                 };
             }
         });
@@ -4169,7 +4887,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (!label) return false;
             let yes = false;
             try {
-                yes = isConfirm(await this.quickGenerate(providerId, CONFIRM_SYSTEM, message.slice(0, 300), botId, CONFIRM_TIMEOUT_MS));
+                yes = isConfirm(await this.quickGenerate(providerId, CONFIRM_SYSTEM, message.slice(0, 300), botId, CONFIRM_TIMEOUT_MS, person.uuid));
             } catch {
                 // Not knowing is not a yes: the card closes and the person asks again
             }
@@ -4205,11 +4923,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * The model asks which way to go (#1661): a card with the choices, in a direct message or, in a bubble, to the person
      * alone with one plain line for everyone. The reply ends there; their pick comes back as their next message. Never throws.
      */
-    private async askPerson(botId: string | undefined, args: Record<string, unknown>, playerId: number | undefined, botClient?: BotClient, spaceName?: string): Promise<Record<string, unknown>> {
+    private async askPerson(
+        botId: string | undefined,
+        args: Record<string, unknown>,
+        playerId: number | undefined,
+        botClient?: BotClient,
+        spaceName?: string,
+        /** A card the Brick must show to recover (the credit ran out), whatever the setting for asking which way to go says. */
+        recovery = false
+    ): Promise<Record<string, unknown>> {
         const inWords = 'A question card could not be shown here. Ask in one short sentence in words instead.';
         const chat = botId && playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
         if (!botId || !this.approvals || !chat || !chat.person.signedIn || !chat.person.identifier) return { error: inWords };
-        if ((await this.approvals.settings(botId)).askWhichWay === 'never') {
+        if (!recovery && (await this.approvals.settings(botId)).askWhichWay === 'never') {
             return { error: "This bot's settings say not to ask which way to go. Pick the best choice, say your pick in one short line and start." };
         }
         const read = readQuestion(args);
@@ -4403,7 +5129,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from media tools and built-in tools — they don't produce URLs to extract
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name) || isTaskTool(tr.name)) {
                 continue;
             }
 
@@ -4479,7 +5205,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name) || isTaskTool(tr.name)) {
                 continue;
             }
 
@@ -4835,7 +5561,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private noteMadeMedia(toolCalls: ToolCall[], toolResults: Array<{ id: string; name: string; result: any }>): void {
         for (const tr of toolResults) {
-            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || isFileTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
+            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || isFileTool(tr.name) || isMemoryTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
             let urls: string[];
             try {
                 urls = this.extractUrlsFromResult(tr.result);
@@ -4949,12 +5675,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Format tool results for AI
      */
-    private formatToolResults(results: Array<{ id: string; name: string; result: any }>, botId?: string): string {
-        return results.map((r) => this.formatToolResult(r, botId)).join('\n');
+    private formatToolResults(results: Array<{ id: string; name: string; result: any }>, botId?: string, toolServerMap?: Map<string, unknown>): string {
+        return results.map((r) => this.formatToolResult(r, botId, !!toolServerMap?.has(r.name))).join('\n');
     }
 
     /** One tool result as the model reads it. */
-    private formatToolResult(r: { id: string; name: string; result: any }, botId?: string): string {
+    private formatToolResult(r: { id: string; name: string; result: any }, botId?: string, fromToolServer = false): string {
         // Format results in a more readable way for the AI
         if (r.name === 'get_people_on_map' && Array.isArray(r.result)) {
             if (r.result.length === 0) {
@@ -4991,6 +5717,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // The file tools ran (Orbit keeps files here), not an MCP tool of the same name
         if (isFileTool(r.name) && r.result && this.keepsFiles(botId)) {
             return formatFileResult(r.name, r.result);
+        }
+        // Only what an Instant App's own run answered: a tool server's tool that happens to have such a name is read as any other
+        if (isInstantTool(r.name) && !fromToolServer && r.result && typeof r.result === 'object') {
+            return formatInstantResult(r.name, r.result);
         }
         if (r.name === READ_WEB_PAGE_TOOL && r.result) {
             if (r.result.error || !r.result.content) {
@@ -5344,7 +6074,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         providerId: string,
         call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>,
         botId?: string,
-        timeoutMs: number = QUICK_LLM_TIMEOUT_MS
+        timeoutMs: number = QUICK_LLM_TIMEOUT_MS,
+        asker?: string
     ): Promise<T | undefined> {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         let lookupTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -5354,7 +6085,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // own deadline: the provider call below then still has its full time, instead of
             // starting already aborted after a slow lookup.
             const config = await Promise.race([
-                this.getProviderCredentials(providerId, botId),
+                this.getProviderCredentials(providerId, botId, asker),
                 new Promise<never>((_resolve, reject) => {
                     lookupTimeoutId = setTimeout(() => reject(new Error("credential lookup timed out")), QUICK_LLM_TIMEOUT_MS);
                 }),
@@ -5381,7 +6112,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * interruption feature works for bots on any provider.
      * Returns the action and a message to say as a followup.
      */
-    async quickClassify(providerId: string, currentTask: string, newMessage: string, botId?: string): Promise<{ action: InterruptionAction; message: string }> {
+    async quickClassify(providerId: string, currentTask: string, newMessage: string, botId?: string, asker?: string): Promise<{ action: InterruptionAction; message: string }> {
         const prompt = `Current task: "${currentTask}"
 New message: "${newMessage}"
 
@@ -5408,7 +6139,9 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
                 undefined,
                 signal
             ),
-            botId
+            botId,
+            undefined,
+            asker
         );
         if (!result) return { action: 'queue', message: '' };
 
@@ -5430,7 +6163,7 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
      * Returns '' on failure so callers stay silent rather than fall back to
      * hardcoded text.
      */
-    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string, timeoutMs?: number): Promise<string> {
+    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string, timeoutMs?: number, asker?: string): Promise<string> {
         // Same bounded-abort pattern as quickClassify: the overflow ack runs in
         // the interruption-routing path — a slow provider must not delay it for
         // the provider's own (30s+) timeout, and the call must actually be
@@ -5438,7 +6171,8 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
         const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
             provider.generate(systemPrompt, userPrompt, config, undefined, signal),
             botId,
-            timeoutMs
+            timeoutMs,
+            asker
         );
         return (result?.content || '').trim();
     }

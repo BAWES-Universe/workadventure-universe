@@ -22,6 +22,9 @@
     import { friendsEnabledStore, relationshipsStore } from "../../../Stores/FriendsStore";
     import { invitesEnabledStore } from "../../../Stores/RingStore";
     import { NAME_BY_CHAT_ID_CONTEXT, personName } from "../../../Stores/ChatUserWokaStore";
+    import { botIdFromChatId } from "../../../Bots/BotChatStatus";
+    import MemorySheet from "../../../Bricks/MemorySheet.svelte";
+    import { myBricksStore } from "../../../Bricks/MyBricksStore";
     import { directPartnerStore } from "../DirectChat/DirectPartnerStore";
     import { partnerStillInChat } from "../DirectChat/partnerStillInChat";
     import {
@@ -45,6 +48,7 @@
         IconTrash,
         IconUserCircle,
         IconUsersPlus,
+        IconBrain,
     } from "@wa-icons";
 
     export let room: ChatRoom & ChatRoomMembershipManagement & ChatRoomNotificationControl & ChatRoomModeration;
@@ -176,6 +180,16 @@
         toggleRoomOptions();
     }
 
+    // What a bot remembers about this person (game #2003): in a chat with any bot, theirs or someone else's
+    $: memoryBotId = isDirect && $partner?.isBot ? botIdFromChatId($partner.chatId) : undefined;
+
+    function openMemory() {
+        toggleRoomOptions();
+        if (!memoryBotId) return;
+        const own = ($myBricksStore ?? []).some((brick) => brick.id === memoryBotId);
+        openModal(MemorySheet, { botId: memoryBotId, name, own });
+    }
+
     // Their profile in Orbit, online or not (the same page as Full profile); the chat's own profile page only for
     // a bot, or when Orbit isn't available.
     function viewProfile() {
@@ -255,6 +269,15 @@
             : $LL.chat.roomMenu.muteRoom()}
         on:click={closeMenuAndSetMuteStatus}
     />
+
+    {#if memoryBotId}
+        <RoomOption
+            dataTestId="botMemoryOption"
+            IconComponent={IconBrain}
+            title={$LL.chat.brick.memory.menu({ name })}
+            on:click={openMemory}
+        />
+    {/if}
 
     {#if isDirect}
         <div class="u-menu-divider" />

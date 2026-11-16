@@ -1,9 +1,15 @@
 <script lang="ts">
+    import { getColorByString } from "../../Utils/ColorGenerator";
     import WokaFromUserId from "../Woka/WokaFromUserId.svelte";
 
-    export let userId: number;
+    export let userId: number | string;
     // 44px in the cards, 30px in the pills, the notes and the list rows.
     export let small = false;
+    /** When given, its first letter fills the frame until the Woka is found (a reconnect, a scene change), instead of an empty ring. */
+    export let fallbackName: string | undefined = undefined;
+
+    let resolved = false;
+    $: initial = fallbackName && !resolved ? fallbackName.charAt(0) : "";
 </script>
 
 <!-- The person's front-facing Woka, the picture the People list shows, in a round frame with the violet ring. -->
@@ -12,10 +18,16 @@
         ? 'h-[30px] w-[30px]'
         : 'h-11 w-11'}"
     class:small
+    style:background-color={initial && fallbackName ? getColorByString(fallbackName) : undefined}
     aria-hidden="true"
 >
+    {#if initial}
+        <span class="font-bold uppercase text-white {small ? 'text-xs' : 'text-base'}" data-testid="follow-woka-initial"
+            >{initial}</span
+        >
+    {/if}
     {#key userId}
-        <WokaFromUserId {userId} placeholderSrc="" customWidth={small ? "30px" : "44px"} />
+        <WokaFromUserId bind:resolved {userId} placeholderSrc="" customWidth={small ? "30px" : "44px"} />
     {/key}
 </span>
 

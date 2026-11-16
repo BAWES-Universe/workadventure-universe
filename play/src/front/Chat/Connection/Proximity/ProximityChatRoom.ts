@@ -125,6 +125,8 @@ export interface ProximityChatParticipant {
     readonly bot: boolean;
     /** Their chat account, which gives them their colour from People. */
     readonly chatId?: string;
+    /** Their account's id, which tells another tab or device of your own account from someone else (a call's walk-up). */
+    readonly uuid?: string;
 }
 
 /**
@@ -1787,6 +1789,7 @@ export class ProximityChatRoom implements ChatRoom {
                         pictureStore: user.pictureStore,
                         bot: isBotUser(user),
                         chatId: user.chatID,
+                        uuid: user.uuid,
                     }))
             );
             if (!hasUserInProximityChat && users.size > 1) {

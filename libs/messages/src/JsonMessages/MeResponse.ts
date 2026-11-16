@@ -17,6 +17,10 @@ export const MeSuccessResponse = extendApi(
             description:
                 "The email of the user.",
         }),
+        userId: extendApi(z.string().optional(), {
+            description:
+                "The admin's own id for the user (never an email or a name). The game gives it, and only it, to its analytics to tell who the user is. Missing when the admin has none to give.",
+        }),
         username: extendApi(z.string().nullable().optional(), {
             description:
                 "The name of the Woka.",
