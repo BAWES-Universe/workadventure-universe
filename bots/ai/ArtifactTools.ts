@@ -15,7 +15,8 @@ import type {
     ArtifactReachCall,
     ArtifactSummary,
 } from '../server/AdminApiService';
-import { ArtifactCallError } from '../server/AdminApiService';
+import { ArtifactCallError, isUnknownField } from '../server/AdminApiService';
+import { ASK_IN_PRIVATE } from './PrivateAnswers';
 import { MediaFetchError, fetchMedia, mediaFileName, type TurnMedia } from './ArtifactMedia';
 import { FIND_FILES_TOOL } from './FileTools';
 
@@ -227,6 +228,11 @@ export interface ArtifactContext {
     chat: ArtifactChat;
     /** The artifacts the person pointed at in their own words (a pasted link, a card they replied to): read and change may reach these even when another bot made them (game #1781). */
     referencedArtifactIds?: string[];
+    /**
+     * Other people in the bubble or meeting room read this reply (game #1993): read, change and the list reach only what
+     * the chat shares with all of them. Never a "Just you", and nothing the person has in another chat.
+     */
+    everyoneHere?: boolean;
     /** How long a make or a change may take to save, from the super admin's "Time to save" (Orbit #666). */
     saveTimeoutMs?: number;
     /** This turn's songs, images and videos the page may carry (#1510), and how much they may come to together. */
@@ -451,11 +457,20 @@ export function writesArtifact(name: string): boolean {
 }
 
 /** What the model hears when Orbit says no, in words it can pass on. Never the content. */
-export function describeArtifactError(error: unknown): string {
+export function describeArtifactError(error: unknown, everyoneHere = false): string {
     if (error instanceof ArtifactCallError) {
+        // An Orbit from before it could answer for a reply other people read (#1993): nothing is opened in front of them
+        if (everyoneHere && isUnknownField(error)) return "Artifacts can't be opened while other people are here yet. Say so in one short line.";
         switch (error.code) {
             case 'not_found':
+                if (everyoneHere) return `That artifact isn't here, or it isn't shared with everyone here. ${ASK_IN_PRIVATE}`;
                 return "That artifact isn't here, or this person can't open it.";
+            // "Just you" (#1994): its card is in this chat, so to the person alone, saying it is private tells nothing new.
+            // In front of other people the card may be one they were never shown, so the words are the same as for one
+            // that is not here at all (#1993)
+            case 'kept_private':
+                if (everyoneHere) return `That artifact isn't here, or it isn't shared with everyone here. ${ASK_IN_PRIVATE}`;
+                return "Its owner keeps this one private, so it can't be opened here. Say so in one short line.";
             case 'change_not_allowed':
                 return "The owner hasn't allowed changes from this person. Say so kindly; they can ask the owner, or make their own copy.";
             case 'not_allowed':
@@ -495,10 +510,18 @@ export function describeArtifactError(error: unknown): string {
     return "Couldn't do that right now. Say so simply and offer to try again.";
 }
 
-/** Who asks and where, and the artifacts the person pointed at, for a call that opens one by id. */
-function reachOf(context: Pick<ArtifactContext, 'botId' | 'person' | 'chat' | 'referencedArtifactIds'>): { call: ArtifactCall; reach: ArtifactReachCall } {
+/**
+ * Who asks and where, for making one (`call`); with whether other people read the reply, for the list (`list`); and with
+ * the artifacts the person pointed at too, for a call that opens one by id (`reach`).
+ */
+function reachOf(context: Pick<ArtifactContext, 'botId' | 'person' | 'chat' | 'referencedArtifactIds' | 'everyoneHere'>): {
+    call: ArtifactCall;
+    list: ArtifactCall & { everyoneHere?: boolean };
+    reach: ArtifactReachCall;
+} {
     const call: ArtifactCall = { botId: context.botId, person: context.person, chat: context.chat };
-    return { call, reach: { ...call, ...(context.referencedArtifactIds?.length ? { referencedArtifactIds: context.referencedArtifactIds } : {}) } };
+    const list = { ...call, ...(context.everyoneHere ? { everyoneHere: true } : {}) };
+    return { call, list, reach: { ...list, ...(context.referencedArtifactIds?.length ? { referencedArtifactIds: context.referencedArtifactIds } : {}) } };
 }
 
 /**
@@ -508,20 +531,20 @@ function reachOf(context: Pick<ArtifactContext, 'botId' | 'person' | 'chat' | 'r
  */
 export async function artifactCardAgain(
     id: string,
-    context: Pick<ArtifactContext, 'admin' | 'botId' | 'person' | 'chat' | 'referencedArtifactIds'>
+    context: Pick<ArtifactContext, 'admin' | 'botId' | 'person' | 'chat' | 'referencedArtifactIds' | 'everyoneHere'>
 ): Promise<ArtifactToolRun> {
     try {
         const read = await context.admin.readArtifact(id, reachOf(context).reach);
         const card = cardOf(read.artifact, read.version.number);
         return { result: { sent: true, artifact: { id: card.id, title: card.title, kind: card.kind, version: card.version } }, card };
     } catch (error) {
-        return { result: { error: describeArtifactError(error) } };
+        return { result: { error: describeArtifactError(error, context.everyoneHere === true) } };
     }
 }
 
 /** Runs one artifact tool for one person in one chat. Never throws: a failure comes back as `{ error }` for the model. */
 export async function runArtifactTool(name: string, args: Record<string, unknown>, context: ArtifactContext): Promise<ArtifactToolRun> {
-    const { call, reach } = reachOf(context);
+    const { call, list, reach } = reachOf(context);
     try {
         switch (name) {
             case MAKE_ARTIFACT_TOOL: {
@@ -592,7 +615,7 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                 };
             }
             case LIST_ARTIFACTS_TOOL: {
-                const listed = await context.admin.listArtifactsInChat(call);
+                const listed = await context.admin.listArtifactsInChat(list);
                 return {
                     result: {
                         artifacts: listed.artifacts.map((artifact) => ({
@@ -610,7 +633,7 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
         }
     } catch (error) {
         if (error instanceof MediaArgError) return { result: { error: `${error.message} Nothing was saved.` } };
-        return { result: { error: describeArtifactError(error) } };
+        return { result: { error: describeArtifactError(error, context.everyoneHere === true) } };
     }
 }
 

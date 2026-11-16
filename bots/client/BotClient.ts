@@ -39,6 +39,7 @@ import type { ChatUpload, SentMedia } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
+import { sanitizedError } from '../utils/sanitizedError';
 import { VoiceCalls } from '../voice/VoiceCalls';
 import { WorkerLink } from '../voice/VoiceLink';
 import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
@@ -53,9 +54,14 @@ import { tidyTranscript } from '../voice/NoteHearing';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
+import { SpaceAudience } from './SpaceAudience';
+import type { Heard } from '../memory/Heard';
 import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
+import { isGreetingReply } from './GreetingReply';
+import { ReplyReaders } from './ReplyReaders';
+import { isCallSpaceName } from '../../libs/shared-utils/src/Space/callSpaceName';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -76,14 +82,34 @@ export interface BotConfig {
     companionTextureId?: string;
     token?: string;
     uploaderUrl?: string;
+    /**
+     * A call-only connection (game #2004): the bot is not in the room at all. It has no body on the map and joins
+     * nothing but the private space of the one call it was opened for. Only a person's call to a bot that is not
+     * there in person uses it.
+     */
+    callOnly?: boolean;
 }
 
 /** Uploads remembered for matching a sent file with the tool that made it. */
 const MAX_UPLOADED_FROM = 500;
+/** How many people's chat addresses a bot keeps at once: more than are ever in a world with it. */
+const MAX_CHAT_IDS = 2000;
+/** The space everyone in the world is in. */
+const WORLD_SPACE = 'allWorldUser';
+/** What the pusher starts the space user id of a call-only connection with (it has no room number). */
+const CALL_ONLY_SPACE_USER_PREFIX = 'call_';
+
+/** A view wide enough for any map: the whole room. */
+const WHOLE_ROOM_RADIUS = 100_000;
 
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
+    /**
+     * The same, by room: user ids are only unique within a room, so "is this user a bot" about someone in a given room is
+     * answered from the bots that joined that room, never from the numbers of every room together.
+     */
+    private static botUserIdsByRoom: Map<string, Set<number>> = new Map();
     /** Max URLs extracted from a single chat message (bounds downstream classification/sniffing). */
     private static readonly MAX_CHAT_URLS = 10;
     
@@ -117,6 +143,15 @@ export class BotClient {
     private pendingMessages: ClientToServerMessage[] = [];
     private static readonly MAX_PENDING_MESSAGES = 100;
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
+    /** Everyone else in each space the bot is in, people, guests and bots alike (#1993): who would read a reply there. */
+    private readonly audience = new SpaceAudience();
+    /** Who each reply is delivered to: one written for someone alone with the bot reaches nobody who walks up meanwhile (#1993). */
+    private readonly readers = new ReplyReaders();
+    /**
+     * By player: their chat address, as the game's server vouches for it (a browser cannot claim someone else's). It is
+     * where the one copy of an answer only they saw is kept, in their direct messages with this bot (#1993).
+     */
+    private readonly chatIds = new Map<number, string>();
     /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
     private voice: VoiceCalls | null = null;
     /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
@@ -164,6 +199,12 @@ export class BotClient {
 
     // Callback invoked when WebSocket unexpectedly disconnects (not during initial connection)
     public onDisconnect?: () => void;
+    /** A call-only connection: the person who called is no longer in the call's space, so the call is over. */
+    public onCallOver?: (spaceName: string) => void;
+    /** A call-only client sees the caller in its call space (they came in, or were already there). */
+    public onCallJoined?: (spaceName: string) => void;
+    /** The caller's own space user id in each call space this client is in (#2004). */
+    private callerIds: Map<string, string> = new Map();
 
     /**
      * Who the bot listens to when others are in the bubble (#1220): the person who says its name, who summoned it, or
@@ -203,6 +244,8 @@ export class BotClient {
 
     /** The numeric player id in a space user id ("roomID_userID"), or 0. */
     private static playerIdOf(spaceUserId: string | undefined): number {
+        // A call-only connection has no room number: what follows its "call_" is a random id, never a player
+        if (spaceUserId?.startsWith(CALL_ONLY_SPACE_USER_PREFIX)) return 0;
         const at = spaceUserId?.lastIndexOf('_') ?? -1;
         const id = at === -1 ? NaN : Number.parseInt(spaceUserId!.substring(at + 1), 10);
         return Number.isNaN(id) ? 0 : id;
@@ -222,6 +265,13 @@ export class BotClient {
         return Array.from(BotClient.botUserIds);
     }
 
+    /** The tag that names the person a visiting Brick walks with, for the game's caption under its name (#2005). */
+    private visitingTag(): string[] {
+        const visiting = this.fullConfig?.brick?.visiting;
+        const name = visiting?.ownerName?.replace(/\s+/g, ' ').trim().slice(0, 40);
+        return name ? [`visiting:${name}`] : [];
+    }
+
     /**
      * Generate a JWT token for this bot
      */
@@ -234,7 +284,8 @@ export class BotClient {
             identifier: botIdentifier,
             username: this.config.name,
             // A voice bot is the only kind of bot the game opens an audio connection with
-            tags: this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot'],
+            // `visiting:<name>` makes the map say who a visiting Brick walks with (#2005)
+            tags: [...(this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot']), ...this.visitingTag()],
         };
         
         return jwt.sign(tokenData, SECRET_KEY, { expiresIn: '30d' });
@@ -277,6 +328,7 @@ export class BotClient {
             params.set('cameraState', 'false');
             params.set('microphoneState', 'false');
             params.set('screenSharingState', 'false');
+            if (this.config.callOnly) params.set('callOnly', 'true');
 
             // Generate bot token for authentication
             const token = this.config.token || this.generateBotToken();
@@ -294,6 +346,12 @@ export class BotClient {
                     console.log(`[Bot ${this.config.botId}] Connected successfully`);
                 }
                 this.connected = true;
+                if (this.config.callOnly) {
+                    // The server never says the bot joined a room, because it joins none: it is ready once the socket is
+                    // open, and its voice (the only reason for the call) starts now
+                    this.markJoined();
+                    this.startVoice();
+                }
                 resolve();
             });
 
@@ -338,9 +396,16 @@ export class BotClient {
      */
     disconnect(): void {
         this.stopVoice();
+        // Gone from every space: who is in them is no longer known
+        this.audience.reset();
+        this.readers.reset();
+        this.chatIds.clear();
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
+            const here = BotClient.botUserIdsByRoom.get(this.config.roomUrl);
+            here?.delete(this.userId);
+            if (here?.size === 0) BotClient.botUserIdsByRoom.delete(this.config.roomUrl);
         }
         
         if (this.ws) {
@@ -386,6 +451,8 @@ export class BotClient {
     private async mayChat(spaceName: string, senderId: number, message: object): Promise<boolean> {
         // A meeting room's chat is not the bot's to answer: there the bot only takes part in the audio
         if (this.isMeetingSpace(spaceName)) return false;
+        // A call was allowed by Orbit's "Call" rule when it was started (and only that person is in it)
+        if (isCallSpaceName(spaceName)) return true;
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         // Someone's first words can arrive just before the game says who they are: asking Orbit now would take a
@@ -429,6 +496,8 @@ export class BotClient {
         person: Parameters<BotAccessGate['check']>[2]
     ): Promise<BotAccessVerdict> {
         try {
+            // A Brick that walks beside its owner, or lives in a room (#2005), is asked about from the room it is in
+            if (this.fullConfig?.brick?.visiting || this.fullConfig?.brick?.home) return await gate.check(this.config.botId, 'chat', person, this.config.name, this.config.roomUrl);
             return await gate.check(this.config.botId, 'chat', person, this.config.name);
         } catch (error) {
             // The gate does not throw; if that ever changes, a failed check must not let a chat through
@@ -441,13 +510,17 @@ export class BotClient {
      * Whether the bot may greet this person with its AI: the same answer as for chatting with it nearby, asked before
      * anything is generated. A person who is refused hears the owner's line once per visit (shared with mayChat, so a
      * greeting and a message do not both say it) and gets no greeting. When Orbit cannot answer and nothing is
-     * remembered there is no greeting; their first words get the "can't check" line. Never throws.
+     * remembered there is no greeting; their first words get the "can't check" line. A greeting is free for the person and text
+     * only (see GreetingReply), so a person who may chat is greeted each time they come, whatever replies they have left. Never throws.
      */
     async mayGreet(spaceName: string, personId: number): Promise<boolean> {
+        // A call is for talking: a written greeting would land in a space no chat shows
+        if (isCallSpaceName(spaceName)) return false;
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(personId));
-        if (verdict.kind === 'allowed') return this.greetingWithinAllowance(personId);
+        // A greeting is free for the person (it is never counted against their replies), so it is not held back by them
+        if (verdict.kind === 'allowed') return true;
         if (verdict.kind === 'refused') {
             const toldAt = this.toldNoChat.get(personId);
             if (toldAt === undefined || Date.now() - toldAt >= BotClient.TOLD_NO_CHAT_FOR_MS) {
@@ -456,20 +529,6 @@ export class BotClient {
             }
         }
         return false;
-    }
-
-    /**
-     * A voice bot greets only while replies beyond the ones kept for text are left (#1669): a greeting is a Universe AI reply nobody
-     * asked for. A greeting that isn't made says nothing. Every other bot is as it was. Never throws.
-     */
-    private async greetingWithinAllowance(personId: number): Promise<boolean> {
-        if (!this.isVoiceBot() || !this.behavior) return true;
-        try {
-            return await this.behavior.mayGreetWithinAllowance(personId);
-        } catch (error) {
-            console.warn(`[Bot ${this.config.botId}] Could not check the allowance for a greeting, greeting anyway: ${error instanceof Error ? error.message : 'unknown'}`);
-            return true;
-        }
     }
 
     /**
@@ -1482,6 +1541,8 @@ export class BotClient {
             this.voice?.spaceLeft(spaceName);
             this.speech?.spaceLeft(spaceName);
             this.attention.spaceLeft(spaceName);
+            this.audience.spaceLeft(spaceName);
+            this.readers.spaceLeft(spaceName);
             const wasMeeting = this.isMeetingSpace(spaceName);
             await this.emitLeaveSpace(spaceName);
             this.spaces.delete(spaceName);
@@ -1505,9 +1566,9 @@ export class BotClient {
     }
 
     /**
-     * Send chat message to space
+     * Send chat message to space. `only`: the one person it is for (see `toOnly`); left out, everyone in the space.
      */
-    sendChatMessage(spaceName: string, message: string): void {
+    sendChatMessage(spaceName: string, message: string, only?: number): void {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1515,9 +1576,11 @@ export class BotClient {
             }
             return;
         }
+        const to = this.toOnly(spaceName, only);
+        if (!to) return;
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] Sending chat message to space ${spaceName}: "${message}"`);
+            console.log(`[Bot ${this.config.botId}] Sending chat message to space ${spaceName} (${message.length} characters)`);
         }
 
         // Chat messages are sent via PublicEvent with spaceMessage, not updateSpaceUserMessage
@@ -1536,6 +1599,7 @@ export class BotClient {
                                 galleryUrls: [],
                                 fileNames: [],
                                 voiceWaveform: [],
+                                ...to,
                             },
                         },
                     },
@@ -1719,6 +1783,17 @@ export class BotClient {
      * to the uploader's /upload-file endpoint with the BOT_SERVICE_TOKEN header.
      * Returns the CDN location and inferred media type.
      */
+    /**
+     * Asked once the file is uploaded and before it goes into the space (#1993): a file for everyone here is not sent
+     * when someone has walked up while it was uploaded. The error says so (`_heldBack`), and nothing was sent.
+     */
+    private static heldBack(mayGo: (() => boolean) | undefined): void {
+        if (!mayGo || mayGo()) return;
+        const err = new Error('Someone joined before the file could be sent');
+        (err as any)._heldBack = true;
+        throw err;
+    }
+
     private async uploadMedia(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
         const uploaderUrl = this.config.uploaderUrl || process.env.UPLOADER_URL;
         if (!uploaderUrl) {
@@ -1808,11 +1883,12 @@ export class BotClient {
      * Send an image to a space.
      * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
      */
-    async sendImage(spaceName: string, url: string, alt?: string, asker?: number, mimeType?: string): Promise<string> {
+    async sendImage(spaceName: string, url: string, alt?: string, asker?: number, mimeType?: string, only?: number, mayGo?: () => boolean): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '', undefined, asker)) {
+            BotClient.heldBack(mayGo);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '', undefined, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send image`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1834,11 +1910,12 @@ export class BotClient {
     /**
      * Send a file to a space.
      */
-    async sendFile(spaceName: string, url: string, filename?: string, asker?: number, mimeType?: string): Promise<string> {
+    async sendFile(spaceName: string, url: string, filename?: string, asker?: number, mimeType?: string, only?: number, mayGo?: () => boolean): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename, asker)) {
+            BotClient.heldBack(mayGo);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1860,17 +1937,18 @@ export class BotClient {
     /**
      * Send audio to a space.
      */
-    async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string): Promise<string> {
+    async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string, only?: number, mayGo?: () => boolean): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mimeType: uploadedType } = await this.uploadMedia(url, mimeHint);
+            BotClient.heldBack(mayGo);
             // A song with no usable name would show as a plain player: give it one that ends as audio.
             // When nothing says which audio type it is (a stored link is a bare id, with no type), mp3 is the common one,
             // and the message still goes out as audio, not as a file the card would not play.
             const audioType = [mimeHint, uploadedType].find((one) => one?.startsWith('audio/')) ?? 'audio/mpeg';
             const fileName = audioFileNameFor(location, audioType);
             const sentType = uploadedType.startsWith('audio/') ? uploadedType : audioType;
-            if (!this.sendMediaMessage(spaceName, location, 'audio', sentType, undefined, fileName, asker)) {
+            if (!this.sendMediaMessage(spaceName, location, 'audio', sentType, undefined, fileName, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = 'audio';
@@ -1892,11 +1970,12 @@ export class BotClient {
     /**
      * Send video to a space.
      */
-    async sendVideo(spaceName: string, url: string, asker?: number, mimeType?: string): Promise<string> {
+    async sendVideo(spaceName: string, url: string, asker?: number, mimeType?: string, only?: number, mayGo?: () => boolean): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
+            BotClient.heldBack(mayGo);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1982,9 +2061,10 @@ export class BotClient {
     }
 
     /**
-     * Send a media message to a space via publicEvent spaceMessage.
+     * Send a media message to a space via publicEvent spaceMessage. `only`: the one person it is for (see `toOnly`);
+     * left out, everyone in the space.
      */
-    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string, asker?: number): boolean {
+    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string, asker?: number, only?: number): boolean {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1992,6 +2072,8 @@ export class BotClient {
             }
             return false;
         }
+        const to = this.toOnly(spaceName, only);
+        if (!to) return false;
 
         this.send({
             message: {
@@ -2012,13 +2094,14 @@ export class BotClient {
                                 fileNames: [],
                                 fileName,
                                 voiceWaveform: [],
+                                ...to,
                             },
                         },
                     },
                 },
             },
         });
-        this.mediaSent(spaceName, asker, [{ url, mediaType, mimeType, caption, fileName }]);
+        this.mediaSent(spaceName, asker, [{ url, mediaType, mimeType, caption, fileName }], only !== undefined);
         return true;
     }
 
@@ -2027,7 +2110,7 @@ export class BotClient {
      * The first image goes in the `url` field (backwards compatible), and
      * additional images go in `galleryUrls`. The caption appears below the grid.
      */
-    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[], asker?: number): boolean {
+    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[], asker?: number, only?: number): boolean {
         if (urls.length === 0) return false;
 
         const spaceUserId = this.spaces.get(spaceName);
@@ -2037,6 +2120,8 @@ export class BotClient {
             }
             return false;
         }
+        const to = this.toOnly(spaceName, only);
+        if (!to) return false;
 
         const firstUrl = urls[0];
         const extraUrls = urls.slice(1);
@@ -2060,13 +2145,14 @@ export class BotClient {
                                 galleryUrls: extraUrls,
                                 fileNames: fileNames ?? [],
                                 voiceWaveform: [],
+                                ...to,
                             },
                         },
                     },
                 },
             },
         });
-        this.mediaSent(spaceName, asker, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })));
+        this.mediaSent(spaceName, asker, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })), only !== undefined);
         return true;
     }
 
@@ -2085,11 +2171,13 @@ export class BotClient {
     /**
      * Files the bot sent, for the list of files (#1508): theirs, for `asker`, the person whose reply sent them. Every
      * reply passes its own, so two replies at once never swap files; a send with no asker (not from a reply) isn't kept.
+     * `toThemAlone`: nobody else was sent them (#1993), whoever is in the space.
      */
-    private mediaSent(spaceName: string, asker: number | undefined, items: SentMedia[]): void {
+    private mediaSent(spaceName: string, asker: number | undefined, items: SentMedia[], toThemAlone = false): void {
         if (asker === undefined || !this.behavior) return;
         try {
-            this.behavior.onBotMediaSent(spaceName, asker, items);
+            if (toThemAlone) this.behavior.onBotMediaSent(spaceName, asker, items, true);
+            else this.behavior.onBotMediaSent(spaceName, asker, items);
         } catch (error) {
             // Keeping the file never stops it being sent
             console.warn(`[Bot ${this.config.botId}] Could not keep a sent file:`, (error as Error)?.message ?? error);
@@ -2135,9 +2223,11 @@ export class BotClient {
         }
 
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] Sending stream chunk to space ${spaceName}: token="${token.substring(0, 30)}", isFinal=${isFinal}`);
+            console.log(`[Bot ${this.config.botId}] Sending stream chunk to space ${spaceName} (${token.length} characters), isFinal=${isFinal}`);
         }
 
+        // A reply written for someone alone with the bot is delivered to them and nobody else, to its last piece (#1993)
+        const onlyFor = this.readerOf(spaceName, responseId);
         this.send({
             message: {
                 $case: 'publicEvent',
@@ -2156,20 +2246,116 @@ export class BotClient {
                                 reset: reset ?? false,
                                 ...(steps !== undefined ? { steps } : {}),
                                 ...(mood ? { mood } : {}),
+                                ...(onlyFor ? { onlyFor } : {}),
                             },
                         },
                     },
                 },
             },
         });
-        // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error
+        // A greeting the bot made on its own is never a voice reply: it stays in the chat, so it is not spoken and never counts as a
+        // spoken reply
+        if (isGreetingReply(responseId)) return;
+        // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error.
+        // A reply written for one person is said to that person and nobody else, also when someone else is here by now:
+        // the voice is handed their name with it, and does not say it at all when it cannot keep it to them (#1993)
         if (this.speech && steps === undefined && !isError) {
             if (isFinal) {
-                if (finalContent) this.speech.final(spaceName, responseId, finalContent);
+                if (finalContent) {
+                    if (onlyFor === undefined) this.speech.final(spaceName, responseId, finalContent);
+                    else this.speech.final(spaceName, responseId, finalContent, onlyFor);
+                }
             } else if (token) {
                 this.speech.begin(responseId);
             }
         }
+    }
+
+    /**
+     * A reply for this person starts (#1993). `alone` is the answer the reply was built on: with nobody else in the space,
+     * every piece of it goes to that person and nobody else, also when someone walks up while it is being written.
+     */
+    replyStarts(spaceName: string, playerId: number, alone: boolean): void {
+        this.readers.starts(spaceName, playerId, alone);
+    }
+
+    /** Whether this person is alone with the bot in this space right now. Not when the bot cannot tell. */
+    private aloneWith(spaceName: string, playerId: number | undefined): boolean {
+        return playerId !== undefined && this.othersWith(spaceName, playerId)?.length === 0;
+    }
+
+    /** The one reader a reply is delivered to (their space user id), or undefined when it is for everyone in the space. */
+    private readerOf(spaceName: string, responseId: string): string | undefined {
+        return this.readers.readerOf(spaceName, responseId, {
+            alone: (playerId) => this.aloneWith(spaceName, playerId),
+            spaceUserIdOf: (playerId) => this.spaceUserIdOf(spaceName, playerId),
+        });
+    }
+
+    /** A person's id in this space, from the bot's own id there. Undefined when the bot is not in the space. */
+    private spaceUserIdOf(spaceName: string, playerId: number): string | undefined {
+        // In a call the bot's own id is a call-only one, which says nothing of the caller's: the caller's own id is used
+        if (this.config.callOnly && isCallSpaceName(spaceName)) return this.callerIds.get(spaceName);
+        const mine = this.spaces.get(spaceName);
+        const cut = mine?.lastIndexOf('_') ?? -1;
+        return mine && cut >= 0 ? `${mine.slice(0, cut)}_${playerId}` : undefined;
+    }
+
+    /**
+     * Who a message the bot sends with a reply is delivered to (#1993): a picture, a file, a card. `only` is the person
+     * the reply was written for when they were alone with the bot as it started. The game server then delivers the
+     * message to them and nobody else, so someone who walks up meanwhile is not sent it. Left out: everyone in the
+     * space. Null when that person cannot be named, and the message is then not sent at all.
+     */
+    private toOnly(spaceName: string, only: number | undefined): { onlyFor?: string } | null {
+        if (only === undefined) return {};
+        const onlyFor = this.spaceUserIdOf(spaceName, only);
+        return onlyFor ? { onlyFor } : null;
+    }
+
+    private onlyForOf(spaceName: string, responseId: string): { onlyFor?: string } {
+        const onlyFor = this.readerOf(spaceName, responseId);
+        return onlyFor ? { onlyFor } : {};
+    }
+
+    /**
+     * Someone came into the space (#1993). A reply written for one person alone goes on being said to that person: the
+     * voice sends it to them and nobody else, so the newcomer is sent none of it. Only a voice that speaks to the whole
+     * bubble (a worker from before) stops what it is saying of such a reply, because the newcomer would hear it. The
+     * reply stays whole in that person's chat, with a line that says why the voice stopped.
+     */
+    private hushRepliesForOne(spaceName: string, newcomer: string | undefined): void {
+        if (!this.speech || !newcomer || newcomer === this.spaces.get(spaceName)) return;
+        if (this.voice?.keepsToOne(spaceName) !== false) return;
+        for (const responseId of this.readers.forOneReaderIn(spaceName)) {
+            if (this.readerOf(spaceName, responseId) === newcomer) continue;
+            const how = this.speech.hush(spaceName, responseId);
+            if (how) this.sendKeptQuiet(spaceName, responseId, how);
+        }
+    }
+
+    /**
+     * Tells the one person a reply was written for that it was not said out loud (`unsaid`), or that its voice stopped
+     * part-way (`stopped`), so that nobody else hears it (#1993). The reply is in their chat in full; this is the one
+     * line under it. Sent to that person and nobody else, like the reply.
+     */
+    private sendKeptQuiet(spaceName: string, responseId: string, keptQuiet: 'unsaid' | 'stopped'): void {
+        const to = this.onlyForOf(spaceName, responseId);
+        if (!to.onlyFor) return;
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceStreamMessage',
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, keptQuiet, ...to },
+                        },
+                    },
+                },
+            },
+        });
     }
 
     /** Says a voice bot's reply was cut off by someone speaking: the message in everyone's chat is marked (#1665). */
@@ -2182,7 +2368,7 @@ export class BotClient {
                     spaceEvent: {
                         event: {
                             $case: 'spaceStreamMessage',
-                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, stoppedBySpeech: true },
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, stoppedBySpeech: true, ...this.onlyForOf(spaceName, responseId) },
                         },
                     },
                 },
@@ -2200,7 +2386,7 @@ export class BotClient {
                     spaceEvent: {
                         event: {
                             $case: 'spaceStreamMessage',
-                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking },
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking, ...this.onlyForOf(spaceName, responseId) },
                         },
                     },
                 },
@@ -2275,12 +2461,9 @@ export class BotClient {
      * to that person in the bot's nearby chat; the pusher passes it on only when a bot sends it.
      */
     sendReplyLimitCard(spaceName: string, playerId: number, card: { limit: string; resetsAt: string; who: string }): void {
-        const spaceUserId = this.spaces.get(spaceName);
-        if (!spaceUserId) return;
-        // A space user id is "<room>_<user id>": the person's is the bot's with their own user id at the end
-        const cut = spaceUserId.lastIndexOf('_');
-        if (cut < 0) return;
-        const receiverUserId = `${spaceUserId.slice(0, cut)}_${playerId}`;
+        // The person's own id in this space (in a call, the caller's, not the bot's call-only one)
+        const receiverUserId = this.spaceUserIdOf(spaceName, playerId);
+        if (!receiverUserId) return;
         this.send({
             message: {
                 $case: 'privateEvent',
@@ -2304,11 +2487,9 @@ export class BotClient {
      * bot is not in that space, so nothing was sent.
      */
     sendAskEvent(spaceName: string, playerId: number, event: { kind: 'card' | 'reply'; id: string; revision: number; body: string }): boolean {
-        const spaceUserId = this.spaces.get(spaceName);
-        if (!spaceUserId) return false;
-        const cut = spaceUserId.lastIndexOf('_');
-        if (cut < 0) return false;
-        this.sendPrivateEvent(spaceName, `${spaceUserId.slice(0, cut)}_${playerId}`, {
+        const receiverUserId = this.spaceUserIdOf(spaceName, playerId);
+        if (!receiverUserId) return false;
+        this.sendPrivateEvent(spaceName, receiverUserId, {
             $case: 'botAsk',
             botAsk: { botId: this.config.botId, botName: this.config.name, ...event },
         });
@@ -2379,8 +2560,9 @@ export class BotClient {
         if (this.isMeetingSpace(spaceName)) return false;
         if (this.accessGate && !(await this.chatAllowed(this.accessGate, spaceName, playerId))) return false;
         this.behavior.onChatMessage(spaceName, text, playerId).catch((error) => {
-            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer:`, error);
-            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer: ${error?.name ?? 'Error'}`);
+            Sentry.captureException(sanitizedError(error, `onChatMessage failed for a card answer (${error?.name ?? 'Error'})`));
         });
         return true;
     }
@@ -2388,6 +2570,33 @@ export class BotClient {
     /** Whether this person is in a bubble the bot sees: a card is for people in one, and nobody else. */
     inBubble(playerId: number): boolean {
         return this.getBubbleUserIds(playerId) !== undefined;
+    }
+
+    /**
+     * Everyone else who is in this space with the bot and this person right now, by who they are (#1993): people, guests
+     * and other bots alike, and nobody when the person is alone with the bot. Room membership only, never distance.
+     * Undefined when the bot is not in the space or was told nothing about it: it cannot say who would read a reply
+     * there, and the caller takes that as other people being there.
+     */
+    othersWith(spaceName: string, playerId: number): string[] | undefined {
+        const mine = this.spaces.get(spaceName);
+        if (!mine) return undefined;
+        return this.audience.others(spaceName, (spaceUserId) => spaceUserId === mine || BotClient.playerIdOf(spaceUserId) === playerId);
+    }
+
+    /** Where a line said in this space right now is heard, and by whom, for what the bot remembers (#1993). */
+    heardIn(spaceName: string, playerId: number): Heard | undefined {
+        const others = this.othersWith(spaceName, playerId);
+        return others ? { place: 'nearby', with: others } : undefined;
+    }
+
+    /**
+     * Where what the bot itself just said to this person is heard (#1993). A reply that went to them alone was read by
+     * nobody else, whoever has walked up while it was written, so it is remembered as said with nobody else there.
+     */
+    saidIn(spaceName: string, playerId: number): Heard | undefined {
+        if (this.readers.wentToThemAlone(spaceName, playerId)) return this.spaces.has(spaceName) ? { place: 'nearby', with: [] } : undefined;
+        return this.heardIn(spaceName, playerId);
     }
 
     /**
@@ -2402,7 +2611,31 @@ export class BotClient {
         if (!sender || !me || event.receiverUserId !== me || sender.spaceUserId === me || isBotSpaceUser(sender)) return;
         const playerId = BotClient.playerIdOf(sender.spaceUserId);
         if (!playerId) return;
+        this.noteChatId(event.spaceName, sender, false);
         this.asks.tap(this, event.spaceName, playerId, inner.botAskAnswer);
+    }
+
+    /**
+     * What the game says a person's chat address is. `joined`: they just came into this space, or were listed in it. In
+     * the space the whole world is in, that is someone new under this number, so one without an address has none.
+     */
+    private noteChatId(spaceName: string, user: { spaceUserId?: string; chatID?: string } | undefined, joined: boolean): void {
+        const playerId = BotClient.playerIdOf(user?.spaceUserId);
+        if (!playerId || playerId === this.userId) return;
+        const chatId = user?.chatID?.trim();
+        if (chatId) {
+            this.chatIds.delete(playerId);
+            this.chatIds.set(playerId, chatId);
+            if (this.chatIds.size > MAX_CHAT_IDS) this.chatIds.delete(this.chatIds.keys().next().value as number);
+        } else if (joined && spaceName === WORLD_SPACE) {
+            // A number the game gave to someone new: never the address of whoever had it before
+            this.chatIds.delete(playerId);
+        }
+    }
+
+    /** This person's chat address, or undefined for a guest and for someone the game has not vouched for yet. */
+    chatIdOf(playerId: number): string | undefined {
+        return this.chatIds.get(playerId);
     }
 
     /**
@@ -2498,7 +2731,8 @@ export class BotClient {
         // Anybody in the room, whether or not they have come close enough to the bot to be in one of its spaces.
         const seenInRoom = [...this.players.values()].find((candidate) => candidate.uuid === uuid);
         const userId = seenInRoom?.userId ?? this.behavior?.getUserIdForUuid(uuid);
-        if (userId === undefined || BotClient.isBot(userId)) {
+        // A bot of this room only: the same number in another room is someone else (the numbers are per room)
+        if (userId === undefined || BotClient.botUserIdsByRoom.get(this.config.roomUrl)?.has(userId) === true) {
             return undefined;
         }
         const player = this.players.get(userId);
@@ -2601,13 +2835,14 @@ export class BotClient {
 
     /**
      * Hears a voice note and tells everyone who got it, so each shows "Listening…" and then the words under the note (or that it could
-     * not be heard). Returns the words for the bot, or 'unheard' when there are none to give: the bot then does not answer a file it
+     * not be heard). Returns the words for the bot, '' when the person's replies are used up (the note goes on as before and the reply path shows the limit card), or 'unheard' when there are none to give: the bot then does not answer a file it
      * cannot read.
      */
     private async hearNearbyNote(
         spaceName: string,
         senderUserId: string,
-        spaceMessage: { id?: string; url?: string; fileName?: string; voiceDurationMs?: number }
+        spaceMessage: { id?: string; url?: string; fileName?: string; voiceDurationMs?: number },
+        sender: { userId?: string; isGuest?: boolean } = {}
     ): Promise<string> {
         const hearing = sharedNoteHearing(adminApiService);
         const id = spaceMessage.id;
@@ -2615,12 +2850,20 @@ export class BotClient {
         // and are saved for them only
         if (!hearing || !id || !senderUserId || !spaceMessage.url) return 'unheard';
         const note = { messageId: id, senderUserId };
-        this.sendTranscript(spaceName, note, 'listening');
-        const heard = await hearing.hear(this.config.botId, `${spaceName}|${senderUserId}|${id}`, {
-            url: spaceMessage.url,
-            filename: spaceMessage.fileName ?? 'Voice message',
-            ...(spaceMessage.voiceDurationMs ? { seconds: spaceMessage.voiceDurationMs / 1000 } : {}),
-        });
+        const heard = await hearing.hear(
+            this.config.botId,
+            `${spaceName}|${senderUserId}|${id}`,
+            {
+                url: spaceMessage.url,
+                filename: spaceMessage.fileName ?? 'Voice message',
+                ...(spaceMessage.voiceDurationMs ? { seconds: spaceMessage.voiceDurationMs / 1000 } : {}),
+            },
+            sender,
+            // "Listening…" once the note is on its way to be heard; never for a note refused before that
+            () => this.sendTranscript(spaceName, note, 'listening')
+        );
+        // The person's replies are used up: the note is read as before, and the reply path shows the usual limit card
+        if ('reason' in heard && heard.reason === 'reply-limit') return '';
         const words = 'text' in heard ? tidyTranscript(heard.text, hearing.limits.maxChars) : '';
         if (!words) {
             this.sendTranscript(spaceName, note, 'failed');
@@ -2829,6 +3072,13 @@ export class BotClient {
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
+        // A reply for one person alone that others would have heard is not said, and that person is told why (#1993)
+        this.voice.aloneWith = (spaceName, personId) => this.aloneWith(spaceName, BotClient.playerIdOf(personId));
+        this.voice.onKeptQuiet = (spaceName, segmentId, heard) => {
+            const responseId = this.speech?.stopped(spaceName, segmentId);
+            if (responseId) this.sendKeptQuiet(spaceName, responseId, heard ? 'stopped' : 'unsaid');
+        };
+        this.speech.onKeptQuiet = (spaceName, responseId) => this.sendKeptQuiet(spaceName, responseId, 'unsaid');
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
         // Orbit's follow-up window (its voice limits) is the one the bot uses, in voice and in nearby chat alike
@@ -2895,12 +3145,66 @@ export class BotClient {
         }
     }
 
+    /**
+     * The bot takes a call: it joins the call's private space (the pusher lets in only the caller and this bot), where
+     * the caller's browser offers the audio and the voice code answers as in any space. It joins as a space user with
+     * nothing on the map: no camera, microphone or screen of its own to show, and no availability to change, because
+     * a call-only connection has no room user. Resolves true once it is in the space.
+     */
+    async acceptCall(spaceName: string): Promise<boolean> {
+        if (!this.config.callOnly || !isCallSpaceName(spaceName)) return false;
+        try {
+            const spaceUserId = await this.emitJoinSpace(spaceName, FilterType.ALL_USERS, ['cameraState', 'microphoneState', 'screenShareState']);
+            this.spaces.set(spaceName, spaceUserId);
+            this.emitAddSpaceFilter(spaceName);
+            this.sendSpaceUserUpdate(spaceName, { cameraState: false, microphoneState: false, screenSharingState: false });
+            // The behaviour only needs to know the space it answers in (it is never told to greet there: see mayGreet)
+            this.behavior?.onSpaceJoined(spaceName);
+            return true;
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not take the call ${spaceName}: ${error instanceof Error ? error.message : error}`);
+            return false;
+        }
+    }
+
+    /** In a call space, anyone who is not a call-only connection (this bot) is the caller. */
+    private noteCallerIn(spaceName: string, users: ReadonlyArray<{ spaceUserId?: string }>): void {
+        if (!this.config.callOnly || !isCallSpaceName(spaceName)) return;
+        const caller = users.find((user) => user.spaceUserId && !user.spaceUserId.startsWith(CALL_ONLY_SPACE_USER_PREFIX));
+        if (!caller?.spaceUserId) return;
+        // Kept so a reply meant for the caller alone is addressed to the caller's own id (spaceUserIdOf)
+        this.callerIds.set(spaceName, caller.spaceUserId);
+        this.onCallJoined?.(spaceName);
+    }
+
+    /** The call is over: the bot leaves its space and closes its connection. Never throws. */
+    async endCall(spaceName: string): Promise<void> {
+        try {
+            if (this.spaces.has(spaceName)) {
+                this.emitRemoveSpaceFilter(spaceName);
+                this.voice?.spaceLeft(spaceName);
+                this.speech?.spaceLeft(spaceName);
+                this.attention.spaceLeft(spaceName);
+                this.audience.spaceLeft(spaceName);
+                this.readers.spaceLeft(spaceName);
+                await this.emitLeaveSpace(spaceName);
+            }
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not leave the call ${spaceName}:`, error);
+        }
+        this.spaces.delete(spaceName);
+        this.callerIds.delete(spaceName);
+        this.disconnect();
+    }
+
     private async leaveMeetingSpace(spaceName: string): Promise<void> {
         try {
             this.emitRemoveSpaceFilter(spaceName);
             this.voice?.spaceLeft(spaceName);
             this.speech?.spaceLeft(spaceName);
             this.attention.spaceLeft(spaceName);
+            this.audience.spaceLeft(spaceName);
+            this.readers.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
         } catch (error) {
             console.warn(`[Bot ${this.config.botId}] Could not leave meeting room ${spaceName}:`, error);
@@ -3186,6 +3490,7 @@ export class BotClient {
                 this.userId = message.roomJoinedMessage.currentUserId;
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
+                BotClient.botUserIdsByRoom.set(this.config.roomUrl, (BotClient.botUserIdsByRoom.get(this.config.roomUrl) ?? new Set()).add(this.userId));
                 this.markJoined();
                 this.startVoice();
                 for (const variable of message.roomJoinedMessage.areaPropertyVariable ?? []) {
@@ -3197,7 +3502,7 @@ export class BotClient {
                 
                 // Automatically join the world space (allWorldUser) so bots appear in user list
                 // This matches what regular users do in GameScene.ts
-                const worldSpaceName = "allWorldUser";
+                const worldSpaceName = WORLD_SPACE;
                 this.emitJoinSpace(worldSpaceName, FilterType.ALL_USERS, ["availabilityStatus", "chatID"])
                     .then((spaceUserId) => {
                         this.spaces.set(worldSpaceName, spaceUserId);
@@ -3354,6 +3659,9 @@ export class BotClient {
                 break;
 
             case 'initSpaceUsersMessage':
+                this.noteCallerIn(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
+                this.audience.seen(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
+                for (const user of message.initSpaceUsersMessage.users ?? []) this.noteChatId(message.initSpaceUsersMessage.spaceName, user, true);
                 this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 if (this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
                     for (const user of message.initSpaceUsersMessage.users ?? []) this.rememberMeetingPerson(message.initSpaceUsersMessage.spaceName, user);
@@ -3372,17 +3680,8 @@ export class BotClient {
                     for (const spaceUser of spaceUsers) {
                         // Extract numeric userId from spaceUserId (format: "roomID_userID")
                         // The last part after the underscore is the numeric userId
-                        let numericUserId: number | null = null;
-                        if (spaceUser.spaceUserId) {
-                            const lastUnderscoreIndex = spaceUser.spaceUserId.lastIndexOf('_');
-                            if (lastUnderscoreIndex !== -1) {
-                                const userIdStr = spaceUser.spaceUserId.substring(lastUnderscoreIndex + 1);
-                                numericUserId = parseInt(userIdStr, 10);
-                                if (isNaN(numericUserId)) {
-                                    numericUserId = null;
-                                }
-                            }
-                        }
+                        // A call-only id is never a player number (playerIdOf)
+                        const numericUserId = BotClient.playerIdOf(spaceUser.spaceUserId) || null;
                         
                         if (numericUserId) {
                             // Skip the bot itself
@@ -3416,6 +3715,12 @@ export class BotClient {
                 break;
 
             case 'addSpaceUserMessage':
+                if (message.addSpaceUserMessage.user) this.noteCallerIn(message.addSpaceUserMessage.spaceName, [message.addSpaceUserMessage.user]);
+                // First of all: from here on a reply in this space is read by them too (#1993)
+                if (message.addSpaceUserMessage.user) this.audience.joined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
+                this.noteChatId(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user, true);
+                // And what the bot is saying out loud to someone who was alone with it stops: they would hear it
+                if (message.addSpaceUserMessage.user) this.hushRepliesForOne(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user.spaceUserId);
                 if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 // A person who came back (a reload, or walking back to the bubble) gets their cards and replies again (#1658)
                 if (message.addSpaceUserMessage.user && this.asks && !isBotSpaceUser(message.addSpaceUserMessage.user)) {
@@ -3436,17 +3741,8 @@ export class BotClient {
                     }
                     
                     // Extract numeric userId from spaceUserId (format: "roomID_userID" or full URL)
-                    let numericUserId: number | null = null;
-                    if (spaceUser.spaceUserId) {
-                        const lastUnderscoreIndex = spaceUser.spaceUserId.lastIndexOf('_');
-                        if (lastUnderscoreIndex !== -1) {
-                            const userIdStr = spaceUser.spaceUserId.substring(lastUnderscoreIndex + 1);
-                            numericUserId = parseInt(userIdStr, 10);
-                            if (isNaN(numericUserId)) {
-                                numericUserId = null;
-                            }
-                        }
-                    }
+                    // A call-only id is never a player number (playerIdOf)
+                    const numericUserId = BotClient.playerIdOf(spaceUser.spaceUserId) || null;
                     
                     if (!numericUserId) {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3471,12 +3767,14 @@ export class BotClient {
                 break;
 
             case 'updateSpaceUserMessage':
+                // Their browser proved its chat login a moment after they joined
+                this.noteChatId(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.user, false);
                 if (message.updateSpaceUserMessage.message) {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     // When the line reached the bot, before anything is asked about it: a card shown after is not answered by it (#1661)
                     const heardAt = Date.now();
                     if (chatMessage && this.behavior) {
-                        console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
+                        console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage (${chatMessage.length} characters) from user ${message.updateSpaceUserMessage.userId}`);
                         // With others in the bubble, only what is said to the bot reaches it (#1220)
                         if (!this.attention.hears(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, chatMessage)) {
                             break;
@@ -3500,8 +3798,9 @@ export class BotClient {
                             undefined,
                             heardAt
                         ).catch(error => {
-                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error: ${error?.name ?? 'Error'}`);
+                            Sentry.captureException(sanitizedError(error, `onChatMessage failed (${error?.name ?? 'Error'})`));
                         });
                     }
                 }
@@ -3519,7 +3818,7 @@ export class BotClient {
                     const senderUserId = message.publicEvent.senderUserId; // spaceUserId format: "roomID_userID"
                     
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage: "${spaceMessage.message}" from ${senderName}, senderUserId: ${senderUserId}, players map size: ${this.players.size}`);
+                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage (${spaceMessage.message.length} characters) from ${senderName}, senderUserId: ${senderUserId}, players map size: ${this.players.size}`);
                     }
                     
                     // Extract numeric userId from senderUserId (format: "roomID_userID")
@@ -3610,14 +3909,16 @@ export class BotClient {
                         // Heard once, here; the people who got the note see what was heard under it
                         let lineText = spaceMessage.message;
                         if (noteForBot) {
-                            const heard = await this.hearNearbyNote(spaceName, senderUserId, spaceMessage);
+                            // Counted on the person as Orbit knows them (their uuid), like their replies; unknown yet: not heard
+                            const talker = this.behavior?.getTalker(senderId) ?? null;
+                            const heard = await this.hearNearbyNote(spaceName, senderUserId, spaceMessage, talker ?? {});
                             if (heard === 'unheard') break;
-                            lineText = lineText ? `${lineText}\n${heard}` : heard;
+                            if (heard) lineText = lineText ? `${lineText}\n${heard}` : heard;
                         }
                         // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
                         if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
+                            console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage (${spaceMessage.message.length} characters) from ${senderName} (userId: ${senderId})`);
                         }
                         // Detect URL from message text independently of uploads —
                         // previously `url || extractUrlFromText` short-circuited,
@@ -3649,8 +3950,9 @@ export class BotClient {
                             BotClient.uploadsOf(spaceMessage, detectedMime),
                             heardAt
                         ).catch(error => {
-                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error: ${error?.name ?? 'Error'}`);
+                            Sentry.captureException(sanitizedError(error, `onChatMessage failed (${error?.name ?? 'Error'})`));
                         });
                     } else {
                         if (senderId === 0) {
@@ -3663,7 +3965,19 @@ export class BotClient {
                 break;
 
             case 'removeSpaceUserMessage':
+                this.audience.left(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
+                // Gone from the world: their number may be given to someone else
+                if (message.removeSpaceUserMessage.spaceName === WORLD_SPACE) this.chatIds.delete(BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
+                this.readers.personLeft(message.removeSpaceUserMessage.spaceName, BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
+                // A call has two members, the bot and the caller: the caller leaving is the call ending
+                if (
+                    this.config.callOnly &&
+                    isCallSpaceName(message.removeSpaceUserMessage.spaceName) &&
+                    message.removeSpaceUserMessage.spaceUserId !== this.spaces.get(message.removeSpaceUserMessage.spaceName)
+                ) {
+                    this.onCallOver?.(message.removeSpaceUserMessage.spaceName);
+                }
                 if (this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
                     this.attention.personLeft(
                         message.removeSpaceUserMessage.spaceName,
@@ -3881,6 +4195,8 @@ export class BotClient {
             this.voice?.spaceLeft(request.spaceName);
             this.speech?.spaceLeft(request.spaceName);
             this.attention.spaceLeft(request.spaceName);
+            this.audience.spaceLeft(request.spaceName);
+            this.readers.spaceLeft(request.spaceName);
             const wasMeeting = this.isMeetingSpace(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
@@ -4004,12 +4320,21 @@ export class BotClient {
         }
     }
 
-    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
+    /**
+     * Asks to be told about everyone in the room, wherever they stand, until the next move narrows the view again. A
+     * visiting Brick does it before it decides its person has left: a person can go further than the usual view in one
+     * hop on a large map, and is still in the room.
+     */
+    public lookAcrossTheRoom(): void {
+        const state = this.getState();
+        this.sendPosition(state.getPosition(), state.getDirection(), false, WHOLE_ROOM_RADIUS);
+    }
+
+    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean, viewportRadius = 2000): void {
         // Safety checks for undefined values
         const x = position?.x ?? 0;
         const y = position?.y ?? 0;
         // Update viewport to be centered on current position with large radius
-        const viewportRadius = 2000;
         const top = Math.max(0, y - viewportRadius);
         const bottom = y + viewportRadius;
         const left = Math.max(0, x - viewportRadius);

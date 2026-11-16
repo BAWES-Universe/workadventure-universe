@@ -4,6 +4,7 @@
 
 import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, createConversationState, type BehaviorConfig } from './BaseBehavior';
+import { greetingReplyId } from '../client/GreetingReply';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import type { SpaceUser } from '@workadventure/messages';
@@ -14,6 +15,7 @@ import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEn
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
 import type { BehaviorMoves } from './behaviorModel';
 import { distance, distanceToRoute, nearestPointInCircle, nearestStopIndex, nextStop } from './leash';
+import type { Heard } from '../memory/Heard';
 import {
     buildBotInitiatedGreetingPrompt,
     isAvailableForApproach,
@@ -758,11 +760,14 @@ export class SocialBehavior extends BaseBehavior {
         // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
         let historyMessage = message;
         let keepFiles: () => void = () => undefined;
+        // With files, who heard the message when it came: someone who walks up while they are read never got it (#1993)
+        let arrived: { heard: Heard | undefined } | undefined;
         if (url) {
             const files = await this.readBubbleFiles(spaceName, senderId, message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls, uploads);
             message = files.augmented;
             historyMessage = files.line;
             keepFiles = files.keep;
+            arrived = files.arrived;
         }
 
         let conversation = this.activeConversations.get(senderId);
@@ -818,7 +823,8 @@ export class SocialBehavior extends BaseBehavior {
         }
         
         // Store player's message in memory (original, without augmented file content)
-        this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+        if (arrived) this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName, true, arrived);
+        else this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
         keepFiles();
 
         // Store player's message in conversation storage (original, without augmented file content)
@@ -831,7 +837,7 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // Extract personal information from original user message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage);
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage, arrived ? arrived.heard : spaceName);
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);
@@ -1634,7 +1640,7 @@ export class SocialBehavior extends BaseBehavior {
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
         try {
             // Special prompt for leading completion
             const leadingContext = followerUuid === 'group'
@@ -1649,7 +1655,7 @@ export class SocialBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1791,12 +1797,12 @@ export class SocialBehavior extends BaseBehavior {
         // This context includes previous conversations, emotional state, and relationship history
         // The AI will use this to remember bad interactions and respond appropriately
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
-        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory);
+        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory, spaceName);
 
         // Generate natural response using AI - not a greeting, just respond naturally
         // The context will inform the AI about previous interactions, emotions, and relationship state
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
 
         try {
             // Natural prompt: person approached, respond naturally based on context
@@ -1827,7 +1833,7 @@ export class SocialBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1844,7 +1850,7 @@ export class SocialBehavior extends BaseBehavior {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, finalContent);
                     }
-                    greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    greetingResponseId = greetingReplyId(botId, playerId);
                     fullMessage = "";
                     emotionBlockStarted = false;
                     pendingPrefix = '';

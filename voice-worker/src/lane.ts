@@ -9,7 +9,7 @@ import { asInt16, newOpusDecoder } from './opus.ts';
 import { FRAME_MS } from './audioFormat.ts';
 import type { Counters } from './counters.ts';
 import { type LeaveReason, type Mode, type Signal, modeListens, modePlays } from './protocol.ts';
-import type { InputSink, OutputFrame, OutputTarget } from './transport.ts';
+import type { InputSink, OutputFrame, OutputTarget, Reach } from './transport.ts';
 
 export interface IceConfig {
     iceServers?: { urls: string; username?: string; credential?: string }[];
@@ -232,9 +232,21 @@ export class Lane implements OutputTarget {
 
     // ---- outbound ----
 
-    /** Writes one 20 ms Opus packet. A new talk spurt gets a marker bit and a timestamp that follows wall time. */
-    sendFrame(frame: OutputFrame): void {
+    /** This connection carries audio to one person and nobody else. */
+    reach(participantId: string): Reach {
+        return participantId === this.participantId ? 'alone' : 'elsewhere';
+    }
+
+    /**
+     * Writes one 20 ms Opus packet. A new talk spurt gets a marker bit and a timestamp that follows wall time.
+     * A frame of a reply for one person alone (`onlyFor`) is written to that person's connection and no other.
+     */
+    sendFrame(frame: OutputFrame, onlyFor?: string): void {
         if (!this.plays()) return;
+        if (onlyFor !== undefined && onlyFor !== this.participantId) {
+            this.deps.counters.inc('private_frames_refused');
+            return;
+        }
         const payload = frame.opus();
         const now = performance.now();
         if (this.lastTx === 0 || now - this.lastTx > 60) {
