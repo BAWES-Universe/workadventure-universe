@@ -130,6 +130,14 @@
     const { items: myGoals, state: myGoalsState } = myGoalsList;
     $: goalsBrief = $myGoalsState === "ready" ? sayBrief($myGoals, Date.now(), $LL, $locale) : "";
 
+    // A Brick's own page can change its goals and tasks (Pause, Mark done, Reopen): reading again when it closes keeps this row's line true
+    let hadBrickPage = false;
+    $: {
+        const has = pageOfId !== undefined;
+        if (hadBrickPage && !has) myGoalsList.load().catch((error) => console.error(error));
+        hadBrickPage = has;
+    }
+
     /** A goal or task tapped on the Goals and tasks page: its Brick's page, open on Goals and tasks. */
     function openGoalOn(brickId: string) {
         openNextOn("goals");

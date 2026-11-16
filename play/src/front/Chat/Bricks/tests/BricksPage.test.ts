@@ -1531,6 +1531,24 @@ describe("the Bricks page (#1995)", () => {
             expect(rows()).toHaveLength(2);
         });
 
+        it("reads the list again when a Brick's own page closes, since its goals could have changed there", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            game.getAllBrickItems.mockResolvedValue({ items: [goal()] });
+            await open();
+            expect(byId("bricksGoalsRow")?.textContent).toContain("1 goal");
+            expect(game.getAllBrickItems).toHaveBeenCalledTimes(1);
+            rows()[1].click();
+            await settle();
+            // Done on the Brick's page: nothing is in progress any more
+            game.getAllBrickItems.mockResolvedValue({
+                items: [goal({ state: "done", doneAt: "2026-11-16T05:00:00.000Z" })],
+            });
+            target.querySelector<HTMLElement>('[data-testid="edit-panel-back"]')?.click();
+            await settle();
+            expect(game.getAllBrickItems).toHaveBeenCalledTimes(2);
+            expect(byId("bricksGoalsRow")?.textContent).toContain("1 goal done");
+        });
+
         it("opens when a Brick's words link to it", async () => {
             await open();
             openGoalsPage();
