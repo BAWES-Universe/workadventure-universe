@@ -28,7 +28,7 @@ import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
-import { alreadyAskedLine, appNotUsedLine, narrowToReturns, ownerNoteText, settleOutcomeOf, type AppUseAnswer, type AppUseCheck, type AppUseContext, type AppUseRequest, type AppUseSettle, type OwnerNote } from '../mcp/AppUse';
+import { alreadyAskedLine, appNotUsedLine, narrowToReturns, SHARED_FAILED_LINE, ownerNoteText, settleOutcomeOf, type AppUseAnswer, type AppUseCheck, type AppUseContext, type AppUseRequest, type AppUseSettle, type OwnerNote } from '../mcp/AppUse';
 import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
@@ -436,6 +436,8 @@ export class AIService {
         /** Who is asking, which call this is and what heading the tool is under: needed when the App sits on a connection (#2001). */
         use?: AppUseRequest & { botId: string }
     ): Promise<any> {
+        // Set when someone else is asking for a job its owner shared (#2006); an error then reaches them in the bot's words only
+        let shared: { returns: string[] | null } | undefined;
         try {
             // An App with a key (#2044) is used only through Orbit, which holds the key, checks the use again and answers with the fields
             // the App lists: nothing here ever reaches the service
@@ -454,7 +456,6 @@ export class AIService {
             // spent or a switch turned off stops it at once. No answer is a no.
             // Someone else asking for a job its owner shared (#2006) is told so here: what comes back is held to what was picked, and what
             // the try came to is told to Orbit, which only gives the use back for a failure it can be sure of
-            let shared: { returns: string[] | null } | undefined;
             if (entry.connectionId) {
                 const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, { ...use, tool: toolName, argumentNames: Object.keys(args ?? {}) }) : { allowed: false, reason: 'unavailable' };
                 this.tellOwner(use?.botId ?? '', answer.ownerNote);
@@ -512,6 +513,8 @@ export class AIService {
             const kind = mcpError instanceof Error ? mcpError.name : 'Error';
             console.error(`[AIService] Error executing MCP tool ${toolName}: ${kind}`);
             Sentry.captureException(sanitizedError(mcpError, `MCP tool ${toolName} failed (${kind})`), { tags: { area: 'bot-tools' } });
+            // It may have run (the use stays counted): never run again
+            if (shared) return { error: SHARED_FAILED_LINE, outcome: 'uncertain', hint: 'It may have run, so do not call it again.' };
             return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
         }
     }
@@ -4898,7 +4901,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 ...(asker.signedIn && asker.identifier
                                     ? { requesterKey: asker.identifier }
                                     : forOthers && playerId !== undefined
-                                      ? { requesterKey: this.chatCallFor(botId!, playerId, botClient, spaceName)?.person.identifier || `guest:${playerId}` }
+                                      ? { requesterKey: this.chatCallFor(botId!, playerId, botClient, spaceName)?.person.identifier || (playerUuid && !playerUuid.startsWith('temp-') ? `guest:${playerUuid}` : `guest:${playerId}`) }
                                       : {}),
                             });
                             // A call that proved it made nothing doesn't count toward the limit

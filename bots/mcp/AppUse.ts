@@ -259,11 +259,30 @@ export function settleWithOrbit(side: () => { adminApiUrl: string; serviceToken:
     };
 }
 
+/** What someone else is told when a shared job did not work and the App said why in its own words. */
+export const SHARED_FAILED_LINE = "That didn't work just now.";
+
+/**
+ * A failure as someone else may see it. A try that never left or has no answer is told in the bot's own fixed words, with its hint; a
+ * failure the App worded itself (an account, an email, a file name can be in it) is replaced by one plain line. The kind of failure stays,
+ * so the Brick still knows whether to try again.
+ */
+function forVisitor(failed: Record<string, unknown>): Record<string, unknown> {
+    const own = failed.outcome === 'not_sent' || failed.outcome === 'uncertain';
+    return {
+        error: own && typeof failed.error === 'string' ? failed.error : SHARED_FAILED_LINE,
+        ...(typeof failed.outcome === 'string' ? { outcome: failed.outcome } : {}),
+        ...(own && typeof failed.hint === 'string' ? { hint: failed.hint } : {}),
+    };
+}
+
 /**
  * Holds what comes back to the fields the owner picked. `returns: null` is the whole answer (the App does not say what it gives back). A
  * text answer that is not JSON cannot be held to named fields, so it is not given; neither is a file or a picture. Never throws.
  */
 export function narrowToReturns(result: unknown, returns: string[] | null): unknown {
+    // An error reaches someone else only in the bot's own words: the App's own words can name the owner's account
+    if (result && typeof result === 'object' && !Array.isArray(result) && 'error' in (result as object)) return forVisitor(result as Record<string, unknown>);
     if (returns === null) return result;
     const keep = new Set(returns);
     const narrow = (value: unknown): unknown => {
@@ -286,11 +305,7 @@ export function narrowToReturns(result: unknown, returns: string[] | null): unkn
         }
         return items;
     }
-    if (result && typeof result === 'object') {
-        // An error and its hint are the bot's own notes, not the App's answer
-        if ('error' in (result as object)) return result;
-        return narrow(result);
-    }
+    if (result && typeof result === 'object') return narrow(result);
     return typeof result === 'string' ? [] : result;
 }
 

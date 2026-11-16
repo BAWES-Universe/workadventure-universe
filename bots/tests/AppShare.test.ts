@@ -12,7 +12,7 @@ import {
     alreadyAskedLine,
     appNotUsedLine,
     askOrbitAboutAppUse,
-    narrowToReturns,
+    narrowToReturns, SHARED_FAILED_LINE,
     ownerNoteText,
     settleOutcomeOf,
     settleWithOrbit,
@@ -133,6 +133,14 @@ describe('holding what comes back to what the owner picked', () => {
         expect(narrowToReturns([song], null)).toEqual([song]);
     });
 
+    it('replaces a failure the App worded itself, so an account or an email in it never reaches someone else', () => {
+        const failed = { error: 'Tool error: token for khalid@example.com expired', outcome: 'failed' };
+        for (const returns of [['audio_url'], null]) {
+            expect(narrowToReturns(failed, returns)).toEqual({ error: SHARED_FAILED_LINE, outcome: 'failed' });
+        }
+        expect(JSON.stringify(narrowToReturns({ error: 'Tool error: acct_123' }, null))).not.toContain('acct_123');
+    });
+
     it('lets the bot\'s own error notes through', () => {
         const failed = { error: 'No answer. May have finished', outcome: 'uncertain', hint: 'Do not call this again' };
         expect(narrowToReturns(failed, ['audio_url'])).toEqual(failed);
@@ -173,8 +181,8 @@ function service(check: AppUseCheck, settle: AppUseSettle = async () => true, te
 
 const sara = { isVoiceBot: () => false, getPersonForArtifacts: () => ({ signedIn: true, identifier: 'u-sara', name: 'Sara' }) };
 const guest = { isVoiceBot: () => false, getPersonForArtifacts: () => ({ signedIn: false, identifier: null, name: null }) };
-const ask = (ai: AIService, name: string, args: object, id = 'call-1', person: object = sara, forOthers = true) =>
-    ai['executeToolCalls']([{ id, name, arguments: JSON.stringify(args) }], person as never, undefined, SHARED, undefined, 'room', 'b1', 7, undefined, undefined, false, undefined, undefined, undefined, false, forOthers);
+const ask = (ai: AIService, name: string, args: object, id = 'call-1', person: object = sara, forOthers = true, uuid?: string) =>
+    ai['executeToolCalls']([{ id, name, arguments: JSON.stringify(args) }], person as never, undefined, SHARED, uuid, 'room', 'b1', 7, undefined, undefined, false, undefined, undefined, undefined, false, forOthers);
 
 describe('someone else asking a Brick for a job', () => {
     it('never runs a tool of the App that was not shared, and never asks Orbit about it', async () => {
@@ -212,6 +220,25 @@ describe('someone else asking a Brick for a job', () => {
         const check = vi.fn<AppUseCheck>(async () => ({ allowed: true, shared: { returns: null } }));
         await ask(service(check), 'make_song', { style: 'oud' }, 'call-g', guest);
         expect(check.mock.calls[0][2].requesterKey).toBe('guest:7');
+    });
+
+    it('counts a guest by the id their browser keeps, so reconnecting does not give them a new day', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('song' as never);
+        const check = vi.fn<AppUseCheck>(async () => ({ allowed: true, shared: { returns: null } }));
+        const ai = service(check);
+        await ask(ai, 'make_song', { style: 'oud' }, 'call-a', guest, true, 'wa-uuid-1');
+        await ask(ai, 'make_song', { style: 'oud' }, 'call-b', guest, true, 'wa-uuid-1');
+        expect(check.mock.calls.map((call) => call[2].requesterKey)).toEqual(['guest:wa-uuid-1', 'guest:wa-uuid-1']);
+        // A temporary id stands for nobody: the session is all there is to go by
+        await ask(ai, 'make_song', { style: 'oud' }, 'call-c', guest, true, 'temp-7');
+        expect(check.mock.calls[2][2].requesterKey).toBe('guest:7');
+    });
+
+    it('never shows someone else what the App said when it failed', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue({ error: 'Tool error: owner@example.com is over quota', outcome: 'failed' } as never);
+        const [result] = await ask(service(async () => ({ allowed: true, shared: { returns: null } })), 'make_song', { style: 'oud' });
+        expect(JSON.stringify(result.result)).not.toContain('owner@example.com');
+        expect(result.result.error).toBe(SHARED_FAILED_LINE);
     });
 
     it('gives back only the fields the owner picked', async () => {
