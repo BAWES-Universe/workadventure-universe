@@ -1364,7 +1364,7 @@ export class AdminApiService {
     }
 
     /** An Instant call to Orbit with the service token. Never throws: 200 and 202 are answers, 404 is "not the owner", the rest are not answers. */
-    private async instantCall(method: 'get' | 'post', path: string, body: unknown, params: Record<string, string> | undefined, timeout: number): Promise<{ status: number; data: Record<string, unknown> } | { status: 'none'; retry: boolean; rejected?: true }> {
+    private async instantCall(method: 'get' | 'post', path: string, body: unknown, params: Record<string, string> | undefined, timeout: number): Promise<{ status: number; data: Record<string, unknown> } | { status: 'none'; retry: boolean; rejected?: true; http?: number }> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         // Nothing was sent, so nothing ran
         if (!this.isConfigured() || !botServiceToken) return { status: 'none', retry: false, rejected: true };
@@ -1383,7 +1383,7 @@ export class AdminApiService {
             if (response.status === 200 || response.status === 201 || response.status === 202 || response.status === 404) return { status: response.status, data };
             // A server error may have come after the run started: the same call id is asked again. A refusal of the request itself (a refused token, a body
             // Orbit does not take, too many asks) came before any run and will not change: it is certain nothing ran. A timeout from something on the way (408) is not.
-            if (response.status >= 400 && response.status < 500 && response.status !== 408) return { status: 'none', retry: false, rejected: true };
+            if (response.status >= 400 && response.status < 500 && response.status !== 408) return { status: 'none', retry: false, rejected: true, http: response.status };
             return { status: 'none', retry: response.status >= 500 || response.status === 408 };
         } catch (error) {
             console.warn('[AdminApiService] An Instant call got no answer:', error instanceof Error ? error.message : error);
@@ -1478,11 +1478,12 @@ export class AdminApiService {
      * Ends a task's receipt: done, refunded (a failure on our side took nothing) or checking (no answer came back). What it used is never sent: Orbit reads
      * it from its books by the task's key, and settles a receipt left in checking by itself. Safe to say twice. Never throws. True when there is nothing
      * more to ask: Orbit took it, or said it never will (a receipt that is not this person's or does not exist, a guest without Activity, a request it
-     * refuses: asking again will not change that). False only when Orbit gave no answer (down, a server error, a timeout), so it is worth asking again.
+     * refuses: asking again will not change that). False when Orbit gave no answer (down, a server error, a timeout) or said to slow down (429), so it is worth asking again.
      */
     async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState }): Promise<boolean> {
         const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'close', taskKey: task.taskKey, state: task.state }, undefined, INSTANT_LIST_TIMEOUT_MS);
-        if (answer.status === 'none') return answer.rejected === true;
+        // "Too many asks" (429) passes, so it is asked again; any other refusal of the request itself will not change
+        if (answer.status === 'none') return answer.rejected === true && answer.http !== 429;
         return answer.status === 200 || answer.status === 404;
     }
 

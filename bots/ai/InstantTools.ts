@@ -446,7 +446,7 @@ export function receiptStateOf(ended: readonly InstantEnded[]): TaskReceiptState
 }
 
 /** How many times a close that Orbit did not answer is sent again before it is let go (Orbit settles a receipt left open by itself). */
-export const CLOSE_TRIES = 5;
+export const CLOSE_TRIES = 3;
 
 /** Whether the task has outcomes its receipt was not closed with yet, and a close still worth sending. */
 export const instantTaskPending = (task: InstantTask): boolean => !!task.title && task.ended.length > (task.reported ?? 0) && (task.attempts ?? 0) < CLOSE_TRIES;

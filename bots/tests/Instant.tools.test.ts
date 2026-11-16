@@ -168,6 +168,8 @@ describe('Orbit’s Instant routes, from the bot server', () => {
         expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(true);
         respond(500, {});
         expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(false);
+        respond(429, {});
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(false);
         request.mockRejectedValueOnce(new Error('down'));
         expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(false);
     });
@@ -1091,7 +1093,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
     });
 
     it('a close Orbit still does not take stays owed from turn to turn until it does', async () => {
-        const { ai, orbit, memory } = service({ closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true) });
+        const { ai, orbit, memory } = service({ closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true) });
         ai.noteBrick(BRICK, { isDefault: false });
         const first = ai.startInstantTurn(BRICK, memory);
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
@@ -1104,13 +1106,11 @@ describe('in a Brick’s owner chat (AIService)', () => {
         ai.startInstantTurn(BRICK, memory);
         await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(3));
         await new Promise((resolve) => setTimeout(resolve, 5));
-        ai.startInstantTurn(BRICK, memory);
-        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(4));
-        await new Promise((resolve) => setTimeout(resolve, 5));
         // taken at last: not asked again
         ai.startInstantTurn(BRICK, memory);
+        ai.startInstantTurn(BRICK, memory);
         await new Promise((resolve) => setTimeout(resolve, 10));
-        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(4);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(3);
     });
 
     it('an Instant App is the one offered and run when a tool server has a tool of that very name', async () => {
@@ -1151,7 +1151,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
             await new Promise((resolve) => setTimeout(resolve, 5));
             await ai.endInstantTurn(BRICK, 'uuid-alice', now);
         }
-        expect(orbit.closeTaskReceipt.mock.calls.length).toBe(5);
+        expect(orbit.closeTaskReceipt.mock.calls.length).toBe(3);
         // a turn with an earlier debt ends without waiting for it
         const slow = vi.fn(() => new Promise<boolean>(() => undefined));
         const held = service({ closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockImplementation(slow) });
