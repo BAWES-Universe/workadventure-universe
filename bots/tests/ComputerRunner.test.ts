@@ -112,6 +112,8 @@ describe('how the agent says its turn ended', () => {
         expect(prompt).toContain(GIT_RULE);
         expect(prompt).toContain('git clone https://github.com/OWNER/REPO');
         expect(prompt).toMatch(/force push.*refused/);
+        expect(prompt).toContain('python3 ~/.universe/open-pr OWNER/REPO BRANCH');
+        expect(GIT_RULE_READ_ONLY).not.toContain('open-pr');
         expect(prompt).toMatch(/no key or token on this computer/);
         const lookOnly = jobPrompt({ ...JOB, writes: false });
         expect(lookOnly).toContain(GIT_RULE_READ_ONLY);
