@@ -77,6 +77,11 @@ export class BotSpeech {
     private readonly started = new Map<string, number>();
     private readonly said = new Set<string>();
     private readonly segments = new Map<string, { spaceName: string; responseId: string; heard: boolean }>();
+    /**
+     * Who each reply was for, kept apart from `segments`: a reply stopped or retracted forgets its segment at once, yet the worker still reports the
+     * seconds it did play afterwards, and those seconds belong to the person it was for. Only the size cap forgets an entry.
+     */
+    private readonly players = new Map<string, number>();
     /** Replies whose audio is not over yet, with the space each is in. */
     private readonly unfinished = new Map<string, string>();
     /** The segments people are hearing now (round 8): the reply shows Stop speaking until its audio is over, however it ends. */
@@ -172,8 +177,7 @@ export class BotSpeech {
 
     /** The person (their player id) the reply that was said as this segment was for, when it is still remembered. */
     playerOfSegment(segmentId: string): number | undefined {
-        const segment = this.segments.get(segmentId);
-        return segment ? playerOf(segment.responseId) : undefined;
+        return this.players.get(segmentId);
     }
 
     /** Whether a reply for this person is being played now. */
@@ -444,6 +448,8 @@ export class BotSpeech {
             return 'unsaid';
         }
         this.segments.set(segmentId, { spaceName, responseId, heard: false });
+        const player = playerOf(responseId);
+        if (player !== undefined) remember(this.players, segmentId, player);
         remember(this.unfinished, segmentId, spaceName);
         for (const oldest of this.segments.keys()) {
             if (this.segments.size <= MAX_REMEMBERED) break;

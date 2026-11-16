@@ -225,6 +225,24 @@ describe('a live call is booked in Orbit', () => {
         expect(b.requests.flat().map((e) => [e.detail.part, e.quantity, e.userId, e.isGuest, e.payerKind])).toEqual([['speaking', 4, 'uuid-room_8', true, 'universe']]);
     });
 
+    it('books the seconds played of a reply the person stopped, or said they were done with, for that person: the worker reports them after the reply was forgotten', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        await b.connect('room_8');
+        await b.say(reply(1, 8), 'For the guest.');
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 1500, totalMs: 4000, finished: false, interrupted: false });
+        expect(b.speech.stopReply(SPACE, reply(1, 8))).toBe(true);
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 3000, totalMs: 4000, finished: true, interrupted: true, reason: 'retract' });
+        await b.say(reply(2, 7), 'For the member.');
+        b.speech.endFor(SPACE, 7);
+        b.workerSays({ type: 'playback.progress', segmentId: 's2', playedMs: 2000, totalMs: 4000, finished: true, interrupted: true, reason: 'retract' });
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(b.requests.flat().map((e) => [e.detail.part, e.quantity, e.userId, e.isGuest])).toEqual([
+            ['speaking', 3, 'uuid-room_8', true],
+            ['speaking', 2, 'uuid-room_7', false],
+        ]);
+    });
+
     it('books nothing for a reply of which no moment was heard', async () => {
         const b = bot({ recognition: false, speech: false });
         await b.connect();
