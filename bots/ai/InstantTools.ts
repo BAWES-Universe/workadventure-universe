@@ -17,7 +17,7 @@
  * Only the Brick's owner, in their own Brick's direct messages. A visitor, a room bot or a bubble never has these tools, and Orbit
  * refuses them too. In the person's words these are "Instant Apps" or "Apps", never tools or connectors.
  */
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { AdminApiService, InstantListing, InstantToolInfo, InstantWho, TaskReceiptOpened, TaskReceiptState } from '../server/AdminApiService';
 
 /** The name each Instant tool has for the model: "EXA_SEARCH" is `instant_app_exa_search`. */
@@ -28,9 +28,14 @@ export const isInstantTool = (name: string): boolean => name.startsWith(INSTANT_
 /** The words of a tool name without the prefix ("exa_search"): what a step shows of it. */
 export const instantSlugOf = (name: string): string => (isInstantTool(name) ? name.slice(INSTANT_TOOL_PREFIX.length) : name);
 
-/** The model's name for a tool: lower case, only what every provider takes in a function name, at most 64 long. */
+/** The model's name for a tool: lower case, only what every provider takes in a function name, at most 64 long. A name that has to be cut ends in a
+ * short hash of the whole slug, so two long slugs that share their first words never end up with the same name. */
 export function instantToolName(slug: string): string {
-    return `${INSTANT_TOOL_PREFIX}${slug.toLowerCase().replace(/[^a-z0-9_-]+/g, '_')}`.slice(0, 64);
+    const clean = slug.toLowerCase().replace(/[^a-z0-9_-]+/g, '_');
+    const whole = `${INSTANT_TOOL_PREFIX}${clean}`;
+    if (whole.length <= 64) return whole;
+    const hash = createHash('sha256').update(slug).digest('hex').slice(0, 8);
+    return `${whole.slice(0, 64 - 9)}_${hash}`;
 }
 
 type ToolDefinition = { type: 'function'; function: { name: string; description: string; parameters: object } };
@@ -40,15 +45,24 @@ const DESCRIPTION_TAIL = ' This is one of your Instant Apps: it runs once for yo
 
 export function instantToolDefinitions(listing: InstantListing | null): ToolDefinition[] {
     if (!listing?.ready) return [];
-    return listing.tools.map((tool) => ({
-        type: 'function',
-        function: {
-            name: instantToolName(tool.name),
-            description: `${(tool.description ?? `Runs ${tool.name.toLowerCase().replace(/_/g, ' ')}.`).trim()}${DESCRIPTION_TAIL}`,
-            // Orbit's schema, as it came
-            parameters: tool.inputSchema,
-        },
-    }));
+    const seen = new Set<string>();
+    const defs: ToolDefinition[] = [];
+    for (const tool of listing.tools) {
+        const name = instantToolName(tool.name);
+        // Two tools that came to one name (`A.B` and `A_B`) would be told apart wrongly: the first one is kept, as `toolNamed` finds it
+        if (seen.has(name)) continue;
+        seen.add(name);
+        defs.push({
+            type: 'function',
+            function: {
+                name,
+                description: `${(tool.description ?? `Runs ${tool.name.toLowerCase().replace(/_/g, ' ')}.`).trim()}${DESCRIPTION_TAIL}`,
+                // Orbit's schema, as it came
+                parameters: tool.inputSchema,
+            },
+        });
+    }
+    return defs;
 }
 
 /** What a Brick with Instant Apps is told with its instructions. */

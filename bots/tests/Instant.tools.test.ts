@@ -232,6 +232,23 @@ describe('who is offered it, and for how long Orbit’s list is kept', () => {
         expect(await offers.listingFor(owner({ instantTools: vi.fn().mockRejectedValue(new Error('x')) }), 'b5', 'u')).toBeNull();
     });
 
+    it('two long tools that share their first words never get one name, and two that come to one name keep only the first', () => {
+        const a = instantToolName('GOOGLE_MAPS_GEOCODE_ADDRESS_WITH_QUERY_AND_A_VERY_LONG_TAIL_ONE');
+        const b = instantToolName('GOOGLE_MAPS_GEOCODE_ADDRESS_WITH_QUERY_AND_A_VERY_LONG_TAIL_TWO');
+        expect(a).not.toBe(b);
+        expect(a.length).toBeLessThanOrEqual(64);
+        expect(a).toMatch(/^instant_app_[a-z0-9_-]+_[0-9a-f]{8}$/);
+        expect(instantToolName('GOOGLE_MAPS_GEOCODE_ADDRESS_WITH_QUERY_AND_A_VERY_LONG_TAIL_ONE')).toBe(a);
+        const tools = [
+            { ...TOOL, name: 'A.B' },
+            { ...TOOL, name: 'A_B' },
+            { ...TOOL, name: 'OTHER' },
+        ];
+        const defs = instantToolDefinitions(listing({ tools }));
+        expect(defs.map((d) => d.function.name)).toEqual(['instant_app_a_b', 'instant_app_other']);
+        expect(InstantOffers.toolNamed(listing({ tools }), 'instant_app_a_b')?.name).toBe('A.B');
+    });
+
     it('finds the tool the model named from what is offered, and nothing else', () => {
         expect(InstantOffers.toolNamed(listing(), 'instant_app_exa_search')?.name).toBe('EXA_SEARCH');
         expect(InstantOffers.toolNamed(listing(), 'instant_app_gmail_send')).toBeUndefined();
@@ -508,6 +525,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         noteBrick: AIService['noteBrick'];
         instantFor(botId: string, playerId: number, botClient?: unknown, admin?: unknown): Promise<InstantListing | null>;
         endInstantTurn(botId: string, playerId: number | undefined, admin?: unknown): Promise<void>;
+        startInstantTurn(botId: string, memory: unknown, admin?: unknown): void;
         runInstantToolCall(name: string, args: Record<string, unknown>, where: Record<string, unknown>): Promise<Record<string, unknown>>;
         buildTools(...args: unknown[]): Promise<{ tools: Array<{ function: { name: string } }> }>;
         formatToolResult(r: { id: string; name: string; result: unknown }): string;
@@ -786,6 +804,28 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'other' }, where)).toMatchObject({ reason: 'rule' });
         expect(orbit.instantRun).toHaveBeenCalledTimes(1);
         expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(1);
+    });
+
+    it('a close Orbit did not take is said again when the next turn starts, instead of the task being dropped with its receipt open', async () => {
+        const { ai, orbit, memory } = service({ closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await ai.endInstantTurn(BRICK, 1);
+        const key = orbit.instantRun.mock.calls[0][1].taskKey;
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
+        // the next turn begins: the old task is closed on its own and the memory is clear for the new one
+        ai.startInstantTurn(BRICK, memory);
+        expect(memory.instantTask).toBeUndefined();
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2));
+        expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: key, state: 'done' });
+        // one that was closed, or never ran, is not said again
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        await ai.endInstantTurn(BRICK, 1);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(3);
+        ai.startInstantTurn(BRICK, memory);
+        ai.startInstantTurn(BRICK, memory);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(3);
     });
 
     it('a new turn is not stopped by the last turn’s rule', async () => {

@@ -143,6 +143,7 @@ import {
     isInstantTool,
     newInstantTask,
     openInstantReceipt,
+    type InstantTask,
     runInstantTool,
 } from './InstantTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
@@ -1196,8 +1197,7 @@ export class AIService {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
-            // The new turn is a new Instant task, with its own receipt (the last one was closed when that turn ended)
-            if (memory) memory.instantTask = undefined;
+            this.startInstantTurn(botId, memory, adminApiService);
             memory?.sentAgain?.clear();
             memory?.cardsAgain?.clear();
         }
@@ -3721,6 +3721,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         })();
         if (memory) (memory.instantCalls ??= new Map()).set(repeatKey, run);
         return run;
+    }
+
+    /**
+     * A new turn is a new Instant task, with its own receipt. The last one, when Orbit did not take the close of its receipt as that turn ended, is
+     * closed now, without holding this turn up: it is never dropped with its receipt left open.
+     */
+    private startInstantTurn(botId: string, memory: { instantTask?: InstantTask; userUuid?: string } | undefined, adminApiService?: AdminApiService): void {
+        if (!memory) return;
+        const left = memory.instantTask;
+        memory.instantTask = undefined;
+        const admin = adminApiService ?? this.adminApiService;
+        if (left && !left.closed && left.ended.length > 0 && admin && memory.userUuid) void endInstantTask(admin, botId, memory.userUuid, left);
     }
 
     /**
