@@ -284,7 +284,8 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                     result: {
                         success: true,
                         already: true,
-                        note: 'This exact run already happened a moment ago, so it was not run again and nothing more was taken. Its answer is earlier in this chat: use that. Never say a price or an amount.',
+                        // Orbit does not hand an earlier run's answer back (the first asking got no answer through), so there is none to use
+                        note: "This exact run already worked once, but its answer never reached you, and it was not run again, so nothing more was taken. Say so in one plain sentence, never make up what it said, do not run it again in this reply, and offer to ask again later if they still need it. Never say a price or an amount.",
                     },
                 };
             case 'failed': {

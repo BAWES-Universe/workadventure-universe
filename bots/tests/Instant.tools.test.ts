@@ -411,6 +411,10 @@ describe('one Instant run', () => {
         const ran = await go(answers({ status: 'already_done', chargedMicros: 5 }));
         expect(ran.result).toMatchObject({ success: true, already: true });
         expect(ran.result.data).toBeUndefined();
+        // there is no earlier answer to point at, so the Brick is never told to find one, and never to make one up
+        expect(String(ran.result.note)).not.toMatch(/earlier in this chat|use that/);
+        expect(String(ran.result.note)).toMatch(/never reached you/);
+        expect(String(ran.result.note)).toMatch(/never make up what it said/);
         expect(ran.ended).toBe('worked');
     });
 
