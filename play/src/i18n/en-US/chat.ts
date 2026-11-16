@@ -906,6 +906,8 @@ const chat: BaseTranslation = {
         doneCount: "{done} of {total} done",
         failed: "{count} didn't work",
         noAnswer: "{count} no answer",
+        waiting: "{count} waiting for your OK",
+        whatItDid: "What it did",
         stopped: "Stopped",
         again: "again",
         show: "Show steps",

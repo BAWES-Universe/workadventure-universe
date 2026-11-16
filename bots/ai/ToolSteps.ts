@@ -31,20 +31,32 @@ export interface ToolStep {
     kind?: StepKind;
 }
 
+/** One labelled line of what a step sent or got back, for a step opened in a direct message (#2061). */
+export interface StepLine {
+    label?: string;
+    text: string;
+}
+
 /** How a call ended. */
 export interface ToolStepResult {
     id: string;
     ok: boolean;
+    /** A card waits for the person's OK: nothing ran yet, which is not a failure (#2061). */
+    waiting?: boolean;
+    /** What the call sent and got back, in plain lines. Only set where nobody else reads the reply (a direct message). */
+    shows?: StepLine[];
     /** It went out and no answer came back: it may have run (#1692). Shown as "no answer", not as didn't work. */
     unknown?: boolean;
     /** Why it didn't work, short and without links. */
     note?: string;
+    /** When the call settled, so a quick call is not timed with the slowest one it ran beside (#2061). */
+    at?: number;
     /** What the step says once it has ended, when "Forgot" or "Read a page" would be untrue ("Didn't forget anything"). */
     done?: string;
 }
 
-/** unknown: the call went out and no answer came back, so it may have run (#1692). */
-export type StepState = 'running' | 'done' | 'failed' | 'unknown';
+/** unknown: the call went out and no answer came back, so it may have run (#1692). waiting: a card waits for the person's OK (#2061). */
+export type StepState = 'running' | 'done' | 'failed' | 'unknown' | 'waiting';
 
 export interface ShownStep {
     doing: string;
@@ -55,6 +67,10 @@ export interface ShownStep {
     again?: boolean;
     note?: string;
     kind?: StepKind;
+    /** How long it took, in seconds (#2061). */
+    secs?: number;
+    /** What it sent and got back (#2061). */
+    shows?: StepLine[];
 }
 
 /** What the `universe.steps` field carries. */
@@ -66,6 +82,8 @@ export interface StepsField {
     line: string;
     /** When the first step started, for the clock while working. */
     startedAt: number;
+    /** Once the reply is over: how long the steps took in all, in seconds (#2061). */
+    took?: number;
     steps: ShownStep[];
 }
 
@@ -186,7 +204,7 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
     if (result && typeof result === 'object' && !Array.isArray(result)) {
         const r = result as Record<string, unknown>;
         // A card is waiting for someone's OK: nothing ran, so the step must not read "Used ..." (#1657)
-        if (r.status === 'waiting_for_ok') return { id, ok: false, note: 'Waiting for your OK. Nothing ran yet' };
+        if (r.status === 'waiting_for_ok') return { id, ok: false, waiting: true, note: 'Waiting for your OK. Nothing ran yet' };
         // Forgetting that removed nothing (asked which memory they mean, a question, already gone): the step must not read
         // "Forgot" while the memory is still there (game #2020)
         if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
@@ -207,8 +225,9 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
  * result only changes the step it belongs to.
  */
 export class ReplySteps {
-    private steps: Array<ToolStep & { state: StepState; again?: boolean; note?: string }> = [];
+    private steps: Array<ToolStep & { state: StepState; again?: boolean; note?: string; began: number; secs?: number; shows?: StepLine[] }> = [];
     private state: StepsField['state'] = 'working';
+    private endedAt: number | undefined;
     readonly startedAt: number;
 
     constructor(now = Date.now()) {
@@ -219,7 +238,7 @@ export class ReplySteps {
         return this.steps.length;
     }
 
-    start(steps: ToolStep[]): void {
+    start(steps: ToolStep[], now = Date.now()): void {
         for (const step of steps) {
             // A call is announced when it begins and again when its arguments are complete: the second time only
             // fills in what it is about
@@ -233,16 +252,18 @@ export class ReplySteps {
             }
             // Only a call about something can be seen to repeat: two calls without a detail may differ
             const again = !!step.detail && this.steps.some((s) => s.group === step.group && s.detail === step.detail);
-            this.steps.push({ ...step, state: 'running', ...(again ? { again } : {}) });
+            this.steps.push({ ...step, state: 'running', began: now, ...(again ? { again } : {}) });
         }
     }
 
-    finish(results: ToolStepResult[]): boolean {
+    finish(results: ToolStepResult[], now = Date.now()): boolean {
         let changed = false;
         for (const result of results) {
             const step = this.steps.find((s) => s.id === result.id && s.state === 'running');
             if (!step) continue;
-            step.state = result.ok ? 'done' : result.unknown ? 'unknown' : 'failed';
+            step.state = result.ok ? 'done' : result.waiting ? 'waiting' : result.unknown ? 'unknown' : 'failed';
+            step.secs = secondsBetween(step.began, result.at ?? now);
+            if (result.shows?.length) step.shows = result.shows;
             if (result.note) step.note = result.note;
             if (result.done) step.done = result.done;
             changed = true;
@@ -251,17 +272,25 @@ export class ReplySteps {
     }
 
     /** The answer came: anything still running counts as done, since its result was used. */
-    end(): void {
-        for (const step of this.steps) if (step.state === 'running') step.state = 'done';
+    end(now = Date.now()): void {
+        for (const step of this.steps) {
+            if (step.state !== 'running') continue;
+            step.state = 'done';
+            step.secs = secondsBetween(step.began, now);
+        }
         this.state = 'done';
+        this.endedAt = now;
     }
 
     /** The reply failed part-way: what didn't finish stays unfinished. */
-    stop(): void {
+    stop(now = Date.now()): void {
         for (const step of this.steps) {
-            if (step.state === 'running') step.state = 'failed';
+            if (step.state !== 'running') continue;
+            step.state = 'failed';
+            step.secs = secondsBetween(step.began, now);
         }
         this.state = 'stopped';
+        this.endedAt = now;
     }
 
     field(): StepsField {
@@ -270,7 +299,8 @@ export class ReplySteps {
             state: this.state,
             line: this.state === 'working' ? this.liveLine() : summaryOf(this.steps),
             startedAt: this.startedAt,
-            steps: this.steps.map(({ doing, done, detail, state, again, note, kind }) => ({
+            ...(this.endedAt !== undefined && this.state !== 'working' ? { took: secondsBetween(this.startedAt, this.endedAt) } : {}),
+            steps: this.steps.map(({ doing, done, detail, state, again, note, kind, secs, shows }) => ({
                 doing,
                 done,
                 ...(detail ? { detail } : {}),
@@ -278,6 +308,8 @@ export class ReplySteps {
                 ...(again ? { again } : {}),
                 ...(note ? { note } : {}),
                 ...(kind ? { kind } : {}),
+                ...(secs !== undefined ? { secs } : {}),
+                ...(shows ? { shows } : {}),
             })),
         };
     }
@@ -287,8 +319,9 @@ export class ReplySteps {
         const field = this.field();
         const failed = field.steps.filter((s) => s.state === 'failed').length;
         const unknown = field.steps.filter((s) => s.state === 'unknown').length;
+        const waiting = field.steps.filter((s) => s.state === 'waiting').length;
         if (field.state === 'working') return `${field.line}…`;
-        return `${field.line}${failed ? ` · ${failed} didn't work` : ''}${unknown ? ` · ${unknown} no answer` : ''}`;
+        return `${field.line}${failed ? ` · ${failed} didn't work` : ''}${unknown ? ` · ${unknown} no answer` : ''}${waiting ? ` · ${waiting} waiting for your OK` : ''}`;
     }
 
     /**
@@ -320,6 +353,11 @@ export function summaryOf(steps: Array<{ group?: string; done: string; state: St
     return steps.length === 1 ? '1 step' : `${steps.length} steps`;
 }
 
+/** Seconds between two moments, to a tenth, never below zero. */
+function secondsBetween(from: number, to: number): number {
+    return Math.max(0, Math.round((to - from) / 100) / 10);
+}
+
 function parseArgs(raw: unknown): Record<string, unknown> {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
     if (typeof raw !== 'string' || !raw.trim()) return {};
@@ -349,7 +387,14 @@ function detailOf(args: Record<string, unknown>): string | undefined {
  */
 function shown(value: unknown): string | undefined {
     if (typeof value !== 'string') return undefined;
-    const bare = value.replace(/\bhttps?:\/\/\S+/gi, (link) => {
+    const bare = bareLinks(value);
+    if (EMAIL.test(bare) || TOKEN_LIKE.test(bare)) return undefined;
+    return oneLine(bare);
+}
+
+/** Links keep only where they go: no sign-in parts, query or fragment. */
+function bareLinks(value: string): string {
+    return value.replace(/\bhttps?:\/\/\S+/gi, (link) => {
         try {
             const url = new URL(link);
             return `${url.protocol}//${url.host}${url.pathname === '/' ? '' : url.pathname}`;
@@ -357,8 +402,56 @@ function shown(value: unknown): string | undefined {
             return '';
         }
     });
-    if (EMAIL.test(bare) || TOKEN_LIKE.test(bare)) return undefined;
-    return oneLine(bare);
+}
+
+/** Keys whose values are never shown, even to the person whose reply it is. */
+const SECRET_KEY = /key|token|secret|password|passwd|auth|cookie|session/i;
+const LINES_MAX = 6;
+const LINE_TEXT_MAX = 160;
+
+/** One argument or result as a plain line: words, numbers and short lists, never a block of JSON. */
+function plainValue(value: unknown): string | undefined {
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+        const parts = value.map((item) => (typeof item === 'string' || typeof item === 'number' ? plainValue(item) : undefined));
+        return parts.length > 0 && parts.every((part) => part !== undefined) ? oneLine(parts.join(', '), LINE_TEXT_MAX) : undefined;
+    }
+    if (typeof value !== 'string') return undefined;
+    // A string that holds JSON is data, and may hold a password under a key we cannot see
+    if (/^\s*[[{]/.test(value)) return undefined;
+    const bare = bareLinks(value);
+    if (TOKEN_LIKE.test(bare)) return undefined;
+    return oneLine(bare, LINE_TEXT_MAX);
+}
+
+/** What a tool's answer says when it is plain text; an answer that is data (JSON) says nothing here. */
+function plainAnswer(result: unknown): string | undefined {
+    const items = Array.isArray(result) ? result : [result];
+    for (const item of items) {
+        const text = typeof item === 'string' ? item : item && typeof item === 'object' && (item as Record<string, unknown>).type === 'text' ? (item as Record<string, unknown>).text : undefined;
+        if (typeof text !== 'string') continue;
+        const trimmed = text.trim();
+        if (!trimmed) continue;
+        return /^[[{]/.test(trimmed) ? undefined : plainValue(trimmed);
+    }
+    return undefined;
+}
+
+/**
+ * What a call sent and got back, as labelled plain lines for a step opened in a direct message (#2061). Only the person
+ * whose reply it is reads this, so an address stays; a key, token or password never does, and data (JSON) is never shown.
+ */
+export function stepDetails(rawArgs: unknown, result?: unknown): StepLine[] | undefined {
+    const lines: StepLine[] = [];
+    for (const [key, value] of Object.entries(parseArgs(rawArgs))) {
+        if (lines.length >= LINES_MAX) break;
+        if (SECRET_KEY.test(key)) continue;
+        const text = plainValue(value);
+        if (text) lines.push({ label: tidyName(key), text });
+    }
+    const answer = plainAnswer(result);
+    if (answer) lines.push({ label: 'Result', text: answer });
+    return lines.length ? lines : undefined;
 }
 
 function oneLine(value: unknown, max = DETAIL_MAX): string | undefined {

@@ -74,3 +74,93 @@ describe("the steps line of a reply that forgot nothing yet (#2003)", () => {
         expect(items[1].textContent).toContain("Asked which one. Nothing forgotten yet");
     });
 });
+
+describe("the steps line: waiting, times and what a step did (#2061)", () => {
+    let target: HTMLElement;
+    let component: { $destroy(): void } | undefined;
+
+    beforeEach(() => {
+        target = document.createElement("div");
+        document.body.appendChild(target);
+    });
+    afterEach(() => {
+        component?.$destroy();
+        component = undefined;
+        target.remove();
+    });
+
+    function mount(steps: BotSteps) {
+        component = new BotStepsLine({ target, props: { steps: readable<BotSteps | undefined>(steps) } });
+    }
+    const waiting: BotStep = {
+        doing: "Updating",
+        done: "Used Update a draft",
+        note: "Waiting for your OK. Nothing ran yet",
+        state: "waiting",
+        again: false,
+    };
+
+    it("shows a step that waits for an OK with its note, and no failure mark", async () => {
+        mount({ state: "done", line: "Used Get a draft", startedAt: 0, steps: [{ ...read, secs: 1 }, waiting] });
+        expect(target.querySelector(".bot-steps-icon.bad")).toBeNull();
+        expect(target.querySelector(".bad")).toBeNull();
+        // The folded line shows the waiting clock, not a check or a cross
+        expect(target.querySelector('[data-testid="botStepsSummary"] svg')).not.toBeNull();
+        target.querySelector<HTMLButtonElement>('[data-testid="botStepsSummary"]')!.click();
+        await tick();
+        const items = [...target.querySelectorAll('[data-testid="botStepItem"]')];
+        expect(items).toHaveLength(2);
+        expect(items[1].textContent).toContain("Waiting for your OK. Nothing ran yet");
+        expect(items[1].querySelector('[data-testid="botStepSecs"]')).toBeNull();
+        expect(target.querySelector(".bad")).toBeNull();
+    });
+
+    it("keeps a lone finished step openable, so what it sent stays reachable", async () => {
+        mount({
+            state: "done",
+            line: "Used Update a draft",
+            startedAt: 0,
+            steps: [{ ...read, secs: 2, shows: [{ label: "Subject", text: "Review draft" }] }],
+        });
+        expect(target.querySelector('[data-testid="botStepsSingleOpen"]')).not.toBeNull();
+        target.querySelector<HTMLButtonElement>('[data-testid="botStepOpen"]')!.click();
+        await tick();
+        expect(target.querySelector('[data-testid="botStepShows"]')?.textContent).toContain("Review draft");
+    });
+
+    it("shows the total time on the folded line and each step's time once opened", async () => {
+        mount({
+            state: "done",
+            line: "Did 2 things",
+            startedAt: 0,
+            took: 9,
+            steps: [
+                { ...read, secs: 1.3 },
+                { ...read, secs: 42 },
+            ],
+        });
+        expect(target.querySelector('[data-testid="botStepsSummary"]')?.textContent).toContain("9s");
+        target.querySelector<HTMLButtonElement>('[data-testid="botStepsSummary"]')!.click();
+        await tick();
+        const times = [...target.querySelectorAll('[data-testid="botStepSecs"]')].map((el) => el.textContent?.trim());
+        expect(times).toEqual(["1.3s", "42s"]);
+    });
+
+    it("opens a step that has lines in place, and a step with none has nothing to open", async () => {
+        mount({
+            state: "done",
+            line: "Did 2 things",
+            startedAt: 0,
+            steps: [{ ...read, shows: [{ label: "To", text: "a@b.co" }, { text: "Draft updated" }] }, read],
+        });
+        target.querySelector<HTMLButtonElement>('[data-testid="botStepsSummary"]')!.click();
+        await tick();
+        expect(target.querySelectorAll('[data-testid="botStepOpen"]')).toHaveLength(1);
+        expect(target.querySelector('[data-testid="botStepShows"]')).toBeNull();
+        target.querySelector<HTMLButtonElement>('[data-testid="botStepOpen"]')!.click();
+        await tick();
+        const shows = target.querySelector('[data-testid="botStepShows"]')?.textContent?.replace(/\s+/g, " ") ?? "";
+        expect(shows).toContain("To a@b.co");
+        expect(shows).toContain("Draft updated");
+    });
+});
