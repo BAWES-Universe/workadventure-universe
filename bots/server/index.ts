@@ -33,6 +33,7 @@ import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
+import { startInstantSweep } from './InstantSweep';
 import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
@@ -167,6 +168,8 @@ const COMPUTER_SWEEP_EVERY_MS = 60 * 1000;
 const COMPUTER_RUNNER_EVERY_MS = 10 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
 let computerSweepInterval: NodeJS.Timeout | undefined;
+/** Stops the timer that has Orbit settle Instant runs that lost their answer, at shutdown. */
+let stopInstantSweep: (() => void) | undefined;
 let computerRunner: ComputerRunner | undefined;
 /** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
 let stopBrickListening: (() => void) | undefined;
@@ -391,6 +394,8 @@ async function start() {
         screenGateway = createScreenGateway({ orbit: screenOrbitFor(adminApiService) });
         botAPI.addUpgradeHandler((request, socket, head) => screenGateway?.handleUpgrade(request, socket, head) ?? false);
         startComputers();
+        // Instant runs that lost their answer are settled by Orbit's sweep: it needs no Matrix either
+        stopInstantSweep = startInstantSweep(adminApiService);
         matrixBridge?.start();
 
         console.log(`[BotServer] Bot server started on port ${BOT_SERVER_PORT}`);
@@ -519,6 +524,7 @@ function stopGameLoop(): void {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
         if (computerSweepInterval) clearInterval(computerSweepInterval);
+        stopInstantSweep?.();
         computerRunner?.stop();
         screenGateway?.close();
         gameLoopInterval = null;

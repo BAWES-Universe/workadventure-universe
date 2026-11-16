@@ -1626,6 +1626,18 @@ export class AdminApiService {
         }
     }
 
+    /**
+     * Has Orbit settle Instant runs that lost their answer, read app link sessions back so none allows Instant, check the trusted prices
+     * and run the failure-rate pause check. Never throws: a sweep that cannot be asked for blocks nothing.
+     */
+    async sweepInstant(): Promise<void> {
+        try {
+            await this.brickCall('post', 'api/instant/sweep', {});
+        } catch (error) {
+            console.warn('[AdminApiService] Could not sweep Instant runs:', error instanceof Error ? error.message : error);
+        }
+    }
+
     /** Has Orbit remove every deleted Brick whose days are over (#1996), and names them. Empty when Orbit cannot be asked. */
     async sweepBricks(): Promise<string[]> {
         try {
