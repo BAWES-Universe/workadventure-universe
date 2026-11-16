@@ -29,6 +29,9 @@ import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
 import type { SpokeAnswer } from '../server/BrickRunner';
 
+/** Marks what a Brick says on its own (a reminder, a goal's news), never an answer in a chat. Orbit reads it to show the news as the title on a locked phone; it counts only from our own bot. */
+export const OWN_INITIATIVE_KEY = 'net.bawes.universe.alone';
+
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
 /** The words of a voice note the bot heard, carried by a notice that points at the note: `{ v: 1, for, state, text }`. */
@@ -781,7 +784,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const room = await this.roomToSpeakIn(botId, matrixUserId);
         if ('reason' in room) return { ok: false, reason: room.reason };
         try {
-            const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text }, transactionId);
+            const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text, [OWN_INITIATIVE_KEY]: true }, transactionId);
             return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);

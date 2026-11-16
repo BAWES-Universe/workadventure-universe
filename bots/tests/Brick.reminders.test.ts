@@ -237,7 +237,7 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
     it('sends the text as the Brick into the chat the two share alone, under the run’s transaction id', async () => {
         const { bridge, sendMessage } = bridgeWith({});
         expect(await bridge.speakInDirectChat(BRICK, SARA, 'Reminder: Pick up the car', 'brick-run:run-1')).toEqual({ ok: true, eventId: '$said' });
-        expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Reminder: Pick up the car' }, 'brick-run:run-1');
+        expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Reminder: Pick up the car', 'net.bawes.universe.alone': true }, 'brick-run:run-1');
     });
 
     it('makes no chat for a person who has none', async () => {
@@ -346,7 +346,7 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
         expect(await runner.tick()).toBe(1);
         expect(deps.rooms.getDmRoomOf).toHaveBeenCalledWith(BRICK, SARA);
         expect(sendMessage).toHaveBeenCalledTimes(1);
-        expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Reminder: Pick up the car' }, 'brick-run:run-9');
+        expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Reminder: Pick up the car', 'net.bawes.universe.alone': true }, 'brick-run:run-9');
     });
 });
 
