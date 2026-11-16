@@ -1851,7 +1851,7 @@ describe('DmReplyService history', () => {
             ['done', "Make a song · 1 didn't work"],
         ]);
         expect(shown[0][0].steps.map((s: any) => s.state)).toEqual(['running', 'running']);
-        expect(shown[2][0].steps).toEqual([
+        expect(shown[2][0].steps).toMatchObject([
             { doing: 'Make a song', done: 'Make a song', detail: 'funk', state: 'done' },
             { doing: 'Make a song', done: 'Make a song', detail: 'disco', state: 'failed', note: 'daily limit reached' },
         ]);

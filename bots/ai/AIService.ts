@@ -37,7 +37,7 @@ import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
 import { mayUse, SOMEONE_UNKNOWN, viewFor } from '../memory/Heard';
 import { MarkerWatch, PrivateAnswers, answeredPrivatelyLine, continuedIn, emotionBlockOf, onlyForThemRule, othersHereRule, privateAnswerRule, privateBodyOf, type PrivateAnswerCopies } from './PrivateAnswers';
-import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
+import { describeStep, resultOf, showsAsStep, stepDetails, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
 import { normalizeWebUrl } from '../utils/chatLinks';
@@ -1976,7 +1976,13 @@ export class AIService {
                             // The steps line marks each shown call done or failed before the bot carries on (#1545)
                             const toolStepResults = toolResults
                                 .filter((tr) => showsAsStep(tr.name, toolServerMap.has(tr.name)))
-                                .map((tr) => resultOf(tr.id, tr.result));
+                                .map((tr) => {
+                                    const ended = resultOf(tr.id, tr.result);
+                                    // In a direct message only the person reads it: a step can open to what it sent (#2061)
+                                    if (channel !== 'dm' || forOthers || !toolServerMap.has(tr.name)) return ended;
+                                    const shows = stepDetails(pendingToolCalls.find((call) => call.id === tr.id)?.arguments, ended.ok ? tr.result : undefined);
+                                    return shows ? { ...ended, shows } : ended;
+                                });
                             if (toolStepResults.length) yield {content: '', done: false, toolStepResults};
                             if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
 

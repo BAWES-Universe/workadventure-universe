@@ -145,9 +145,10 @@ describe("AIService – the steps a reply shows (#1545)", () => {
         ]);
         const ended = chunks.find((chunk) => chunk.toolStepResults);
         expect(ended).toMatchObject({ content: "", done: false });
+        // A direct message also carries what each step sent, so a step can open to show it (#2061)
         expect(ended.toolStepResults).toEqual([
-            { id: "c1", ok: true },
-            { id: "c2", ok: false, note: "daily limit reached" },
+            { id: "c1", ok: true, shows: [{ label: "Prompt", text: "upbeat 8-bit funk" }] },
+            { id: "c2", ok: false, note: "daily limit reached", shows: [{ label: "Prompt", text: "same, meaner bass" }] },
         ]);
         expect(chunks.indexOf(ended)).toBeGreaterThan(chunks.indexOf(reset));
         expect(chunks.map((chunk) => chunk.content).join("")).toBe("Here it is.");
@@ -177,7 +178,7 @@ describe("AIService – the steps a reply shows (#1545)", () => {
         const announced = chunks.filter((chunk) => chunk.toolSteps && chunk.reset).flatMap((chunk) => chunk.toolSteps.map((step: any) => step.id));
         expect(announced).toEqual(["c1", "c2"]);
         const results = chunks.filter((chunk) => chunk.toolStepResults).flatMap((chunk) => chunk.toolStepResults);
-        expect(results).toEqual([
+        expect(results).toMatchObject([
             { id: "c1", ok: true },
             { id: "c2", ok: false, note: "Not run: the bot reached its step limit" },
         ]);

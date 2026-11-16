@@ -2,7 +2,7 @@
  * The steps line of a reply (#1545): plain words for each call, what it was about, how it ended, and the one-line summary.
  */
 import { describe, expect, it } from 'vitest';
-import { ReplySteps, describeStep, resultOf, showsAsStep, summaryOf, tidyName } from '../ai/ToolSteps';
+import { ReplySteps, describeStep, resultOf, showsAsStep, stepDetails, summaryOf, tidyName } from '../ai/ToolSteps';
 
 describe('a forget that removed nothing, as the line shows it (CodeRabbit)', () => {
     it('does not read "Forgot" once it ended without forgetting', () => {
@@ -103,7 +103,7 @@ describe('ToolSteps', () => {
         expect(resultOf('a', [{ type: 'text' }])).toEqual({ id: 'a', ok: true });
         expect(resultOf('a', { success: false, message: 'Not allowed' })).toEqual({ id: 'a', ok: false, note: 'Not allowed' });
         expect(resultOf('a', { isError: true })).toEqual({ id: 'a', ok: false });
-        expect(resultOf('a', { status: 'waiting_for_ok', message: 'A card was shown.' })).toEqual({ id: 'a', ok: false, note: 'Waiting for your OK. Nothing ran yet' });
+        expect(resultOf('a', { status: 'waiting_for_ok', message: 'A card was shown.' })).toEqual({ id: 'a', ok: false, waiting: true, note: 'Waiting for your OK. Nothing ran yet' });
         expect(resultOf('a', { error: 'MCP tool error: quota at https://x.test/?key=abc reached' })).toEqual({
             id: 'a',
             ok: false,
@@ -211,5 +211,55 @@ describe('ToolSteps', () => {
         steps.finish([{ id: 'a', ok: true }]);
         steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact' }]);
         expect(steps.size).toBe(2);
+    });
+});
+
+describe('waiting, times and what a step did (#2061)', () => {
+    it('shows a step that waits for an OK as waiting, not as one that did not work', () => {
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'a', name: 'get_draft' }), describeStep({ id: 'b', name: 'update_draft' })], 0);
+        steps.finish([resultOf('a', { ok: true }), resultOf('b', { status: 'waiting_for_ok' })], 1000);
+        steps.end(2000);
+        const field = steps.field();
+        expect(field.steps[1]).toMatchObject({ state: 'waiting', note: 'Waiting for your OK. Nothing ran yet' });
+        expect(steps.text()).toContain('1 waiting for your OK');
+        expect(steps.text()).not.toContain("didn't work");
+    });
+
+    it('gives each finished step its time, and the whole reply its time once it ends', () => {
+        const steps = new ReplySteps(1000);
+        steps.start([describeStep({ id: 'a', name: 'get_draft' })], 1000);
+        expect(steps.field().steps[0].secs).toBeUndefined();
+        expect(steps.field().took).toBeUndefined();
+        steps.finish([resultOf('a', { ok: true })], 2340);
+        expect(steps.field().steps[0].secs).toBe(1.3);
+        steps.end(10_020);
+        expect(steps.field().took).toBe(9);
+    });
+
+    it('lists what a call sent as plain lines, keeping an address but never a key, a token or data', () => {
+        const lines = stepDetails(
+            { to: 'info@meetingcpp.com', subject: 'Review draft', api_key: 'abc', note: 'x'.repeat(30) + '1', options: { a: 1 }, tags: ['a', 'b'], link: 'https://x.test/p?token=zz#h' },
+            [{ type: 'text', text: 'Draft updated' }]
+        );
+        expect(lines).toEqual([
+            { label: 'To', text: 'info@meetingcpp.com' },
+            { label: 'Subject', text: 'Review draft' },
+            { label: 'Tags', text: 'a, b' },
+            { label: 'Link', text: 'https://x.test/p' },
+            { label: 'Result', text: 'Draft updated' },
+        ]);
+    });
+
+    it('shows no result that is data, and nothing when there is nothing to show', () => {
+        expect(stepDetails({}, [{ type: 'text', text: '{"data":{"id":"r1"}}' }])).toBeUndefined();
+        expect(stepDetails('{"subject":"Hi"}', undefined)).toEqual([{ label: 'Subject', text: 'Hi' }]);
+    });
+
+    it('carries what a step did into the field it sends', () => {
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'a', name: 'update_draft' })], 0);
+        steps.finish([{ ...resultOf('a', { ok: true }), shows: [{ label: 'To', text: 'a@b.co' }] }], 500);
+        expect(steps.field().steps[0].shows).toEqual([{ label: 'To', text: 'a@b.co' }]);
     });
 });
