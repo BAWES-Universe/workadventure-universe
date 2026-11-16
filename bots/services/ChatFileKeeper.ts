@@ -17,6 +17,8 @@ const RETRY_AFTER_MS = 2_000;
 const READS_AT_ONCE = 2;
 /** The longest line Orbit takes with a file. */
 const MAX_LINE_SENT = 2_000;
+/** The most people Orbit takes as having been there with a file. */
+const MAX_OTHERS_SENT = 200;
 
 export interface FileJob {
     call: ArtifactCall;
@@ -39,6 +41,11 @@ export interface FileJob {
     maxTextChars: number;
     /** Called with the short id once Orbit gave one. */
     onRef?: (ref: string) => void;
+    /**
+     * Everyone else who was in the bubble or meeting room when it was put in the chat (game #1993), by who they are.
+     * Left out or empty: nobody else was there, so the file stays with its person.
+     */
+    others?: string[];
 }
 
 type Parse = typeof FileParser.parseFile;
@@ -49,7 +56,7 @@ type Parse = typeof FileParser.parseFile;
  */
 export function sentMediaJob(
     item: SentMedia,
-    where: { call: ArtifactCall; personRef: string | null; maxTextChars: number },
+    where: { call: ArtifactCall; personRef: string | null; maxTextChars: number; others?: string[] },
     made: MadeWith | null
 ): FileJob {
     let fromLink = '';
@@ -177,6 +184,8 @@ export class ChatFileKeeper {
             ...(job.line ? { line: clipped(job.line, MAX_LINE_SENT) } : {}),
             // Orbit takes a prompt up to one piece of text
             ...(job.made ? { madeWith: job.made.with, madePrompt: job.made.prompt === null ? null : clipped(job.made.prompt, TEXT_PIECE_CHARS) } : {}),
+            // Who else was there (#1993): only in a bubble or meeting room, and only people the bot can name
+            ...(job.call.chat.kind === 'nearby' && job.others?.length ? { others: job.others.slice(0, MAX_OTHERS_SENT) } : {}),
         };
         for (let attempt = 0; attempt < 2; attempt++) {
             try {
