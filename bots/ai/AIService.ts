@@ -128,7 +128,7 @@ import {
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
-import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
+import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, reviewAppSteps, runComputerTool } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
@@ -1973,6 +1973,8 @@ export class AIService {
                         // A reply keeps its own steps (#1508): every round goes back to the model as the chat messages its
                         // provider knows, within "Room for tool results in one reply", so step five still sees step one
                         const stepRoom = new StepRoom((config.limits ?? BOT_LIMIT_DEFAULTS).roomChars);
+                        // The steps each App took in this reply: at every 20 the Brick looks again at whether its computer is the better way for the rest
+                        const appStepCounts = new Map<string, number>();
                         // What the model said, and its reasoning, in the call that asked for this round's tools
                         let roundContent = firstCallContent || '';
                         let roundReasoning = chunk.reasoning;
@@ -2008,6 +2010,7 @@ export class AIService {
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers);
+                            await this.reviewAppStepCount(toolResults, toolServerMap, appStepCounts, botId, playerId, adminApiService);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
                             const sharedLineIds = sharedLineIdsOf(toolResults);
@@ -3800,6 +3803,33 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // A job started or queued changes what the bar says: read it fresh next time
         this.computerOnCache.delete(`${botId}|${userId}`);
         return result;
+    }
+
+    /**
+     * Counts the steps the Apps took in this round of tool calls and, at every 20 in one reply, puts a line on the App's last result when
+     * Orbit says the steps so far already cost what the job would on the computer (advice, never a switch). Only a person's own Brick with a
+     * computer that is on has anything to look at; a failure adds nothing and never stops the reply.
+     */
+    private async reviewAppStepCount(
+        results: Array<{ id: string; name: string; result: any }>,
+        toolServerMap: Map<string, ToolServerEntry> | undefined,
+        counts: Map<string, number>,
+        botId?: string,
+        playerId?: number,
+        adminApiService?: AdminApiService
+    ): Promise<void> {
+        if (!toolServerMap?.size || !botId || playerId === undefined) return;
+        const appOf = (name: string): string | undefined => {
+            const entry = toolServerMap.get(name);
+            return entry && (entry.connectionId || entry.readyMade || entry.keyApp) ? entry.serverName : undefined;
+        };
+        if (!results.some((result) => appOf(result.name))) return;
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        const mine = this.ownBricks.has(botId) && !!admin?.isConfigured?.() && !!userId;
+        const on = mine && (await this.computerOnFor(botId, playerId, adminApiService));
+        // Counted either way, so the count is right if the computer comes on while the reply goes on
+        await reviewAppSteps(results, appOf, counts, async (app, steps) => (on && admin && userId ? admin.reviewAppSteps(botId, userId, app, steps) : false));
     }
 
     /** Whether this reply has the two Brick tools: a person's own first Brick, in a direct message, with Orbit to ask. */

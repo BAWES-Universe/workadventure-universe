@@ -89,6 +89,63 @@ export function appThatFits(job: string, details: string, apps: string[] | undef
     return null;
 }
 
+/** Every this many steps an app has taken in one answer, the Brick looks again at whether the computer would be the better way for the rest. */
+export const APP_STEP_CHECKPOINT = 20;
+
+/** Whether going from `before` to `after` steps passed a checkpoint (20, 40, 60...). */
+export function checkpointCrossed(before: number, after: number): boolean {
+    return after > before && Math.floor(after / APP_STEP_CHECKPOINT) > Math.floor(before / APP_STEP_CHECKPOINT);
+}
+
+/** One line for the model at a checkpoint: no price, and nothing for the person unless the Brick moves the work. */
+export function appStepsNote(app: string, steps: number): string {
+    return `You have taken ${steps} steps in ${app} on this job. If a lot of the job is still left, your computer may be the better way to finish it: call use_computer for the rest and say in app_steps about how many steps the rest would take in ${app}. If it is nearly done, just finish it in ${app}. Say nothing about this to the person unless you move the work.`;
+}
+
+/** Puts a note on a tool's result as the model will read it: a result made of content items gets one more, a plain result gets a `note`. Anything else is left. */
+export function withNote(result: unknown, note: string): unknown {
+    if (Array.isArray(result)) return [...result, { type: 'text', text: note }];
+    if (result && typeof result === 'object') return { ...(result as Record<string, unknown>), note };
+    return result;
+}
+
+const failed = (result: unknown): boolean => !!result && typeof result === 'object' && !Array.isArray(result) && ((result as Record<string, unknown>).error !== undefined || (result as Record<string, unknown>).success === false || (result as Record<string, unknown>).isError === true);
+
+/**
+ * Counts the steps the apps took in one round of tool calls (`counts` is kept for the whole answer, per app) and, when an app's count passes
+ * a checkpoint, asks whether to look again at the computer (`ask`, which is Orbit's call) and puts the note on that app's last result of the
+ * round. A step that failed is not counted. Advice only, and never throws: a question that cannot be answered adds nothing.
+ */
+export async function reviewAppSteps(
+    results: Array<{ name: string; result: unknown }>,
+    appOf: (toolName: string) => string | undefined,
+    counts: Map<string, number>,
+    ask: (app: string, steps: number) => Promise<boolean>
+): Promise<void> {
+    const lastOf = new Map<string, number>();
+    const taken = new Map<string, number>();
+    results.forEach((entry, index) => {
+        const app = appOf(entry.name);
+        if (!app || failed(entry.result)) return;
+        taken.set(app, (taken.get(app) ?? 0) + 1);
+        lastOf.set(app, index);
+    });
+    for (const [app, more] of taken) {
+        const before = counts.get(app) ?? 0;
+        const after = before + more;
+        counts.set(app, after);
+        if (!checkpointCrossed(before, after)) continue;
+        let review = false;
+        try {
+            review = await ask(app, after);
+        } catch (error) {
+            console.warn('[ComputerTools] Could not weigh the steps of an app:', error instanceof Error ? error.message : error);
+        }
+        const at = lastOf.get(app);
+        if (review && at !== undefined) results[at] = { ...results[at], result: withNote(results[at].result, appStepsNote(app, after)) };
+    }
+}
+
 /** Runs use_computer. Never throws: the model is told in plain words what happened. */
 export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext): Promise<Record<string, unknown>> {
     const job = text(args.job, TITLE_MAX);

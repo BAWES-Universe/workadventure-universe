@@ -1510,6 +1510,12 @@ export class AdminApiService {
         return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown', ...(typeof data?.app === 'string' ? { app: data.app } : {}) };
     }
 
+    /** Whether the steps an app has taken in one answer already cost what the job would on the computer, so the Brick should look again at the way. Throws when Orbit cannot be reached. */
+    async reviewAppSteps(viaBotId: string, userId: string, app: string, steps: number): Promise<boolean> {
+        const response = await this.brickCall<{ review?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-route-review`, { userId, app, steps });
+        return response.data?.review === true;
+    }
+
     /** A job as it stands (#2000), or null when it is not there. */
     /** The job as Orbit has it; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
     async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string } | null> {
