@@ -127,10 +127,20 @@ describe('Orbit’s Instant routes, from the bot server', () => {
         expect(await ask()).toEqual({ status: 'unreachable', retry: true });
         respond(200, { status: 'something-new' });
         expect(await ask()).toEqual({ status: 'unreachable', retry: true });
-        respond(401, { error: 'Unauthorized' });
-        expect(await ask()).toEqual({ status: 'unreachable', retry: false });
+        // a timeout from something on the way may have come after the run started
+        respond(408, {});
+        expect(await ask()).toEqual({ status: 'unreachable', retry: true });
+    });
+
+    it('reads a refusal of the request itself (a refused token, a body Orbit does not take, too many asks, nothing to send with) as "nothing ran", never as "no answer"', async () => {
+        const ask = () => admin().instantRun(BRICK, { requesterKey: 'a', tool: 'T', arguments: {}, callId: 'c' });
+        for (const status of [400, 401, 403, 429]) {
+            respond(status, { error: 'no' });
+            expect(await ask()).toEqual({ status: 'rejected' });
+        }
+        expect(request).toHaveBeenCalledTimes(4);
         delete process.env.BOT_SERVICE_TOKEN;
-        expect(await new AdminApiService('https://orbit.example', 'admin-token').instantRun(BRICK, { requesterKey: 'a', tool: 'T', arguments: {}, callId: 'c' })).toEqual({ status: 'unreachable', retry: false });
+        expect(await new AdminApiService('https://orbit.example', 'admin-token').instantRun(BRICK, { requesterKey: 'a', tool: 'T', arguments: {}, callId: 'c' })).toEqual({ status: 'rejected' });
     });
 
     it('opens and closes a task’s receipt with the task’s key, and what it used is never sent', async () => {
@@ -276,6 +286,16 @@ describe('one Instant run', () => {
         const refused = answers({ status: 'unreachable', retry: false });
         expect((await go(refused)).result).toMatchObject({ outcome: 'uncertain' });
         expect(refused).toHaveBeenCalledTimes(1);
+    });
+
+    it('a request Orbit refused before any run is "nothing ran": not sent, not unsure, and the receipt ends refunded', async () => {
+        const instantRun = answers({ status: 'rejected' });
+        const ran = await go(instantRun);
+        expect(instantRun).toHaveBeenCalledTimes(1);
+        expect(ran).toMatchObject({ ended: 'not_sent', notSent: true, stop: false });
+        expect(ran.result).toMatchObject({ success: false, outcome: 'not_sent', reason: 'rejected' });
+        expect(String(ran.result.note)).toMatch(/Nothing ran and nothing was taken/);
+        expect(receiptStateOf([ran.ended])).toBe('refunded');
     });
 
     it('waits and asks again with the same id while Orbit is still checking, then leaves it to settle by itself', async () => {

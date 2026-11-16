@@ -436,7 +436,9 @@ export type InstantRunAnswer =
     | { status: 'checking' }
     | { status: 'already_done'; chargedMicros: number | null }
     | { status: 'not_owner' }
-    | { status: 'unreachable'; retry: boolean };
+    | { status: 'unreachable'; retry: boolean }
+    /** Orbit refused the request itself (a refused token, a body it does not take, too many asks): it never reached the run, so nothing ran. */
+    | { status: 'rejected' };
 
 /** One task's receipt on the Usage page's Activity (`POST /api/bots/:id/task-receipts`), as the bot server needs it. */
 export interface TaskReceiptOpened {
@@ -1362,9 +1364,10 @@ export class AdminApiService {
     }
 
     /** An Instant call to Orbit with the service token. Never throws: 200 and 202 are answers, 404 is "not the owner", the rest are not answers. */
-    private async instantCall(method: 'get' | 'post', path: string, body: unknown, params: Record<string, string> | undefined, timeout: number): Promise<{ status: number; data: Record<string, unknown> } | { status: 'none'; retry: boolean }> {
+    private async instantCall(method: 'get' | 'post', path: string, body: unknown, params: Record<string, string> | undefined, timeout: number): Promise<{ status: number; data: Record<string, unknown> } | { status: 'none'; retry: boolean; rejected?: true }> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
-        if (!this.isConfigured() || !botServiceToken) return { status: 'none', retry: false };
+        // Nothing was sent, so nothing ran
+        if (!this.isConfigured() || !botServiceToken) return { status: 'none', retry: false, rejected: true };
         try {
             const response = await axios.request<Record<string, unknown>>({
                 method,
@@ -1378,8 +1381,10 @@ export class AdminApiService {
             });
             const data = response.data && typeof response.data === 'object' && !Array.isArray(response.data) ? response.data : {};
             if (response.status === 200 || response.status === 201 || response.status === 202 || response.status === 404) return { status: response.status, data };
-            // A server error may have come after the run started: the same call id is asked again. Anything else (a refused token, a body Orbit does not take) will not change
-            return { status: 'none', retry: response.status >= 500 };
+            // A server error may have come after the run started: the same call id is asked again. A refusal of the request itself (a refused token, a body
+            // Orbit does not take, too many asks) came before any run and will not change: it is certain nothing ran. A timeout from something on the way (408) is not.
+            if (response.status >= 400 && response.status < 500 && response.status !== 408) return { status: 'none', retry: false, rejected: true };
+            return { status: 'none', retry: response.status >= 500 || response.status === 408 };
         } catch (error) {
             console.warn('[AdminApiService] An Instant call got no answer:', error instanceof Error ? error.message : error);
             return { status: 'none', retry: true };
@@ -1429,7 +1434,7 @@ export class AdminApiService {
             undefined,
             INSTANT_RUN_TIMEOUT_MS
         );
-        if (answer.status === 'none') return { status: 'unreachable', retry: answer.retry };
+        if (answer.status === 'none') return answer.rejected ? { status: 'rejected' } : { status: 'unreachable', retry: answer.retry };
         if (answer.status === 404) return { status: 'not_owner' };
         const data = answer.data;
         const message = asText(data.message) ?? '';

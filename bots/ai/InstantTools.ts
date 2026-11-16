@@ -329,6 +329,20 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                     },
                 };
             }
+            case 'rejected':
+                // Orbit refused the request before any run: nothing ran, so nothing is unsure and nothing was taken
+                return {
+                    ...base,
+                    ended: 'not_sent',
+                    notSent: true,
+                    result: {
+                        success: false,
+                        error: 'That did not run.',
+                        outcome: 'not_sent',
+                        reason: 'rejected',
+                        note: 'Nothing ran and nothing was taken. Say so in one plain sentence in their language, carry on another way if you can, and do not try it again in this reply.',
+                    },
+                };
             case 'not_owner':
                 return {
                     ...base,
