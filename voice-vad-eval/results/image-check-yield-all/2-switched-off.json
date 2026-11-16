@@ -1,6 +1,6 @@
 {
   "expect": "today",
-  "image": "sha256:2e68c544a11bec8d7c90ffb40f6f9fb6a1d259d252344b24b05e01de967bf611",
+  "image": "sha256:3bfa171fc087c7bdae8004ce662006cf35638725e7551cc17d75896e8a276996",
   "timeline": [
     [
       3604,
@@ -11,8 +11,8 @@
       "fan on"
     ],
     [
-      3705,
-      "reply ended: {\"type\":\"playback.progress\",\"segmentId\":\"seg-1\",\"playedMs\":660,\"totalMs\":29120,\"finished\":true,\"interrupted\":true,\"reason\":\"barge_in\",\"sessionId\":\"bot1.1\",\"ts\":1794569637196}"
+      3706,
+      "reply ended: {\"type\":\"playback.progress\",\"segmentId\":\"seg-1\",\"playedMs\":660,\"totalMs\":29120,\"finished\":true,\"interrupted\":true,\"reason\":\"barge_in\",\"sessionId\":\"bot1.1\",\"ts\":1794863337223}"
     ]
   ],
   "finished": {
@@ -24,7 +24,7 @@
     "interrupted": true,
     "reason": "barge_in",
     "sessionId": "bot1.1",
-    "ts": 1794569637196
+    "ts": 1794863337223
   },
   "speechStarted": 1,
   "yieldCounters": {},
