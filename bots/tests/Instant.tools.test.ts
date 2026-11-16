@@ -1163,4 +1163,19 @@ describe('in a Brick’s owner chat (AIService)', () => {
         const ended = await Promise.race([held.ai.endInstantTurn(BRICK, 'uuid-alice', two).then(() => 'ended'), new Promise((resolve) => setTimeout(() => resolve('held'), 200))]);
         expect(ended).toBe('ended');
     });
+    it('a receipt Orbit will not open is let go after a few tries too', async () => {
+        const { ai, orbit, memory } = service({ openTaskReceipt: vi.fn().mockResolvedValue(null) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const first = ai.startInstantTurn(BRICK, memory);
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', first);
+        for (let turn = 0; turn < 8; turn++) {
+            const now = ai.startInstantTurn(BRICK, memory);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await ai.endInstantTurn(BRICK, 'uuid-alice', now);
+        }
+        // one open with the run, then one for each try to close it, three in all
+        expect(orbit.openTaskReceipt.mock.calls.length).toBe(4);
+        expect(orbit.closeTaskReceipt).not.toHaveBeenCalled();
+    });
 });

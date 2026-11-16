@@ -471,7 +471,12 @@ export function endInstantTask(
             // The close never overtakes the open
             const opened = (task.receipt ? await task.receipt : null) ?? (await openInstantReceipt(admin, botId, userId, task, task.title ?? ''));
             // A run that began while the receipt was being opened lands first, in the same way
-            if (!opened || task.running) return;
+            // A receipt that cannot be opened counts as a try too, so one Orbit will not open is not asked about for ever
+            if (!opened) {
+                task.attempts = (task.attempts ?? 0) + 1;
+                return;
+            }
+            if (task.running) return;
             const count = task.ended.length;
             // From here no run joins this task: what it is closed with may be final
             task.closed = true;
