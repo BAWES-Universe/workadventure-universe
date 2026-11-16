@@ -1,4 +1,4 @@
-import { writable, type Readable } from "svelte/store";
+import { get, writable, type Readable } from "svelte/store";
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 
@@ -25,6 +25,9 @@ export type ItemCadence =
 
 export interface GoalItem {
     id: string;
+    /** The Brick that keeps it, and its name as Orbit says it (empty when Orbit gave none). */
+    brickId: string;
+    brickName: string;
     kind: ItemKind;
     /** What it says, in the person's words. */
     words: string;
@@ -102,11 +105,19 @@ function parseCadence(value: unknown): ItemCadence {
 const groupOf = (state: ItemState, kind: ItemKind): ItemGroup =>
     state === "done" ? "done" : kind === "goal" ? "progress" : "scheduled";
 
-function readItem(one: unknown, goalId: string | null): GoalItem | null {
+/** The Brick a row is for: its own `brickId`, or the one the list was read for. */
+interface BrickOf {
+    brickId: string | null;
+    brickName: string;
+}
+
+function readItem(one: unknown, goalId: string | null, of: BrickOf): GoalItem | null {
     const row = (one ?? {}) as Record<string, unknown>;
     const { id, kind, state } = row;
     const words = line(row.words);
     if (typeof id !== "string" || id === "" || words === null) return null;
+    const brickId = typeof row.brickId === "string" && row.brickId !== "" ? row.brickId : of.brickId;
+    if (brickId === null) return null;
     if (!(ITEM_KINDS as readonly unknown[]).includes(kind)) return null;
     if (state !== "on" && state !== "paused" && state !== "done") return null;
     const steps = Array.isArray(row.steps)
@@ -120,6 +131,8 @@ function readItem(one: unknown, goalId: string | null): GoalItem | null {
         : [];
     return {
         id,
+        brickId,
+        brickName: line(row.brickName) ?? of.brickName,
         kind: kind as ItemKind,
         words,
         condition: line(row.condition),
@@ -145,8 +158,9 @@ function readItem(one: unknown, goalId: string | null): GoalItem | null {
 /**
  * A list as Orbit sends it (`{ items: [...] }`); a row that is not whole is left out. The checks a goal set for itself come
  * nested under it: they are listed under Scheduled, so a person sees when the Brick looks, but only the ones still running.
+ * Read for one Brick, a row is that Brick's when it does not say; read across all of them, a row that does not say is left out.
  */
-export function parseGoalItems(value: unknown): GoalItem[] {
+export function parseGoalItems(value: unknown, forBrickId: string | null = null): GoalItem[] {
     const list = (value as { items?: unknown } | null)?.items;
     if (!Array.isArray(list)) return [];
     const items: GoalItem[] = [];
@@ -157,13 +171,13 @@ export function parseGoalItems(value: unknown): GoalItem[] {
         const row = (one ?? {}) as Record<string, unknown>;
         // A check that comes on its own is a goal's own business, not a row
         if (typeof row.parentId === "string" && row.parentId !== "") continue;
-        const item = readItem(one, null);
+        const item = readItem(one, null, { brickId: forBrickId, brickName: "" });
         if (!item) continue;
         add(item);
         // The checks of a goal that is done are done with it: none of them is listed
         if (item.kind === "goal" && item.state !== "done" && Array.isArray(row.checks)) {
             for (const check of row.checks) {
-                const read = readItem(check, item.id);
+                const read = readItem(check, item.id, { brickId: item.brickId, brickName: item.brickName });
                 if (read && read.state !== "done" && read.kind !== "goal") add(read);
             }
         }
@@ -340,12 +354,62 @@ export interface BrickGoalsList {
     items: Readable<GoalItem[]>;
     state: Readable<GoalsState>;
     load(): Promise<void>;
+    /** Forgets what shows and drops any read still on its way: the list belongs to somebody else now. */
+    reset(): void;
     /** Sends a tap. The list is read again afterwards, whatever Orbit said: it is the one that knows. */
     tap(itemId: string, action: GoalTap): Promise<GoalTapResult>;
 }
 
 /** One Brick's goals and tasks. A read that fails says so; it never shows a list it did not read. */
 export function brickGoalsList(brickId: string): BrickGoalsList {
+    const own = goalsList(
+        async () => parseGoalItems(await botApiService.getBrickItems(brickId), brickId),
+        (item, action) => botApiService.tapBrickItem(brickId, item.id, action)
+    );
+    return {
+        ...own,
+        async tap(itemId, action) {
+            const result = await own.tap(itemId, action);
+            // The row and page across all Bricks show this too: read them again once Orbit has taken the tap, even if this page was left meanwhile
+            myGoalsList.load().catch((error) => console.error(error));
+            return result;
+        },
+    };
+}
+
+/**
+ * The person's goals and tasks across all their Bricks (the "Goals and tasks" row of the Bricks page, mock t-7-all): one
+ * list, read once for the row and the page it opens. Each row says its Brick; a tap goes to that Brick's own route.
+ */
+export function allGoalsList(): BrickGoalsList {
+    const list = goalsList(
+        async () => parseGoalItems(await botApiService.getAllBrickItems()),
+        (item, action) => botApiService.tapBrickItem(item.brickId, item.id, action)
+    );
+    let watching = false;
+    return {
+        ...list,
+        async load() {
+            // This list outlives the page: when the account or Orbit changes in place, it must not show the one before
+            if (!watching) {
+                watching = true;
+                botApiService.onIdentityChange(() => {
+                    list.reset();
+                    list.load().catch((error) => console.error(error));
+                });
+            }
+            await list.load();
+        },
+    };
+}
+
+/** The one list the Bricks page and its Goals and tasks page share. */
+export const myGoalsList: BrickGoalsList = allGoalsList();
+
+function goalsList(
+    readList: () => Promise<GoalItem[]>,
+    send: (item: GoalItem, action: GoalTap) => Promise<unknown>
+): BrickGoalsList {
     const items = writable<GoalItem[]>([]);
     const state = writable<GoalsState>("loading");
     // Only the latest read shows: a slow answer to an earlier one never covers a newer list
@@ -353,14 +417,14 @@ export function brickGoalsList(brickId: string): BrickGoalsList {
     const read = async (quiet = false): Promise<boolean> => {
         const mine = ++reads;
         try {
-            const next = parseGoalItems(await botApiService.getBrickItems(brickId));
+            const next = await readList();
             if (mine === reads) {
                 items.set(next);
                 state.set("ready");
             }
             return true;
         } catch (error) {
-            console.warn("Could not read a Brick's goals and tasks", error);
+            console.warn("Could not read goals and tasks", error);
             // After a tap, a read that fails leaves the list that shows; only a first read says it failed
             if (mine === reads && !quiet) state.set("failed");
             return false;
@@ -369,17 +433,26 @@ export function brickGoalsList(brickId: string): BrickGoalsList {
     return {
         items: { subscribe: items.subscribe },
         state: { subscribe: state.subscribe },
-        async load() {
+        reset() {
+            reads++;
+            items.set([]);
             state.set("loading");
+        },
+        async load() {
+            // A list that shows stays while it is read again (the page opened from its row); one that never came says it is coming
+            if (get(state) !== "ready") state.set("loading");
             await read();
         },
         async tap(itemId, action) {
-            let taken = true;
-            try {
-                await botApiService.tapBrickItem(brickId, itemId, action);
-            } catch (error) {
-                console.warn("Could not change a goal or task", error);
-                taken = false;
+            const item = get(items).find((one) => one.id === itemId);
+            let taken = item !== undefined;
+            if (item) {
+                try {
+                    await send(item, action);
+                } catch (error) {
+                    console.warn("Could not change a goal or task", error);
+                    taken = false;
+                }
             }
             // Read again either way: if it was refused, the list shows how it really stands.
             const fresh = await read(true);

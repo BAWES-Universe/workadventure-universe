@@ -218,8 +218,10 @@ describe('what the Brick is told', () => {
         expect(note).toContain('Never guess from where they live');
     });
 
-    it('never points at a page that is not there yet', () => {
-        expect(taskToolsNote({ timeZone: 'UTC', workdays: null, limits: {} }, NOW)).not.toMatch(/Goals and tasks|page|screen/i);
+    it('points at the Goals and tasks page by its link, the one the game opens in place', () => {
+        const note = taskToolsNote({ timeZone: 'UTC', workdays: null, limits: {} }, NOW);
+        expect(note).toContain('[Goals and tasks](#goals)');
+        expect(note).not.toMatch(/screen/i);
     });
 });
 

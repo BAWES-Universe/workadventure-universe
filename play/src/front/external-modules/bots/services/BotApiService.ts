@@ -160,6 +160,7 @@ export class BotApiService {
     private botServerUrl: string | null = null;
     private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
     private readonly initializeListeners = new Set<() => void>();
+    private readonly identityListeners = new Set<() => void>();
 
     /**
      * Initialize the API service with extension options
@@ -174,11 +175,13 @@ export class BotApiService {
         const roomIdChanged = this.roomId !== null && this.roomId !== roomId;
         this.initialized = true;
         const previousAdminUrl = this.adminUrl;
+        let identityChanged = false;
         const nextAccessToken = this.getAccessTokenFromJwt(userAccessToken);
         if (this.accessToken !== nextAccessToken) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
             this.resetTimeZoneKept();
+            identityChanged = true;
         }
         this.accessToken = nextAccessToken;
         if (!userAccessToken) this.gameToken = null;
@@ -195,7 +198,9 @@ export class BotApiService {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
             this.resetTimeZoneKept();
+            identityChanged = true;
         }
+        if (identityChanged) this.identityListeners.forEach((listener) => listener());
 
         try {
             this.botServerUrl = resolveCredentialUrl(
@@ -220,6 +225,12 @@ export class BotApiService {
     onInitialize(listener: () => void): () => void {
         this.initializeListeners.add(listener);
         return () => this.initializeListeners.delete(listener);
+    }
+
+    /** Called when initialize() moved to another account or another Orbit: what was kept for the one before must go. Returns how to stop. */
+    onIdentityChange(listener: () => void): () => void {
+        this.identityListeners.add(listener);
+        return () => this.identityListeners.delete(listener);
     }
 
     /**
@@ -1721,6 +1732,11 @@ export class BotApiService {
     /** A Brick's goals and tasks for its owner (game #2002): `{ items }`, each with the part of the page it sits in. */
     async getBrickItems(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items`, {});
+    }
+
+    /** Everything the person gave any of their Bricks (game #2002): `{ items }`, each with its `brickId` and `brickName`. */
+    async getAllBrickItems(): Promise<unknown> {
+        return await this.brickWrite("/api/bricks/items", {});
     }
 
     /** The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze or Keep going. Answers `{ item }`. */

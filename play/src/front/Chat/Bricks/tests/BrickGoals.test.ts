@@ -3,13 +3,16 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const orbit = vi.hoisted(() => ({
     getBrickItems: vi.fn<(brickId: string) => Promise<unknown>>(),
+    getAllBrickItems: vi.fn<() => Promise<unknown>>(),
     tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string) => Promise<unknown>>(),
+    onIdentityChange: vi.fn<(listener: () => void) => () => void>(() => () => undefined),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: orbit }));
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import LL, { setLocale } from "../../../../i18n/i18n-svelte";
 import {
+    allGoalsList,
     brickGoalsList,
     groupGoalItems,
     parseGoalItems,
@@ -311,6 +314,17 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             expect(get(list.items)[0].state).toBe("done");
         });
 
+        it("reads the list across all Bricks again once a tap on one Brick has been taken", async () => {
+            orbit.getBrickItems.mockResolvedValue({ items: [row()] });
+            orbit.getAllBrickItems.mockClear();
+            orbit.getAllBrickItems.mockResolvedValue({ items: [] });
+            const list = brickGoalsList(BRICK);
+            await list.load();
+            orbit.tapBrickItem.mockResolvedValueOnce({});
+            await list.tap("i1", "pause");
+            await vi.waitFor(() => expect(orbit.getAllBrickItems).toHaveBeenCalledTimes(1));
+        });
+
         it("keeps the list it has, and says it is stale, when the read after a tap fails", async () => {
             orbit.getBrickItems.mockResolvedValueOnce({ items: [row()] });
             const list = brickGoalsList(BRICK);
@@ -321,5 +335,115 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             expect(get(list.state)).toBe("ready");
             expect(get(list.items)).toHaveLength(1);
         });
+    });
+
+    describe("the list across all Bricks", () => {
+        const OTHER = "1c8d2e3f-2222-4333-8444-055566667777";
+
+        it("names each row's Brick, and leaves out a row that does not say its Brick", async () => {
+            orbit.getAllBrickItems.mockResolvedValueOnce({
+                items: [
+                    row({ brickName: "Brick" }),
+                    row({ id: "i2", brickId: OTHER, brickName: "Recipe Brick", words: "Plan the weekend menu" }),
+                    row({ id: "i3", brickId: undefined }),
+                    row({
+                        id: "g1",
+                        kind: "goal",
+                        words: "Visa in hand before 12 Dec",
+                        brickName: "Brick",
+                        checks: [row({ id: "c1", brickId: undefined, kind: "watch", parentId: "g1" })],
+                    }),
+                ],
+            });
+            const list = allGoalsList();
+            await list.load();
+            expect(orbit.getAllBrickItems).toHaveBeenCalledTimes(1);
+            expect(get(list.items).map((one) => [one.id, one.brickId, one.brickName])).toEqual([
+                ["i1", BRICK, "Brick"],
+                ["i2", OTHER, "Recipe Brick"],
+                ["g1", BRICK, "Brick"],
+                // A goal's own check is its goal's Brick's
+                ["c1", BRICK, "Brick"],
+            ]);
+        });
+
+        it("sends a tap to the row's own Brick, and refuses one for a row it does not have", async () => {
+            orbit.getAllBrickItems.mockResolvedValue({
+                items: [
+                    row(),
+                    row({ id: "i2", brickId: OTHER, kind: "schedule", cadence: { type: "every", minutes: 60 } }),
+                ],
+            });
+            const list = allGoalsList();
+            await list.load();
+            orbit.tapBrickItem.mockResolvedValueOnce({});
+            expect(await list.tap("i2", "pause")).toBe("taken");
+            expect(orbit.tapBrickItem).toHaveBeenLastCalledWith(OTHER, "i2", "pause");
+            expect(await list.tap("gone", "pause")).toBe("refused");
+            expect(orbit.tapBrickItem).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps a list it shows while it is read again", async () => {
+            orbit.getAllBrickItems.mockResolvedValueOnce({ items: [row()] });
+            const list = allGoalsList();
+            await list.load();
+            let finish: (value: unknown) => void = () => undefined;
+            orbit.getAllBrickItems.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+            );
+            const again = list.load();
+            expect(get(list.state)).toBe("ready");
+            expect(get(list.items)).toHaveLength(1);
+            finish({ items: [] });
+            await again;
+            expect(get(list.items)).toHaveLength(0);
+        });
+    });
+
+    describe("when the account or Orbit changes in place", () => {
+        it("forgets the list and drops a read that started before, then reads for the new account", async () => {
+            let changed: () => void = () => undefined;
+            orbit.onIdentityChange.mockImplementation((listener) => {
+                changed = listener;
+                return () => undefined;
+            });
+            orbit.getAllBrickItems.mockResolvedValueOnce({ items: [row({ words: "First account's" })] });
+            const list = allGoalsList();
+            await list.load();
+            expect(get(list.items)).toHaveLength(1);
+
+            let finishOld: (value: unknown) => void = () => undefined;
+            orbit.getAllBrickItems.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    finishOld = resolve;
+                })
+            );
+            const old = list.load();
+            orbit.getAllBrickItems.mockResolvedValueOnce({ items: [row({ id: "n1", words: "Second account's" })] });
+            changed();
+            // Nothing of the first account shows, not even for a moment
+            expect(get(list.items)).toEqual([]);
+            expect(get(list.state)).toBe("loading");
+            finishOld({ items: [row({ words: "First account's, late" })] });
+            await old;
+            await vi.waitFor(() => expect(get(list.state)).toBe("ready"));
+            expect(get(list.items).map((one) => one.words)).toEqual(["Second account's"]);
+        });
+
+        it("watches only once, however often the list is read", async () => {
+            orbit.onIdentityChange.mockClear();
+            orbit.getAllBrickItems.mockResolvedValue({ items: [] });
+            const list = allGoalsList();
+            await list.load();
+            await list.load();
+            expect(orbit.onIdentityChange).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    it("reads a row for one Brick as that Brick's when Orbit does not say", () => {
+        expect(parseGoalItems({ items: [row({ brickId: undefined })] }, BRICK)[0].brickId).toBe(BRICK);
+        expect(parseGoalItems({ items: [row({ brickId: undefined })] })).toEqual([]);
     });
 });

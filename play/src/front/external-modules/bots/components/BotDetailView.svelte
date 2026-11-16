@@ -1,6 +1,11 @@
 <script context="module" lang="ts">
     // The group left open, so the next bot opens on the same one
     let lastOpenGroup: string | undefined;
+
+    /** The next page opens on this group: a goal tapped on the Goals and tasks page opens on its Brick's own Goals and tasks. */
+    export function openNextOn(group: string): void {
+        lastOpenGroup = group;
+    }
 </script>
 
 <script lang="ts">

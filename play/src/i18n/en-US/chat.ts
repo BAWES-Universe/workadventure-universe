@@ -1229,6 +1229,11 @@ const chat: BaseTranslation = {
             retry: "Try again",
             tapFailed: "Couldn't do that. Try again.",
             tapStale: "Done, but the list could not be refreshed. Close this page and open it again.",
+            // The Goals and tasks page across all Bricks (mock t-7-all), opened from its row on the Bricks page
+            pageNote: "Tap one to open it on its Brick's page. To add one, tell any Brick in its chat.",
+            pageNone: "Nothing here yet. To add one, tell any Brick in its chat.",
+            pageLoadFailed: "Couldn't read your goals and tasks. Try again.",
+            openOnPage: "Open “{words}” on {name}'s page",
         },
         // Templates and finding Bricks (game #2008): start a new Brick from someone's template, and share one of your own
         templates: {
