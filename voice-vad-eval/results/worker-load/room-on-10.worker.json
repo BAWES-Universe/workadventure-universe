@@ -1,0 +1,55 @@
+{
+  "observer": "on",
+  "node": "v22.23.4",
+  "arch": "x64",
+  "cpuModel": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "seconds": 160,
+  "memory": {
+    "limitMb": 512,
+    "peakMb": 170,
+    "peakShareOfLimit": 0.333,
+    "peakAnonMbSampled": 154,
+    "peakProcessRssMbSampled": 232,
+    "endAnonMb": 153,
+    "oomKills": 0
+  },
+  "cpu": {
+    "coresUsed": 0.684,
+    "throttledSeconds": 3.38,
+    "throttledPeriods": 69
+  },
+  "eventLoopDelayMs": {
+    "p50": 5.1,
+    "p99": 7.1,
+    "max": 178.3
+  },
+  "heard": {
+    "frames": 158767,
+    "speechTurns": 62,
+    "lanesConnected": 0,
+    "lanesClosed": 0
+  },
+  "observerWork": {
+    "status": "on",
+    "windows": 49609,
+    "audioSecondsJudged": 1587,
+    "calls": 33819,
+    "meanPeoplePerCall": 1.5,
+    "mostPeopleInACall": 10,
+    "meanCallMs": 0.79,
+    "maxCallMs": 149,
+    "meanAgeMs": 1.5,
+    "maxAgeMs": 350,
+    "peakQueuedMs": 3684,
+    "peakStreams": 10,
+    "droppedMs": 0,
+    "overloads": 0,
+    "lateDiscarded": 0,
+    "errors": 0,
+    "streamsStarted": 10,
+    "streamsEnded": 11,
+    "speechWindows": 12516,
+    "firings": 72
+  },
+  "maxQueuedMsSeen": 206
+}
