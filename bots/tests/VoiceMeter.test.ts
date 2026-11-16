@@ -118,6 +118,28 @@ describe('the meter: sending', () => {
         expect(recordMeterEvents).toHaveBeenCalledTimes(2);
     });
 
+    it('never takes away an event that was not sent when the oldest are dropped for room while a request is out', async () => {
+        const sent: string[] = [];
+        let answer!: (ok: boolean) => void;
+        const gate = new Promise<boolean>((resolve) => (answer = resolve));
+        const recordMeterEvents = vi.fn(async (events: SpeechEvent[]) => {
+            sent.push(...events.map((e) => e.eventId));
+            return sent.length === events.length ? gate : true;
+        });
+        const m = new VoiceMeter('sam', { recordMeterEvents }, undefined, 'r1');
+        m.add(use('first'));
+        void m.flush();
+        // While Orbit is asked about the first one, more gather than are kept: the first is dropped from the waiting list
+        for (let n = 0; n < 1100; n += 1) m.add(use(`k${n}`));
+        answer(true);
+        await vi.advanceTimersByTimeAsync(60_000);
+        await vi.advanceTimersByTimeAsync(60_000);
+        // Everything kept was sent after all: the newest 1000, and nothing of them lost to the first one's leaving
+        expect(sent).toContain('speech:call:sam:r1:hearing:k1099');
+        expect(new Set(sent).size).toBe(1001);
+        expect(sent.filter((id) => id.endsWith(':first'))).toHaveLength(1);
+    });
+
     it('sends what is left when the bot is switched off, and books nothing after', async () => {
         const o = orbit();
         const m = new VoiceMeter('sam', o.fake, undefined, 'r1');

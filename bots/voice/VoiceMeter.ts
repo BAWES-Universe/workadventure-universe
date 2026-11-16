@@ -158,8 +158,10 @@ export class VoiceMeter {
             ok = false;
         }
         if (ok) {
-            // Only what was sent leaves: events that gathered meanwhile are still to go
-            this.pending = this.pending.slice(batch.length);
+            // Only what was sent leaves, found by the event itself and not by place: while the request was out the oldest were dropped for
+            // room, and a count would then take away events that were never sent
+            const sent = new Set(batch);
+            this.pending = this.pending.filter((event) => !sent.has(event));
             this.retryMs = RETRY_FIRST_MS;
             return;
         }
