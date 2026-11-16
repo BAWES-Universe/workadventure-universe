@@ -365,4 +365,17 @@ describe('the bot server asks Orbit only for what it can run', () => {
         request.mockRestore();
         vi.unstubAllEnvs();
     });
+
+    it('reads the runs Orbit gave up on, and takes an Orbit from before as having none', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'token');
+        const service = new AdminApiService('https://orbit.test/', 'admin-token');
+        const request = vi.spyOn(axios, 'request').mockResolvedValue({
+            data: { runs: [], failed: [{ runId: 'run-77', itemId: 'item-9', brickId: 'brick-1', userId: 'u', matrixUserId: '@sara:matrix.test', kind: 'reminder', words: 'Call the bank', timeZone: null, error: 'no chat' }, { runId: '' }] },
+        } as never);
+        expect((await service.claimDueItems(RUNNABLE_KINDS)).failed).toEqual([expect.objectContaining({ runId: 'run-77', matrixUserId: '@sara:matrix.test', error: 'no chat' })]);
+        request.mockResolvedValue({ data: { runs: [] } } as never);
+        expect((await service.claimDueItems(RUNNABLE_KINDS)).failed).toEqual([]);
+        request.mockRestore();
+        vi.unstubAllEnvs();
+    });
 });

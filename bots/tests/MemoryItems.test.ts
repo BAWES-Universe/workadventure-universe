@@ -302,7 +302,7 @@ describe('PersistentMemory: Forget of one thing', () => {
         await vi.waitFor(() => expect(hoisted.axios.post.mock.calls.some((call) => String(call[0]).endsWith('/forgotten'))).toBe(true));
         const [url, body] = hoisted.axios.post.mock.calls.find((call) => String(call[0]).endsWith('/forgotten'))!;
         expect(url).toBe('http://orbit.local/api/bots/memory/bot-1/forgotten');
-        expect(body).toEqual({ itemIds: ['f1'] });
+        expect(body).toEqual({ itemIds: ['f1'], items: [{ id: 'f1', at: 2000 }] });
     });
 
     it('drops it once: Orbit repeating the notice does not take what was said since', async () => {

@@ -84,10 +84,23 @@ export interface HeldNotice {
     waitId: string;
 }
 
+/** A run Orbit gave up on without a report (a one-off reminder that failed every try): its person is told once, then Orbit is told they were. */
+export interface FailedNotice {
+    runId: string;
+    itemId: string;
+    brickId: string;
+    userId: string;
+    matrixUserId: string | null;
+    kind: DueRun['kind'];
+    words: string;
+    timeZone: string | null;
+    error: string;
+}
+
 /** What this part asks of Orbit. */
 export interface BrickRunnerApi {
     /** The runs that fell due, and the goals and tasks that wait for usage; throws when Orbit cannot be asked (nothing is lost: they are handed out again). */
-    claimDue(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[] }>;
+    claimDue(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[]; failed?: FailedNotice[] }>;
     checkRun(runId: string, attempt: number): Promise<RunCheck>;
     /** Keeps the chat event the run's message got, and with it how the run is to be reported when it has said something that matters to that. Returns whether Orbit kept it. */
     keepDelivered(runId: string, eventId: string, report?: KeptReport): Promise<boolean>;
@@ -187,6 +200,26 @@ export function heldNoticeOf(raw: unknown): HeldNotice | null {
         resumesAt: one.resumesAt,
         timeZone: typeof one.timeZone === 'string' && one.timeZone ? one.timeZone : null,
         waitId: one.waitId,
+    };
+}
+
+/** One failed notice of Orbit's answer, kept only when it has what saying it needs. */
+export function failedNoticeOf(raw: unknown): FailedNotice | null {
+    if (typeof raw !== 'object' || raw === null) return null;
+    const one = raw as Record<string, unknown>;
+    const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+    if (!text(one.runId) || !text(one.itemId) || !text(one.brickId) || !text(one.userId) || !text(one.words)) return null;
+    if (one.kind !== 'reminder' && one.kind !== 'schedule' && one.kind !== 'watch' && one.kind !== 'goal') return null;
+    return {
+        runId: one.runId,
+        itemId: one.itemId,
+        brickId: one.brickId,
+        userId: one.userId,
+        matrixUserId: typeof one.matrixUserId === 'string' && one.matrixUserId ? one.matrixUserId : null,
+        kind: one.kind,
+        words: one.words,
+        timeZone: typeof one.timeZone === 'string' && one.timeZone ? one.timeZone : null,
+        error: typeof one.error === 'string' && one.error.trim() ? one.error.slice(0, ERROR_MAX) : 'it did not work',
     };
 }
 
@@ -293,7 +326,7 @@ export class BrickRunner {
         if (this.running) return 0;
         this.running = true;
         try {
-            let work: { runs: DueRun[]; held: HeldNotice[] };
+            let work: { runs: DueRun[]; held: HeldNotice[]; failed?: FailedNotice[] };
             try {
                 work = await this.api.claimDue(this.model ? MODEL_KINDS : RUNNABLE_KINDS);
             } catch (error) {
@@ -323,6 +356,14 @@ export class BrickRunner {
                     await this.sayHeld(notice);
                 } catch (error) {
                     this.log.warn(`[BrickRunner] Could not say that ${notice.itemId} waits:`, error instanceof Error ? error.message : error);
+                }
+            }
+            for (const notice of work.failed ?? []) {
+                if (this.stopped) break;
+                try {
+                    await this.sayFailed(notice);
+                } catch (error) {
+                    this.log.warn(`[BrickRunner] Could not say that run ${notice.runId} failed:`, error instanceof Error ? error.message : error);
                 }
             }
             return handled;
@@ -520,6 +561,26 @@ export class BrickRunner {
         const spoke = await this.speaker.say(run.brickId, run.matrixUserId, failedText(run, error), transactionIdOfTold(run.runId));
         // Kept as told only after it went out: a tell that did not is asked for again with the next failure
         if ('eventId' in spoke) await this.api.keepTold(run.runId);
+    }
+
+    /**
+     * A run Orbit gave up on with no report: said once to its person, in the same words and with the same transaction id as a failure
+     * the report asked to tell, and confirmed to Orbit only after it went out (Orbit hands it out again after its retry time until then).
+     * One that can never be said (no chat, or the chat refuses) is confirmed with a line in the log; one that only could not be said just now is left.
+     */
+    private async sayFailed(notice: FailedNotice): Promise<void> {
+        if (!notice.matrixUserId) {
+            this.log.warn(`[BrickRunner] Run ${notice.runId} failed but its person has no chat to be told in; kept as told`);
+            await this.api.keepTold(notice.runId);
+            return;
+        }
+        const spoke = await this.speaker.say(notice.brickId, notice.matrixUserId, failedText(notice, notice.error), transactionIdOfTold(notice.runId));
+        if ('eventId' in spoke) {
+            await this.api.keepTold(notice.runId);
+        } else if (spoke.reason !== 'unsure') {
+            this.log.warn(`[BrickRunner] Run ${notice.runId} failed and its person cannot be told in chat (${spoke.reason}); kept as told`);
+            await this.api.keepTold(notice.runId);
+        }
     }
 
     // --- what waits for usage ---------------------------------------------------------------------------------------------------------------

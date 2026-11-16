@@ -131,7 +131,7 @@ export class PersistentMemory extends ConversationMemory {
             }
         }
         // Every Forget in this notice gets reported, the new ones and the ones a lost report left behind
-        this.reportForgottenItems(botId, items.map((item) => item.id));
+        this.reportForgottenItems(botId, items.map((item) => ({ id: item.id, at: item.at })));
     }
 
     /** Who a memory is about: the uuid tracked for the chat, else the one it carries ("temp-<id>" until it is known). */
@@ -139,12 +139,13 @@ export class PersistentMemory extends ConversationMemory {
         return this.uuidTracking.get(key)?.userUuid ?? memory.userUuid ?? '';
     }
 
-    private reportForgottenItems(botId: string, ids: string[]): void {
-        const pending = ids.filter((id) => !this.reporting.has(`${botId}|item:${id}`));
-        if (pending.length === 0) return;
+    private reportForgottenItems(botId: string, forgets: Array<{ id: string; at: number }>): void {
+        const fresh = forgets.filter((one) => !this.reporting.has(`${botId}|item:${one.id}`));
+        if (fresh.length === 0) return;
+        const pending = fresh.map((one) => one.id);
         for (const id of pending) this.reporting.add(`${botId}|item:${id}`);
         this.memoryStorage
-            .acknowledgeItemForgets(botId, pending)
+            .acknowledgeItemForgets(botId, fresh)
             .then((reported) => {
                 if (!reported) return;
                 const keepUntil = Date.now() + PersistentMemory.FORGET_REPEAT_WINDOW_MS;

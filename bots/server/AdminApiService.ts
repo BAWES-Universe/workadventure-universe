@@ -11,7 +11,7 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
-import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
+import { dueRunOf, failedNoticeOf, heldNoticeOf, type DueRun, type FailedNotice, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -1262,13 +1262,16 @@ export class AdminApiService {
      * retry never share one, and a run that was handed out and never reported, again with the same run id. Throws when Orbit cannot
      * be asked: nothing is lost, the runs are handed out again.
      */
-    async claimDueItems(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[] }> {
-        const response = await this.brickCall<{ runs?: unknown; held?: unknown }>('post', 'api/bricks/items/due', { kinds });
+    async claimDueItems(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[]; failed: FailedNotice[] }> {
+        const response = await this.brickCall<{ runs?: unknown; held?: unknown; failed?: unknown }>('post', 'api/bricks/items/due', { kinds });
         const runs = Array.isArray(response.data?.runs) ? response.data.runs : [];
         const held = Array.isArray(response.data?.held) ? response.data.held : [];
+        // An Orbit from before has no `failed`: none
+        const failed = Array.isArray(response.data?.failed) ? response.data.failed : [];
         return {
             runs: runs.map(dueRunOf).filter((run): run is DueRun => run !== null),
             held: held.map(heldNoticeOf).filter((notice): notice is HeldNotice => notice !== null),
+            failed: failed.map(failedNoticeOf).filter((notice): notice is FailedNotice => notice !== null),
         };
     }
 

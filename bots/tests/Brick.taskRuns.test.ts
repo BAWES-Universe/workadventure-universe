@@ -14,6 +14,7 @@ import {
     MODEL_KINDS,
     RUNNABLE_KINDS,
     dueRunOf,
+    failedNoticeOf,
     failedText,
     heldNoticeOf,
     heldText,
@@ -21,6 +22,7 @@ import {
     type BrickSpeaker,
     type BrickTaskModel,
     type DueRun,
+    type FailedNotice,
     type HeldNotice,
     type RunReport,
     type TaskOutcome,
@@ -151,10 +153,10 @@ describe('what Orbit hands out for a model', () => {
 
 // --- the runner, with a fake model ----------------------------------------------------------------------------------------------------------
 
-function setUp(due: DueRun[], model: BrickTaskModel['run'], over: { say?: BrickSpeaker['say']; check?: () => Promise<{ ok: boolean; reason?: string }>; held?: HeldNotice[]; tell?: boolean; askPerson?: 'unsure' | 'date_passed' | null; keepAsked?: boolean } = {}) {
+function setUp(due: DueRun[], model: BrickTaskModel['run'], over: { say?: BrickSpeaker['say']; check?: () => Promise<{ ok: boolean; reason?: string }>; held?: HeldNotice[]; failed?: FailedNotice[]; tell?: boolean; askPerson?: 'unsure' | 'date_passed' | null; keepAsked?: boolean } = {}) {
     const reports: Array<{ runId: string; report: RunReport }> = [];
     const api: BrickRunnerApi = {
-        claimDue: vi.fn(async (_kinds: readonly string[]) => ({ runs: due, held: over.held ?? [] })),
+        claimDue: vi.fn(async (_kinds: readonly string[]) => ({ runs: due, held: over.held ?? [], failed: over.failed ?? [] })),
         checkRun: vi.fn((over.check ?? (async () => ({ ok: true }))) as BrickRunnerApi['checkRun']),
         keepDelivered: vi.fn(async () => true),
         keepTold: vi.fn(async () => true),
@@ -716,3 +718,45 @@ describe('each model call of a run is on the books, one row each, under the runâ
 
 beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => undefined));
 afterEach(() => vi.restoreAllMocks());
+
+describe('a run Orbit gave up on with no report is told once', () => {
+    const failedNotice = (over: Partial<FailedNotice> = {}): FailedNotice => ({
+        runId: 'run-77',
+        itemId: 'item-9',
+        brickId: 'brick-1',
+        userId: 'user-1',
+        matrixUserId: '@sara:matrix.test',
+        kind: 'reminder',
+        words: 'Call the bank',
+        timeZone: 'Asia/Kuwait',
+        error: 'the chat was not there',
+        ...over,
+    });
+
+    it('keeps only a notice that has what saying it needs', () => {
+        expect(failedNoticeOf(failedNotice())).toEqual(failedNotice());
+        expect(failedNoticeOf({ ...failedNotice(), runId: '' })).toBeNull();
+        expect(failedNoticeOf({ ...failedNotice(), kind: 'quest' })).toBeNull();
+        expect(failedNoticeOf({ ...failedNotice(), matrixUserId: undefined, error: undefined })).toMatchObject({ matrixUserId: null, error: 'it did not work' });
+    });
+
+    it('says it in the failure words under the run\'s own told id, and tells Orbit only after it went out', async () => {
+        const { runner, say, api } = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice()] });
+        await runner.tick();
+        expect(say).toHaveBeenCalledWith('brick-1', '@sara:matrix.test', failedText({ words: 'Call the bank' }, 'the chat was not there'), 'brick-told:run-77');
+        expect(api.keepTold).toHaveBeenCalledWith('run-77');
+    });
+
+    it('is handed out again when it could not be said just now, and kept as told when it can never be said', async () => {
+        const blip = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice()], say: async () => ({ ok: false, reason: 'unsure' }) });
+        await blip.runner.tick();
+        expect(blip.api.keepTold).not.toHaveBeenCalled();
+        const noChat = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice({ matrixUserId: null })] });
+        await noChat.runner.tick();
+        expect(noChat.say).not.toHaveBeenCalled();
+        expect(noChat.api.keepTold).toHaveBeenCalledWith('run-77');
+        const refused = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice()], say: async () => ({ ok: false, reason: 'not_allowed' }) });
+        await refused.runner.tick();
+        expect(refused.api.keepTold).toHaveBeenCalledWith('run-77');
+    });
+});

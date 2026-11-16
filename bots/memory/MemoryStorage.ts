@@ -211,12 +211,15 @@ export class MemoryStorage {
      * Tell Orbit these things are dropped from memory, by Forget id (#2003). Orbit keeps sending a Forget until it hears
      * this; the Forget itself stays, so a restored row cannot bring the thing back. True when Orbit took it.
      */
-    async acknowledgeItemForgets(botId: string, itemIds: string[]): Promise<boolean> {
-        if (!this.isConfigured() || !this.botServiceToken || !botId || itemIds.length === 0) return false;
+    async acknowledgeItemForgets(botId: string, forgets: Array<string | { id: string; at?: number }>): Promise<boolean> {
+        const items = forgets.map((one) => (typeof one === 'string' ? { id: one } : { id: one.id, ...(one.at && one.at > 0 ? { at: one.at } : {}) }));
+        if (!this.isConfigured() || !this.botServiceToken || !botId || items.length === 0) return false;
         try {
+            // Each carries when it was forgotten: Orbit marks a Forget dropped only if it is not newer than that, so a thing forgotten again
+            // meanwhile is handed out again. `itemIds` stays for an Orbit that reads only that
             await axios.post(
                 `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/forgotten`,
-                { itemIds },
+                { itemIds: items.map((one) => one.id), items },
                 { headers: { Authorization: `Bearer ${this.botServiceToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
             );
             return true;
