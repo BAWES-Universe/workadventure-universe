@@ -26,3 +26,19 @@ export function statusLabel(status: AvailabilityStatus, ll: TranslationFunctions
             return ll.chat.status.unavailable();
     }
 }
+
+/**
+ * The status words with "On a call" added while the person is on a call with a Brick (game #2004). It is only a label:
+ * someone who is Online reads "On a call", and anyone with another status keeps it ("Busy · On a call"), because a
+ * call never changes Busy or Do not disturb.
+ */
+export function statusLabelOnACall(
+    status: AvailabilityStatus,
+    onACall: boolean | undefined,
+    ll: TranslationFunctions
+): string {
+    const label = statusLabel(status, ll);
+    if (!onACall) return label;
+    if (status === AvailabilityStatus.ONLINE) return ll.chat.brickCall.onACall();
+    return `${label}${ll.chat.topRow.separator()}${ll.chat.brickCall.onACall()}`;
+}

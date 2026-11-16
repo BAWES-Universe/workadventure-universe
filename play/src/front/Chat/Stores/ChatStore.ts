@@ -70,6 +70,9 @@ export const chatInviteSheetHeightStore = writable(0);
 /** The "Find a group" page (the public Matrix directory), shown over the chat list when true. */
 export const findGroupOpenStore = writable(false);
 
+/** The Bricks page (the person's own Bricks, game #1995), shown over the chat list when true. Per tab and in memory. */
+export const bricksPageOpenStore = writable(false);
+
 /** Which sections of the People tab are unfolded. Per tab and in memory. */
 export const peopleSectionsOpenStore = writable<{
     elsewhere: boolean;

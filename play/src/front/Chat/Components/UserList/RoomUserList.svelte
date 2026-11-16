@@ -17,6 +17,7 @@
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import InviteFooter from "../InviteFooter.svelte";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
+    import { searchesForBots } from "../../Bricks/Brick";
     import { createColourByChatIdStore, createWokaByChatIdStore, personColour } from "../../Stores/ChatUserWokaStore";
     import { currentChatPeople, requestChatPerson } from "../../Stores/ChatPeopleLookup";
     import { fold } from "../../../Utils/foldTransition";
@@ -72,6 +73,8 @@
     $: usersByRoom = userProviderMerger.usersByRoomStore;
     $: query = $chatSearchBarValue.trim().toLocaleLowerCase();
     $: isSearching = query !== "";
+    // "Bot" and "Brick" are the same word (game #1995): either one, typed whole, finds every bot whatever its name.
+    $: findsBots = searchesForBots(query);
 
     let listElement: HTMLDivElement | undefined;
 
@@ -87,6 +90,7 @@
 
     function matches(user: ChatUser): boolean {
         if (!isSearching) return true;
+        if (findsBots && user.isBot === true) return true;
         return user.username ? user.username.toLocaleLowerCase().includes(query) : false;
     }
 

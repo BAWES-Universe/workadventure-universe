@@ -58,6 +58,8 @@
     // A file the viewer can show opens beside the map when tapped, with a separate Download button. Any other file
     // keeps the card it always had: a download link.
     $: viewable = $content.url !== undefined && chatFileOpensInViewer(displayName);
+    // A file that no longer exists: no link, and its card says it is gone
+    $: gone = $content.mediaGone === true && !$content.url;
     $: hasCaption = $content.body && $content.body.trim() && $content.body !== $content.filename;
 </script>
 
@@ -71,7 +73,8 @@
         target={$content.url ? "_blank" : undefined}
         rel={$content.url ? "noopener noreferrer" : undefined}
         download={$content.url ? displayName : undefined}
-        aria-busy={$content.url ? undefined : "true"}
+        aria-busy={$content.url || gone ? undefined : "true"}
+        data-testid={gone ? "messageFileGone" : undefined}
         class="flex items-center gap-3 p-2 rounded-lg bg-white/5 transition-colors group {$content.url
             ? 'hover:bg-white/10'
             : 'opacity-60'}"
@@ -87,11 +90,11 @@
         <div class="flex-1 min-w-0">
             <div class="text-sm text-white/90 truncate">{displayName}</div>
             <div class="text-[10px] text-white/40">
-                {$content.url ? $LL.chat.file.clickToOpen() : $LL.chat.loader()}
+                {$content.url ? $LL.chat.file.clickToOpen() : gone ? $LL.chat.file.gone() : $LL.chat.loader()}
             </div>
         </div>
         <!-- Download/open icon -->
-        <div class="flex-shrink-0 opacity-40 group-hover:opacity-80 transition-opacity">
+        <div class:hidden={gone} class="flex-shrink-0 opacity-40 group-hover:opacity-80 transition-opacity">
             <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="18"

@@ -6,11 +6,19 @@
     import { ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
     import LL from "../../../../i18n/i18n-svelte";
     import BotRow from "./BotRow.svelte";
+    import RoomBricksSection from "./RoomBricksSection.svelte";
     import { IconChevronDown, IconPlus, IconRobot } from "@wa-icons";
 
     export let bots: BotData[] = [];
     export let onSelectBot: (bot: BotData | null) => void;
     export let onCreateBot: () => void;
+    /** "Add here" on one of the person's own Bricks (game #2005): starts picking its spot on the map. */
+    export let onAddBrickHere: (brick: {
+        id: string;
+        name: string;
+        description: string | null;
+        look: string | null;
+    }) => void;
 
     $: page = $LL.mapEditor.edit.bots.page;
 
@@ -153,6 +161,7 @@
                 <IconPlus font-size="18" />
                 {page.list.newBot()}
             </button>
+            <RoomBricksSection onAddHere={onAddBrickHere} />
         </div>
     {:else}
         <button type="button" class="bl-pill bl-cta" data-testid="bot-new" on:click={onCreateBot}>
@@ -191,6 +200,7 @@
                     {/if}
                 {/if}
             {/each}
+            <RoomBricksSection onAddHere={onAddBrickHere} />
         </div>
     {/if}
 </div>
