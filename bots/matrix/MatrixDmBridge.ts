@@ -322,16 +322,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private handledEvents = new Set<string>();
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
     private roomMembers = new Map<string, Set<string>>();
+    /**
+     * By room: the looks at who is in it that wait for the homeserver. Each one is given the joins and leaves that arrive meanwhile, so an
+     * answer read before them never undoes them (a third person who joined is still counted).
+     */
+    private memberLooks = new Map<string, Set<Map<string, boolean>>>();
     /** By bot and person: the room of their direct chat, so a line for it needs no message from them first (#1993). */
     private directRooms = new Map<string, string>();
     /** By bot and person: answers they got in nearby chat that are not in their direct chat yet (#1993). */
-    private nearbyAnswers = new Map<string, { text: string; at: number }[]>();
+    private nearbyAnswers = new Map<string, { text: string; at: number; txnId: string }[]>();
     /** Waits before looking again at a chat a person just made from an answer, which the bot may still be joining. */
     private openedRetryDelaysMs = [3000, 10_000];
     /** By bot and person: such a chat is being looked at again. */
     private lookingAgain = new Set<string>();
     /** By bot and person, when there is no shared store: until when one device is making their chat (#1995). */
-    private directChatClaims = new Map<string, number>();
+    private directChatClaims = new Map<string, { until: number; token: string }>();
     /** The hand-overs of a guest's chat already brought into a chat (#1997), so one is never brought twice. */
     private carriedChats = new Set<string>();
     /** The hand-overs being brought right now, so an ask that comes meanwhile waits for how that ends. */
@@ -533,7 +538,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const now = Date.now();
             const waiting = (this.nearbyAnswers.get(key) ?? []).filter((answer) => now - answer.at <= NEARBY_ANSWER_WAIT_MS);
             this.nearbyAnswers.delete(key);
-            this.nearbyAnswers.set(key, [...waiting, { text, at: now }].slice(-NEARBY_ANSWERS_PER_CHAT));
+            this.nearbyAnswers.set(key, [...waiting, { text, at: now, txnId: randomUUID() }].slice(-NEARBY_ANSWERS_PER_CHAT));
             if (this.nearbyAnswers.size > NEARBY_ANSWERS_MAX) this.nearbyAnswers.delete(this.nearbyAnswers.keys().next().value!);
             const roomId = await this.directRoomOf(botId, matrixUserId);
             if (roomId) await this.sendNearbyAnswers(botId, matrixUserId, roomId);
@@ -573,6 +578,25 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    /** Who is in the room now: what the homeserver says, with every join and leave that came while it was being asked. Throws when it can't be read. */
+    private async readMembers(botUserId: string, roomId: string): Promise<Set<string>> {
+        const meanwhile = new Map<string, boolean>();
+        let looks = this.memberLooks.get(roomId);
+        if (!looks) this.memberLooks.set(roomId, (looks = new Set()));
+        looks.add(meanwhile);
+        try {
+            const members = new Set(await this.client.getJoinedMembers(botUserId, roomId));
+            for (const [member, joined] of meanwhile) {
+                if (joined) members.add(member);
+                else members.delete(member);
+            }
+            return members;
+        } finally {
+            looks.delete(meanwhile);
+            if (looks.size === 0) this.memberLooks.delete(roomId);
+        }
+    }
+
     /** Whether this room is the bot's and only the bot and this person are in it. Null when that could not be read. */
     private async isTheirDirectChat(botId: string, matrixUserId: string, roomId: string): Promise<boolean | null> {
         let bot: string | null;
@@ -584,10 +608,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (bot !== botId) return false;
         const botUserId = this.botUserId(botId);
         // Asked afresh: who is in the room decides that nobody else reads what goes there
-        const joined = await this.client.getJoinedMembers(botUserId, roomId).catch(() => null);
+        const joined = await this.readMembers(botUserId, roomId).catch(() => null);
         if (!joined) return null;
-        this.roomMembers.set(roomId, new Set(joined));
-        return joined.length === 2 && joined.includes(botUserId) && joined.includes(matrixUserId);
+        this.roomMembers.set(roomId, joined);
+        return joined.size === 2 && joined.has(botUserId) && joined.has(matrixUserId);
     }
 
     private async noteDirectRoom(botId: string, matrixUserId: string, roomId: string): Promise<void> {
@@ -717,10 +741,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * this claim: a look that took longer than the claim lasts never lets go of another device's claim made since.
      */
     private letGoOfClaim(botId: string, matrixUserId: string, claim: string): void {
-        this.directChatClaims.delete(MatrixDmBridge.pair(botId, matrixUserId));
+        this.letGoOfOwnClaim(MatrixDmBridge.pair(botId, matrixUserId), claim);
         this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId, claim).catch((error: any) => {
             console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
         });
+    }
+
+    /** Lets this device's own record of a claim go, only while it is still this token's: a claim another look took since stays. */
+    private letGoOfOwnClaim(key: string, token: string): void {
+        if (this.directChatClaims.get(key)?.token === token) this.directChatClaims.delete(key);
     }
 
     private async claimDirectChat(botId: string, matrixUserId: string, claim: string): Promise<boolean> {
@@ -736,11 +765,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (shared !== null && shared !== undefined) return shared;
         const key = MatrixDmBridge.pair(botId, matrixUserId);
         const now = Date.now();
-        if ((this.directChatClaims.get(key) ?? 0) > now) return false;
-        for (const [other, until] of this.directChatClaims) {
-            if (until <= now) this.directChatClaims.delete(other);
+        if ((this.directChatClaims.get(key)?.until ?? 0) > now) return false;
+        for (const [other, held] of this.directChatClaims) {
+            if (held.until <= now) this.directChatClaims.delete(other);
         }
-        this.directChatClaims.set(key, now + DIRECT_CHAT_CLAIM_MS);
+        this.directChatClaims.set(key, { until: now + DIRECT_CHAT_CLAIM_MS, token: claim });
         return true;
     }
 
@@ -755,7 +784,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const token = randomUUID();
         let first = true;
         const hold = () => {
-            this.directChatClaims.set(key, Date.now() + DIRECT_CHAT_CLAIM_MS);
+            this.directChatClaims.set(key, { until: Date.now() + DIRECT_CHAT_CLAIM_MS, token });
             const takeOver = first;
             first = false;
             this.deps.rooms?.holdDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS, token, takeOver).catch((error: any) => {
@@ -768,7 +797,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         timer.unref?.();
         return () => {
             clearInterval(timer);
-            this.directChatClaims.delete(key);
+            this.letGoOfOwnClaim(key, token);
             this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId, token).catch((error: any) => {
                 console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
             });
@@ -848,7 +877,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // Each send waits, so who is in the room is looked at again before every one of them
             if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return keepWaiting(index);
             try {
-                await this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true });
+                await this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true }, due[index].txnId);
             } catch (error: any) {
                 keepWaiting(index);
                 console.warn(`[MatrixDmBridge] Could not keep an answer of bot ${botId} in ${roomId}:`, error?.message ?? error);
@@ -992,6 +1021,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const members = this.roomMembers.get(event.room_id);
         if (members && membership === 'join') members.add(event.state_key!);
         if (members && membership !== 'join' && membership !== 'invite') members.delete(event.state_key!);
+        // A look at who is in the room is waiting for the homeserver: it takes this change too
+        if (membership === 'join' || (membership !== 'invite' && membership !== undefined)) {
+            for (const look of this.memberLooks.get(event.room_id) ?? []) look.set(event.state_key!, membership === 'join');
+        }
 
         if (botId) {
             if (membership === 'invite') {
@@ -1019,13 +1052,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const botUserId = this.botUserId(botId);
         let members = this.roomMembers.get(roomId);
         if (!members) {
-            const joined = await this.client.getJoinedMembers(botUserId, roomId).catch((error) => {
+            const joined = await this.readMembers(botUserId, roomId).catch((error) => {
                 // Unknown members: leave as the person most likely was the only one, and say so.
                 console.warn(`[MatrixDmBridge] Could not read the members of ${roomId}, leaving it:`, error?.message ?? error);
                 return null;
             });
             if (!joined) return false;
-            members = new Set(joined.filter((member) => member !== leaving));
+            joined.delete(leaving);
+            members = joined;
             this.roomMembers.set(roomId, members);
         }
         return [...members].some((member) => member !== botUserId && member !== leaving);
@@ -1198,7 +1232,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // Someone added a third person: the room is no longer a one-to-one chat, so the bot stays quiet.
         let members = this.roomMembers.get(event.room_id);
         if (!members) {
-            const joined = await this.client.getJoinedMembers(botUserId, event.room_id).catch((error) => {
+            const joined = await this.readMembers(botUserId, event.room_id).catch((error) => {
                 console.warn(`[MatrixDmBridge] Could not read the members of ${event.room_id}:`, error?.message ?? error);
                 return null;
             });
@@ -1206,7 +1240,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await couldNotAnswer();
                 return;
             }
-            members = new Set(joined);
+            members = joined;
             this.roomMembers.set(event.room_id, members);
         }
         if (members.size !== 2 || !members.has(event.sender)) {

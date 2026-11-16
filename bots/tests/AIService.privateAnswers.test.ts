@@ -506,6 +506,49 @@ describe('AIService: private answers in a group (#1993)', () => {
         });
     });
 
+    describe('files read for the group', () => {
+        const OMAR = 'uuid-omar';
+        /** A model that looks for a file, then says what it found. */
+        const looksThenSays = () => {
+            let calls = 0;
+            hoisted.generateStream.mockReset().mockImplementation(async function* () {
+                calls++;
+                if (calls === 1) yield { content: '', done: false, toolCalls: [{ id: 'call_1', name: 'find_files', arguments: JSON.stringify({ query: 'minutes' }) }] };
+                else yield { content: 'The minutes say the layoffs start on Monday.', done: false };
+                yield { content: '', done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 5, error: false, truncated: false } };
+            });
+        };
+
+        it('says one plain line, not what the files say, when someone walked up while they were read', async () => {
+            looksThenSays();
+            const { say, service, adminApi, here, botClient } = await scene();
+            Object.assign(botClient, { getFullConfig: () => ({}) });
+            (service as unknown as { orbitKeepsFiles: boolean }).orbitKeepsFiles = true;
+            adminApi.isConfigured = () => true;
+            // Omar walks up while Orbit looks the files up
+            adminApi.findBotFiles = vi.fn(async () => {
+                here.others = [SARA, OMAR];
+                return { files: [], hidden: false };
+            });
+            const { room } = await say('What do the minutes say?');
+
+            expect(adminApi.findBotFiles).toHaveBeenCalled();
+            expect(room).not.toContain('layoffs');
+            expect(room).toContain('Someone else just joined');
+        });
+
+        it('says what they say when nobody walked up', async () => {
+            looksThenSays();
+            const { say, service, adminApi, botClient } = await scene();
+            Object.assign(botClient, { getFullConfig: () => ({}) });
+            (service as unknown as { orbitKeepsFiles: boolean }).orbitKeepsFiles = true;
+            adminApi.isConfigured = () => true;
+            adminApi.findBotFiles = vi.fn(async () => ({ files: [], hidden: false }));
+            const { room } = await say('What do the minutes say?');
+            expect(room).toContain('layoffs');
+        });
+    });
+
     it('answers a guest alone too', async () => {
         model([PRIVATE_MARKER, 'It is at 10.']);
         const { say, sentPrivately } = await scene({ signedIn: false });

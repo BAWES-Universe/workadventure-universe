@@ -194,7 +194,11 @@ describe('what the model is told', () => {
             [502, { code: 'key_rejected' }, 'failed'],
             // Orbit may have sent it and lost the answer: never said to be undone
             [502, { code: 'unavailable' }, undefined],
-            [500, {}, 'not_sent'],
+            // Any server error may have come after the request was sent on: never said to be undone
+            [500, {}, undefined],
+            [503, {}, undefined],
+            [504, { code: 'timeout' }, undefined],
+            [503, { code: 'key_rejected' }, 'failed'],
         ];
         for (const [status, body, outcome] of cases) {
             const result = answerOf(status, body) as { error: string; outcome?: string };
@@ -208,7 +212,7 @@ describe('what the model is told', () => {
     });
 
     it('never says an address, a key or an app’s inside', () => {
-        for (const status of [200, 400, 403, 404, 409, 429, 500, 502]) expect(JSON.stringify(answerOf(status, { code: 'x', error: 'bad' }))).not.toMatch(/https?:\/\/|sk_|Bearer/);
+        for (const status of [200, 400, 403, 404, 409, 429, 500, 502, 503, 504]) expect(JSON.stringify(answerOf(status, { code: 'x', error: 'bad' }))).not.toMatch(/https?:\/\/|sk_|Bearer/);
     });
 });
 

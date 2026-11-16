@@ -2228,6 +2228,11 @@ export class BotClient {
 
         // A reply written for someone alone with the bot is delivered to them and nobody else, to its last piece (#1993)
         const onlyFor = this.readerOf(spaceName, responseId);
+        // For one person who cannot be named yet: not for everyone, so it is not sent at all (a later piece asks again)
+        if (onlyFor === null) {
+            console.warn(`[Bot ${this.config.botId}] A reply for one person was held back: they cannot be named in ${spaceName} yet`);
+            return;
+        }
         this.send({
             message: {
                 $case: 'publicEvent',
@@ -2284,8 +2289,8 @@ export class BotClient {
         return playerId !== undefined && this.othersWith(spaceName, playerId)?.length === 0;
     }
 
-    /** The one reader a reply is delivered to (their space user id), or undefined when it is for everyone in the space. */
-    private readerOf(spaceName: string, responseId: string): string | undefined {
+    /** The one reader a reply is delivered to (their space user id), undefined when it is for everyone in the space, null when it is for one person who cannot be named yet. */
+    private readerOf(spaceName: string, responseId: string): string | undefined | null {
         return this.readers.readerOf(spaceName, responseId, {
             alone: (playerId) => this.aloneWith(spaceName, playerId),
             spaceUserIdOf: (playerId) => this.spaceUserIdOf(spaceName, playerId),
@@ -2313,8 +2318,10 @@ export class BotClient {
         return onlyFor ? { onlyFor } : null;
     }
 
-    private onlyForOf(spaceName: string, responseId: string): { onlyFor?: string } {
+    /** Who a line about a reply is for, as the reply: `{}` for everyone, null when it is for one person who cannot be named yet (the line is then not sent). */
+    private onlyForOf(spaceName: string, responseId: string): { onlyFor?: string } | null {
         const onlyFor = this.readerOf(spaceName, responseId);
+        if (onlyFor === null) return null;
         return onlyFor ? { onlyFor } : {};
     }
 
@@ -2341,7 +2348,7 @@ export class BotClient {
      */
     private sendKeptQuiet(spaceName: string, responseId: string, keptQuiet: 'unsaid' | 'stopped'): void {
         const to = this.onlyForOf(spaceName, responseId);
-        if (!to.onlyFor) return;
+        if (!to?.onlyFor) return;
         this.send({
             message: {
                 $case: 'publicEvent',
@@ -2360,6 +2367,8 @@ export class BotClient {
 
     /** Says a voice bot's reply was cut off by someone speaking: the message in everyone's chat is marked (#1665). */
     private sendSpeechStopped(spaceName: string, responseId: string): void {
+        const to = this.onlyForOf(spaceName, responseId);
+        if (!to) return;
         this.send({
             message: {
                 $case: 'publicEvent',
@@ -2368,7 +2377,7 @@ export class BotClient {
                     spaceEvent: {
                         event: {
                             $case: 'spaceStreamMessage',
-                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, stoppedBySpeech: true, ...this.onlyForOf(spaceName, responseId) },
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, stoppedBySpeech: true, ...to },
                         },
                     },
                 },
@@ -2378,6 +2387,8 @@ export class BotClient {
 
     /** Says a voice bot's reply began to be heard, or is over (round 8): the reply in everyone's chat shows Stop speaking meanwhile. */
     private sendSpeaking(spaceName: string, responseId: string, speaking: boolean): void {
+        const to = this.onlyForOf(spaceName, responseId);
+        if (!to) return;
         this.send({
             message: {
                 $case: 'publicEvent',
@@ -2386,7 +2397,7 @@ export class BotClient {
                     spaceEvent: {
                         event: {
                             $case: 'spaceStreamMessage',
-                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking, ...this.onlyForOf(spaceName, responseId) },
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking, ...to },
                         },
                     },
                 },

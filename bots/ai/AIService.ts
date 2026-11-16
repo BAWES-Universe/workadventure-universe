@@ -117,6 +117,8 @@ import {
     artifactsEnabled,
     formatArtifactResult,
     isArtifactTool,
+    READ_ARTIFACT_TOOL,
+    LIST_ARTIFACTS_TOOL,
     writesArtifact,
     ARTIFACT_CUT_OFF_MESSAGE,
     NOTHING_SAVED_LINE,
@@ -241,6 +243,18 @@ const NEARBY_ASK_RULE =
     'When a tool says a card was shown, write nothing more.';
 /** What the model hears when an earlier file or card was not sent because someone walked up while it was looked up (#1993). */
 const SOMEONE_CAME = "Someone else just joined, so it wasn't sent. Say so in one short line; they can ask again.";
+/** The one line everyone reads instead of a reply built from files or pages when someone walked up while it was made (#1993). */
+const SOMEONE_CAME_READING = "Someone else just joined, so I'm not going to say what I found in your files here. Ask me again and I'll answer for everyone who is here now.";
+/** The tools that read what only the people who were here for it may be told (find, open, read, list). */
+const readsForTheGroup = (name: string): boolean => name === FIND_FILES_TOOL || name === OPEN_FILE_TOOL || name === READ_ARTIFACT_TOOL || name === LIST_ARTIFACTS_TOOL;
+/**
+ * The tool names an analytics event may carry (#1841): only the bot's own tools, which are named here and reviewed. The name of a tool
+ * from an App or another tool server is the server's to choose, and a name the model made up is the model's: a name that is a valid
+ * identifier (`medical_report.pdf`) is not thereby safe to send, so each of those is "other".
+ */
+export function telemetryToolNames(names: readonly string[], own: ReadonlySet<string>): string[] {
+    return names.filter(Boolean).map((name) => (own.has(name) ? name : 'other'));
+}
 const UNIVERSE_AI_REF = 'universe-ai';
 const OWN_KEY_PREFIX = 'key-';
 const needsBotRoute = (ref: string): boolean => ref === UNIVERSE_AI_REF || ref.startsWith(OWN_KEY_PREFIX);
@@ -1493,6 +1507,8 @@ export class AIService {
                       computerOn,
                       instantListing
                   );
+            // The bot's own tools, by name, at the moment an event is made (the list changes as tools are offered or taken away): the only names analytics may carry
+            const ownToolNames = (): Set<string> => new Set<string>((tools as Array<{ function?: { name?: string } }>).map((tool) => tool.function?.name ?? '').filter((name) => name && !toolServerMap.has(name) && !isInstantTool(name)));
             // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
             if (forOthers) {
                 for (let at = tools.length - 1; at >= 0; at--) {
@@ -1807,7 +1823,7 @@ export class AIService {
                                 sessionId: `conversation-${botId}-player-${playerId}`,
                                 model: config.model,
                                 provider: config.type,
-                                toolNames: Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean),
+                                toolNames: telemetryToolNames(Array.from(toolCallAccumulator.values()).map(tc => tc.name), ownToolNames()),
                                 inputTokens: promptTokens,
                                 cachedInputTokens: cachedPromptTokens,
                                 outputTokens: completionTokens,
@@ -1965,6 +1981,9 @@ export class AIService {
                         
                         // Execute tool calls and continue conversation in a loop for multi-round tool calling
                         let followUpIterations = 0;
+                        // Files or pages were read for the people who were here when this reply started (#1993): what the reply says of them goes to
+                        // everyone in the space when it is sent, so it is not said once someone has walked up since
+                        let readForTheGroup = false;
                         // Track URLs sent by autoSendMedia across tool call iterations.
                         // Local variable prevents cross-conversation contamination (AIService is shared).
                         let iterationSentUrls = new Set<string>();
@@ -2007,9 +2026,10 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
-                            const sharedLine = sharedLineOf(toolResults);
+                            if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) readForTheGroup = true;
+                            const sharedLine = sharedLineOf(toolResults) || (readForTheGroup && this.someoneCameSince(botClient, spaceName, playerId, present) ? SOMEONE_CAME_READING : '');
                             const sharedLineIds = sharedLineIdsOf(toolResults);
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
                             this.noteMadeMedia(pendingToolCalls, toolResults);
@@ -2058,7 +2078,7 @@ export class AIService {
                             // If the generator is cancelled before autoSendMedia runs
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
-                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId, channel === 'dm');
+                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId, channel === 'dm', sentOnlyTo(options, playerId));
                             // Before the auto-send below replaces results that carried media with a short note
                             const turnMediaSoFar = this.noteTurnMedia(toolResults, turnMedia);
 
@@ -2081,7 +2101,7 @@ export class AIService {
                             );
                             stepRoom.add(step);
 
-                            turnToolNames.push(...pendingToolCalls.map(tc => tc.name).filter(Boolean));
+                            turnToolNames.push(...telemetryToolNames(pendingToolCalls.map(tc => tc.name), ownToolNames()));
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -2245,7 +2265,7 @@ export class AIService {
                                             sessionId: `conversation-${botId}-player-${playerId}`,
                                             model: config.model,
                                             provider: config.type,
-                                            toolNames: pendingToolCalls.map(tc => tc.name).filter(Boolean),
+                                            toolNames: telemetryToolNames(pendingToolCalls.map(tc => tc.name), ownToolNames()),
                                             inputTokens: followUpPromptTokens,
                                             cachedInputTokens: followUpCachedPromptTokens,
                                             outputTokens: followUpCompletionTokens,
@@ -4215,6 +4235,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             retryCount: 0,
             again: true,
             name: file.name,
+            ...(only !== undefined ? { audience: only } : {}),
         });
         return null;
     }
@@ -4312,6 +4333,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });
         if (!run.card) return run.result;
+        // Orbit allowed it for the people who were here when the reply started: someone who walked up while it was made was not asked about, so no card goes out
+        if (this.someoneCameSince(botClient, spaceName, playerId, present)) return { ...run.result, notShown: SOMEONE_CAME };
         if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory, present === undefined ? playerId : undefined)) {
             // The bubble closed while the file was being made: the file is saved, but nobody was shown it, so a retry may place it
             return { ...run.result, notShown: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
@@ -4365,7 +4388,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** This reply was offered the reminder tools (#2002): a call to one of them from a reply that was not offered them is not run. */
         taskToolsOffered = false,
         /** The reply is for someone but the Brick's owner (#2005): a call to anything of the owner's is not run, whatever the model asks for. */
-        forOthers = false
+        forOthers = false,
+        /** The reply is an answer for one person alone (#1993): it was offered no tools, so a call the model makes anyway is not run. */
+        noTools = false
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -4381,6 +4406,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
+            // A private answer was offered no tools: whatever the model asks for anyway would show its steps, cards and files to the whole space
+            if (noTools) return { id: toolCall.id, name: toolCall.name, result: { error: 'That cannot be used in an answer for one person alone. Answer in words.' }, endedAt: Date.now() };
             try {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] 🔧 Executing tool: ${toolCall.name}, id: ${toolCall.id}, botClient: ${botClient ? 'available' : 'missing'}`);
@@ -4598,7 +4625,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, imageUrl, alt, 'image',
                                 () => botClient.sendImage(spaceName, imageUrl, alt, playerId, undefined, only),
-                                botId, playerId
+                                botId, playerId, only
                             );
                         } else {
                             result = { error: 'Bot client not available' };
@@ -4623,7 +4650,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, fileUrl, filename, 'file',
                                 () => botClient.sendFile(spaceName, fileUrl, filename, playerId, undefined, only),
-                                botId, playerId
+                                botId, playerId, only
                             );
                         } else {
                             result = { error: 'Bot client not available' };
@@ -4647,7 +4674,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, audioUrl, '', 'audio',
                                 () => botClient.sendAudio(spaceName, audioUrl, playerId, undefined, only),
-                                botId, playerId
+                                botId, playerId, only
                             );
                         } else {
                             result = { error: 'Bot client not available' };
@@ -4671,7 +4698,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, videoUrl, '', 'video',
                                 () => botClient.sendVideo(spaceName, videoUrl, playerId, undefined, only),
-                                botId, playerId
+                                botId, playerId, only
                             );
                         } else {
                             result = { error: 'Bot client not available' };
@@ -5113,7 +5140,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         alreadySentUrls: Set<string>,
         botId?: string,
         playerId?: number,
-        deliversReply = false
+        deliversReply = false,
+        /** The one person this reply is for, when it is for them alone (#1993): what is queued goes to them alone, whenever it is sent. */
+        only?: number
     ): void {
         if (!botId || playerId === undefined) return;
         const memory = this.conversationMemory?.getMemory(botId, playerId);
@@ -5165,6 +5194,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     caption: '',
                     createdAt: Date.now(),
                     retryCount: 0,
+                    ...(only !== undefined ? { audience: only } : {}),
                 });
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[PM-TRACE] preQueueToolResults queued: url=${url.substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
@@ -5328,6 +5358,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     caption: '',
                                     createdAt: Date.now(),
                                     retryCount: 0,
+                                    ...(only !== undefined ? { audience: only } : {}),
                                 });
                             }
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -5388,6 +5419,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     caption: '',
                                     createdAt: Date.now(),
                                     retryCount: 0,
+                                    ...(only !== undefined ? { audience: only } : {}),
                                 });
                             }
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -5526,7 +5558,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 remaining.push(item);
                 continue;
             }
-            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId, only)) {
+            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId, item.audience ?? only)) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }
@@ -5836,7 +5868,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         mediaType: 'image' | 'file' | 'audio' | 'video',
         sendFn: () => Promise<string>,
         botId?: string,
-        playerId?: number
+        playerId?: number,
+        /** The one person it is for (#1993): a retry later goes to them alone. */
+        only?: number
     ): Promise<any> {
         try {
             const location = await sendFn();
@@ -5870,6 +5904,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         caption: caption || undefined,
                         createdAt: Date.now(),
                         retryCount: 0,
+                        ...(only !== undefined ? { audience: only } : {}),
                     });
                 }
             }

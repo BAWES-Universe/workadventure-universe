@@ -381,6 +381,22 @@ describe('setting a reminder', () => {
         expect(admin.changeBrickItem.mock.calls[0][2]).toMatchObject({ change: { cadence: { type: 'once', at: '2026-11-16T06:00:00.000Z' } } });
     });
 
+    it('keeps a daily reminder repeating on its days when a new time comes with no repeat', async () => {
+        const { admin, context } = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4] } })] });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:30' }, context);
+        expect(admin.changeBrickItem.mock.calls[0][2]).toMatchObject({ change: { cadence: { type: 'daily', time: '09:30', days: [0, 1, 2, 3, 4] } } });
+    });
+
+    it('does not turn a repeating item into a one-off by "in 20 minutes" or by a new time on a check every few hours', async () => {
+        const daily = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4, 5, 6] } })] });
+        const soon = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', in_minutes: 20 }, daily.context);
+        expect(daily.admin.changeBrickItem).not.toHaveBeenCalled();
+        expect(String(soon.error)).toContain('repeats');
+        const hours = setUp({ items: [item({ cadence: { type: 'every', minutes: 360 } })] });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:00' }, hours.context);
+        expect(hours.admin.changeBrickItem).not.toHaveBeenCalled();
+    });
+
     it('still asks for the time of day when a change only says it repeats every day', async () => {
         const { admin, context } = setUp();
         const result = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', repeat: 'every_day' }, context);

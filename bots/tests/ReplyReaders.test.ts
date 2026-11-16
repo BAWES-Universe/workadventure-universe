@@ -92,6 +92,15 @@ describe('ReplyReaders', () => {
         expect(readers.wentToThemAlone(SPACE, 7)).toBe(true);
     });
 
+    it('says null, and keeps nothing, when the person is alone with the bot but cannot be named yet', () => {
+        const readers = new ReplyReaders();
+        readers.starts(SPACE, 7, true);
+        const unnamed = { alone: vi.fn(() => true), spaceUserIdOf: () => undefined };
+        expect(readers.readerOf(SPACE, REPLY, unnamed)).toBeNull();
+        expect(readers.wentToThemAlone(SPACE, 7)).toBe(false);
+        expect(readers.readerOf(SPACE, REPLY, now(true))).toBe('room-1_7');
+    });
+
     it('forgets who the last reply went to once the person, or the bot, has left', () => {
         const readers = new ReplyReaders();
         readers.starts(SPACE, 7, true);
@@ -168,6 +177,23 @@ describe('BotClient: who a reply is sent to', () => {
         bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
 
         expect(sent()[0].onlyFor).toBe('room-1_7');
+    });
+
+    it('holds back a reply for one person alone when they cannot be named yet, instead of sending it to everyone', async () => {
+        const { bot, internals, init, join, sent } = setup();
+        await init([KHALID]);
+        // The bot's own id in the space has no part the person's id can be made from yet
+        internals.spaces.set(SPACE, 'no-id-yet');
+        bot.replyStarts(SPACE, 7, true);
+        bot.sendStreamMessage(SPACE, REPLY, 'Your interview ', false);
+        await join(SARA);
+        bot.sendStreamMessage(SPACE, REPLY, 'is at 10.', false);
+        expect(sent()).toEqual([]);
+
+        // Once they can be named, the reply goes to them alone, and still never to everyone
+        internals.spaces.set(SPACE, ME);
+        bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+        expect(sent()).toEqual([{ token: '', final: 'Your interview is at 10.', onlyFor: 'room-1_7', stopped: undefined }]);
     });
 
     it('sends a reply built for the group to everyone', async () => {

@@ -90,7 +90,7 @@ describe('MatrixDmBridge: an answer from nearby chat, kept once in direct messag
 
         await bridge.keepNearbyAnswer(BOT, ALICE, ANSWER);
 
-        expect(client.sendMessage.mock.calls).toEqual([[BOT_USER, ROOM, copyOf(ANSWER)]]);
+        expect(client.sendMessage.mock.calls).toEqual([[BOT_USER, ROOM, copyOf(ANSWER), expect.any(String)]]);
         expect(client.sendText).not.toHaveBeenCalled();
         expect(deps.reply).not.toHaveBeenCalled();
     });
@@ -150,6 +150,66 @@ describe('MatrixDmBridge: an answer from nearby chat, kept once in direct messag
 
         expect(copies()).toEqual([]);
         expect((bridge as any).nearbyAnswers.size).toBe(1);
+    });
+
+    it('sends a notice again under the transaction id of the first try, so a try the homeserver already took is not sent twice', async () => {
+        await bridge.onEvent(invite());
+        client.sendMessage.mockClear();
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout'));
+
+        await bridge.keepNearbyAnswer(BOT, ALICE, ANSWER);
+        await bridge.openedFromNearby(BOT, ALICE, ROOM);
+
+        const tries = client.sendMessage.mock.calls.filter((call: any[]) => call[2]?.[ANSWERED_NEARBY_KEY]);
+        expect(tries).toHaveLength(2);
+        expect(tries[1][3]).toBe(tries[0][3]);
+        expect(typeof tries[0][3]).toBe('string');
+    });
+
+    it('counts a person who joined while the members were being read, whatever the homeserver answered', async () => {
+        stores.rooms.set(ROOM, BOT);
+        await bridge.keepNearbyAnswer(BOT, ALICE, ANSWER);
+        // The homeserver answers with the room as it was before Bob joined
+        client.getJoinedMembers.mockImplementationOnce(async () => {
+            await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$join', state_key: BOB, content: { membership: 'join' } });
+            return [ALICE, BOT_USER];
+        });
+
+        await bridge.openedFromNearby(BOT, ALICE, ROOM);
+
+        expect(copies()).toEqual([]);
+        expect(bridge.roomStillTheirs(BOT, ROOM, ALICE)).toBe(false);
+        expect((bridge as any).nearbyAnswers.size).toBe(1);
+    });
+
+    it('does not count a person who left while the members were being read', async () => {
+        stores.rooms.set(ROOM, BOT);
+        await bridge.keepNearbyAnswer(BOT, ALICE, ANSWER);
+        client.getJoinedMembers.mockImplementationOnce(async () => {
+            // Bob leaves while the homeserver is asked, and it answers with the room as it was before
+            await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: BOB, event_id: '$leave', state_key: BOB, content: { membership: 'leave' } });
+            return [ALICE, BOB, BOT_USER];
+        });
+
+        await bridge.openedFromNearby(BOT, ALICE, ROOM);
+
+        expect(copies()).toEqual([[BOT_USER, ROOM, ANSWER]]);
+    });
+
+    it('lets go of its own record of a claim only while the claim is still its own token', async () => {
+        const key = `${BOT}|${ALICE}`;
+        const claims = (bridge as any).directChatClaims as Map<string, { until: number; token: string }>;
+        expect(await (bridge as any).claimDirectChat(BOT, ALICE, 'first')).toBe(true);
+        // The first claim ran out, and another look took the chat since
+        claims.get(key)!.until = 0;
+        expect(await (bridge as any).claimDirectChat(BOT, ALICE, 'second')).toBe(true);
+
+        // The first look ends late and lets go of its own claim: the second one stays
+        (bridge as any).letGoOfClaim(BOT, ALICE, 'first');
+        expect(await (bridge as any).claimDirectChat(BOT, ALICE, 'third')).toBe(false);
+
+        (bridge as any).letGoOfClaim(BOT, ALICE, 'second');
+        expect(await (bridge as any).claimDirectChat(BOT, ALICE, 'third')).toBe(true);
     });
 
     it('stops between two answers when someone joins the chat, and keeps the rest waiting in order', async () => {

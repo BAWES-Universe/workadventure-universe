@@ -29,7 +29,6 @@ import {
 } from "../Service/AudioMessageValidator";
 import {
   isValidPlayAuthToken,
-  isValidPlayGameSession,
   playGameIdentifier,
 } from "../Service/PlayAuthToken";
 import {
@@ -278,7 +277,10 @@ export class FileController {
         response.status(503).json({ message: "uploads-not-configured" });
         return;
       }
-      if (isValidPlayGameSession(request.header("authorization"), SECRET_KEY)) {
+      // Who the session is, read once: the receipt of this upload names this one, whatever the session does while the file is stored
+      const who = playGameIdentifier(request.header("authorization"), SECRET_KEY);
+      if (who) {
+        response.locals.gameIdentifier = who;
         next();
         return;
       }
@@ -382,7 +384,7 @@ export class FileController {
           const location = await locationOf(bucket, fileUuid);
           // A player's upload comes with a receipt: who uploaded which bytes, so a bot server can trust the file a guest names
           const now = Date.now();
-          const uploader = !isBotUpload && SECRET_KEY ? playGameIdentifier(request.header("authorization"), SECRET_KEY) : null;
+          const uploader: string | null = !isBotUpload && SECRET_KEY && typeof response.locals.gameIdentifier === "string" ? response.locals.gameIdentifier : null;
           const receipt =
             uploader && SECRET_KEY
               ? signReceipt(

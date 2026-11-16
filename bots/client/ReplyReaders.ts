@@ -50,8 +50,11 @@ export class ReplyReaders {
      *
      * `now` is asked only that first time: whether the person is alone with the bot right now (used when no turn said,
      * as for a line the bot says outside a turn), and their space user id.
+     *
+     * Null when the reply is for one person who cannot be named yet: it is NOT for everyone, so nothing of it is sent, and
+     * nothing is kept, so the next piece asks again.
      */
-    readerOf(spaceName: string, responseId: string, now: { alone(playerId: number): boolean; spaceUserIdOf(playerId: number): string | undefined }): string | undefined {
+    readerOf(spaceName: string, responseId: string, now: { alone(playerId: number): boolean; spaceUserIdOf(playerId: number): string | undefined }): string | undefined | null {
         const playerId = playerOfReply(responseId);
         const known = this.bound.get(responseId);
         if (known) {
@@ -61,7 +64,12 @@ export class ReplyReaders {
         let reader: string | null = null;
         if (playerId !== undefined) {
             const alone = this.turns.get(ReplyReaders.turnKey(spaceName, playerId)) ?? now.alone(playerId);
-            if (alone) reader = now.spaceUserIdOf(playerId) ?? null;
+            if (alone) {
+                const named = now.spaceUserIdOf(playerId);
+                // Alone with the bot, but their id in the space is not known yet: unresolved is not public
+                if (!named) return null;
+                reader = named;
+            }
         }
         this.bound.set(responseId, { spaceName, reader });
         if (this.bound.size > MAX_BOUND) this.bound.delete(this.bound.keys().next().value as string);

@@ -65,6 +65,13 @@ describe('artifact tools in AIService', () => {
         expect(await names(undefined, admin(), 'dm')).not.toContain('make_artifact');
     });
 
+    it('puts no card in nearby chat when someone walked up while the page was being made, and says so', async () => {
+        const client = { ...botClient(), othersWith: vi.fn(() => ['uuid-sara', 'uuid-omar']) };
+        const [result] = await service()['executeToolCalls']([make], client as never, admin() as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7, undefined, undefined, false, undefined, undefined, ['uuid-sara']);
+        expect(client.sendChatMessage).not.toHaveBeenCalled();
+        expect(result.result).toMatchObject({ notShown: expect.stringMatching(/Someone else just joined/) });
+    });
+
     it('in a bubble: asks Orbit for the person and the bubble, puts the card in nearby chat, and tells the model no address or code', async () => {
         const client = botClient();
         const orbit = admin();

@@ -450,6 +450,43 @@ describe('by the clock', () => {
         expect(o.counters.get('observer_max_age_ms')).toBe(399);
     });
 
+    it('a person whose stream ended while waiting keeps the newest path they were on: an older path cannot open a new stream', async () => {
+        const o = observing();
+        await o.observer.ready();
+        // Less than a window on the new path, and nothing more: it is let go by the clock
+        o.feed(20, 'p1', 2, 320);
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        const dropped = o.counters.get('observer_stale_dropped');
+
+        // The old path sends a little more: none of it is taken, and no stream is opened for it
+        o.feed(64, 'p1', 1, 320);
+        await settle();
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0 });
+        expect(o.counters.get('observer_stale_dropped')).toBeGreaterThan(dropped);
+        expect(o.calls.length).toBe(0);
+        // The newer path goes on as before
+        o.feed(32, 'p1', 2, 512);
+        await settle();
+        expect(o.calls.length).toBe(1);
+    });
+
+    it('a stream whose last window emptied its queue is let go once nothing comes for it, so it never holds one of the places', async () => {
+        const o = observing('at once', { maxStreams: 2 });
+        await o.observer.ready();
+        o.feed(32, 'p1', 1, 512);
+        o.feed(32, 'p2', 1, 512);
+        await settle();
+        expect(o.observer.stats()).toMatchObject({ streams: 2, queuedMs: 0 });
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+
+        o.feed(32, 'p3', 1, 512);
+        await settle();
+        expect(o.counters.get('observer_streams_refused')).toBe(0);
+        expect(o.calls.length).toBe(3);
+    });
+
     it('audio left waiting goes by the clock even if no more ever arrives: a held-up line, and a last bit shorter than a window', async () => {
         const o = observing('held');
         await o.observer.ready();

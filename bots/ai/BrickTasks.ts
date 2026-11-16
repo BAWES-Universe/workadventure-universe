@@ -599,7 +599,25 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
             if (condition) change.condition = condition;
             const outcome = text(args.outcome, CONDITION_MAX);
             if (outcome) change.outcome = outcome;
-            if (timeGiven(args.when) || timeGiven(args.in_minutes) || repeatOf(args.repeat) !== 'none') {
+            // A new time with no "repeat" at all says nothing about how often: a thing that repeats keeps repeating, at the new time
+            const repeatSaid = args.repeat === 'none' || repeatOf(args.repeat) !== 'none';
+            let keptCadence: Record<string, unknown> | undefined;
+            if (!repeatSaid && (timeGiven(args.when) || timeGiven(args.in_minutes))) {
+                const kept = await context.admin.listBrickItems(context.botId, context.userId);
+                if (refused(kept)) return refusal(kept);
+                const stored = kept.items.find((candidate) => candidate.id === id)?.cadence;
+                if (stored && (stored.type === 'daily' || stored.type === 'every')) {
+                    if (stored.type === 'every' || !timeGiven(args.when) || inMinutesOf(args) !== null) {
+                        return { error: 'That repeats, so a single new time would turn it into a one-off. Ask them: a new time of day for every time it comes, only the next one (snooze it), or a different how often. Then call again with repeat set.' };
+                    }
+                    const time = timeOfDayOf(args.when);
+                    if (!time) return { error: 'The new time is not written as "2026-11-16 09:00" (their clock, 24 hour; only the time of day counts). Write it that way and call again.' };
+                    keptCadence = { type: 'daily', time, days: stored.days };
+                }
+            }
+            if (keptCadence) {
+                change.cadence = keptCadence;
+            } else if (timeGiven(args.when) || timeGiven(args.in_minutes) || repeatOf(args.repeat) !== 'none') {
                 const given = text(args.time_zone, 64);
                 const timeZone = settings.timeZone ?? (isTimeZone(given) ? given : null);
                 // Only a date and time on their clock needs the zone: "in 20 minutes" and "every day at 9" do not

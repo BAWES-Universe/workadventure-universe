@@ -269,8 +269,18 @@ export function resolveForgetting(items: MemoryItem[], about: string): Forgettin
     for (const clause of clausesOf(asked)) {
         const tokens = tokensOf(clause.text);
         // "keep coffee" and "remember my name" name the thing after the verb: the verb is not part of what is named
-        const found = resolveClause(items, clause.keep ? tokens.filter((token) => !KEEP_WORDS.has(token) && !FORGET_WORDS.has(token)) : tokens);
+        const named = clause.keep ? tokens.filter((token) => !KEEP_WORDS.has(token) && !FORGET_WORDS.has(token)) : tokens;
+        const found = resolveClause(items, named);
         if (clause.keep) {
+            // "but not coffee", "don't forget coffee": the "not" says to keep the thing, so it is not part of what is named. A thing that is itself
+            // "not tired" is still protected by the words as they were said, so each way of reading it keeps what it names (more kept is the safe side)
+            let from = 0;
+            while (from < named.length - 1 && NEGATIONS.has(named[from])) from++;
+            if (from > 0) {
+                const bare = resolveClause(items, named.slice(from));
+                found.picked.push(...bare.picked.filter((item) => !found.picked.includes(item)));
+                found.unsure.push(...bare.unsure.filter((item) => !found.unsure.includes(item)));
+            }
             for (const item of found.picked) kept.add(item.id);
             // A keep that could mean more than one thing ("keep Paris" with two facts that are Paris) protects each of them
             for (const item of found.unsure) keepCould.set(item.id, item);

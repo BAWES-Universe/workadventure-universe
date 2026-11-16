@@ -115,6 +115,8 @@ export interface PendingMedia {
     again?: boolean;
     /** What the file is called, when it has a name of its own (a file sent again); otherwise the link's last part. */
     name?: string;
+    /** The one person it was made for (an answer for them alone, #1993), by their id in the space: whatever turn sends it later, it goes to them alone. */
+    audience?: number;
 }
 
 export interface BotPlayerMemory {
