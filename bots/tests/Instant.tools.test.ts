@@ -161,7 +161,12 @@ describe('Orbit’s Instant routes, from the bot server', () => {
         expect(await admin().openTaskReceipt(BRICK, 'u', { taskKey: 'k', title: 't', category: 'apps' })).toBeNull();
         respond(400, { error: 'Invalid input data' });
         expect(await admin().openTaskReceipt(BRICK, 'u', { taskKey: 'k', title: 't', category: 'apps' })).toBeNull();
+        // Orbit's own "never" (not this person's, a guest, a request it refuses) is nothing more to ask; only no answer is worth asking again
         respond(200, { ok: false, reason: 'not_found' });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(true);
+        respond(400, { error: 'Invalid input data' });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(true);
+        respond(500, {});
         expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(false);
         request.mockRejectedValueOnce(new Error('down'));
         expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(false);
@@ -1133,5 +1138,29 @@ describe('in a Brick’s owner chat (AIService)', () => {
         const text = ai.formatToolResult({ id: 't', name: 'instant_app_exa_search', result: { content: [{ type: 'text', text: 'plain answer' }] } }, BRICK, true);
         expect(text).toContain('plain answer');
         expect(text).not.toMatch(/INSTANT APP DATA/);
+    });
+    it('a close Orbit never answers is let go after a few tries, and an earlier turn’s debt never holds the reply up', async () => {
+        const closeTaskReceipt = vi.fn().mockResolvedValue(false);
+        const { ai, orbit, memory } = service({ closeTaskReceipt });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const first = ai.startInstantTurn(BRICK, memory);
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', first);
+        for (let turn = 0; turn < 8; turn++) {
+            const now = ai.startInstantTurn(BRICK, memory);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await ai.endInstantTurn(BRICK, 'uuid-alice', now);
+        }
+        expect(orbit.closeTaskReceipt.mock.calls.length).toBe(5);
+        // a turn with an earlier debt ends without waiting for it
+        const slow = vi.fn(() => new Promise<boolean>(() => undefined));
+        const held = service({ closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockImplementation(slow) });
+        held.ai.noteBrick(BRICK, { isDefault: false });
+        const one = held.ai.startInstantTurn(BRICK, held.memory);
+        await held.ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await held.ai.endInstantTurn(BRICK, 'uuid-alice', one);
+        const two = held.ai.startInstantTurn(BRICK, held.memory);
+        const ended = await Promise.race([held.ai.endInstantTurn(BRICK, 'uuid-alice', two).then(() => 'ended'), new Promise((resolve) => setTimeout(() => resolve('held'), 200))]);
+        expect(ended).toBe('ended');
     });
 });

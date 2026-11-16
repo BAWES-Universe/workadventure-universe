@@ -1476,11 +1476,14 @@ export class AdminApiService {
 
     /**
      * Ends a task's receipt: done, refunded (a failure on our side took nothing) or checking (no answer came back). What it used is never sent: Orbit reads
-     * it from its books by the task's key, and settles a receipt left in checking by itself. Safe to say twice. Never throws; true when Orbit took it.
+     * it from its books by the task's key, and settles a receipt left in checking by itself. Safe to say twice. Never throws. True when there is nothing
+     * more to ask: Orbit took it, or said it never will (a receipt that is not this person's or does not exist, a guest without Activity, a request it
+     * refuses: asking again will not change that). False only when Orbit gave no answer (down, a server error, a timeout), so it is worth asking again.
      */
     async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState }): Promise<boolean> {
         const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'close', taskKey: task.taskKey, state: task.state }, undefined, INSTANT_LIST_TIMEOUT_MS);
-        return answer.status === 200 && answer.data.ok !== false;
+        if (answer.status === 'none') return answer.rejected === true;
+        return answer.status === 200 || answer.status === 404;
     }
 
     /** Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. */

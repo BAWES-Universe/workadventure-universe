@@ -3776,7 +3776,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const admin = adminApiService ?? this.adminApiService;
             if (!turn || !admin || !userId) return;
             turn.over = true;
-            for (const task of [...(turn.owed ?? []), ...turn.tasks]) await endInstantTask(admin, botId, userId, task);
+            // What an earlier turn still owes is asked again without holding this reply up; this turn's own is awaited
+            for (const task of turn.owed ?? []) void endInstantTask(admin, botId, userId, task);
+            for (const task of [...turn.tasks]) await endInstantTask(admin, botId, userId, task);
         } catch {
             // A receipt is never in the way of a reply
         }

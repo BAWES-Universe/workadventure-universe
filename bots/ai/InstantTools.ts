@@ -397,6 +397,8 @@ export interface InstantTask {
     /** Runs of this task in flight. Its receipt is not closed while any is: a close is final for done and refunded, so a run that lands after
      * it would sit under a receipt that says something else. */
     running?: number;
+    /** How many closes were sent for this task and not taken (Orbit down, or no answer): after a few it is let go, so a receipt Orbit never takes is not asked about forever. */
+    attempts?: number;
     /** A close was sent (whether or not Orbit took it). A closed task is never used again: Orbit keeps a done or refunded receipt as it ended, so a run
      * that came after (a reply written again) goes under a task of its own, with its own key and receipt. */
     closed?: boolean;
@@ -443,8 +445,11 @@ export function receiptStateOf(ended: readonly InstantEnded[]): TaskReceiptState
     return 'refunded';
 }
 
-/** Whether the task has outcomes its receipt was not closed with yet. */
-export const instantTaskPending = (task: InstantTask): boolean => !!task.title && task.ended.length > (task.reported ?? 0);
+/** How many times a close that Orbit did not answer is sent again before it is let go (Orbit settles a receipt left open by itself). */
+export const CLOSE_TRIES = 5;
+
+/** Whether the task has outcomes its receipt was not closed with yet, and a close still worth sending. */
+export const instantTaskPending = (task: InstantTask): boolean => !!task.title && task.ended.length > (task.reported ?? 0) && (task.attempts ?? 0) < CLOSE_TRIES;
 
 /**
  * Ends the task's receipt, once for what ran since it was last ended. Nothing happens when nothing new ran. What the task used is never sent:
@@ -471,8 +476,10 @@ export function endInstantTask(
             // From here no run joins this task: what it is closed with may be final
             task.closed = true;
             if (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(task.ended.slice(0, count)) })) task.reported = count;
+            else task.attempts = (task.attempts ?? 0) + 1;
         } catch {
-            // kept: the next end says it again
+            // kept: the next end says it again (a few times)
+            task.attempts = (task.attempts ?? 0) + 1;
         }
     });
     task.settling = settled;
