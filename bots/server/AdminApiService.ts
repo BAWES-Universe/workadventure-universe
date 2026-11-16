@@ -1491,12 +1491,12 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; brief?: string; writes?: boolean }
-    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string }> {
-        const response = await this.brickCall<{ ok?: unknown; reason?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
+        ask: { title: string; brief?: string; writes?: boolean; plan?: { app: string; steps?: number; appCannot?: string } }
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
+        const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
-            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
+            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }), ...(ask.plan ? { plan: ask.plan } : {}) }
         );
         const data = response.data;
         const job = data?.job;
@@ -1507,7 +1507,7 @@ export class AdminApiService {
                 restoredFrom: typeof data.restoredFrom === 'string' ? data.restoredFrom : null,
             };
         }
-        return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown' };
+        return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown', ...(typeof data?.app === 'string' ? { app: data.app } : {}) };
     }
 
     /** A job as it stands (#2000), or null when it is not there. */

@@ -35,6 +35,8 @@ export function computerToolDefinitions(): { type: 'function'; function: { name:
                     properties: {
                         job: { type: 'string', description: 'What the job is, in a few plain words, as the bar will show it: "Visa form", "Shop website", "Taxi booking".' },
                         details: { type: 'string', description: 'Everything the computer needs to do it, in the person\'s words: the site, what they asked for, the choices they made. Leave out passwords, card numbers and ID numbers: the computer asks the person for those when it needs them.' },
+                        app: { type: 'string', description: 'Only when one of your apps could seem to fit this job: its name, as it is connected. Leave out otherwise.' },
+                        app_steps: { type: 'integer', description: 'With app: about how many steps (your own turns) that app would take to do the whole job. Your best guess, a whole number.' },
                         app_cannot: { type: 'string', description: 'Only when one of your apps could seem to fit this job: in a few words, why that app cannot do it (it has no such action, or the job lives on a website screen). Leave out otherwise.' },
                         reads_only: { type: 'boolean', description: 'True when the job only looks and writes nothing anywhere (it may run beside another job). Leave out otherwise.' },
                     },
@@ -93,18 +95,25 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     if (!job) return { error: 'Say in a few words what the job is.' };
     const brief = typeof args.details === 'string' ? args.details.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, DETAILS_MAX) : '';
     const fits = appThatFits(job, brief, context.apps);
-    if (fits && text(args.app_cannot, 300).length < 8) {
+    const appCannot = text(args.app_cannot, 300);
+    if (fits && appCannot.length < 8) {
         return { started: false, success: false, note: `You have ${fits} connected, and this names it: do the job through ${fits} first. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
     }
+    // The way Brick weighed: Orbit works out which way costs least and says so (no price comes back, and none goes to the model)
+    const planned = text(args.app, 120) || fits || '';
+    const steps = typeof args.app_steps === 'number' && Number.isInteger(args.app_steps) && args.app_steps >= 1 ? Math.min(args.app_steps, 10000) : undefined;
+    const plan = planned ? { app: planned, ...(steps !== undefined ? { steps } : {}), ...(appCannot ? { appCannot } : {}) } : undefined;
     let started;
     try {
-        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined });
+        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}) });
     } catch (error) {
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
     }
     if (!started.ok) {
         switch (started.reason) {
+            case 'cheaper_route':
+                return { started: false, success: false, note: `${started.app ?? 'An app you have'} can do this job: do it through ${started.app ?? 'that app'}. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
             case 'off':
                 return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
             case 'broken_start':

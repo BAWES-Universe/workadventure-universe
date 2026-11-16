@@ -40,4 +40,44 @@ describe('the fixed order: answer, then an app, then the computer', () => {
         const [tool] = computerToolDefinitions();
         expect(JSON.stringify(tool.function.parameters)).toContain('app_cannot');
     });
+
+describe('the way weighed by cost: Brick says which app and how many steps, and Orbit works out the cheaper way', () => {
+    const context = (admin: ReturnType<typeof asking>) => ({ admin, botId: BRICK, userId: 'u', apps: ['GitHub'] });
+
+    it('tells Brick about the plan it can give: the app it weighed and about how many steps', () => {
+        const [tool] = computerToolDefinitions();
+        const properties = (tool.function.parameters as { properties: Record<string, { description: string }> }).properties;
+        expect(Object.keys(properties)).toEqual(expect.arrayContaining(['app', 'app_steps']));
+        expect(properties.app_steps.description).toMatch(/steps/i);
+    });
+
+    it('sends the plan with the start: the app, its steps and why it cannot, and nothing a price could be put in', async () => {
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        await runComputerTool({ job: 'Sheet chart', app: 'Notion', app_steps: 3, app_cannot: 'the chart lives on a website screen' }, context(admin));
+        expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'u', expect.objectContaining({ plan: { app: 'Notion', steps: 3, appCannot: 'the chart lives on a website screen' } }));
+    });
+
+    it('sends the app a job names even when Brick left the plan out, and no plan for a job that names none', async () => {
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        await runComputerTool({ job: 'Open a PR', details: 'on GitHub', app_cannot: 'the job is on the website screen, GitHub has no such action' }, context(admin));
+        expect(admin.startComputerJob).toHaveBeenLastCalledWith(BRICK, 'u', expect.objectContaining({ plan: expect.objectContaining({ app: 'GitHub' }) }));
+        await runComputerTool({ job: 'Visa form', details: 'the embassy site' }, context(admin));
+        expect(admin.startComputerJob.mock.calls.at(-1)?.[2]).not.toHaveProperty('plan');
+    });
+
+    it('reads a step count that is not a whole number as none', async () => {
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        await runComputerTool({ job: 'Chart', app: 'Notion', app_steps: 'lots' }, context(admin));
+        expect(admin.startComputerJob).toHaveBeenLastCalledWith(BRICK, 'u', expect.objectContaining({ plan: { app: 'Notion' } }));
+    });
+
+    it('turns "a connected app is cheaper" into one plain line: use that app, no price, and nothing was started', async () => {
+        const admin = asking({ ok: false, reason: 'cheaper_route', app: 'Notion' });
+        const result = await runComputerTool({ job: 'Add a page', app: 'Notion', app_steps: 3 }, context(admin));
+        expect(result).toMatchObject({ started: false, success: false });
+        expect(String(result.note)).toContain('Notion');
+        expect(String(result.note)).toMatch(/app_cannot/);
+        expect(String(result.note)).not.toMatch(/\$|cost|price|cheaper|cents/i);
+    });
+});
 });

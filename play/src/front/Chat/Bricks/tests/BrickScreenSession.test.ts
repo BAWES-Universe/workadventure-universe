@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     createScreenSession,
+    documentVisibility,
     SCREEN_RETRIES,
     SCREEN_RETRY_MS,
     SCREEN_SLOW_RETRY_MS,
@@ -211,5 +212,137 @@ describe("a Brick's screen connection", () => {
         expect(FakeRfb.all).toHaveLength(0);
         await runTimer();
         expect(FakeRfb.all).toHaveLength(1);
+    });
+
+    describe("when the page is hidden", () => {
+        /** A page whose visibility a test turns, and the listeners told. */
+        function page(hidden = false) {
+            const listeners: Array<() => void> = [];
+            const state = {
+                hidden,
+                listeners,
+                set(value: boolean) {
+                    state.hidden = value;
+                    for (const listener of [...listeners]) listener();
+                },
+                visibility: {
+                    hidden: () => state.hidden,
+                    onChange(listener: () => void) {
+                        listeners.push(listener);
+                        return () => {
+                            listeners.splice(listeners.indexOf(listener), 1);
+                        };
+                    },
+                },
+            };
+            return state;
+        }
+
+        it("closes the connection the moment the tab is hidden, and opens a new one with a new ticket when it is shown again", async () => {
+            const tab = page();
+            deps.visibility = tab.visibility;
+            const session = createScreenSession(deps, target, (value) => live.push(value));
+            session.want("watch");
+            await flush();
+            FakeRfb.all[0].fire("connect");
+            tab.set(true);
+            expect(FakeRfb.all[0].disconnected).toBe(true);
+            expect(live.at(-1)).toBe(false);
+            // Nothing is asked or retried while it is hidden, however long
+            deps.ticket.mockResolvedValueOnce({ ticket: "t-2" });
+            expect(timers.filter((timer) => timer.live)).toHaveLength(0);
+            expect(asked()).toEqual(["watch"]);
+            tab.set(false);
+            await flush();
+            expect(asked()).toEqual(["watch", "watch"]);
+            expect(FakeRfb.all[1].url).toContain("t-2");
+        });
+
+        it("opens nothing for a page that starts hidden, and shows the screen when it is first seen", async () => {
+            const tab = page(true);
+            deps.visibility = tab.visibility;
+            const session = createScreenSession(deps, target, () => undefined);
+            session.want("watch");
+            await flush();
+            expect(asked()).toEqual([]);
+            expect(FakeRfb.all).toHaveLength(0);
+            tab.set(false);
+            await flush();
+            expect(asked()).toEqual(["watch"]);
+        });
+
+        it("drops a connection that was still being made when the tab was hidden", async () => {
+            const tab = page();
+            deps.visibility = tab.visibility;
+            let resolve: (value: { ticket: string }) => void = () => undefined;
+            deps.ticket.mockImplementationOnce(
+                () =>
+                    new Promise((done) => {
+                        resolve = done;
+                    })
+            );
+            const session = createScreenSession(deps, target, () => undefined);
+            session.want("watch");
+            await flush();
+            tab.set(true);
+            resolve({ ticket: "late" });
+            await flush();
+            expect(FakeRfb.all).toHaveLength(0);
+        });
+
+        it("stops a retry that was waiting when the tab was hidden", async () => {
+            const tab = page();
+            deps.visibility = tab.visibility;
+            deps.ticket.mockResolvedValueOnce("failed");
+            const session = createScreenSession(deps, target, () => undefined);
+            session.want("watch");
+            await flush();
+            expect(timers.filter((timer) => timer.live)).toHaveLength(1);
+            tab.set(true);
+            expect(timers.filter((timer) => timer.live)).toHaveLength(0);
+        });
+
+        it("keeps what it is wanted to show while hidden, so a change of who has the keyboard shows when the tab is seen", async () => {
+            const tab = page(true);
+            deps.visibility = tab.visibility;
+            const session = createScreenSession(deps, target, () => undefined);
+            session.want("watch");
+            session.want("input");
+            await flush();
+            expect(asked()).toEqual([]);
+            tab.set(false);
+            await flush();
+            expect(asked()).toEqual(["input"]);
+            expect(FakeRfb.all[0].viewOnly).toBe(false);
+        });
+
+        it("stops listening for the tab when the screen is gone", async () => {
+            const tab = page();
+            deps.visibility = tab.visibility;
+            const session = createScreenSession(deps, target, () => undefined);
+            session.want("watch");
+            await flush();
+            expect(tab.listeners).toHaveLength(1);
+            session.destroy();
+            expect(tab.listeners).toHaveLength(0);
+            tab.set(false);
+            await flush();
+            expect(asked()).toEqual(["watch"]);
+        });
+
+        it("reads the page's own visibility: hidden is a tab out of sight, and listening ends when told", () => {
+            const seen: string[] = [];
+            const spy = vi.spyOn(document, "visibilityState", "get");
+            spy.mockReturnValue("visible");
+            const watching = documentVisibility(document);
+            expect(watching.hidden()).toBe(false);
+            const stop = watching.onChange(() => seen.push(String(watching.hidden())));
+            spy.mockReturnValue("hidden");
+            document.dispatchEvent(new Event("visibilitychange"));
+            expect(watching.hidden()).toBe(true);
+            stop();
+            document.dispatchEvent(new Event("visibilitychange"));
+            expect(seen).toEqual(["true"]);
+        });
     });
 });

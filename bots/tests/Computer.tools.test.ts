@@ -152,6 +152,16 @@ describe('asking Orbit for a computer (#2000)', () => {
         expect(await service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).toEqual({ ok: false, reason: 'unknown' });
     });
 
+    it('sends the plan Brick weighed with the start, and gives back the app Orbit says to use when it is the cheaper way', async () => {
+        process.env.BOT_SERVICE_TOKEN = 'secret';
+        request.mockResolvedValueOnce({ data: { ok: false, reason: 'cheaper_route', app: 'Notion' } });
+        expect(await service().startComputerJob(BRICK, 'uuid-alice', { title: 'Add a page', plan: { app: 'Notion', steps: 3 } })).toEqual({ ok: false, reason: 'cheaper_route', app: 'Notion' });
+        expect(JSON.stringify(request.mock.calls.at(-1))).toContain('"plan":{"app":"Notion","steps":3}');
+        request.mockResolvedValueOnce({ data: { ok: true, job: { id: 'j1', status: 'queued', queuedFor: null } } });
+        await service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' });
+        expect(JSON.stringify(request.mock.calls.at(-1))).not.toContain('plan');
+    });
+
     it('throws when Orbit answers with a failure status, since every refusal comes as a 200 with a reason', async () => {
         process.env.BOT_SERVICE_TOKEN = 'secret';
         request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 500'), { response: { status: 500 } }));

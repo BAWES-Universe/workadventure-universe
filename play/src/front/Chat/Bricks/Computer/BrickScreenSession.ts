@@ -6,14 +6,37 @@ import type { RfbConnection, RfbConstructor } from "./novnc";
  * fits: nothing is cached, because a ticket is worth a minute and the server decides each time. A try that did not go through is asked
  * again after a wait that doubles, a few times, and then every so often for as long as the screen is wanted (the computer may be waking, or the
  * connection down for a while): it is never left stuck on the waiting picture.
+ *
+ * A tab that is hidden shows nothing and costs the bot server a socket and the computer a stream for no one: the connection is closed the
+ * moment the tab is hidden, nothing is asked or retried while it stays hidden, and a new ticket and connection are made when it is seen again
+ * (build handoff v2, section 4: "Hidden tabs disconnect"). What the screen is wanted to show is kept meanwhile.
  */
 
 export type ScreenMode = "watch" | "input";
+
+/** Whether the page is out of sight, and a way to hear when that changes (it returns what ends the listening). */
+export interface Visibility {
+    hidden(): boolean;
+    onChange(listener: () => void): () => void;
+}
+
+/** The page's own visibility: a tab that is switched away from, or a window that is minimised, is hidden. */
+export function documentVisibility(doc: Document): Visibility {
+    return {
+        hidden: () => doc.visibilityState === "hidden",
+        onChange(listener) {
+            doc.addEventListener("visibilitychange", listener);
+            return () => doc.removeEventListener("visibilitychange", listener);
+        },
+    };
+}
 
 export interface ScreenSessionDeps {
     ticket(mode: ScreenMode): Promise<{ ticket: string } | undefined | "failed">;
     socketUrl(ticket: string): string | null;
     load(): Promise<RfbConstructor>;
+    /** Without it the page is taken to be always seen. */
+    visibility?: Visibility;
     /** For tests. */
     setTimer?: (fn: () => void, ms: number) => unknown;
     clearTimer?: (handle: unknown) => void;
@@ -42,6 +65,20 @@ export function createScreenSession(
     let retry: unknown;
     let connection: RfbConnection | undefined;
     let wanted: ScreenMode | "" = "";
+    let hidden = deps.visibility?.hidden() ?? false;
+    // The tab going out of sight closes the screen; coming back asks for it again with a ticket that fits now
+    const stopListening = deps.visibility?.onChange(() => {
+        const now = deps.visibility?.hidden() ?? false;
+        if (now === hidden) return;
+        hidden = now;
+        if (hidden) {
+            stop();
+        } else if (wanted) {
+            stop();
+            failures = 0;
+            void start(wanted);
+        }
+    });
 
     function stop() {
         generation += 1;
@@ -110,10 +147,11 @@ export function createScreenSession(
             wanted = mode;
             stop();
             failures = 0;
-            if (mode) void start(mode);
+            if (mode && !hidden) void start(mode);
         },
         destroy() {
             wanted = "";
+            stopListening?.();
             stop();
         },
     };
