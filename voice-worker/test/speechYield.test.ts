@@ -1293,6 +1293,58 @@ describe("end to end over a person's own connection (proximity), the bot speakin
         expect(r.worker.counters.get('yield_episodes')).toBe(0);
         expect(r.worker.counters.get('observer_decide_asked')).toBe(0);
     }, 30_000);
+
+    it('beyond the people the detector can watch, the one not watched gets today\'s rule at once; the watched one still gets the pause', async () => {
+        const d = detector();
+        const r = await startRig({ recognizer: new FakeEars([]).factory, speechObserver: { load: async () => d.model, maxStreams: 1 }, yieldBots: { policy: 'hold' } });
+        rigs.push(r);
+        r.calls.spaceUsers(r.game.spaceName, ['alice', 'bob'].map((name) => ({ spaceUserId: name, uuid: `uuid-${name}`, tags: [], name }) as never));
+        const people: Record<string, FakeHuman> = {};
+        for (const name of ['alice', 'bob']) {
+            const h = new FakeHuman(name);
+            humans.push(h);
+            people[name] = h;
+            r.game.humans.set(name, h);
+            r.calls.handlePrivateEvent(privateEvent(r.game, name, { $case: 'webRtcStartMessage', webRtcStartMessage: { userId: name, initiator: false } }));
+            for (const signal of await h.offer()) r.calls.handlePrivateEvent(privateEvent(r.game, name, { $case: 'webRtcSignal', webRtcSignal: { signal } }));
+            await waitFor(`${name}'s audio connection`, () => r.fromWorker.filter((m) => m.type === 'participant.join').length >= Object.keys(people).length);
+            // The first to connect takes the one place the detector has; the second is not watched
+            h.startMic(0);
+            if (name === 'alice') await waitFor('the detector to watch her', () => r.worker.counters.get('observer_windows_accepted') > 10, 5000);
+        }
+        await waitFor('the second one refused a place', () => r.worker.counters.get('observer_streams_refused') > 0, 5000);
+        const finished = (segmentId: string) => r.fromWorker.filter((m): m is Progress => m.type === 'playback.progress' && m.segmentId === segmentId && m.finished);
+
+        // Bob, not watched: his hum stops the bot as today, at once, not after the pause's 6 s deadline
+        r.calls.say(r.game.spaceName, 'seg-1', LONG);
+        await waitFor('the bot to be heard', () => people.bob.loudFrames >= 25);
+        const humAt = performance.now();
+        people.bob.stopMic();
+        people.bob.startMic(NOISE_HZ);
+        await waitFor('the voice to stop', () => finished('seg-1').length > 0, 3000);
+        expect(performance.now() - humAt).toBeLessThan(1500);
+        expect(finished('seg-1')[0]).toMatchObject({ interrupted: true, reason: 'barge_in' });
+        expect(r.worker.counters.get('yield_continues')).toBe(0);
+        expect(r.worker.counters.get('yield_resumes')).toBe(0);
+        people.bob.stopMic();
+        people.bob.startMic(0);
+        await waitFor('his stretch to end', () => r.fromWorker.some((m) => m.type === 'user.turn'), 8000).catch(() => undefined);
+        await sleep(1500);
+
+        // Alice, watched: her hum only pauses the next reply, and it goes on
+        const holdsBefore = r.worker.counters.get('yield_holds');
+        r.calls.say(r.game.spaceName, 'seg-2', LONG);
+        await waitFor('the bot to be heard again', () => people.alice.loudFrames >= 50);
+        people.alice.stopMic();
+        people.alice.startMic(NOISE_HZ);
+        await sleep(500);
+        people.alice.stopMic();
+        people.alice.startMic(0);
+        await waitFor('the pause', () => r.worker.counters.get('yield_holds') > holdsBefore, 1500);
+        await waitFor('the bot to go on', () => r.worker.counters.get('yield_resumes') >= 1, 6000);
+        expect(finished('seg-2')).toHaveLength(0);
+        expect(r.violations).toEqual([]);
+    }, 60_000);
 });
 
 const HTTP_URL = process.env.LIVEKIT_HTTP_URL ?? 'http://127.0.0.1:7880';
