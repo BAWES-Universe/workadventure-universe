@@ -163,6 +163,9 @@ export interface BotPlayerMemory {
     /** The Instant App runs of the turn being answered, by tool and arguments, so asking the model again for the same turn (a repeated
      * reply is regenerated) never runs or pays a second time. Cleared when the next turn starts. Runtime only. */
     instantCalls?: Map<string, Promise<Record<string, unknown>>>;
+    /** The Instant task of the turn being answered: the key its runs carry, its receipt, and whether a rule ended it. Started fresh with
+     * each turn, kept for a repeat of the same one. Runtime only. */
+    instantTask?: import('../ai/InstantTools').InstantTask;
     /** The songs, images and videos of the turn being answered, by their short names ("m1"), that an artifact may carry
      * (#1510). Started fresh with each turn from its message, added to by its tools. Runtime only: nothing here is saved. */
     turnMedia?: Array<{ ref: string; url: string; kind: 'audio' | 'image' | 'video' | 'file'; by: 'person' | 'tool' }>;

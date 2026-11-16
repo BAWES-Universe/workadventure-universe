@@ -422,20 +422,30 @@ export type InstantWho = { requesterKey: string; forOwner?: undefined } | { forO
  * answer was read (a network error, a timeout or a server error): the run may or may not have started, so the same call id is asked again.
  */
 export type InstantRunAnswer =
-    | { status: 'done'; data: unknown; chargedMicros: number; activityId: string | null }
-    | { status: 'failed'; reason: string; message: string; activityId: string | null }
-    | { status: 'refused'; reason: string; message: string; renewsAt: string | null | undefined; canAskForMore: boolean | undefined; activityId: string | null }
-    | { status: 'checking'; activityId: string | null }
-    | { status: 'already_done'; chargedMicros: number | null; activityId: string | null }
+    | { status: 'done'; data: unknown; chargedMicros: number }
+    | { status: 'failed'; reason: string; message: string }
+    | {
+          status: 'refused';
+          reason: string;
+          message: string;
+          /** A rule the person said in chat said no: final. Never tried again for this task, and never answered with an offer of more credit. */
+          stop: boolean;
+          renewsAt: string | null | undefined;
+          canAskForMore: boolean | undefined;
+      }
+    | { status: 'checking' }
+    | { status: 'already_done'; chargedMicros: number | null }
     | { status: 'not_owner' }
     | { status: 'unreachable'; retry: boolean };
 
-/** What Orbit said to "Didn't work" on a charged run (`POST /api/instant/giveback`). */
-export type InstantGiveBackAnswer =
-    | { status: 'given' }
-    | { status: 'refused'; reason: string }
-    | { status: 'not_owner' }
-    | { status: 'unreachable' };
+/** One task's receipt on the Usage page's Activity (`POST /api/bots/:id/task-receipts`), as the bot server needs it. */
+export interface TaskReceiptOpened {
+    /** "[What it used](#usage=<id>)": the link a reply may carry. */
+    link: string | null;
+    /** The words for who pays ("Paid by you"). */
+    paidBy: string | null;
+}
+export type TaskReceiptState = 'done' | 'refunded' | 'checking';
 
 /** Orbit's own wait for the provider is a minute; the bot server waits a little longer so the answer comes back. */
 const INSTANT_RUN_TIMEOUT_MS = 75_000;
@@ -1367,7 +1377,7 @@ export class AdminApiService {
                 validateStatus: () => true,
             });
             const data = response.data && typeof response.data === 'object' && !Array.isArray(response.data) ? response.data : {};
-            if (response.status === 200 || response.status === 202 || response.status === 404) return { status: response.status, data };
+            if (response.status === 200 || response.status === 201 || response.status === 202 || response.status === 404) return { status: response.status, data };
             // A server error may have come after the run started: the same call id is asked again. Anything else (a refused token, a body Orbit does not take) will not change
             return { status: 'none', retry: response.status >= 500 };
         } catch (error) {
@@ -1403,59 +1413,69 @@ export class AdminApiService {
      * One Instant run for the Brick's owner. `callId` is this attempt's own id: asking again with the same one never runs or pays twice,
      * and is how an unclear run is looked at again. Never throws.
      */
-    async instantRun(botId: string, ask: InstantWho & { tool: string; arguments: Record<string, unknown>; callId: string }): Promise<InstantRunAnswer> {
+    async instantRun(botId: string, ask: InstantWho & { tool: string; arguments: Record<string, unknown>; callId: string; taskKey?: string }): Promise<InstantRunAnswer> {
         const answer = await this.instantCall(
             'post',
             'api/instant/run',
-            { botId, tool: ask.tool, arguments: ask.arguments, callId: ask.callId, ...(ask.forOwner ? { forOwner: true } : { requesterKey: ask.requesterKey }) },
+            {
+                botId,
+                tool: ask.tool,
+                arguments: ask.arguments,
+                callId: ask.callId,
+                // The task this run is part of: Orbit's rules about one task count all of its runs
+                ...(ask.taskKey ? { taskKey: ask.taskKey } : {}),
+                ...(ask.forOwner ? { forOwner: true } : { requesterKey: ask.requesterKey }),
+            },
             undefined,
             INSTANT_RUN_TIMEOUT_MS
         );
         if (answer.status === 'none') return { status: 'unreachable', retry: answer.retry };
         if (answer.status === 404) return { status: 'not_owner' };
         const data = answer.data;
-        // The receipt this run is under in Usage's Activity, only when Orbit says so: a run id is not guessed to be one
-        const activityId = asText(data.activityId);
         const message = asText(data.message) ?? '';
         const reason = asText(data.reason) ?? 'unclear';
         switch (data.status) {
             case 'done':
-                return { status: 'done', data: data.data, chargedMicros: typeof data.chargedMicros === 'number' && data.chargedMicros > 0 ? data.chargedMicros : 0, activityId };
+                return { status: 'done', data: data.data, chargedMicros: typeof data.chargedMicros === 'number' && data.chargedMicros > 0 ? data.chargedMicros : 0 };
             case 'failed':
-                return { status: 'failed', reason, message, activityId };
+                return { status: 'failed', reason, message };
             case 'refused':
                 return {
                     status: 'refused',
                     reason,
                     message,
+                    stop: data.stop === true || reason === 'rule',
                     renewsAt: typeof data.renewsAt === 'string' ? data.renewsAt : data.renewsAt === null ? null : undefined,
                     canAskForMore: typeof data.canAskForMore === 'boolean' ? data.canAskForMore : undefined,
-                    activityId,
                 };
             case 'checking':
-                return { status: 'checking', activityId };
+                return { status: 'checking' };
             case 'already_done':
-                return { status: 'already_done', chargedMicros: typeof data.chargedMicros === 'number' ? data.chargedMicros : null, activityId };
+                return { status: 'already_done', chargedMicros: typeof data.chargedMicros === 'number' ? data.chargedMicros : null };
             default:
                 // An answer this server does not know is not a result: nothing is claimed, and the same call id is asked about again
                 return { status: 'unreachable', retry: true };
         }
     }
 
-    /** "Didn't work" on a run that was charged (a bounded goodwill give-back, once per run; Orbit holds the limits). Never throws. */
-    async instantGiveBack(botId: string, ask: InstantWho & { callId: string }): Promise<InstantGiveBackAnswer> {
-        const answer = await this.instantCall(
-            'post',
-            'api/instant/giveback',
-            { botId, callId: ask.callId, ...(ask.forOwner ? { forOwner: true } : { requesterKey: ask.requesterKey }) },
-            undefined,
-            INSTANT_LIST_TIMEOUT_MS
-        );
-        if (answer.status === 'none') return { status: 'unreachable' };
-        if (answer.status === 404) return { status: 'not_owner' };
-        if (answer.data.status === 'given') return { status: 'given' };
-        if (answer.data.status === 'refused') return { status: 'refused', reason: asText(answer.data.reason) ?? 'unavailable' };
-        return { status: 'unreachable' };
+    /**
+     * Opens the receipt of a task for the person who asked, for Activity on the Usage page (Orbit `POST /api/bots/:id/task-receipts`). Once for each
+     * Brick and task: opening it again finds it. Null when Orbit cannot say or says no: a receipt is never in the way of a reply.
+     */
+    async openTaskReceipt(botId: string, userId: string, task: { taskKey: string; title: string; category: 'apps' | 'computer' }): Promise<TaskReceiptOpened | null> {
+        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'open', taskKey: task.taskKey, title: task.title, category: task.category }, undefined, INSTANT_LIST_TIMEOUT_MS);
+        if (answer.status !== 200 && answer.status !== 201) return null;
+        const paid = answer.data.paidBy as { label?: unknown } | undefined;
+        return { link: asText(answer.data.link), paidBy: asText(paid?.label) };
+    }
+
+    /**
+     * Ends a task's receipt: done, refunded (a failure on our side took nothing) or checking (no answer came back). What it used is never sent: Orbit reads
+     * it from its books by the task's key, and settles a receipt left in checking by itself. Safe to say twice. Never throws; true when Orbit took it.
+     */
+    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState }): Promise<boolean> {
+        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'close', taskKey: task.taskKey, state: task.state }, undefined, INSTANT_LIST_TIMEOUT_MS);
+        return answer.status === 200 && answer.data.ok !== false;
     }
 
     /** Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. */
