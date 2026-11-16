@@ -2,6 +2,7 @@ import { get } from "svelte/store";
 import { APPS_LINK, openAppsPage } from "./Apps/OpenApps";
 import { keyFormLinkId, KEY_FORM_LINK, openKeyFormSheet } from "./Apps/KeyFormLink";
 import { openBrickChat } from "./BrickChat";
+import { GOALS_LINK, openGoalsPage } from "./OpenGoals";
 import { openUsagePage } from "./OpenUsage";
 import { usageLinkRequest } from "./UsageLink";
 import { loadMyBricks, myBricksStore } from "./MyBricksStore";
@@ -46,6 +47,12 @@ export function brickChatLinks(node: HTMLElement): { destroy: () => void } {
             // "[Apps](#apps)" in a Brick's words (#2001): the Apps page opens here
             event.preventDefault();
             openAppsPage();
+            return;
+        }
+        if (href === GOALS_LINK) {
+            // "[Goals and tasks](#goals)" in a Brick's words after it set one (#2002): that page opens here
+            event.preventDefault();
+            openGoalsPage();
             return;
         }
         if (href?.startsWith(KEY_FORM_LINK)) {

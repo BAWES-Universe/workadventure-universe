@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const orbit = vi.hoisted(() => ({
     getBrickItems: vi.fn<(brickId: string) => Promise<unknown>>(),
+    getAllBrickItems: vi.fn<() => Promise<unknown>>(),
     tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: orbit }));
@@ -10,6 +11,7 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApi
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import LL, { setLocale } from "../../../../i18n/i18n-svelte";
 import {
+    allGoalsList,
     brickGoalsList,
     groupGoalItems,
     parseGoalItems,
@@ -321,5 +323,75 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             expect(get(list.state)).toBe("ready");
             expect(get(list.items)).toHaveLength(1);
         });
+    });
+
+    describe("the list across all Bricks", () => {
+        const OTHER = "1c8d2e3f-2222-4333-8444-055566667777";
+
+        it("names each row's Brick, and leaves out a row that does not say its Brick", async () => {
+            orbit.getAllBrickItems.mockResolvedValueOnce({
+                items: [
+                    row({ brickName: "Brick" }),
+                    row({ id: "i2", brickId: OTHER, brickName: "Recipe Brick", words: "Plan the weekend menu" }),
+                    row({ id: "i3", brickId: undefined }),
+                    row({
+                        id: "g1",
+                        kind: "goal",
+                        words: "Visa in hand before 12 Dec",
+                        brickName: "Brick",
+                        checks: [row({ id: "c1", brickId: undefined, kind: "watch", parentId: "g1" })],
+                    }),
+                ],
+            });
+            const list = allGoalsList();
+            await list.load();
+            expect(orbit.getAllBrickItems).toHaveBeenCalledTimes(1);
+            expect(get(list.items).map((one) => [one.id, one.brickId, one.brickName])).toEqual([
+                ["i1", BRICK, "Brick"],
+                ["i2", OTHER, "Recipe Brick"],
+                ["g1", BRICK, "Brick"],
+                // A goal's own check is its goal's Brick's
+                ["c1", BRICK, "Brick"],
+            ]);
+        });
+
+        it("sends a tap to the row's own Brick, and refuses one for a row it does not have", async () => {
+            orbit.getAllBrickItems.mockResolvedValue({
+                items: [
+                    row(),
+                    row({ id: "i2", brickId: OTHER, kind: "schedule", cadence: { type: "every", minutes: 60 } }),
+                ],
+            });
+            const list = allGoalsList();
+            await list.load();
+            orbit.tapBrickItem.mockResolvedValueOnce({});
+            expect(await list.tap("i2", "pause")).toBe("taken");
+            expect(orbit.tapBrickItem).toHaveBeenLastCalledWith(OTHER, "i2", "pause");
+            expect(await list.tap("gone", "pause")).toBe("refused");
+            expect(orbit.tapBrickItem).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps a list it shows while it is read again", async () => {
+            orbit.getAllBrickItems.mockResolvedValueOnce({ items: [row()] });
+            const list = allGoalsList();
+            await list.load();
+            let finish: (value: unknown) => void = () => undefined;
+            orbit.getAllBrickItems.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+            );
+            const again = list.load();
+            expect(get(list.state)).toBe("ready");
+            expect(get(list.items)).toHaveLength(1);
+            finish({ items: [] });
+            await again;
+            expect(get(list.items)).toHaveLength(0);
+        });
+    });
+
+    it("reads a row for one Brick as that Brick's when Orbit does not say", () => {
+        expect(parseGoalItems({ items: [row({ brickId: undefined })] }, BRICK)[0].brickId).toBe(BRICK);
+        expect(parseGoalItems({ items: [row({ brickId: undefined })] })).toEqual([]);
     });
 });

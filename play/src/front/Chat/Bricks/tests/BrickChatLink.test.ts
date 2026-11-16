@@ -24,6 +24,8 @@ const { openAppsPage } = vi.hoisted(() => ({ openAppsPage: vi.fn() }));
 vi.mock("../Apps/OpenApps", () => ({ APPS_LINK: "#apps", openAppsPage }));
 const { openUsagePage } = vi.hoisted(() => ({ openUsagePage: vi.fn() }));
 vi.mock("../OpenUsage", () => ({ openUsagePage }));
+const { openGoalsPage } = vi.hoisted(() => ({ openGoalsPage: vi.fn() }));
+vi.mock("../OpenGoals", () => ({ GOALS_LINK: "#goals", openGoalsPage }));
 vi.mock("../BrickChat", () => ({ openBrickChat }));
 vi.mock("../MyBricksStore", () => ({ myBricksStore: bricks, loadMyBricks }));
 
@@ -124,6 +126,27 @@ describe("a link to a Brick's chat inside an answer", () => {
         brickChatLinks(list);
         expect(tap(link).defaultPrevented).toBe(false);
         expect(openBrickChat).not.toHaveBeenCalled();
+    });
+});
+
+describe("the Goals and tasks link in what a Brick says after setting one", () => {
+    it("opens the Goals and tasks page here on a tap, and is never followed", () => {
+        const { list, link } = listWithLink("#goals");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(true);
+        expect(openGoalsPage).toHaveBeenCalledTimes(1);
+        expect(openBrickChat).not.toHaveBeenCalled();
+        action.destroy();
+    });
+
+    it("leaves any other address alone", () => {
+        openGoalsPage.mockClear();
+        const { list, link } = listWithLink("#goals-later");
+        const action = brickChatLinks(list);
+        expect(tap(link.querySelector("b")!).defaultPrevented).toBe(false);
+        expect(openGoalsPage).not.toHaveBeenCalled();
+        action.destroy();
     });
 });
 

@@ -1723,6 +1723,11 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items`, {});
     }
 
+    /** Everything the person gave any of their Bricks (game #2002): `{ items }`, each with its `brickId` and `brickName`. */
+    async getAllBrickItems(): Promise<unknown> {
+        return await this.brickWrite("/api/bricks/items", {});
+    }
+
     /** The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze or Keep going. Answers `{ item }`. */
     async tapBrickItem(brickId: string, itemId: string, action: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items/${encodeURIComponent(itemId)}`, {

@@ -193,7 +193,7 @@ export function taskToolsNote(settings: TaskSettings, now: number): string {
     );
     lines.push(
         'Rules: never guess a time they did not give, ask once (a question card when it fits). A plain "yes" sets something only when it answers a specific offer you made in your message just before. ' +
-            'When you set one, say it in one message: what you will say, when (naming their time zone), that it comes here in this chat, and that they can ask you here to change, snooze or stop it. ' +
+            'When you set one, say it in one message: what you will say, when (naming their time zone), that it comes here in this chat, and that they can ask you here to change, snooze or stop it, or do it any time in [Goals and tasks](#goals) (write that link exactly as it is). ' +
             'When they ask to snooze, or to be reminded again, after one came, find the one that went off last with my_tasks and snooze it. ' +
             'Never say you set, changed or cancelled one unless the tool said it worked. ' +
             'Pick the kind by what they want: a reminder says their own words at a time; a briefing brings them something every time it is due; a watch speaks only when its condition is met; a goal needs steps and time and speaks only when something changed. Never use one kind to stand in for another. ' +

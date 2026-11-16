@@ -28,6 +28,8 @@ const game = vi.hoisted(() => ({
     undoMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
     tellBrickChanged: vi.fn<(brickId: string) => Promise<void>>(),
     getMyUsage: vi.fn<() => Promise<unknown>>(),
+    getAllBrickItems: vi.fn<() => Promise<unknown>>(),
+    tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string) => Promise<unknown>>(),
     getMyApps: vi.fn<() => Promise<unknown>>(),
     getMyAppUniverses: vi.fn<() => Promise<unknown>>(),
     openModal: vi.fn<(component: unknown) => void>(),
@@ -97,6 +99,8 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         getBotPermissions: game.getBotPermissions,
         isInitialized: () => true,
         getBrickItems: () => Promise.resolve({ items: [] }),
+        getAllBrickItems: game.getAllBrickItems,
+        tapBrickItem: game.tapBrickItem,
         getMyMemory: () => Promise.resolve({ items: [] }),
         getBrickFiles: () => Promise.resolve({}),
         getMyUsage: game.getMyUsage,
@@ -182,6 +186,17 @@ vi.mock("../OpenUsage", async () => {
         openUsagePage: (request: { receiptId: string | undefined }) => requested.set(request),
     };
 });
+// Opening Goals and tasks from a chat leaves the chat first, as Usage does: only the request is real here
+vi.mock("../OpenGoals", async () => {
+    const store = await import("svelte/store");
+    const requested = store.writable(false);
+    return {
+        GOALS_LINK: "#goals",
+        goalsPageRequest: { subscribe: requested.subscribe },
+        takeGoalsPageRequest: () => requested.set(false),
+        openGoalsPage: () => requested.set(true),
+    };
+});
 vi.mock("../BrickChat", async () => {
     const store = await import("svelte/store");
     return { openBrickChat: game.openBrickChat, openingBrickChats: store.writable(new Set<string>()) };
@@ -196,6 +211,7 @@ import { forgetBrickHome, provideBrickLocator } from "../BrickHomeStore";
 import { forgetBrickVisit, provideOwnPosition } from "../BrickVisitStore";
 import { forgetMyUsage } from "../UsageStore";
 import { openUsagePage } from "../OpenUsage";
+import { openGoalsPage } from "../OpenGoals";
 import { forgetMyApps } from "../Apps/AppsStore";
 import BricksPage from "../BricksPage.svelte";
 
@@ -253,6 +269,8 @@ describe("the Bricks page (#1995)", () => {
         forgetMyUsage();
         forgetMyApps();
         game.getMyApps.mockResolvedValue({ apps: [], bricks: [] });
+        game.getAllBrickItems.mockResolvedValue({ items: [] });
+        game.tapBrickItem.mockResolvedValue({});
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getMyUsage.mockResolvedValue({
             chat: { left: 1, words: "plenty", fullAgainAt: null },
@@ -1456,6 +1474,85 @@ describe("the Bricks page (#1995)", () => {
             await settle();
             expect(byId("appsPage")).toBeNull();
             expect(rows()).toHaveLength(2);
+        });
+    });
+
+    // Last in this file: opening a Brick from Goals and tasks leaves the next Brick page open on that group
+    describe("the Goals and tasks row (#2002, mock t-7-all)", () => {
+        const goal = (over: Record<string, unknown> = {}) => ({
+            id: "g1",
+            brickId: MADE,
+            brickName: "Recipe Brick",
+            kind: "goal",
+            words: "Plan the weekend menu",
+            cadence: { type: "none" },
+            nextDueAt: null,
+            steps: [],
+            state: "on",
+            setBy: "you",
+            checks: [],
+            ...over,
+        });
+
+        it("sits first under the list, before Apps and Usage, and says in a line what is going on", async () => {
+            game.getAllBrickItems.mockResolvedValue({ items: [goal()] });
+            await open();
+            const under = [...target.querySelectorAll<HTMLElement>(".bk-use > div")].map((one) => one.dataset.testid);
+            expect(under).toEqual(["bricksGoalsRow", "bricksAppsRow", "bricksUsageRow"]);
+            expect(byId("bricksGoalsRow")?.textContent?.replace(/\s+/g, " ").trim()).toBe("Goals and tasks 1 goal");
+        });
+
+        it("says it is optional when nothing is set, and still works when the list could not be read", async () => {
+            await open();
+            expect(byId("bricksGoalsRow")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+                "Goals and tasks Optional · nothing set yet"
+            );
+            page?.$destroy();
+            game.getAllBrickItems.mockRejectedValue(new Error("down"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await open();
+            warn.mockRestore();
+            byId("bricksGoalsRow")?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+            expect(byId("goalsPageFailed")).not.toBeNull();
+        });
+
+        it("opens the page across all Bricks, and Back returns to the Bricks", async () => {
+            game.getAllBrickItems.mockResolvedValue({ items: [goal()] });
+            await open();
+            byId("bricksGoalsRow")?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+            expect(byId("goalsPage")).not.toBeNull();
+            expect(byId("bricksPage")).toBeNull();
+            expect(byId("goalsPageRow")?.textContent).toContain("Recipe Brick · On track");
+            target.querySelector<HTMLElement>('[data-testid="edit-panel-back"]')?.click();
+            await settle();
+            expect(byId("goalsPage")).toBeNull();
+            expect(rows()).toHaveLength(2);
+        });
+
+        it("opens when a Brick's words link to it", async () => {
+            await open();
+            openGoalsPage();
+            await settle();
+            expect(byId("goalsPage")).not.toBeNull();
+        });
+
+        it("opens a tapped one on its Brick's page, on Goals and tasks, and Back returns to the list it came from", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            game.getAllBrickItems.mockResolvedValue({ items: [goal()] });
+            await open();
+            byId("bricksGoalsRow")?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+            byId("goalsPageRow")?.click();
+            await settle();
+            expect(byId("goalsPage")).toBeNull();
+            expect(game.getBot).toHaveBeenLastCalledWith(MADE);
+            expect(target.querySelector<HTMLInputElement>('[data-testid="bot-name"]')?.value).toBe("Recipe Brick");
+            expect(byId("bot-page-group-goals")?.classList.contains("open")).toBe(true);
+            target.querySelector<HTMLElement>('[data-testid="edit-panel-back"]')?.click();
+            await settle();
+            expect(byId("goalsPage")).not.toBeNull();
         });
     });
 });
