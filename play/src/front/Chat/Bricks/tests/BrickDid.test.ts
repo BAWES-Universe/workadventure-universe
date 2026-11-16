@@ -160,5 +160,33 @@ describe("Everything Brick did (#2002)", () => {
             await old;
             expect(get(list.runs).map((one) => one.runId)).toEqual(["n1"]);
         });
+
+        it("keeps Show more off while an older page is still being read, even after the list is read again", async () => {
+            orbit.getBrickDid.mockResolvedValueOnce({ runs: [run({ runId: "r1" })], next: "cursor-1" });
+            const list = brickDidList(BRICK);
+            await list.load();
+            let finishOld: (value: unknown) => void = () => undefined;
+            orbit.getBrickDid.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    finishOld = resolve;
+                })
+            );
+            const old = list.loadMore();
+            orbit.getBrickDid.mockResolvedValueOnce({ runs: [run({ runId: "n1" })], next: "cursor-2" });
+            await list.load();
+            expect(get(list.loadingMore)).toBe(true);
+            // Asking again while the older read is open makes no second read
+            orbit.getBrickDid.mockClear();
+            expect(await list.loadMore()).toBe(true);
+            expect(orbit.getBrickDid).not.toHaveBeenCalled();
+            finishOld({ runs: [run({ runId: "old" })], next: null });
+            await old;
+            expect(get(list.loadingMore)).toBe(false);
+            // Then the next page comes from the refreshed list's own cursor
+            orbit.getBrickDid.mockResolvedValueOnce({ runs: [run({ runId: "n0" })], next: null });
+            expect(await list.loadMore()).toBe(true);
+            expect(orbit.getBrickDid).toHaveBeenLastCalledWith(BRICK, "cursor-2");
+            expect(get(list.runs).map((one) => one.runId)).toEqual(["n1", "n0"]);
+        });
     });
 });

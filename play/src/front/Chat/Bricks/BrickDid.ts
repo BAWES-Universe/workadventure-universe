@@ -113,7 +113,6 @@ export function brickDidList(brickId: string): BrickDidList {
                 if (mine !== reads) return;
                 runs.set(page.runs);
                 keepNext(page.next);
-                loadingMore.set(false);
                 state.set("ready");
             } catch (error) {
                 console.warn("Could not read what a Brick did", error);
