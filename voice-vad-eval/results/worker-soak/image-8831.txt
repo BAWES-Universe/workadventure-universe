@@ -1,0 +1,2 @@
+image sha256:9f0df41a7dc01368a5462cd6aff972e516df4ea37b47253ddcde76a6f4f0a2d8 created 2026-11-11T11:23:36.921951643Z
+caps: memory 512m, cpus 1; people: 9 on their own connections, 6 in LiveKit rooms, 3 to a bubble; measured 1800 s

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
-import { VoiceCalls, parseSignal, type GameSide, type LinkHandlers } from '../voice/VoiceCalls';
+import { RECONNECT_DELAYS_MS, VoiceCalls, parseSignal, type GameSide, type LinkHandlers } from '../voice/VoiceCalls';
 import type { FromWorker, ToWorker, VoiceDraft, VoiceStatus } from '../voice/protocol';
 import type { VoiceLink } from '../voice/VoiceLink';
 
@@ -322,6 +322,22 @@ describe('VoiceCalls: a bubble on LiveKit', () => {
         t.calls.handlePrivateEvent(t.livekit('invite'));
         t.calls.handlePrivateEvent(t.livekit('leave', { sender: 'room_7' }));
         expect(t.sent.some((m) => m.type === 'room.leave')).toBe(false);
+    });
+
+    it('has a room audience for one person only while that person is in the bubble (#1993)', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_8')]);
+        t.calls.handlePrivateEvent(t.livekit('invite'));
+        const room = rooms(t.sent)[0];
+        expect(t.calls.hasAudience(SPACE)).toBe(false);
+        t.fromWorker({ type: 'room.state', sessionId: room.sessionId, epoch: room.epoch, state: 'connected' });
+        expect(t.calls.hasAudience(SPACE)).toBe(true);
+        expect(t.calls.hasAudience(SPACE, 'room_7')).toBe(true);
+        // They left: the room is still connected for the others, and carries nothing to them
+        t.calls.spaceUserLeft(SPACE, 'room_7');
+        expect(t.calls.hasAudience(SPACE)).toBe(true);
+        expect(t.calls.hasAudience(SPACE, 'room_7')).toBe(false);
+        expect(t.calls.hasAudience(SPACE, 'room_8')).toBe(true);
     });
 
     it('refuses an invitation that is not a LiveKit address and token', () => {
@@ -684,6 +700,99 @@ describe('VoiceCalls: telling a person where their audio stands (#1666)', () => 
         const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
         t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_8', epoch: 1, reason: 'failed' });
         expect(t.game.statuses.slice(1)).toEqual([['room_8', 'connecting'], ['room_8', 'paused']]);
+    });
+
+    it('tries again by itself when the worker loses a connection while the person is still here (prod 10 Nov: paused until they walked out)', () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const t = setup();
+            t.calls.spaceUsers(SPACE, [t.person('room_7')]);
+            t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+            const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+            t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_7', epoch: 1, reason: 'timeout' });
+            // Their browser lets go of the dead connection, and they are told it is on its way, not paused
+            expect(t.game.disconnects).toEqual(['room_7']);
+            expect(t.game.statuses).toEqual([['room_7', 'connecting']]);
+            expect(t.calls.hasCall(SPACE, 'room_7')).toBe(false);
+            expect(t.game.starts).toEqual([]);
+            vi.advanceTimersByTime(RECONNECT_DELAYS_MS[0]);
+            // A new connection with a newer epoch, and their browser is asked for a new offer
+            expect(lanes(t.sent).map((l) => l.epoch)).toEqual([1, 2]);
+            expect(t.game.starts).toEqual(['room_7']);
+            t.fromWorker({ type: 'participant.join', sessionId, participantId: 'room_7', epoch: 2 });
+            expect(t.game.statuses.at(-1)).toEqual(['room_7', 'on']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('stops trying after a few losses in one visit, and a new visit gets its tries again', () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const t = setup();
+            t.calls.spaceUsers(SPACE, [t.person('room_7')]);
+            t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+            const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+            for (const wait of RECONNECT_DELAYS_MS) {
+                const epoch = lanes(t.sent).at(-1)!.epoch;
+                t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_7', epoch, reason: 'failed' });
+                vi.advanceTimersByTime(wait);
+            }
+            expect(t.game.starts).toHaveLength(RECONNECT_DELAYS_MS.length);
+            const epoch = lanes(t.sent).at(-1)!.epoch;
+            t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_7', epoch, reason: 'failed' });
+            vi.advanceTimersByTime(60_000);
+            expect(t.game.statuses.at(-1)).toEqual(['room_7', 'paused']);
+            expect(t.game.starts).toHaveLength(RECONNECT_DELAYS_MS.length);
+            // They walk out and back in: the game starts a new connection, and a loss is tried again
+            t.calls.spaceUserLeft(SPACE, 'room_7');
+            t.calls.spaceUserJoined(SPACE, t.person('room_7'));
+            t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+            t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_7', epoch: lanes(t.sent).at(-1)!.epoch, reason: 'timeout' });
+            expect(t.game.statuses.at(-1)).toEqual(['room_7', 'connecting']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not try again for someone who left meanwhile, or a connection the person closed', () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const t = setup();
+            t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_8')]);
+            t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+            t.calls.handlePrivateEvent(t.event('start', 'room_8'));
+            const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+            t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_7', epoch: 1, reason: 'timeout' });
+            t.calls.spaceUserLeft(SPACE, 'room_7');
+            t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_8', epoch: 2, reason: 'closed' });
+            vi.advanceTimersByTime(60_000);
+            expect(t.game.starts).toEqual([]);
+            expect(lanes(t.sent)).toHaveLength(2);
+            expect(t.game.statuses.at(-1)).toEqual(['room_8', 'paused']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('leaves a lost connection to the worker coming back when the worker is away at the time of the try', () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const t = setup();
+            t.calls.spaceUsers(SPACE, [t.person('room_7')]);
+            t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+            const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+            t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_7', epoch: 1, reason: 'timeout' });
+            t.workerDown();
+            vi.advanceTimersByTime(RECONNECT_DELAYS_MS[0]);
+            expect(t.game.starts).toEqual([]);
+            t.workerUp();
+            expect(t.game.starts).toEqual(['room_7']);
+            vi.advanceTimersByTime(60_000);
+            expect(t.game.starts).toEqual(['room_7']);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('says paused to everyone when the worker goes away, and connecting again when it is back', () => {

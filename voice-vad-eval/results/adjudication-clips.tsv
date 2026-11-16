@@ -1,0 +1,175 @@
+file	id	from	to	whisper	voice_ms
+0001.wav	noise|ms-snsd/noise_test/AirConditioner_9.wav|-45	38.92	41.92	The future is going to be a great future.	3000
+0002.wav	noise|ms-snsd/noise_test/AirConditioner_9.wav|-35	0.00	2.08	I'm going to put some paper on the paper	2080
+0003.wav	noise|ms-snsd/noise_test/AirConditioner_9.wav|-35	38.60	41.60	[Speaking in foreign language]	3000
+0004.wav	noise|ms-snsd/noise_test/AirConditioner_9.wav|-25	0.00	1.85	I'm going to start the work.	1850
+0005.wav	noise|ms-snsd/noise_test/AirportAnnouncements_2.wav|-25	1.80	4.80	They have to be sure because any job might not be	2650
+0006.wav	noise|ms-snsd/noise_test/AirportAnnouncements_4.wav|-45	0.00	2.08	I'm sorry for having to ask you, sir.	2070
+0007.wav	noise|ms-snsd/noise_test/AirportAnnouncements_4.wav|-35	0.00	2.01	I'm not even having a chance to do so.	1830
+0008.wav	noise|ms-snsd/noise_test/AirportAnnouncements_4.wav|-25	0.00	2.01	I'm not even having a natural self.	1700
+0009.wav	noise|ms-snsd/noise_test/Babble_1.wav|-45	27.78	30.78	Thank you.	3000
+0010.wav	noise|ms-snsd/noise_test/Babble_1.wav|-35	0.00	2.62	[MUSIC PLAYING]	2620
+0011.wav	noise|ms-snsd/noise_test/Babble_1.wav|-35	27.33	30.33	Thank you.	3000
+0012.wav	noise|ms-snsd/noise_test/Babble_1.wav|-35	34.76	37.76	(indistinct chatter)	3000
+0013.wav	noise|ms-snsd/noise_test/Babble_1.wav|-35	49.83	52.83	[MUSIC]	3000
+0014.wav	noise|ms-snsd/noise_test/Babble_1.wav|-25	0.00	2.81	(speaking in foreign language)	2810
+0015.wav	noise|ms-snsd/noise_test/Babble_7.wav|-45	1.35	4.35	I will do a quick analysis now.	2990
+0016.wav	noise|ms-snsd/noise_test/Babble_7.wav|-45	21.00	22.71	[laughter]	1160
+0017.wav	noise|ms-snsd/noise_test/Babble_7.wav|-35	0.00	1.72	[Music]	1720
+0018.wav	noise|ms-snsd/noise_test/Babble_7.wav|-25	0.00	1.72	[Music]	1720
+0019.wav	noise|ms-snsd/noise_test/Munching_2.wav|-35	18.05	21.05	(cough)	2310
+0020.wav	noise|ms-snsd/noise_test/Munching_6.wav|-35	2.72	5.72	(crunching)	2170
+0021.wav	noise|ms-snsd/noise_test/Neighbor_1.wav|-45	0.00	1.88	10	1880
+0022.wav	noise|ms-snsd/noise_test/Neighbor_1.wav|-35	0.00	1.79	10-h like oh I mean	1620
+0023.wav	noise|ms-snsd/noise_test/Neighbor_1.wav|-25	0.00	1.79	10-inch like oh I mean	1460
+0024.wav	noise|ms-snsd/noise_test/Neighbor_3.wav|-45	0.00	1.69	falling into deep depression.	1450
+0025.wav	noise|ms-snsd/noise_test/Neighbor_3.wav|-35	0.00	1.56	falling into deep darkness.	1480
+0026.wav	noise|ms-snsd/noise_test/Neighbor_3.wav|-25	0.00	1.60	falling into deep darkness.	1480
+0027.wav	noise|ms-snsd/noise_test/Neighbor_5.wav|-45	0.00	1.76	Lucky for this	1210
+0028.wav	noise|ms-snsd/noise_test/Neighbor_5.wav|-35	0.00	1.63	Lucky for	1210
+0029.wav	noise|ms-snsd/noise_test/Neighbor_5.wav|-25	0.00	1.63	Lucky for	1340
+0030.wav	noise|ms-snsd/noise_test/Neighbor_7.wav|-45	0.00	1.88	10	1740
+0031.wav	noise|ms-snsd/noise_test/Neighbor_7.wav|-35	0.00	1.79	10-h like oh I mean	1410
+0032.wav	noise|ms-snsd/noise_test/Neighbor_7.wav|-25	0.00	1.79	10-inch like oh I mean	1320
+0033.wav	noise|ms-snsd/noise_test/Neighbor_9.wav|-35	7.11	10.11	I only want to talk once.	2000
+0034.wav	noise|ms-snsd/noise_test/Neighbor_9.wav|-25	7.11	10.11	I only want to talk once.	1990
+0035.wav	noise|ms-snsd/noise_train/AirportAnnouncements_4.wav|-25	2.18	5.18	[Music]	1920
+0036.wav	noise|ms-snsd/noise_train/AirportAnnouncements_4.wav|-25	46.79	49.79	[Spanish]	2340
+0037.wav	noise|ms-snsd/noise_train/AirportAnnouncements_4.wav|-25	53.86	56.86	(speaking in foreign language)	2240
+0038.wav	noise|ms-snsd/noise_train/AirportAnnouncements_6.wav|-45	1.67	4.67	It doesn't just climb either	1950
+0039.wav	noise|ms-snsd/noise_train/AirportAnnouncements_6.wav|-35	1.35	4.35	with passengers climbing	2660
+0040.wav	noise|ms-snsd/noise_train/AirportAnnouncements_6.wav|-25	1.28	4.28	with passengers climbing	2420
+0041.wav	noise|ms-snsd/noise_train/AirportAnnouncements_8.wav|-45	1.41	4.41	and her. Please wait for the smoke.	2150
+0042.wav	noise|ms-snsd/noise_train/AirportAnnouncements_8.wav|-35	0.00	2.65	Very rich ladies and gentlemen.	2060
+0043.wav	noise|ms-snsd/noise_train/AirportAnnouncements_8.wav|-25	0.00	2.14	Very rich ladies and gentlemen.	1960
+0044.wav	noise|ms-snsd/noise_train/Babble_1.wav|-45	3.04	6.04	(speaking in foreign language)	2360
+0045.wav	noise|ms-snsd/noise_train/Babble_1.wav|-35	0.29	3.29	(speaking in foreign language) (upbeat music)	2100
+0046.wav	noise|ms-snsd/noise_train/Babble_1.wav|-25	0.00	1.79	[inaudible]	1770
+0047.wav	noise|ms-snsd/noise_train/Babble_10.wav|-45	0.00	2.40	I'm not a cub, I'm a cunt, I'm	2080
+0048.wav	noise|ms-snsd/noise_train/Babble_10.wav|-45	22.24	25.24	(speaking in foreign language)	2600
+0049.wav	noise|ms-snsd/noise_train/Babble_10.wav|-35	0.00	2.14	I'm not a caggy, I'm a c	1830
+0050.wav	noise|ms-snsd/noise_train/Babble_10.wav|-25	0.00	1.88	I'm not a caggy, I'm a	1540
+0051.wav	noise|ms-snsd/noise_train/Babble_12.wav|-45	1.51	4.51	I will tell you that my class is now closed.	2740
+0052.wav	noise|ms-snsd/noise_train/Babble_12.wav|-45	21.25	23.08	[laughter]	710
+0053.wav	noise|ms-snsd/noise_train/Babble_12.wav|-35	0.00	2.36	[Music]	2290
+0054.wav	noise|ms-snsd/noise_train/Babble_12.wav|-25	0.00	2.04	[Music]	1990
+0055.wav	noise|ms-snsd/noise_train/Babble_3.wav|-25	12.04	15.04	I told you	2380
+0056.wav	noise|ms-snsd/noise_train/Babble_3.wav|-25	26.50	29.50	(speaking in foreign language)	2540
+0057.wav	noise|ms-snsd/noise_train/Babble_3.wav|-25	36.48	39.48	[MUSIC PLAYING]	2840
+0058.wav	noise|ms-snsd/noise_train/Babble_7.wav|-45	5.22	8.22	(speaking in foreign language)	2300
+0059.wav	noise|ms-snsd/noise_train/Babble_7.wav|-45	15.94	18.94	[MUSIC PLAYING]	2220
+0060.wav	noise|ms-snsd/noise_train/Babble_7.wav|-35	4.29	7.29	(speaking in foreign language)	2770
+0061.wav	noise|ms-snsd/noise_train/Babble_7.wav|-35	15.84	18.84	[MUSIC PLAYING]	2210
+0062.wav	noise|ms-snsd/noise_train/Babble_7.wav|-25	0.00	2.11	Stop! This is the end of the series.	1890
+0063.wav	noise|ms-snsd/noise_train/Babble_7.wav|-25	12.26	15.26	[INAUDIBLE]	2380
+0064.wav	noise|ms-snsd/noise_train/Babble_9.wav|-45	2.88	5.88	I'm saying	2770
+0065.wav	noise|ms-snsd/noise_train/Babble_9.wav|-35	0.29	3.29	Yeah, we'll be sure	1600
+0066.wav	noise|ms-snsd/noise_train/Babble_9.wav|-25	0.00	2.08	Yeah	850
+0067.wav	noise|ms-snsd/noise_train/Munching_2.wav|-45	10.69	13.69	Hmm, I love potato	1540
+0068.wav	noise|ms-snsd/noise_train/Munching_2.wav|-45	25.96	28.22	Hmm, I love potatoes.	1970
+0069.wav	noise|ms-snsd/noise_train/Munching_2.wav|-35	10.66	13.66	Hmm, I love potato	1590
+0070.wav	noise|ms-snsd/noise_train/Munching_2.wav|-35	25.80	28.22	Hmm, I love potatoes.	1960
+0071.wav	noise|ms-snsd/noise_train/Munching_2.wav|-25	10.66	13.66	Hmm, I love potato	1590
+0072.wav	noise|ms-snsd/noise_train/Munching_2.wav|-25	25.54	28.22	Hmm, I love potatoes.	2020
+0073.wav	noise|ms-snsd/noise_train/NeighborSpeaking_1.wav|-45	0.00	1.69	You just know, man.	1660
+0074.wav	noise|ms-snsd/noise_train/NeighborSpeaking_1.wav|-35	0.00	1.69	You just know, man.	1670
+0075.wav	noise|ms-snsd/noise_train/NeighborSpeaking_1.wav|-25	0.00	1.69	You just knocked right	1670
+0076.wav	noise|ms-snsd/noise_train/NeighborSpeaking_10.wav|-45	0.00	1.69	cheese type of tasting	1660
+0077.wav	noise|ms-snsd/noise_train/NeighborSpeaking_10.wav|-35	0.00	1.63	cheese type of tasting	1570
+0078.wav	noise|ms-snsd/noise_train/NeighborSpeaking_10.wav|-25	0.00	1.63	cheese type of tasting	1570
+0079.wav	noise|ms-snsd/noise_train/NeighborSpeaking_12.wav|-45	0.00	2.97	Stat over in terms of large artificial intelligence.	2310
+0080.wav	noise|ms-snsd/noise_train/NeighborSpeaking_12.wav|-45	18.98	21.98	(indistinct chatter)	740
+0081.wav	noise|ms-snsd/noise_train/NeighborSpeaking_12.wav|-45	21.35	24.35	I do not like these chairs	1410
+0082.wav	noise|ms-snsd/noise_train/NeighborSpeaking_12.wav|-45	41.54	44.54	I'm doing it. Yeah, they're doing it.	1400
+0083.wav	noise|ms-snsd/noise_train/NeighborSpeaking_12.wav|-35	0.00	1.79	Step over on terms of...	1640
+0084.wav	noise|ms-snsd/noise_train/NeighborSpeaking_12.wav|-35	18.95	21.95	(chatter)	840
+0085.wav	noise|ms-snsd/noise_train/NeighborSpeaking_12.wav|-25	0.00	1.79	Step over on terms of...	1580
+0086.wav	noise|ms-snsd/noise_train/NeighborSpeaking_12.wav|-25	18.95	21.95	(chatter)	840
+0087.wav	noise|ms-snsd/noise_train/NeighborSpeaking_14.wav|-45	0.00	2.75	Because the eating of the crawfish is the same as you do	1550
+0088.wav	noise|ms-snsd/noise_train/NeighborSpeaking_14.wav|-35	0.00	2.27	Because the urine got the colon part of the baby	1500
+0089.wav	noise|ms-snsd/noise_train/NeighborSpeaking_14.wav|-25	0.00	2.17	I'm gonna go to the entrance of the girl's house	1400
+0090.wav	noise|ms-snsd/noise_train/NeighborSpeaking_3.wav|-45	0.00	1.82	[SPEAKING SPANISH]	1350
+0091.wav	noise|ms-snsd/noise_train/NeighborSpeaking_3.wav|-45	33.19	36.19	So, these	1070
+0092.wav	noise|ms-snsd/noise_train/NeighborSpeaking_3.wav|-35	0.00	1.69	[MUSIC PLAYING]	1280
+0093.wav	noise|ms-snsd/noise_train/NeighborSpeaking_3.wav|-35	33.16	36.16	So, these...	1160
+0094.wav	noise|ms-snsd/noise_train/NeighborSpeaking_3.wav|-25	0.00	1.60	[SPEAKING SPANISH]	1190
+0095.wav	noise|ms-snsd/noise_train/NeighborSpeaking_3.wav|-25	33.16	36.16	So, these	1550
+0096.wav	noise|ms-snsd/noise_train/NeighborSpeaking_5.wav|-45	0.84	3.84	The ten each like a... I mean...	1910
+0097.wav	noise|ms-snsd/noise_train/NeighborSpeaking_5.wav|-35	0.84	3.84	The tenage like a... I mean...	1880
+0098.wav	noise|ms-snsd/noise_train/NeighborSpeaking_5.wav|-25	0.64	3.64	The ten each like a...	1680
+0099.wav	noise|ms-snsd/noise_train/NeighborSpeaking_7.wav|-45	0.00	1.79	(speaking in foreign language)	810
+0100.wav	noise|ms-snsd/noise_train/NeighborSpeaking_7.wav|-35	0.00	1.72	(speaking in foreign language)	770
+0101.wav	noise|ms-snsd/noise_train/NeighborSpeaking_7.wav|-25	0.00	1.60	[Music]	760
+0102.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-45	0.00	1.98	wanna rock right now	1330
+0103.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-45	10.28	13.28	Do you want to hit it loose after me?	380
+0104.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-45	14.34	17.34	I was sure of both her, so you can always	580
+0105.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-45	18.47	21.47	This is made sure I take the wood	760
+0106.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-45	23.11	26.11	Oh, by the way, I'm recording this conversation.	880
+0107.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-35	0.00	1.63	wanna rock right now	1220
+0108.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-35	23.08	26.08	Oh, by the way, I'm recording this conversation.	850
+0109.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-25	0.00	1.63	wanna rock right now	1260
+0110.wav	noise|ms-snsd/noise_train/NeighborSpeaking_9.wav|-25	23.08	26.08	Oh, by the way, I'm recording this conversation.	870
+0111.wav	noise|ms-snsd/noise_train/Office_1.wav|-25	51.78	54.78	(car engine rumbling)	0
+0112.wav	noise|ms-snsd/noise_train/SqueakyChair_1.wav|-35	0.00	2.49	[coughing]	1980
+0113.wav	noise|ms-snsd/noise_train/SqueakyChair_1.wav|-25	0.00	2.46	(crashing)	2070
+0114.wav	noise|asc/background_noise/cooking_1.wav|-25	0.39	3.39	(crickets chirping)	2320
+0115.wav	speech|en/stop/0ff728b5_nohash_4.wav|N5	0.00	3.00	Stop!	900
+0116.wav	speech|en/stop/7014b07e_nohash_1.wav|S40	0.00	2.65	Stop	280
+0117.wav	speech|en/stop/7014b07e_nohash_1.wav|N10	0.00	2.65	Stop	2220
+0118.wav	speech|en/stop/7014b07e_nohash_1.wav|N5	0.00	2.65	(crickets chirping)	1280
+0119.wav	speech|en/stop/778a4a01_nohash_1.wav|S40	0.00	3.00	Stop	1100
+0120.wav	speech|en/stop/9acd0254_nohash_1.wav|N10	0.00	3.00	Start	1390
+0121.wav	speech|en/stop/9acd0254_nohash_1.wav|N5	0.00	3.00	Stop!	1750
+0122.wav	speech|en/stop/b1114e4f_nohash_0.wav|S20	0.00	3.00	STUCK!	790
+0123.wav	speech|en/stop/b1114e4f_nohash_0.wav|S30	0.00	3.00	Stop!	790
+0124.wav	speech|en/stop/b1114e4f_nohash_0.wav|S40	0.00	3.00	Stop!	640
+0125.wav	speech|en/stop/b1114e4f_nohash_0.wav|N10	0.00	3.00	(dog barking)	1440
+0126.wav	speech|en/stop/b1114e4f_nohash_0.wav|N5	0.00	3.00	(dog barking)	2310
+0127.wav	speech|en/stop/b959cd0c_nohash_0.wav|S20	0.00	3.00	[Music]	1170
+0128.wav	speech|en/stop/b959cd0c_nohash_0.wav|S30	0.00	3.00	[Music]	1100
+0129.wav	speech|en/stop/b959cd0c_nohash_0.wav|N10	0.00	3.00	(crunching)	1680
+0130.wav	speech|en/stop/be7a5b2d_nohash_0.wav|N5	0.00	3.00	We can start.	2050
+0131.wav	speech|en/stop/f8f60f59_nohash_1.wav|S20	0.00	3.00	[Music]	1170
+0132.wav	speech|en/stop/f8f60f59_nohash_1.wav|S30	0.00	3.00	[Music]	1110
+0133.wav	speech|en/stop/f8f60f59_nohash_1.wav|S40	0.00	3.00	[Music]	1100
+0134.wav	speech|en/stop/f8f60f59_nohash_1.wav|N10	0.00	3.00	[Music]	1160
+0135.wav	speech|en/stop/f8f60f59_nohash_1.wav|N5	0.00	3.00	(keyboard clicking)	2550
+0136.wav	speech|en/stop/fd395b74_nohash_3.wav|S40	0.00	3.00	I'm going to kill him.	1100
+0137.wav	speech|en/stop/fd395b74_nohash_3.wav|N5	0.00	3.00	(gunfire)	2160
+0138.wav	speech|en/stop/fd395b74_nohash_4.wav|S30	0.00	3.00	[Music]	1100
+0139.wav	speech|en/stop/fd395b74_nohash_4.wav|S40	0.00	3.00	(Gunshot)	1100
+0140.wav	speech|en/stop/fd395b74_nohash_4.wav|N5	0.00	3.00	(gun shots)	1640
+0141.wav	speech|en/no/15c563d7_nohash_1.wav|S40	0.00	3.00	(music)	2070
+0142.wav	speech|en/no/39025b21_nohash_0.wav|N5	0.00	3.00	No.	1860
+0143.wav	speech|en/no/735845ab_nohash_0.wav|N10	0.00	3.00	(gunshot)	1280
+0144.wav	speech|en/no/9712cce0_nohash_0.wav|N10	0.00	3.00	No.	2280
+0145.wav	speech|en/no/ab00c4b2_nohash_1.wav|N5	0.00	3.00	No	1970
+0146.wav	speech|en/no/ced835d3_nohash_1.wav|S20	0.00	3.00	[Laughter]	1110
+0147.wav	speech|en/no/ced835d3_nohash_1.wav|S30	0.00	3.00	[Laughter]	1100
+0148.wav	speech|en/no/ced835d3_nohash_1.wav|S40	0.00	3.00	(laughter)	1100
+0149.wav	speech|en/yes/28ce0c58_nohash_3.wav|S20	0.00	3.00	Yes.	540
+0150.wav	speech|en/yes/881583a6_nohash_0.wav|N5	0.00	3.00	Yes	2390
+0151.wav	speech|en/yes/97f4c236_nohash_2.wav|S20	0.00	3.00	Yes	1030
+0152.wav	speech|en/yes/f34e6f44_nohash_2.wav|S40	0.00	3.00	Yes	410
+0153.wav	speech|en/yes/f34e6f44_nohash_2.wav|N5	0.00	3.00	Yes	1830
+0154.wav	speech|en/go/0d53e045_nohash_0.wav|S40	0.00	3.00	Oh	1010
+0155.wav	speech|en/go/2335770e_nohash_1.wav|N10	0.00	2.90	Go	1190
+0156.wav	speech|en/go/5c8af87a_nohash_0.wav|S20	0.00	3.00	Go	680
+0157.wav	speech|en/go/65040d9b_nohash_0.wav|N5	0.00	3.00	Go	2140
+0158.wav	speech|en/go/9ff1b8b6_nohash_0.wav|N5	0.00	3.00	Go	1930
+0159.wav	speech|en/go/b01c8f61_nohash_0.wav|N5	0.00	2.46	Go	1090
+0160.wav	speech|en/go/d6360b32_nohash_0.wav|N10	0.00	3.00	Yeah	1970
+0161.wav	speech|en/go/fafe8101_nohash_0.wav|N5	0.00	3.00	Go!	2220
+0162.wav	speech|ar/no/00000028_NO_09.wav|N10	0.00	3.00	نسوه سلوه	1840
+0163.wav	speech|ar/yes/00000013_NO_10.wav|N5	0.00	3.00	نعم	2020
+0164.wav	speech|ar/yes/00000019_NO_05.wav|N5	0.00	3.00	لا	1450
+0165.wav	speech|ar/yes/00000026_NO_06.wav|N5	0.00	3.00	نعم	890
+0166.wav	speech|ar/cancel/00000020_NO_01.wav|N10	0.00	3.00	نلوها	1180
+0167.wav	speech|ar/close/00000008_NO_08.wav|N10	0.00	3.00	هل حمو؟	910
+0168.wav	speech|ar/close/00000013_NO_07.wav|N5	0.00	3.00	ازمار	860
+0169.wav	speech|ar/close/00000028_NO_10.wav|N10	0.00	3.00	أكثر	1740
+0170.wav	speech|ar/ok/00000015_NO_05.wav|N5	0.00	3.00	نمعه	2040
+0171.wav	speech|ar/ok/00000019_NO_07.wav|N10	0.00	3.00	لذا	1990
+0172.wav	speech|ar/ok/00000019_NO_07.wav|N5	0.00	3.00	موحب	1670
+0173.wav	speech|sent/clnsp410.wav|N10	0.00	6.00	His history is his alone, that each man must recognize his own.	4030
+0174.wav	speech|sent/clnsp586.wav|N10	0.00	6.00	We're only one club existed before, he said two were flourished.	4240

@@ -14,8 +14,18 @@ export interface ArtifactVersionInfo {
     askedByName: string | null;
     sizeBytes: number;
     createdAt: string;
-    /** Where the file is served from: an address outside the game's own, so a page that runs from it is cut off. */
-    url: string;
+    /**
+     * Where the file is served from: an address outside the game's own, so a page that runs from it is cut off. None for
+     * a "Just you" artifact (game #1994) anywhere but in the answer to its owner opening it.
+     */
+    url: string | null;
+    /**
+     * How long that address goes on working: the one a "Just you" artifact opens at is for that opening only. None for an
+     * address that never stops.
+     */
+    urlLifeMs?: number;
+    /** The page has songs, pictures or videos beside it, which it may fetch from that address at any moment. */
+    urlHasMedia?: boolean;
 }
 
 export interface OpenedArtifact {
@@ -120,7 +130,8 @@ export function restoreArtifactVersion(
     return post<OpenedArtifact>(`${encodeURIComponent(id)}/restore`, { chat, number });
 }
 
-export type ArtifactOpenScope = "chat" | "link";
+/** Who can open it: just its owner, people in the chat it was made in, or anyone with the link. */
+export type ArtifactOpenScope = "me" | "chat" | "link";
 export type ArtifactChangeScope = "owner" | "openers";
 
 /** The owner says who can open it and who can ask for changes; the answer is the artifact as it now is. */
@@ -147,4 +158,24 @@ export function fetchArtifactCode(
     chat: ArtifactChat | undefined
 ): Promise<{ version: ArtifactVersionInfo; content: string }> {
     return post(`${encodeURIComponent(id)}/versions/${number}`, { chat });
+}
+
+/** The payment side of a page that takes payments (game #2044): nothing but what the page's window may know. */
+export interface ArtifactPay {
+    enabled?: boolean;
+    orderId?: string;
+    /** Where the buyer pays; only an https address is ever opened */
+    checkoutUrl?: string | null;
+    app?: string;
+    status?: "checking" | "paid" | "not_paid" | "cant_confirm";
+    testPayment?: boolean;
+}
+
+/** Whether the page takes payments; `start` makes a checkout for the owner's amount, `order` asks where an order stands. */
+export function payOnArtifact(
+    id: string,
+    chat: ArtifactChat | undefined,
+    request: { start?: boolean; order?: string } = {}
+): Promise<ArtifactPay> {
+    return post<ArtifactPay>(`${encodeURIComponent(id)}/pay`, { chat, ...request });
 }

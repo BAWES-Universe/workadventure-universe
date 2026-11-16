@@ -3,7 +3,7 @@
  * person who is talking, and never the claim a retry replaced.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { BotSpeech, type SpeechVoice } from '../voice/BotSpeech';
+import { BotSpeech, type SpeechVoice, type TurnDecision } from '../voice/BotSpeech';
 import { DEFAULT_REPLY_LIMITS } from '../voice/settings';
 import { SPOKEN_PHRASES } from '../voice/SpokenText';
 
@@ -12,15 +12,17 @@ const reply = (n: number, player = 7) => `bot-b1-player-${player}-0000000${n}-aa
 
 function setup(options: { audience?: boolean; limits?: Partial<typeof DEFAULT_REPLY_LIMITS> } = {}) {
     let clock = 1000;
-    const said: { segmentId: string; text: string; maxMs?: number }[] = [];
-    const state = { audience: options.audience ?? true, speaking: false, spokenToAt: 0, sayWorks: true };
+    const said: { segmentId: string; text: string; maxMs?: number; onlyFor?: string }[] = [];
+    const state = { audience: options.audience ?? true, speaking: false, spokenToAt: 0, sayWorks: true, connected: undefined as string[] | undefined, shared: false };
     const voice: SpeechVoice = {
-        say: (_space, segmentId, text, maxMs) => {
+        say: (_space, segmentId, text, maxMs, onlyFor) => {
             if (!state.sayWorks) return false;
-            said.push({ segmentId, text, maxMs });
+            said.push({ segmentId, text, maxMs, ...(onlyFor !== undefined ? { onlyFor } : {}) });
             return true;
         },
-        hasAudience: () => state.audience,
+        // `connected`: whose audio is connected, when a test says; otherwise anyone's is (or nobody's)
+        hasAudience: (_space, onlyFor) => (state.connected ? (onlyFor === undefined ? state.connected.length > 0 : state.connected.includes(onlyFor)) : state.audience),
+        sharedWith: () => state.shared,
         someoneSpeaking: () => state.speaking,
         lastSpokenToAt: () => state.spokenToAt,
     };
@@ -659,5 +661,145 @@ describe('Stop speaking (round 8)', () => {
         // The worker's report that nothing played gives back nothing twice
         speech.unplayed(SPACE, 's1');
         expect(unspoken).toHaveBeenCalledTimes(1);
+    });
+});
+
+const KHALID = 'room_7';
+
+describe('a reply written for one person alone (#1993)', () => {
+    it('is handed to the voice with that person on it, so its audio reaches nobody else', () => {
+        const t = setup();
+        expect(t.speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID)).toBe('spoken');
+        expect(t.said).toEqual([{ segmentId: 's1', text: 'Your interview is at 10.', maxMs: 60000, onlyFor: KHALID }]);
+        // A reply for everyone carries nobody
+        t.speech.final(SPACE, reply(2), 'The demo is on Sunday.');
+        expect(t.said[1]).toEqual({ segmentId: 's2', text: 'The demo is on Sunday.', maxMs: 60000 });
+    });
+
+    it('waits for that person\'s audio, not anyone\'s, and is said to them once it connects', () => {
+        const t = setup();
+        t.state.connected = ['room_9'];
+        expect(t.speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID)).toBe('waiting');
+        // Someone else's audio connecting is not what it waits for
+        t.speech.audience(SPACE);
+        expect(t.said).toEqual([]);
+
+        t.state.connected = ['room_9', KHALID];
+        t.speech.audience(SPACE);
+        expect(t.said).toEqual([{ segmentId: 's1', text: 'Your interview is at 10.', maxMs: 60000, onlyFor: KHALID }]);
+    });
+
+    it('is not said when others would hear it: it is given back, and its person is told why', () => {
+        const unspoken = vi.fn();
+        const t = setup();
+        const keptQuiet: string[] = [];
+        t.speech.onKeptQuiet = (_space, responseId) => void keptQuiet.push(responseId);
+        (t.speech as unknown as { voice: SpeechVoice }).voice.unspoken = unspoken;
+        t.state.shared = true;
+
+        expect(t.speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID)).toBe('unsaid');
+        expect(t.said).toEqual([]);
+        expect(keptQuiet).toEqual([reply(1)]);
+        expect(unspoken).toHaveBeenCalledWith(SPACE, { turnId: reply(1), playerId: 7 });
+        // Not said later either, when the others have gone
+        t.state.shared = false;
+        expect(t.speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID)).toBe('again');
+        expect(t.said).toEqual([]);
+
+        // A reply for everyone is said as usual while others are there
+        t.state.shared = true;
+        expect(t.speech.final(SPACE, reply(2), 'The demo is on Sunday.')).toBe('spoken');
+        expect(keptQuiet).toEqual([reply(1)]);
+    });
+
+    it('is decided when it is said, not when it was written: someone who came and went meanwhile changes nothing', () => {
+        const t = setup({ audience: false });
+        t.state.shared = true;
+        expect(t.speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID)).toBe('waiting');
+        t.state.shared = false;
+        t.state.audience = true;
+        t.speech.audience(SPACE);
+        expect(t.said).toEqual([{ segmentId: 's1', text: 'Your interview is at 10.', maxMs: 60000, onlyFor: KHALID }]);
+    });
+
+    it('keeps its person through a question to Orbit, and through a wait for new voice settings', async () => {
+        const decisions: TurnDecision[] = [{ action: 'wait' }, { action: 'speak' }];
+        const said: unknown[][] = [];
+        const voice: SpeechVoice = {
+            say: (...args) => {
+                said.push(args);
+                return true;
+            },
+            hasAudience: () => true,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            beforeSpeaking: async () => decisions.shift()!,
+        };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000);
+        expect(speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID)).toBe('checking');
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(said).toEqual([]);
+        // The bubble's audio is back with the new settings: asked again, and said to its person
+        speech.audience(SPACE);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(said).toEqual([[SPACE, 's1', 'Your interview is at 10.', 60000, KHALID]]);
+    });
+});
+
+describe('a reply written for one person, when someone else walks up and the voice speaks to the whole bubble (#1993)', () => {
+    const voiceWith = (retracted: string[]): SpeechVoice => ({
+        say: () => true,
+        hasAudience: () => true,
+        someoneSpeaking: () => false,
+        lastSpokenToAt: () => 0,
+        retract: (_space, segmentId) => void retracted.push(segmentId),
+    });
+
+    it('stops what is being heard of it, and it counts as stopped', () => {
+        const retracted: string[] = [];
+        const speech = new BotSpeech(voiceWith(retracted), DEFAULT_REPLY_LIMITS, () => 1000);
+        speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID);
+        speech.heard(SPACE, 's1');
+
+        expect(speech.hush(SPACE, reply(1))).toBe('stopped');
+        expect(retracted).toEqual(['s1']);
+        expect(speech.isSpeakingTo(7)).toBe(false);
+    });
+
+    it('takes back what had not begun to be heard, and it counts as not said', () => {
+        const retracted: string[] = [];
+        const speech = new BotSpeech(voiceWith(retracted), DEFAULT_REPLY_LIMITS, () => 1000);
+        speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID);
+
+        expect(speech.hush(SPACE, reply(1))).toBe('unsaid');
+        expect(retracted).toEqual(['s1']);
+        // Nothing of it is on its way any more
+        expect(speech.hush(SPACE, reply(1))).toBeUndefined();
+    });
+
+    it('leaves a reply that is still being written, or waits for its person\'s audio, to be decided when it is said', () => {
+        const writing = setup();
+        writing.speech.begin(reply(1));
+        expect(writing.speech.hush(SPACE, reply(1))).toBeUndefined();
+        // Finished with the other person still there: not said
+        writing.state.shared = true;
+        expect(writing.speech.final(SPACE, reply(1), 'Your interview is at 10.', KHALID)).toBe('unsaid');
+        expect(writing.said).toEqual([]);
+
+        const waiting = setup({ audience: false });
+        expect(waiting.speech.final(SPACE, reply(2), 'Your interview is at 10.', KHALID)).toBe('waiting');
+        expect(waiting.speech.hush(SPACE, reply(2))).toBeUndefined();
+        waiting.state.shared = true;
+        waiting.state.audience = true;
+        waiting.speech.audience(SPACE);
+        expect(waiting.said).toEqual([]);
+    });
+
+    it('leaves every other reply alone', () => {
+        const t = setup();
+        t.speech.hush(SPACE, reply(1));
+        expect(t.speech.final(SPACE, reply(2, 9), 'The demo is on Sunday.')).toBe('spoken');
     });
 });

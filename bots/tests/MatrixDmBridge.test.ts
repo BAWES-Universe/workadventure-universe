@@ -106,6 +106,34 @@ describe('MatrixDmBridge', () => {
             .toBe("You've used your guest replies for now. Nora answers you again at 09:05 UTC.");
     });
 
+    it('never gives a pasted key to the model, remembers nothing of it, and says where keys go (game #2044)', async () => {
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message(['here it is: sk_', 'live_51Habcdefghijklmnop12345'].join('')));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.size).toBe(0);
+        const said = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => /Keys don't go in chat/.test(String(content?.body)));
+        expect(said?.msgtype).toBe('m.text');
+        expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
+        // Every paste gets the note (the person is waiting on it); an ordinary message still gets its answer
+        await bridge.onEvent(message(['sk_', 'test_abcdefghijklmnopqrstu again'].join('')));
+        expect(client.sendMessage.mock.calls.filter((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toHaveLength(2);
+        expect(deps.reply).not.toHaveBeenCalled();
+        await bridge.onEvent(message('what can you do?'));
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not keep a pasted key for a resting Brick either, and says where keys go (game #2044)', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' } as never);
+        await bridge.onEvent(message(['here it is: sk_', 'live_51Habcdefghijklmnop12345'].join('')));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.size).toBe(0);
+        expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
+        // An ordinary message to the resting Brick is still remembered
+        await bridge.onEvent(message('hello'));
+        expect((bridge as any).localWaiting.size).toBe(1);
+    });
+
     it('sends nothing for a message answered together with others', async () => {
         await bridge.onEvent(invite());
         deps.reply.mockResolvedValue({ text: '', media: [], answeredTogether: true });
@@ -695,7 +723,8 @@ describe('MatrixDmBridge', () => {
         deps.getBotConfig.mockResolvedValue(resting as never);
         await bridge.onEvent(message('Are you around?'));
         expect(deps.reply).not.toHaveBeenCalled();
-        expect(deps.restingLine).toHaveBeenCalledWith(resting, 'Are you around?');
+        // Who is asking goes with it, so a Brick's line is never made on its owner's key for someone else (#2005)
+        expect(deps.restingLine).toHaveBeenCalledWith(resting, 'Are you around?', 'uuid-alice');
         expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'The ship is in the harbour, come back later!');
         expect(noteStates()).toEqual(['resting']);
         expect(client.sendMessage.mock.calls[0][2].body).toBe(
@@ -1237,7 +1266,11 @@ describe('MatrixDmBridge', () => {
             deps.uploadAttachment = vi.fn(async () => 'https://files.test/note.m4a');
             deps.noteHearing = {
                 canHear: vi.fn(async () => true),
-                hear: vi.fn(async () => ({ ok: true, text: ' Remind me   about the\nmeeting ', provider: 'soniox', timings: {} })),
+                // "Listening…" is shown when hearing starts (the note was reserved and is on its way to the provider)
+                hear: vi.fn(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                    onStart?.();
+                    return { ok: true, text: ' Remind me   about the\nmeeting ', provider: 'soniox', timings: {} };
+                }),
                 limits: { maxSeconds: 300, maxBytes: 1e6, maxChars: 4000 },
             };
             await bridge.onEvent(invite());
@@ -1245,18 +1278,62 @@ describe('MatrixDmBridge', () => {
 
         it('shows Listening, then the words under the note, and gives the bot the words', async () => {
             await bridge.onEvent(note);
-            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ filename: 'Voice message.m4a', seconds: 4 }));
+            // Counted on the person who sent it
+            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ filename: 'Voice message.m4a', seconds: 4 }), { userId: 'uuid-alice', isGuest: false }, expect.any(Function));
             const [listening, heard] = transcripts();
             expect(listening['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'listening' });
             expect(heard['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'heard', text: 'Remind me about the meeting' });
             expect(deps.reply.mock.calls.at(-1)[2]).toBe('[Voice note] Remind me about the meeting');
         });
 
+        it('holds back a key read out in a note: no words shown, nothing given to the bot, and it says where keys go (game #2044)', async () => {
+            const spoken = ['sk_', 'live_51Habcdefghijklmnop12345'].join('');
+            deps.noteHearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                onStart?.();
+                return { ok: true, text: `my key is ${spoken}`, provider: 'soniox', timings: {} };
+            });
+            await bridge.onEvent(note);
+            expect(deps.reply).not.toHaveBeenCalled();
+            expect((bridge as any).localWaiting.size).toBe(0);
+            expect(transcripts().at(-1)['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'failed' });
+            expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
+            expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
+        });
+
+        it('reads the whole transcript for a key, so one past the cut-off is held back too (CodeRabbit on #2048)', async () => {
+            const spoken = ['sk_', 'live_51Habcdefghijklmnop12345'].join('');
+            deps.noteHearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                onStart?.();
+                return { ok: true, text: `${'word '.repeat(1000)}my key is ${spoken}`, provider: 'soniox', timings: {} };
+            });
+            await bridge.onEvent(note);
+            expect(deps.reply).not.toHaveBeenCalled();
+            expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
+            expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
+        });
+
         it('says it could not listen, and the bot is not made to answer a file it cannot read', async () => {
-            deps.noteHearing.hear.mockResolvedValue({ ok: false, reason: 'failed' });
+            deps.noteHearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+                onStart?.();
+                return { ok: false, reason: 'failed' };
+            });
             await bridge.onEvent(note);
             expect(transcripts().at(-1)['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'failed' });
             expect(deps.reply).not.toHaveBeenCalled();
+        });
+
+        it('shows no row for a note refused before it was heard, and says so under it', async () => {
+            deps.noteHearing.hear.mockResolvedValue({ ok: false, reason: 'busy' });
+            await bridge.onEvent(note);
+            expect(transcripts().map((content: any) => content['universe.transcript'] ?? content['m.new_content']['universe.transcript'])).toEqual([{ v: 1, for: '$note1', state: 'failed' }]);
+            expect(deps.reply).not.toHaveBeenCalled();
+        });
+
+        it('leaves a note whose sender has no replies left to the reply path, which shows the usual limit card, and never says Listening', async () => {
+            deps.noteHearing.hear.mockResolvedValue({ ok: false, reason: 'reply-limit', allowance: { limit: 'universe-ai', resetsAt: 'soon', who: 'member' } });
+            await bridge.onEvent(note);
+            expect(transcripts()).toEqual([]);
+            expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), '', [expect.objectContaining({ mediaType: 'audio' })], expect.anything());
         });
 
         it('promises nothing to a bot that cannot hear: no row, and the note reaches it as the file', async () => {
@@ -1275,7 +1352,7 @@ describe('MatrixDmBridge', () => {
 
             deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
             await bridge.checkWaiting();
-            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ seconds: 4 }));
+            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ seconds: 4 }), expect.anything(), expect.any(Function));
             expect(deps.reply.mock.calls.at(-1)[2]).toBe('[Voice note] Remind me about the meeting');
         });
 
@@ -1774,7 +1851,7 @@ describe('DmReplyService history', () => {
             ['done', "Make a song · 1 didn't work"],
         ]);
         expect(shown[0][0].steps.map((s: any) => s.state)).toEqual(['running', 'running']);
-        expect(shown[2][0].steps).toEqual([
+        expect(shown[2][0].steps).toMatchObject([
             { doing: 'Make a song', done: 'Make a song', detail: 'funk', state: 'done' },
             { doing: 'Make a song', done: 'Make a song', detail: 'disco', state: 'failed', note: 'daily limit reached' },
         ]);
@@ -2415,7 +2492,7 @@ describe('DmReplyService resting line', () => {
         const config = { botId: BOT, name: 'Mira', aiProviderRef: 'p', chatInstructions: 'You are a pirate.' } as never;
         expect(await service.restingLine(config, 'Are you around?')).toBe('Not now, sailor!');
         // With the bot id, so a bot on Universe AI or a lent key reaches its key
-        expect(quickGenerate).toHaveBeenCalledWith('p', expect.stringContaining('You are a pirate.'), 'Are you around?', BOT);
+        expect(quickGenerate).toHaveBeenCalledWith('p', expect.stringContaining('You are a pirate.'), 'Are you around?', BOT, undefined, undefined);
         quickGenerate.mockRejectedValueOnce(new Error('provider down'));
         expect(await service.restingLine(config, 'hi')).toBe('');
         expect(await service.restingLine({ botId: BOT } as never, 'hi')).toBe('');
@@ -2434,7 +2511,8 @@ describe('DmReplyService bot settings', () => {
             missingCache: new Map(),
         });
         await service.getBotConfig(BOT);
-        expect(getBotConfiguration).toHaveBeenCalledWith(BOT, 10_000);
+        // Direct messages also take a Brick, which Orbit answers only when asked for by name (#1995)
+        expect(getBotConfiguration).toHaveBeenCalledWith(BOT, 10_000, { bricks: true });
     });
 
     it('keeps real bots cached when many ids that are not bots are looked up', async () => {

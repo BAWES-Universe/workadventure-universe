@@ -1,0 +1,17 @@
+{
+  "strict": {
+    "rule": "silero p>=0.50 for 64 ms",
+    "newlyMissed": 9,
+    "missed": 38,
+    "noisePerHour": 3.498516501453305,
+    "p95": 504
+  },
+  "balanced": {
+    "rule": "silero p>=0.50 for 64 ms",
+    "newlyMissed": 9,
+    "missed": 38,
+    "noisePerHour": 3.498516501453305,
+    "p95": 504
+  },
+  "clips": 7351
+}

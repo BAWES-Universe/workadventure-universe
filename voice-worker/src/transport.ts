@@ -20,13 +20,28 @@ export interface OutputFrame {
     opus(): Buffer;
 }
 
+/**
+ * Who a path's audio reaches, asked for a reply that is for one person alone (game #1993): that person and nobody else
+ * (`alone`), other people too (`shared`), or not that person (`elsewhere`).
+ */
+export type Reach = 'alone' | 'shared' | 'elsewhere';
+
 /** One path the bot's audio goes out on: a person's peer connection, or the bot's LiveKit participant for the whole room. */
 export interface OutputTarget {
     readonly participantId: string;
     readonly epoch: number;
-    /** True only while this is the one current path and its listeners' modes play audio. */
-    plays(): boolean;
-    sendFrame(frame: OutputFrame): void;
+    /**
+     * True only while this is the one current path and its listeners' modes play audio. With `onlyFor`: while that
+     * person's own mode plays audio.
+     */
+    plays(onlyFor?: string): boolean;
+    /** Who audio handed to this path reaches right now, for a reply that is for this person alone. */
+    reach(participantId: string): Reach;
+    /**
+     * Sends one frame. With `onlyFor` the frame belongs to a reply for that person alone: the path sends it only while
+     * it reaches them and nobody else, and drops it otherwise. The path checks this itself, whatever the caller checked.
+     */
+    sendFrame(frame: OutputFrame, onlyFor?: string): void;
     /** Drops audio already handed over but not yet played (a stop must not leave a tail). */
     clear?(): void;
 }

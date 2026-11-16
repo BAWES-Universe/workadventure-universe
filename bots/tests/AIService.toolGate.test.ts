@@ -294,7 +294,7 @@ describe('what a person says while their card waits in a bubble (#1658)', () => 
         vi.spyOn(service as never, 'generateTurn').mockImplementation((async function* () {
             yield { content: '', done: true };
         }) as never);
-        const botClient = { releaseSpeech: () => undefined, holdSpeech: () => undefined };
+        const botClient = { releaseSpeech: () => undefined, holdSpeech: () => undefined, othersWith: () => [] };
         const run = async (personSaid: boolean) => {
             const stream = service.generateBotResponseStream('b1', 7, 'Say hello', '', 'prov', 'room#bubble', '', botClient as never, undefined, undefined, undefined, 'world', undefined, undefined, undefined, false, personSaid);
             for await (const chunk of stream) void chunk;

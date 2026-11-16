@@ -223,12 +223,42 @@ export function cancelPlacement(): void {
 }
 
 /**
+ * Who hears that one of the person's own Bricks was placed on the map (game #2005): the editor, which gives it its home
+ * there. A Brick is not a room bot, so it is never added to this room's bots.
+ */
+let brickPlacedHandler:
+    | ((brick: BotData, spot: { behaviorType: "idle"; behaviorConfig: BotData["behaviorConfig"] }) => void)
+    | undefined;
+
+export function onBrickPlaced(handler: typeof brickPlacedHandler): () => void {
+    brickPlacedHandler = handler;
+    return () => {
+        if (brickPlacedHandler === handler) brickPlacedHandler = undefined;
+    };
+}
+
+/**
  * Confirm bot placement at current cursor position
  * Saves position to API and spawns the bot
  */
 export function confirmPlacement(): BotData | undefined {
     const bot = get(placingBotStore);
     const cursor = get(placementCursorStore);
+
+    if (bot?.brickHome && cursor) {
+        const spot = {
+            behaviorType: "idle" as const,
+            behaviorConfig: {
+                ...bot.behaviorConfig,
+                assignedSpace: { ...bot.behaviorConfig.assignedSpace, center: { x: cursor.x, y: cursor.y }, radius: 0 },
+            },
+        };
+        placingBotStore.set(undefined);
+        placementCursorStore.set(undefined);
+        botEditorModeStore.set("list");
+        brickPlacedHandler?.(bot, spot);
+        return undefined;
+    }
 
     if (bot && cursor) {
         // Update bot position
