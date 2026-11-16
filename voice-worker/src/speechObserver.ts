@@ -491,12 +491,21 @@ export class SpeechObserver {
         };
     }
 
-    /** Every FALLBACK_CHECK_MS while it waits: audio of theirs given, and none of it answered, is the detector falling behind. */
+    /**
+     * Every FALLBACK_CHECK_MS while it waits: audio of theirs given, and none of it answered, is the detector falling behind.
+     * None given at all, and none of theirs left waiting: their audio stopped coming, and nothing more is coming to decide
+     * on (a sender that sends nothing while silent, whose last audio the detector already answered), so it is made as
+     * today, as when such a stream ends idle.
+     */
     private checkLater(owner: Owner, participantId: string, pending: Pending): void {
         pending.timer = setTimeout(() => {
             if (owner.pending.get(participantId) !== pending) return;
             if (pending.offeredMs >= FALLBACK_AUDIO_MS && pending.answered === 0) {
                 this.decide(owner, participantId, 'observer_decide_fallback_slow');
+                return;
+            }
+            if (pending.offeredMs === 0 && !((this.streams.get(`${owner.id}\n${participantId}`)?.waiting.length ?? 0) > 0)) {
+                this.decide(owner, participantId, 'observer_decide_fallback_idle');
                 return;
             }
             pending.offeredMs = 0;

@@ -88,8 +88,9 @@ function speechStats(rows: Row[], b: string) {
             if (whyMatch(o, /^watchdog$/)) watchdogStops++;
         }
         // The first change the person could hear once they started (a background pause already in place counts from onset)
-        const before = o.events.filter(([t]) => t < onset);
-        const heldAtOnset = before.length > 0 && !GOING_ON.has(before[before.length - 1][1]) && before[before.length - 1][1] !== 'stop';
+        // From the last playback change before onset: an ended_* marker says a watched stretch ended, not that playback changed
+        const state = o.events.filter(([t, e]) => t < onset && !e.startsWith('ended_')).pop()?.[1];
+        const heldAtOnset = state !== undefined && !GOING_ON.has(state) && state !== 'stop';
         const firstAfter = heldAtOnset ? onset : o.events.find(([t, e]) => t >= onset && !GOING_ON.has(e) && !e.startsWith('ended_'))?.[0];
         if (firstAfter !== undefined && (o.stopAt === undefined || o.stopAt >= clipStartMs)) {
             changes.push(firstAfter - onset);
@@ -321,7 +322,7 @@ function report(path: string, outPath: string): void {
         say();
         say('| clip | label after listening | ' + BEHAVIOURS.map((b) => NAMES[b]).join(' | ') + ' |');
         say('| --- | --- | ' + BEHAVIOURS.map(() => '---').join(' | ') + ' |');
-        for (const r of listenedRows.sort((x, y) => x.id.localeCompare(y.id))) say(`| \`${r.id}\` | ${listenedAs(r.id)} | ${BEHAVIOURS.map((b) => (r.result[b].stopAt === undefined ? 'never stopped' : `stopped at ${sec(r.result[b].stopAt!)}`)).join(' | ')} |`);
+        for (const r of listenedRows.sort((x, y) => x.id.localeCompare(y.id))) say(`| \`${r.id.replaceAll('|', '\\|')}\` | ${listenedAs(r.id)} | ${BEHAVIOURS.map((b) => (r.result[b].stopAt === undefined ? 'never stopped' : `stopped at ${sec(r.result[b].stopAt!)}`)).join(' | ')} |`);
         say();
     }
 

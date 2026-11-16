@@ -81,9 +81,10 @@ for (const g of groups.filter((x) => recs.some((r) => r.group === x && r.kind ==
     const last: number[] = [];
     for (const r of rs) {
         const e = r.streams.flatMap((s) => s.events).filter((x) => (x[1] === 'partial' || x[1] === 'final') && (x[2] ?? '').trim() && x[0] >= (r.onsetMs ?? 0) - 200);
-        if (e.length) first.push(e[0][0] - (r.onsetMs ?? 0));
+        // Streams can overlap (a new one opens while an earlier one waits for its final): earliest and latest by time
+        if (e.length) first.push(Math.min(...e.map((x) => x[0])) - (r.onsetMs ?? 0));
         const f = r.streams.flatMap((s) => s.events).filter((x) => x[1] === 'final' && (x[2] ?? '').trim() && x[0] >= (r.onsetMs ?? 0) - 200);
-        if (f.length) last.push(f[f.length - 1][0] - (r.offsetMs ?? 0));
+        if (f.length) last.push(Math.max(...f.map((x) => x[0])) - (r.offsetMs ?? 0));
     }
     say(`| ${g} | ${rs.length} | ${rs.filter((r) => heardRight(r, finals(r))).length} | ${ms(p(first, 0.5))} / ${ms(p(first, 0.95))} | ${ms(p(last, 0.5))} / ${ms(p(last, 0.95))} |`);
 }
@@ -111,8 +112,9 @@ function speechRow(g: string, rs: { r: Rec; row: Row }[], view?: string): void {
         const o = row.result.hold;
         const onset = row.onsetMs!;
         if (o.stopAt !== undefined && o.stopAt < startOf(row)) continue;
-        const before = o.events.filter(([t]) => t < onset);
-        const held = before.length > 0 && !GOING_ON.has(before[before.length - 1][1]) && before[before.length - 1][1] !== 'stop' && !before[before.length - 1][1].startsWith('ended_');
+        // From the last playback change before onset: an ended_* marker says a watched stretch ended, not that playback changed
+        const state = o.events.filter(([t, e]) => t < onset && !e.startsWith('ended_')).pop()?.[1];
+        const held = state !== undefined && !GOING_ON.has(state) && state !== 'stop';
         const firstAfter = held ? onset : o.events.find(([t, e]) => t >= onset && !GOING_ON.has(e) && !e.startsWith('ended_'))?.[0];
         if (firstAfter !== undefined) changes.push(firstAfter - onset);
         const end = o.stopAt ?? o.spanMs;
@@ -130,7 +132,7 @@ function speechRow(g: string, rs: { r: Rec; row: Row }[], view?: string): void {
 for (const g of groups.filter((x) => recs.some((r) => r.group === x && r.kind === 'speech'))) speechRow(g, recs.filter((r) => r.group === g && r.kind === 'speech').map((r) => ({ r, row: rows.get(r.id)! })));
 say();
 say('The playback time after a false resume runs from going on to the next pause or stop, or to the end of the replay, which');
-say('includes the 3 s tail after the clip. It is not limited to a checked span of the person speaking, so it is not the time');
+say('includes the 8 s replay tail after the clip. It is not limited to a checked span of the person speaking, so it is not the time');
 say('both were talking at once. Onsets and offsets are energy estimates, not checked by a person.');
 say();
 // ---- After listening (results/soniox/disputed-clips.md, src/listened.ts) ----

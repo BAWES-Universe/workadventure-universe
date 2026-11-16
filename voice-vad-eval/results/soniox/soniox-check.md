@@ -76,7 +76,7 @@ Speech over the bot (should stop):
 | sentence (S30) | 20 | 0 / 0 (0) | 0 / 0 | 110 ms / 270 ms | 110 ms / 270 ms; 110 ms / 270 ms | 0 (0.0 s) |
 
 The playback time after a false resume runs from going on to the next pause or stop, or to the end of the replay, which
-includes the 3 s tail after the clip. It is not limited to a checked span of the person speaking, so it is not the time
+includes the 8 s replay tail after the clip. It is not limited to a checked span of the person speaking, so it is not the time
 both were talking at once. Onsets and offsets are energy estimates, not checked by a person.
 
 After listening: a person listened, blind, to the two soft English clips the pause never stopped (source and as played), with a

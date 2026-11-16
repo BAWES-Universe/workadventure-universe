@@ -134,8 +134,12 @@ async function livekit(enrolled: boolean): Promise<Line> {
     };
 }
 
-/** The last loud arrival at or after `from` that is followed by a gap of GAP_MS with none (or undefined while still loud). */
+/**
+ * The last loud arrival at or after `from` that is followed by a gap of GAP_MS with none (or undefined while still loud).
+ * The gap is only what has been observed: up to `until`, and never past now, so time not yet seen never counts as silence.
+ */
 function silentAt(loud: number[], from: number, until = Infinity): number | undefined {
+    until = Math.min(until, performance.now());
     const xs = loud.filter((t) => t >= from - 40 && t <= until);
     for (let i = 0; i < xs.length; i++) {
         const next = i + 1 < xs.length ? xs[i + 1] : until;

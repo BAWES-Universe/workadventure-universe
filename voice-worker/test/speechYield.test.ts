@@ -195,6 +195,20 @@ describe('the detector, asked about one person', () => {
         expect(o.counters.get('observer_decide_fallback_idle')).toBe(1);
     });
 
+    it('their audio stops coming exactly on a window\'s end (nothing left waiting): today\'s rule within a third of a second', async () => {
+        const o = asking();
+        await o.observer.ready();
+        // 160 ms: five whole windows, all answered without speech, nothing left waiting, and then no more audio
+        o.feed(NOISE_HZ, 160);
+        await settle();
+        const a = o.asked();
+        const from = performance.now();
+        while (!a.answers.length && performance.now() - from < 2000) await sleep(20);
+        expect(a.answers).toEqual([true]);
+        expect(performance.now() - from).toBeLessThan(800);
+        expect(o.counters.get('observer_decide_fallback_idle')).toBe(1);
+    });
+
     it('slow even once (answers that keep coming, but late): today\'s rule for that question, never a late confirmation', async () => {
         const o = asking();
         await o.observer.ready();

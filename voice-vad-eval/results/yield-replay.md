@@ -66,16 +66,16 @@ The variants themselves, with the original labels:
 
 | clip | label after listening | today's rule | stop only when confirmed | turn down, then stop or back up | pause; go on only after an empty result | pause; also go on, watched, over steady noise |
 | --- | --- | --- | --- | --- | --- | --- |
-| `speech|en/no/15c563d7_nohash_1.wav|N10` | noise | stopped at 0.2 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
-| `speech|en/no/15c563d7_nohash_1.wav|N5` | noise | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
-| `speech|en/no/15c563d7_nohash_1.wav|S20` | noise | stopped at 1.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
-| `speech|en/no/15c563d7_nohash_1.wav|S30` | noise | stopped at 1.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
-| `speech|en/no/15c563d7_nohash_1.wav|S40` | noise | stopped at 1.1 s | stopped at 4.1 s | stopped at 4.1 s | stopped at 4.1 s | stopped at 4.1 s |
-| `speech|en/stop/fd395b74_nohash_3.wav|N10` | uncertain | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
-| `speech|en/stop/fd395b74_nohash_3.wav|N5` | uncertain | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
-| `speech|en/stop/fd395b74_nohash_3.wav|S20` | uncertain | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
-| `speech|en/stop/fd395b74_nohash_3.wav|S30` | uncertain | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
-| `speech|en/stop/fd395b74_nohash_3.wav|S40` | uncertain | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech\|en/no/15c563d7_nohash_1.wav\|N10` | noise | stopped at 0.2 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
+| `speech\|en/no/15c563d7_nohash_1.wav\|N5` | noise | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech\|en/no/15c563d7_nohash_1.wav\|S20` | noise | stopped at 1.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech\|en/no/15c563d7_nohash_1.wav\|S30` | noise | stopped at 1.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech\|en/no/15c563d7_nohash_1.wav\|S40` | noise | stopped at 1.1 s | stopped at 4.1 s | stopped at 4.1 s | stopped at 4.1 s | stopped at 4.1 s |
+| `speech\|en/stop/fd395b74_nohash_3.wav\|N10` | uncertain | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech\|en/stop/fd395b74_nohash_3.wav\|N5` | uncertain | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech\|en/stop/fd395b74_nohash_3.wav\|S20` | uncertain | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
+| `speech\|en/stop/fd395b74_nohash_3.wav\|S30` | uncertain | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
+| `speech\|en/stop/fd395b74_nohash_3.wav\|S40` | uncertain | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
 
 ## Noise and knocks (311 clips), provider hears nothing (a successful empty result): should not stop
 

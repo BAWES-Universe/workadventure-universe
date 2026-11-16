@@ -16,6 +16,16 @@ for (let i = 0; i < Number(countArg ?? 10); i++) {
         const ws = new WebSocket(SONIOX_ENDPOINT, { headers: { Authorization: `Bearer ${key}` } });
         let openMs = NaN;
         let sentAt = 0;
+        let settled = false;
+        // Closed before it said finished, or no answer in time: a failed measurement, never a hang
+        const deadline = setTimeout(() => fail(new Error('no finished answer within 15 s')), 15000);
+        const fail = (e: Error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(deadline);
+            ws.terminate();
+            reject(e);
+        };
         ws.on('open', () => {
             openMs = performance.now() - start;
             ws.send(JSON.stringify({ model: SONIOX_CURRENT_MODEL, audio_format: 's16le', sample_rate: 16000, num_channels: 1 }));
@@ -25,12 +35,15 @@ for (let i = 0; i < Number(countArg ?? 10); i++) {
         });
         ws.on('message', (d) => {
             const m = JSON.parse(d.toString()) as { finished?: boolean };
-            if (m.finished) {
+            if (m.finished && !settled) {
+                settled = true;
+                clearTimeout(deadline);
                 resolve({ openMs: Math.round(openMs), finishedMs: Math.round(performance.now() - sentAt) });
                 ws.close();
             }
         });
-        ws.on('error', reject);
+        ws.on('error', fail);
+        ws.on('close', (code) => fail(new Error(`closed before finished (${code})`)));
     });
     results.push(r);
 }
