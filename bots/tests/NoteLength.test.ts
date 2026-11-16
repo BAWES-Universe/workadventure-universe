@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { NoteLength, ffmpegArgs, writtenSeconds, type RunResult } from '../voice/NoteLength';
+import { NoteLength, ffmpegArgs, runCommand, writtenSeconds, type RunResult } from '../voice/NoteLength';
 
 const FFMPEG = '/usr/bin/ffmpeg';
 const real = existsSync(FFMPEG) ? describe : describe.skip;
@@ -101,5 +101,13 @@ describe('the bounds', () => {
         ).toEqual({ ok: false, reason: 'unavailable' });
         expect(await make(fake({ stderr: 'out_time_us=301500000\n' })).measure(new Uint8Array(5))).toEqual({ ok: false, reason: 'too-long' });
         expect(await make(fake({ stderr: 'out_time_us=300900000\n' })).measure(new Uint8Array(5))).toMatchObject({ ok: true, seconds: 300.9 });
+    });
+});
+
+describe('runCommand keeps the end of what a command wrote to stderr', () => {
+    it('so the last progress line is still there after a lot of earlier output', async () => {
+        const result = await runCommand('/bin/sh', ['-c', "head -c 300000 /dev/zero | tr '\\0' x >&2; echo 'out_time=00:09:59.00' >&2"], new Uint8Array(), { timeoutMs: 10_000, maxOutputBytes: 1000 });
+        expect(result.stderr.length).toBeLessThanOrEqual(64_000);
+        expect(result.stderr).toContain('out_time=00:09:59.00');
     });
 });

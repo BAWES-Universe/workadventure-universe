@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
-import { createComputerModelRelay, estimateCallMicros, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { createComputerModelRelay, estimateCallMicros, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -177,6 +177,12 @@ describe('the call', () => {
         upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: '' } }] });
         await askAndSettle({ messages });
         expect(settled()[0]).toMatchObject({ costMicros: null, basis: 'unknown' });
+    });
+
+    it('keeps a cost the provider reported when it sent no token counts, in a whole reply', async () => {
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'done' } }], usage: { cost: 0.0123 } });
+        await askAndSettle({ messages });
+        expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
     });
 
     it('writes max_completion_tokens for OpenAI’s own host, which wants the newer name', async () => {
@@ -364,6 +370,36 @@ describe('streaming', () => {
         expect(settled()[0].basis === 'estimated' || settled()[0].basis === 'unknown').toBe(true);
     });
 
+    it('keeps a cost the provider reported when it sent no token counts, in a stream', async () => {
+        upstreamHandler = (_req, res) => sse(res, [data({ choices: [{ delta: { content: 'hello' } }] }), data({ choices: [], usage: { cost: 0.0123 } }), 'data: [DONE]\n\n']);
+        await askAndSettle({ messages, stream: true });
+        expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
+    });
+
+    it('counts a character once when its bytes arrive in two pieces', async () => {
+        // 30 characters of 3 bytes each, cut inside the 15th: read piece by piece it would count 31
+        const line = Buffer.from(data({ choices: [{ delta: { content: '€'.repeat(30) } }] }));
+        const cut = line.indexOf(Buffer.from('€')) + 14 * 3 + 1;
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(line.subarray(0, cut));
+            setTimeout(() => {
+                res.write(line.subarray(cut));
+                res.end('data: [DONE]\n\n');
+            }, 30);
+        };
+        await askAndSettle({ messages, stream: true });
+        expect(settled()[0].tokens?.output).toBe(10);
+    });
+
+    it('drops a line with no end instead of keeping it, and still reads what comes after it', async () => {
+        const huge = 'x'.repeat(RELAY_GUARDS.maxStreamLineChars + 100);
+        upstreamHandler = (_req, res) => sse(res, [`data: ${huge}`, '\n', data({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } }), 'data: [DONE]\n\n']);
+        const { text } = await askAndSettle({ messages, stream: true });
+        expect(text).toContain('[DONE]');
+        expect(settled()[0]).toMatchObject({ tokens: { input: 7, output: 3 } });
+    });
+
     it('a chunk cut across two writes is still read', async () => {
         const whole = data({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } });
         upstreamHandler = (_req, res) => sse(res, [whole.slice(0, 20), whole.slice(20), 'data: [DONE]\n\n']);
@@ -424,5 +460,40 @@ describe('the Orbit calls', () => {
         expect(await relayOrbitFor(admin(404, { ok: false })).settle(input)).toEqual({ ok: false });
         expect(await relayOrbitFor(admin(200, { ok: true })).settle(input)).toEqual({ ok: true });
         await expect(relayOrbitFor(admin(502, {})).settle(input)).rejects.toThrow();
+    });
+});
+
+describe('reading a provider’s answer', () => {
+    const bodyOf = (...pieces: string[]) => {
+        const state = { cancelled: false };
+        const stream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                const next = pieces.shift();
+                if (next === undefined) controller.close();
+                else controller.enqueue(new TextEncoder().encode(next));
+            },
+            cancel() {
+                state.cancelled = true;
+            },
+        });
+        return { response: new Response(stream), state };
+    };
+
+    it('reads a short answer whole', async () => {
+        expect(await readBoundedWithFlag(bodyOf('{"a":', '1}').response, 100)).toEqual({ text: '{"a":1}', tooLong: false });
+    });
+
+    it('stops and cancels the body once it is longer than the bound, keeping the words before it', async () => {
+        const { response, state } = bodyOf('abcd', 'efgh', 'ijkl', 'mnop');
+        const read = await readBoundedWithFlag(response, 10);
+        expect(read.tooLong).toBe(true);
+        expect(read.text).toBe('abcdefgh');
+        expect(state.cancelled).toBe(true);
+    });
+
+    it('gives no JSON for an answer that is too long or is not JSON', async () => {
+        expect(await readBoundedJson(bodyOf('{"a":1}').response, 100)).toEqual({ a: 1 });
+        expect(await readBoundedJson(bodyOf('{"a":', '"'.repeat(50), '}').response, 10)).toBeNull();
+        expect(await readBoundedJson(bodyOf('not json').response, 100)).toBeNull();
     });
 });

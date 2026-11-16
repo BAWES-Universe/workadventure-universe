@@ -85,6 +85,14 @@ export class NoteTurns {
     private readonly done = new Map<string, { at: number; result: Promise<TurnHeard> }>();
     private cleanupTimer: NodeJS.Timeout | undefined;
     private cleaning = false;
+    /**
+     * Provider objects (a file, a transcription) that Orbit could not keep as a cleanup job and that could not be deleted at once either:
+     * kept, by object, until Orbit takes them as a job, which is what confirms they are deleted. Without this the provider keeps a
+     * person's audio and transcript until its own expiry (up to 30 days).
+     */
+    private unconfirmed = new Map<string, { providerId: string; region: string | null; kind: 'file' | 'transcription'; objectId: string; since: number }>();
+    private static readonly UNCONFIRMED_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+    private static readonly UNCONFIRMED_MAX = 500;
     /** Notes being read and measured now, across bots and guests. */
     private measuring = 0;
 
@@ -277,7 +285,9 @@ export class NoteTurns {
             if (unkept.transcription) direct.push(['transcription', unkept.transcription]);
             if (unkept.file) direct.push(['file', unkept.file]);
             for (const [kind, id] of direct) {
-                await (remove ? remove({ key: settings.key ?? '', ...(settings.endpoint ? { endpoint: settings.endpoint } : {}) }, kind, id) : Promise.resolve(0)).catch(() => undefined);
+                const status = await (remove ? remove({ key: settings.key ?? '', ...(settings.endpoint ? { endpoint: settings.endpoint } : {}) }, kind, id) : Promise.resolve(0)).catch(() => -1);
+                // Deleted, or already gone, is confirmed. Anything else is kept to be tried again
+                if (!(status >= 200 && status < 300) && status !== 404) this.keepUnconfirmed(providerId, region, kind, id);
             }
         };
         const hooks: HearHooks = {
@@ -481,6 +491,33 @@ export class NoteTurns {
         return unkept;
     }
 
+    private keepUnconfirmed(providerId: string, region: string | null, kind: 'file' | 'transcription', objectId: string): void {
+        this.log(`could not delete a ${kind} at the provider, keeping it to try again`);
+        this.unconfirmed.set(`${providerId}|${kind}|${objectId}`, { providerId, region, kind, objectId, since: this.now() });
+        // Bounded: the oldest are let go first
+        while (this.unconfirmed.size > NoteTurns.UNCONFIRMED_MAX) {
+            const oldest = this.unconfirmed.keys().next().value;
+            if (oldest === undefined) break;
+            this.unconfirmed.delete(oldest);
+        }
+    }
+
+    /** Offers what could not be deleted to Orbit as cleanup jobs again; what it takes is let go. Stops at the first refusal (Orbit is down): the rest wait. */
+    private async offerUnconfirmed(): Promise<void> {
+        for (const [key, entry] of [...this.unconfirmed]) {
+            if (this.now() - entry.since > NoteTurns.UNCONFIRMED_KEEP_MS) {
+                this.unconfirmed.delete(key);
+                continue;
+            }
+            try {
+                await this.options.orbit.addVoiceNoteCleanup({ providerId: entry.providerId, region: entry.region, kind: entry.kind, objectId: entry.objectId }, this.timeoutMs);
+                this.unconfirmed.delete(key);
+            } catch {
+                return;
+            }
+        }
+    }
+
     /** Deletes what is due, until the provider confirms each. Runs one round at a time; never throws. */
     async cleanNow(): Promise<number> {
         if (this.cleaning) return 0;
@@ -489,6 +526,7 @@ export class NoteTurns {
         try {
             // An Orbit from before has no cleanup jobs: its notes are deleted at once, as before
             if (!needsAll(await this.capabilities().catch(() => null))) return 0;
+            await this.offerUnconfirmed();
             const jobs = await this.options.orbit.claimVoiceNoteCleanups(20, this.timeoutMs);
             for (const job of jobs) {
                 await this.cleanOne(job);

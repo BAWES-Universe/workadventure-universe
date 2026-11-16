@@ -96,6 +96,17 @@ export interface ApprovalDeps {
     questions?: QuestionCards;
     /** Whether a room is still only the bot's and this person's, asked right before a goal's card goes into it (the card shows what the step would do). */
     roomStillTheirs?: (botId: string, roomId: string, matrixUserId: string) => boolean;
+    /**
+     * Whether this room is the person's own direct message with the bot, where a goal's card went. A tap on a goal's card this process
+     * does not hold (it restarted since) is believed only from that room, so a tap from any other room neither runs the saved step nor
+     * has the card, with the arguments the step was saved with, drawn there.
+     */
+    directRoomIs?: (botId: string, roomId: string, matrixUserId: string) => Promise<boolean>;
+    /**
+     * Remembers, for every bot server and across restarts, a goal's saved step whose card could not be shown and whose saved step could not
+     * be closed: any server asked for that step shows the card instead of joining a card nobody has. Without it only this process knows.
+     */
+    unshownCards?: { mark(actionId: string): Promise<void>; marked(actionId: string): Promise<boolean>; clear(actionId: string): Promise<void> };
     /** The bot tells the person how an approved action ended. Never throws. */
     followUp?: (outcome: Outcome) => Promise<void>;
     now?: () => number;
@@ -270,7 +281,7 @@ export class ToolApprovals {
             if (task) {
                 // Orbit sets the wait of a goal's card (a super admin's "Scheduled card wait"), and says when it is the card already waiting
                 const saved = await this.deps.orbit.createOrJoin(botId, { ...base, proposalKey: randomKey(), rememberScope: null });
-                if (!saved.created && !this.unshown.has(saved.action.id)) return { kind: 'waiting', result: ALREADY_ASKED_TASK_RESULT };
+                if (!saved.created && !(await this.noCardShown(saved.action.id))) return { kind: 'waiting', result: ALREADY_ASKED_TASK_RESULT };
                 action = saved.action;
                 wait = Math.max(1, Math.round((Date.parse(action.reviewExpiresAt) - this.now()) / 60_000));
             } else {
@@ -310,7 +321,7 @@ export class ToolApprovals {
                 if (task && person.matrixUserId && this.deps.roomStillTheirs && !this.deps.roomStillTheirs(botId, roomId, person.matrixUserId)) throw new Error('The chat is not only theirs any more');
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
                 card.shownAt = this.now();
-                this.unshown.delete(action.id);
+                if (task) await this.cardShown(action.id);
             } catch (error) {
                 // No card, no OK: the saved action is closed so a tap can never find it
                 console.warn(`[ToolApprovals] Could not show the card for ${toolName}:`, errorText(error));
@@ -319,8 +330,8 @@ export class ToolApprovals {
                     () => false
                 );
                 // Still waiting at Orbit with no card: the same step asked again must show it, not join it
-                if (task && !closed) this.unshown.add(action.id);
-                else this.unshown.delete(action.id);
+                if (task && !closed) await this.cardNotShown(action.id);
+                else if (task) await this.cardShown(action.id);
                 return { kind: 'failed', result: NO_CARD_RESULT };
             }
             this.keep(action.id, card);
@@ -333,6 +344,22 @@ export class ToolApprovals {
             console.warn(`[ToolApprovals] Could not ask for an OK for ${toolName}:`, errorText(error));
             return { kind: 'failed', result: NO_CARD_RESULT };
         }
+    }
+
+    /** Whether this saved step of a goal is known to have no card (here, or on any bot server when the store is there). */
+    private async noCardShown(actionId: string): Promise<boolean> {
+        if (this.unshown.has(actionId)) return true;
+        return (await this.deps.unshownCards?.marked(actionId).catch(() => false)) ?? false;
+    }
+
+    private async cardNotShown(actionId: string): Promise<void> {
+        this.unshown.add(actionId);
+        await this.deps.unshownCards?.mark(actionId).catch(() => undefined);
+    }
+
+    private async cardShown(actionId: string): Promise<void> {
+        this.unshown.delete(actionId);
+        await this.deps.unshownCards?.clear(actionId).catch(() => undefined);
     }
 
     private findWaiting(
@@ -392,6 +419,11 @@ export class ToolApprovals {
         // A card of a goal or task is in that goal's own conversation, and is tapped in the person's direct message all the same
         const own = action?.conversationKey === conversationKeyOf(roomId, nearby) || (!nearby && !!action && taskItemOf(action.conversationKey) !== null);
         if (!action || action.requesterKey !== person.uuid || !own) return null;
+        // A goal's card went to the person's own direct message only: a tap from any other room is not on this card
+        if (!nearby && taskItemOf(action.conversationKey) !== null && this.deps.directRoomIs) {
+            const theirs = person.matrixUserId ? await this.deps.directRoomIs(botId, roomId, person.matrixUserId).catch(() => false) : false;
+            if (!theirs) return null;
+        }
         const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
         const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
         // Whether the tool was never checked is not saved with the action: ask the gate again for a card that still waits,

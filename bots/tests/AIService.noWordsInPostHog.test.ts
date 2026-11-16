@@ -34,7 +34,11 @@ vi.mock("@sentry/node", () => {
         spanContext: vi.fn(() => ({ spanId: "s", traceId: "t" })),
     };
     return {
-        startSpanManual: vi.fn((_opts: unknown, callback: (span: any) => any) => callback(span)),
+        // The options a span is opened with are recorded too: they reach Sentry as much as what is set on the span later
+        startSpanManual: vi.fn((opts: unknown, callback: (span: any) => any) => {
+            hoisted.sentryCalls.push(["startSpanManual", opts]);
+            return callback(span);
+        }),
         startInactiveSpan: vi.fn(),
         getCurrentScope: vi.fn(() => ({ setConversationId: vi.fn() })),
         getActiveSpan: vi.fn(() => null),

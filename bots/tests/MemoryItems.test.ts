@@ -133,6 +133,23 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         expect(lines).toEqual(expect.arrayContaining(['hello there', 'what is the weather', 'my friend Amy is coming']));
     });
 
+    it('takes the bot\'s reply right after the line a general fact came from when it says the value back, and no other line with the word', () => {
+        const talk = talking();
+        say(talk, 'I live in Paris', 1000);
+        reply(talk, 'Paris, lovely!', 1001);
+        say(talk, 'tell me about Paris history', 2000);
+        reply(talk, 'Paris has a long history', 2001);
+        const record = talk.getMemory(BOT, SARA)!;
+        record.personalInfo.facts.set('city', 'Paris');
+        record.personalInfo.drawnFrom = { ...(record.personalInfo.drawnFrom ?? {}), 'fact:city': 1000 };
+        expect(dropItems(record, new Set([memoryItemKey('fact', 'city', 'Paris')]))).toBe(1);
+        const lines = record.conversationHistory.map((line) => line.message);
+        expect(lines).not.toContain('I live in Paris');
+        expect(lines).not.toContain('Paris, lovely!');
+        // The value is not taken out of every line for a general fact
+        expect(lines).toEqual(expect.arrayContaining(['tell me about Paris history', 'Paris has a long history']));
+    });
+
     it('finds a name written with a capital only as written, so the word it is also stays (Sentry)', () => {
         const short = talking();
         say(short, 'call me Will', 1000);
@@ -497,6 +514,110 @@ describe('PersistentMemory: Forget of one thing', () => {
         await memory.reportUnreportedForgets(BOT);
         expect(memory.unreportedItemForgets.size).toBe(0);
         clearTimeout(memory.unreportedRetryTimer);
+    });
+});
+
+describe('PersistentMemory: a forgotten thing is not brought back by a snapshot, a waiting save or a save that was waiting on Orbit', () => {
+    const lofi = memoryItemKey('pref', null, 'lo-fi');
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        hoisted.axios.post.mockReset().mockResolvedValue({ data: { success: true } });
+        process.env.BOT_SERVICE_TOKEN = 'service-secret';
+    });
+
+    function held() {
+        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local' });
+        memory.useHeard(() => heardInDm());
+        memory.setUserUuid(BOT, SARA, 'uuid-sara', true);
+        vi.spyOn(Date, 'now').mockReturnValue(1000);
+        memory.addMessage(BOT, SARA, 'call me Sara', 'person', 'dm');
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        vi.mocked(Date.now).mockRestore();
+        return memory;
+    }
+
+    /** What Orbit holds for her: read before the forget, so it still has the thing. */
+    function oldSnapshot(memory: any): BotPlayerMemory {
+        const snapshot = memory.cloneMemory(memory.getMemory(BOT, SARA));
+        snapshot.userUuid = 'uuid-sara';
+        return snapshot;
+    }
+
+    it('drops a thing forgotten while the memories were being read, from the snapshot that finishes after it', async () => {
+        const memory = held();
+        const snapshot = oldSnapshot(memory);
+        let finish: (memories: BotPlayerMemory[]) => void = () => undefined;
+        vi.spyOn(memory.memoryStorage, 'loadMemories').mockReturnValue(new Promise((resolve) => (finish = resolve)));
+        const loading = memory.loadMemories(BOT);
+        memory.forgetItems(BOT, [{ id: 'f1', userUuid: 'uuid-sara', itemKey: lofi, at: 2000 }]);
+        finish([snapshot]);
+        await loading;
+        expect(memory.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.preferences).toEqual([]);
+        expect(memory.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.name).toBe('Sara');
+        expect(memory.forgetsDuringLoad.size).toBe(0);
+    });
+
+    it('drops a thing forgotten in the chat while they were being read, and a thing Orbit has not taken yet from the old snapshot it gives back', async () => {
+        const memory = held();
+        const snapshot = oldSnapshot(memory);
+        let finish: (memories: BotPlayerMemory[]) => void = () => undefined;
+        vi.spyOn(memory.memoryStorage, 'loadMemories').mockReturnValue(new Promise((resolve) => (finish = resolve)));
+        const loading = memory.loadMemories(BOT);
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'not found', response: { status: 404 } });
+        await memory.forgetThingsReported(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        finish([snapshot]);
+        await loading;
+        expect(memory.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.preferences).toEqual([]);
+        // Later, Orbit's old snapshot is read again while the report is still waiting
+        vi.spyOn(memory.memoryStorage, 'loadMemories').mockResolvedValue([oldSnapshot(held())]);
+        memory.loadedMemoriesByUuid.clear();
+        await memory.loadMemories(BOT);
+        expect(memory.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.preferences).toEqual([]);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('does not keep a snapshot of a person who was forgotten as a whole while it was being read', async () => {
+        const memory = held();
+        const snapshot = oldSnapshot(memory);
+        let finish: (memories: BotPlayerMemory[]) => void = () => undefined;
+        vi.spyOn(memory.memoryStorage, 'loadMemories').mockReturnValue(new Promise((resolve) => (finish = resolve)));
+        const loading = memory.loadMemories(BOT);
+        memory.forget(BOT, { everyone: false, userUuids: ['uuid-sara'], rows: [{ id: 'row-1', userUuid: 'uuid-sara' }] });
+        finish([snapshot]);
+        await loading;
+        expect(memory.loadedMemoriesByUuid.has(`${BOT}_uuid-sara`)).toBe(false);
+    });
+
+    it('drops a thing forgotten in the chat from a copy that a waiting save holds apart from the active memory', async () => {
+        const memory = held();
+        const detached = oldSnapshot(memory);
+        memory.pendingSaves.set(`${BOT}_99`, detached);
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        expect(detached.personalInfo.preferences).toEqual([]);
+    });
+
+    it.each(['periodic', 'immediate'] as const)('does not write a person back over a Forget of them that came while Orbit was being told of other forgets (%s save)', async (kind) => {
+        const memory = held();
+        const save = vi.spyOn(memory.memoryStorage, 'saveMemory').mockResolvedValue(undefined);
+        let finish: () => void = () => undefined;
+        vi.spyOn(memory, 'reportUnreportedForgets').mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+        const saving = kind === 'periodic' ? (memory.scheduleDebouncedSave(BOT, SARA), memory.flushDebouncedSave(BOT, SARA)) : memory.saveMemoryImmediately(BOT, memory.getMemory(BOT, SARA));
+        memory.forget(BOT, { everyone: false, userUuids: ['uuid-sara'], rows: [{ id: 'row-2', userUuid: 'uuid-sara' }] });
+        finish();
+        await saving;
+        expect(save).not.toHaveBeenCalled();
+    });
+
+    it('still saves when nothing was forgotten while Orbit was being told', async () => {
+        const memory = held();
+        const save = vi.spyOn(memory.memoryStorage, 'saveMemory').mockResolvedValue(undefined);
+        // Saves that the earlier messages started are not what is counted
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        save.mockClear();
+        memory.scheduleDebouncedSave(BOT, SARA);
+        await memory.flushDebouncedSave(BOT, SARA);
+        expect(save).toHaveBeenCalledTimes(1);
     });
 });
 

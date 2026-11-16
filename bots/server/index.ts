@@ -151,6 +151,12 @@ const approvals = new ToolApprovals({
         },
     },
     roomStillTheirs: (botId, roomId, matrixUserId) => matrixBridge?.roomStillTheirs(botId, roomId, matrixUserId) ?? false,
+    directRoomIs: async (botId, roomId, matrixUserId) => (await matrixBridge?.isDirectRoomOf(botId, roomId, matrixUserId)) ?? false,
+    unshownCards: {
+        mark: (actionId) => botRegistry.markTaskCardUnshown(actionId),
+        marked: (actionId) => botRegistry.taskCardUnshown(actionId),
+        clear: (actionId) => botRegistry.clearTaskCardUnshown(actionId),
+    },
     followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),
 });
 aiService.useApprovals(approvals);

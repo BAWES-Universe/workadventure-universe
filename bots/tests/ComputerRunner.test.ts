@@ -14,7 +14,7 @@ import {
     type RunnerOrbit,
     type TurnOpened,
 } from '../server/ComputerRunner';
-import { readRunnerEvents, runnerEventOf } from '../server/ComputerTurnStream';
+import { readRunnerEvents, runnerEventOf, streamLimits } from '../server/ComputerTurnStream';
 
 const JOB: RunnableJob = { jobId: 'job-1', botId: 'brick-1', title: 'Visa form', brief: 'Two people, Kuwait', writes: true, hasTurn: false };
 const RELAY = 'https://bot-server.example.test';
@@ -550,6 +550,17 @@ describe('reading Orbit’s events', () => {
         expect((await all(body(frame({ type: 'failed', code: 'fenced', message: 'x' }), frame({ type: 'text', text: 'after' })))).map((e) => e.type)).toEqual(['failed']);
         expect((await all(body(frame({ type: 'text', text: 'half' }))).then((list) => list.at(-1)))).toMatchObject({ type: 'failed', code: 'stream_ended' });
         expect(await all(body(`event: completed\ndata: ${JSON.stringify({ type: 'completed', outputText: 'end', usage: null })}`))).toEqual([{ type: 'completed', outputText: 'end', usage: null }]);
+    });
+
+    it('drops a stream that sends too much without a newline, or too many data lines without a blank one', async () => {
+        const chunk = 'x'.repeat(256 * 1024);
+        const noNewline = await all(body(frame({ type: 'created', id: 'r', sessionId: 's' }), ...Array.from({ length: 6 }, () => chunk)));
+        expect(noNewline.map((e) => e.type)).toEqual(['created', 'failed']);
+        expect(noNewline.at(-1)).toMatchObject({ type: 'failed', code: 'stream_broke' });
+        const line = `data: ${'y'.repeat(streamLimits.line / 2)}\n`;
+        const noBlank = await all(body(frame({ type: 'created', id: 'r', sessionId: 's' }), ...Array.from({ length: 12 }, () => line)));
+        expect(noBlank.map((e) => e.type)).toEqual(['created', 'failed']);
+        expect(noBlank.at(-1)).toMatchObject({ code: 'stream_broke' });
     });
 
     it('keeps the end of a reply that is too long, where the marker that says how it ended is', () => {

@@ -336,6 +336,25 @@ describe('putting the Brick on the map', () => {
         return { botManager, orbit, spawn, despawn, internals };
     }
 
+    it('waits for a start of the same bot that is under way (its home start), and starts nothing a second time when that one connected it', async () => {
+        const { botManager, orbit, spawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        const lock = botManager as unknown as { withBotStartLock: <T>(id: string, run: (waited: boolean) => Promise<T>) => Promise<T> };
+        let finishHomeStart!: () => void;
+        const homeStart = lock.withBotStartLock('brick-1', async () => {
+            await new Promise<void>((resolve) => (finishHomeStart = resolve));
+            // The home start connects the bot while the visit waits
+            internals.bots.set('brick-1', { botId: 'brick-1', client: { setFullConfig: () => undefined }, config: visitingConfig('brick-1', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        });
+        const visit = botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 40, y: 50 });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(spawn).not.toHaveBeenCalled();
+        finishHomeStart();
+        await homeStart;
+        expect(await visit).toEqual({ botId: 'brick-1' });
+        expect(spawn).not.toHaveBeenCalled();
+    });
+
     it('spawns the Brick Orbit names beside the person, once however often it is asked', async () => {
         const { botManager, orbit, spawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];

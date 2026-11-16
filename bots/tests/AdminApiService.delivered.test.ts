@@ -26,13 +26,24 @@ describe('keeping where a run spoke', () => {
     it('keeps the event id alone when an Orbit from before the report is kept refuses the call that carries one', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const old = service(async (_method, _path, body) => {
-            if ((body as Record<string, unknown>).report) throw new Error('Invalid input data');
+            if ((body as Record<string, unknown>).report) throw Object.assign(new Error('Invalid input data'), { response: { status: 400 } });
             return {};
         });
         expect(await old.orbit.keepItemDelivered('run-1', '$e1', report)).toBe(true);
         expect(old.call).toHaveBeenCalledTimes(2);
         expect(old.call.mock.calls[1][2]).toEqual({ eventId: '$e1' });
         expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not drop the report when the call that carries it fails for a reason that is not a refusal: the whole delivery is tried again', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        for (const failure of [Object.assign(new Error('503'), { response: { status: 503 } }), Object.assign(new Error('slow'), { response: { status: 429 } }), Object.assign(new Error('timeout'), { code: 'ECONNABORTED' })]) {
+            const flaky = service(async () => {
+                throw failure;
+            });
+            expect(await flaky.orbit.keepItemDelivered('run-1', '$e1', report)).toBe(false);
+            expect(flaky.call).toHaveBeenCalledTimes(1);
+        }
     });
 
     it('says it was not kept when Orbit refuses both', async () => {
@@ -42,5 +53,16 @@ describe('keeping where a run spoke', () => {
         });
         expect(await down.orbit.keepItemDelivered('run-1', '$e1', report)).toBe(false);
         expect(await down.orbit.keepItemDelivered('run-1', '$e1')).toBe(false);
+    });
+});
+
+describe('a Brick call without Orbit set up', () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it('rejects instead of throwing, so a reply that is closed with finishGuestBrickReply never throws', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', '');
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const orbit = new AdminApiService('http://orbit.test', 'admin-token');
+        await expect(orbit.finishGuestBrickReply('turn-1', { failed: true })).resolves.toBeUndefined();
     });
 });

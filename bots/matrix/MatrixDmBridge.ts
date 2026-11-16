@@ -901,6 +901,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return this.stillTheirs(roomId, this.botUserId(botId), matrixUserId);
     }
 
+    /** Whether this room is the direct chat of the bot and this person, which is still only theirs (read from the chat, never taken from the tap). */
+    async isDirectRoomOf(botId: string, roomId: string, matrixUserId: string): Promise<boolean> {
+        return (await this.directRoomOf(botId, matrixUserId).catch(() => null)) === roomId;
+    }
+
     private botUserId(botId: string): string {
         return `@${BOT_LOCALPART_PREFIX}${botId}:${this.config.domain}`;
     }

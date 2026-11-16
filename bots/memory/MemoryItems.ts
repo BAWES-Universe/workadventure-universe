@@ -100,6 +100,8 @@ export function visibleItems(memory: BotPlayerMemory, view: MemoryView): MemoryI
 
 /** The shortest a phrase may be for lines of the chat to be taken out by the words they hold, when no line was noted. */
 const MIN_PHRASE = 4;
+/** Matches nothing: an echo that is only looked for in the reply right after its line. */
+const NEVER = /(?!)/;
 
 /** These words as their own words, not a piece of a longer one. */
 function wholeWords(text: string, exactCase = false): RegExp {
@@ -198,6 +200,11 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         const at = positive(info.drawnFrom?.[key]);
         if (!goes(memoryItemKey('fact', name, String(value)), at)) continue;
         takeLines(at, name === 'current_state' ? String(value) : '');
+        // The bot's reply right after the line this fact came from, when it says the value back, goes with it (a general fact's
+        // value is never taken out of every line, so only that one reply is looked for)
+        if (name !== 'current_state' && String(value).trim() && at !== null) {
+            echoes.push({ at, ownName: false, words: wholeWords(String(value).trim()), toldBack: NEVER });
+        }
         forgetPlace(key);
         info.facts.delete(name);
         // "tired" and when it was said

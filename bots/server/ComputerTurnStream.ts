@@ -47,15 +47,21 @@ export function runnerEventOf(data: string): RunnerEvent | null {
     }
 }
 
+/** The most one line, and one whole event, may hold before the stream is dropped (a stream that never sends a newline or a blank line cannot fill memory). */
+export const streamLimits = { line: 1024 * 1024, event: 4 * 1024 * 1024 };
+
 export async function* readRunnerEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<RunnerEvent> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let pending = '';
     let data: string[] = [];
+    let dataChars = 0;
     let ended = false;
+    let tooBig = false;
     const frame = (): RunnerEvent | null => {
         const event = data.length > 0 ? runnerEventOf(data.join('\n')) : null;
         data = [];
+        dataChars = 0;
         return event;
     };
     try {
@@ -63,6 +69,10 @@ export async function* readRunnerEvents(body: ReadableStream<Uint8Array>): Async
             const { value, done } = await reader.read();
             if (done) break;
             pending += decoder.decode(value, { stream: true });
+            if (pending.length > streamLimits.line && pending.indexOf('\n') < 0) {
+                tooBig = true;
+                break;
+            }
             let at: number;
             while ((at = pending.indexOf('\n')) >= 0) {
                 const line = pending.slice(0, at).replace(/\r$/, '');
@@ -78,8 +88,20 @@ export async function* readRunnerEvents(body: ReadableStream<Uint8Array>): Async
                     }
                 } else if (line.startsWith('data:')) {
                     data.push(line.slice(5).replace(/^ /, ''));
+                    dataChars += line.length;
+                    if (line.length > streamLimits.line || dataChars > streamLimits.event) {
+                        tooBig = true;
+                        break;
+                    }
                 }
             }
+            if (tooBig) break;
+        }
+        if (tooBig) {
+            data = [];
+            pending = '';
+            yield { type: 'failed', code: 'stream_broke', message: 'Orbit sent an event that was too large to read' };
+            return;
         }
         const rest = pending.replace(/\r$/, '');
         if (rest.startsWith('data:')) data.push(rest.slice(5).replace(/^ /, ''));

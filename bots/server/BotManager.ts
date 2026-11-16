@@ -1084,6 +1084,28 @@ export class BotManager {
         }
     }
 
+    private instanceIds = new WeakMap<object, number>();
+    private nextInstanceId = 1;
+
+    /**
+     * The bots a room has and how each stands, so a Brick that is connected again (a home sync replaced it) or taken away while the game was
+     * asked for its rooms is seen as a change: the game's count and ours are then of two moments, and the room is left alone this time.
+     */
+    private standingBotsOf(roomId: string): string {
+        const room = this.roomsWithBots.get(roomId);
+        if (!room) return '';
+        return [...room.botIds]
+            .sort()
+            .map((botId) => {
+                const instance = this.bots.get(botId);
+                if (!instance) return `${botId}=none`;
+                let id = this.instanceIds.get(instance);
+                if (id === undefined) this.instanceIds.set(instance, (id = this.nextInstanceId++));
+                return `${botId}=${id}/${instance.status}`;
+            })
+            .join(',');
+    }
+
     private noteVisitorChange(roomUrl: string): void {
         this.visitorChanges.set(roomUrl, (this.visitorChanges.get(roomUrl) ?? 0) + 1);
     }
@@ -1131,7 +1153,17 @@ export class BotManager {
         // Where its person stands is where it first appears. Without it the Brick is not put on the map at all (never at the
         // map's corner, to walk across the whole room): the caller says "no position yet" and tries again with one
         if (!start) return { botId: null, reason: 'no_position' };
-        await this.withVisitorOp(roomUrl, () => this.spawnBot(mine.botId, mine, { position: start }));
+        // One start of a bot at a time, the home start's lock too: a Brick that also lives in a room is started there under the same lock,
+        // and two starts at once would connect two clients for one bot, one of them with nobody to track it
+        const started = await this.withBotStartLock(mine.botId, async () => {
+            // Read inside the lock: the home start may have connected it while this one waited
+            const meanwhile = this.bots.get(mine.botId);
+            if (meanwhile && meanwhile.status === 'connected') return false;
+            await this.withVisitorOp(roomUrl, () => this.spawnBot(mine.botId, mine, { position: start }));
+            return true;
+        });
+        // Already standing (as a room Brick): it is one bot, and its person is not a second visit to it
+        if (!started) return { botId: mine.botId };
         this.visitors.set(uuid, { botId: mine.botId, roomUrl, ...(since ? { since } : {}) });
         this.noteVisitorChange(roomUrl);
         return { botId: mine.botId };
@@ -1497,6 +1529,8 @@ export class BotManager {
                         const standsElsewhere = !existingInstance || existingInstance.config.roomUrl !== bot.roomUrl;
                         if (bot.brick?.home && (waited || standsElsewhere)) {
                             const now = await this.adminApiService.getHomedBricks(bot.roomUrl).catch(() => undefined);
+                            // Orbit could not be asked again: the room is kept listed, so the room check reads it again and the Brick comes then
+                            if (now === undefined) this.homedReadFailed.add(roomId);
                             // Orbit says it lives elsewhere now, or cannot say: it is not started or replaced on the strength of a
                             // list that may be older than a move or a take-out. The next sync of the room brings it
                             if (!now?.some((current) => current.botId === bot.botId)) return;
@@ -1760,7 +1794,7 @@ export class BotManager {
         // What the game counts in a room and what this server counts must be of the same moment: a visiting Brick put on the
         // map, or taken off, while the game was asked is a count from two moments, and the room is left alone this time
         const visitingBefore = new Map<string, string>();
-        const placementOf = (roomId: string) => `${this.visitingBrickCount(roomId)}:${this.visitorChanges.get(roomId) ?? 0}:${this.visitorOpsInFlight.get(roomId) ?? 0}`;
+        const placementOf = (roomId: string) => `${this.visitingBrickCount(roomId)}:${this.visitorChanges.get(roomId) ?? 0}:${this.visitorOpsInFlight.get(roomId) ?? 0}:${this.standingBotsOf(roomId)}`;
         for (const roomId of this.roomsWithBots.keys()) visitingBefore.set(roomId, placementOf(roomId));
         const waRooms = await this.queryWorkAdventureRooms();
         console.log(`[BotManager] WA rooms query returned ${waRooms.size} rooms`);

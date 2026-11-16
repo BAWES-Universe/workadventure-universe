@@ -44,6 +44,13 @@ export class PersistentMemory extends ConversationMemory {
      */
     private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string; since: number; first: number }> = new Map();
     private unreportedRetryTimer: NodeJS.Timeout | null = null;
+    /**
+     * Forgets that arrive while a bot's memories are being loaded, by load. A snapshot that finishes loading after a forget was
+     * made before it, and would bring back what the person asked to be gone: each load applies what it was handed.
+     */
+    private forgetsDuringLoad: Set<Array<{ botId: string; everyone: boolean; userUuids: ReadonlySet<string>; items: ReadonlyMap<string, { keys: Set<string>; at: Map<string, number> }> }>> = new Set();
+    /** How many times a person's memory was wiped by a Forget, by "botId_playerId": a save that waited on something sees that it was. */
+    private wipes: Map<string, number> = new Map();
     private static readonly UNREPORTED_RETRY_MS = 30 * 1000;
     /** A retry safety guard, not a limit anyone sees: a forget Orbit has not taken in a day is let go, so a report it will never take is not tried for ever. */
     private static readonly UNREPORTED_GIVE_UP_MS = 24 * 60 * 60 * 1000;
@@ -106,6 +113,7 @@ export class PersistentMemory extends ConversationMemory {
             this.appliedForgets.set(`${botId}|item:${item.id}`, now + PersistentMemory.FORGET_UNREPORTED_KEEP_MS);
         }
         if (byPerson.size > 0) {
+            for (const seen of this.forgetsDuringLoad) seen.push({ botId, everyone: false, userUuids: new Set(), items: byPerson });
             const prefix = `${botId}_`;
             for (const [key, memory] of this.getAllMemories().entries()) {
                 if (!key.startsWith(prefix)) continue;
@@ -170,6 +178,14 @@ export class PersistentMemory extends ConversationMemory {
         if (snapshot) dropItems(snapshot, keys);
         for (const [key, other] of this.getAllMemories()) {
             if (key.startsWith(`${botId}_`) && other !== memory && this.personOf(key, other) === userUuid) dropItems(other, keys);
+        }
+        // A save waiting may hold a copy that is no longer the active memory: it is dropped from too, or a later flush saves the thing again
+        for (const [key, waiting] of this.pendingSaves) {
+            if (key.startsWith(`${botId}_`) && waiting !== memory && this.personOf(key, waiting) === userUuid) dropItems(waiting, keys);
+        }
+        // Memories being loaded for this bot right now were read before this: they are told
+        for (const seen of this.forgetsDuringLoad) {
+            seen.push({ botId, everyone: false, userUuids: new Set(), items: new Map([[userUuid, { keys: new Set(keys), at: new Map() }]]) });
         }
         // A person who is not known to Orbit yet (no uuid) has nothing there to forget
         let waiting = 0;
@@ -258,6 +274,7 @@ export class PersistentMemory extends ConversationMemory {
 
         const prefix = `${botId}_`;
         const forgotten = new Set(userUuids);
+        for (const seen of this.forgetsDuringLoad) seen.push({ botId, everyone, userUuids: forgotten, items: new Map() });
         const isForgotten = (userUuid: string | undefined) => everyone || (!!userUuid && forgotten.has(userUuid));
 
         for (const [key, memory] of this.getAllMemories().entries()) {
@@ -265,6 +282,7 @@ export class PersistentMemory extends ConversationMemory {
             // A memory made before the person's uuid was known still says "temp-<playerId>": the tracked uuid counts too
             if (!isForgotten(memory.userUuid) && !isForgotten(this.uuidTracking.get(key)?.userUuid)) continue;
             this.clearMemory(botId, Number(key.slice(prefix.length)));
+            this.wipes.set(key, (this.wipes.get(key) ?? 0) + 1);
             const timer = this.debounceTimers.get(key);
             if (timer) clearTimeout(timer);
             this.debounceTimers.delete(key);
@@ -782,7 +800,10 @@ export class PersistentMemory extends ConversationMemory {
 
         // Save to storage (periodic save for conversation history)
         try {
+            const wiped = this.wipes.get(key) ?? 0;
             await this.reportUnreportedForgets(botId);
+            // A Forget of the whole person that came while Orbit was being told is not written over by what this save holds
+            if ((this.wipes.get(key) ?? 0) !== wiped) return;
             await this.memoryStorage.saveMemory(botId, memory, 'periodic');
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -816,7 +837,9 @@ export class PersistentMemory extends ConversationMemory {
             }
             
             // Use "immediate" saveType for emotion-only updates
+            const wiped = this.wipes.get(key) ?? 0;
             await this.reportUnreportedForgets(botId);
+            if ((this.wipes.get(key) ?? 0) !== wiped) return;
             await this.memoryStorage.saveMemory(botId, memory, 'immediate');
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -854,13 +877,50 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
+     * What a person forgot while a snapshot was being read, or that Orbit has not taken yet (so the snapshot it gave back may still
+     * hold it), is taken out of the snapshot before it is kept: a snapshot never brings a forgotten thing back.
+     */
+    private withoutForgotten(botId: string, memories: BotPlayerMemory[], seen: Array<{ botId: string; everyone: boolean; userUuids: ReadonlySet<string>; items: ReadonlyMap<string, { keys: Set<string>; at: Map<string, number> }> }>): BotPlayerMemory[] {
+        const wholly = seen.filter((one) => one.botId === botId && (one.everyone || one.userUuids.size > 0));
+        const kept = memories.filter((memory) => !wholly.some((one) => one.everyone || (!!memory.userUuid && one.userUuids.has(memory.userUuid))));
+        const byPerson = new Map<string, { keys: Set<string>; at: Map<string, number> }>();
+        const add = (userUuid: string, itemKey: string, at: number) => {
+            const one = byPerson.get(userUuid) ?? { keys: new Set<string>(), at: new Map<string, number>() };
+            one.keys.add(itemKey);
+            const before = one.at.get(itemKey);
+            one.at.set(itemKey, at <= 0 || before === 0 ? 0 : Math.max(at, before ?? 0));
+            byPerson.set(userUuid, one);
+        };
+        for (const one of seen) {
+            if (one.botId !== botId) continue;
+            for (const [userUuid, items] of one.items) for (const itemKey of items.keys) add(userUuid, itemKey, items.at.get(itemKey) ?? 0);
+        }
+        for (const entry of this.unreportedItemForgets.values()) {
+            if (entry.botId === botId) add(entry.userUuid, entry.itemKey, entry.since);
+        }
+        for (const memory of kept) {
+            const one = memory.userUuid ? byPerson.get(memory.userUuid) : undefined;
+            if (one) dropItems(memory, one.keys, one.at);
+        }
+        return kept;
+    }
+
+    /**
      * Load memories for a bot from storage
      * NOW: Stores memories temporarily by userUuid, to be restored when user joins (lazy restoration)
      * This allows memory to persist across playerId changes (e.g., guest reloads)
      */
     async loadMemories(botId: string): Promise<void> {
+        const seen: Array<{ botId: string; everyone: boolean; userUuids: ReadonlySet<string>; items: ReadonlyMap<string, { keys: Set<string>; at: Map<string, number> }> }> = [];
+        this.forgetsDuringLoad.add(seen);
         try {
-            const memories = await this.memoryStorage.loadMemories(botId);
+            let memories: BotPlayerMemory[];
+            try {
+                memories = await this.memoryStorage.loadMemories(botId);
+            } finally {
+                this.forgetsDuringLoad.delete(seen);
+            }
+            memories = this.withoutForgotten(botId, memories, seen);
             
             // Store memories temporarily by userUuid (not playerId)
             // They will be restored when setUserUuid is called (when user joins)

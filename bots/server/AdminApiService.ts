@@ -1080,7 +1080,7 @@ export class AdminApiService {
         };
     }
 
-    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1287,7 +1287,7 @@ export class AdminApiService {
 
     /**
      * Keeps the chat event a run's message got, and with it how the run is to be reported (a goal that reached its outcome, its progress).
-     * True when Orbit kept it (or already had this one). An Orbit from before the report is kept refuses the call that carries one: the
+     * True when Orbit kept it (or already had this one). An Orbit from before the report is kept refuses (4xx) the call that carries one: the
      * event id is then kept alone, because where the message went matters more than how the run is reported.
      */
     async keepItemDelivered(runId: string, eventId: string, report?: { outcome?: string; result?: string; progress?: unknown; reached?: boolean }): Promise<boolean> {
@@ -1298,6 +1298,10 @@ export class AdminApiService {
                 return true;
             } catch (error) {
                 console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+                // Only a refusal (4xx, but not "too early" or "too many") says the call that carries the report is not understood. A 503 or a
+                // timeout says nothing: the whole delivery is tried again, so the report is not dropped
+                const status = (error as { response?: { status?: number } })?.response?.status;
+                if (!(typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429)) return false;
             }
         }
         return false;
