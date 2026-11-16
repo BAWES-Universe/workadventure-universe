@@ -11,7 +11,7 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
-import { RUNNABLE_KINDS, dueRunOf, type DueRun, type RunCheck, type RunReport } from './BrickRunner';
+import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -285,12 +285,17 @@ export interface BrickItemView {
     id: string;
     kind: 'reminder' | 'schedule' | 'watch' | 'goal';
     words: string;
+    /** A watch: when it speaks. A goal: the outcome that counts as reached. */
+    condition?: string | null;
+    outcome?: string | null;
     cadence: { type: 'once'; at: string } | { type: 'daily'; time: string; days: number[] } | { type: 'every'; minutes: number } | { type: 'none' };
     timeZone: string;
     nextDueAt: string | null;
     state: 'on' | 'paused' | 'done' | 'deleted';
     setBy: 'you' | 'brick';
     lastRunAt: string | null;
+    /** The one question a goal has open for its person (close it, keep going, change it), when Orbit says so. */
+    asking?: 'unsure' | 'date_passed' | null;
 }
 
 /** Orbit's answer to "can this person do this with this bot?" (POST /api/bots/:id/access). */
@@ -309,6 +314,9 @@ export interface BotAccessAnswer {
 const DM_ACCESS_REPORT_EVERY_MS = 60_000;
 let lastDmAccessReportAt = 0;
 
+/** What a Brick that cannot answer people where it visits or lives says to them (#2005): its owner's own key is not lent to this place. */
+export const KEY_NOT_LENT_LINE = "I can't answer here right now. Ask my owner.";
+
 /** How long a bot waits for Orbit's access answer before it counts as "could not check". */
 const BOT_ACCESS_TIMEOUT_MS = 4_000;
 
@@ -322,7 +330,9 @@ export interface BotConfiguration {
     // Set only for a Brick: whose it is, and whether it is the one every account gets. A config with it is answered in
     // direct messages only and is never put on a map.
     // `deleted` (#1996): its owner deleted it and Undo can still give it back. It answers nobody and keeps its chat.
-    brick?: { ownerId: string; isDefault: boolean; deleted?: boolean };
+    // `visiting` (#2005): it walks beside this person (their game uuid) in the room `roomUrl`, and goes when they do.
+    // `home` (#2005): it lives in the room `roomUrl`, put there by this person (their game uuid), and stays at its spot.
+    brick?: { ownerId: string; isDefault: boolean; deleted?: boolean; visiting?: BrickCompany; home?: BrickCompany };
     userId?: string; // User who created the bot
     behaviorType: 'idle' | 'patrol' | 'social';
     behaviorConfig: Record<string, any>;
@@ -362,12 +372,28 @@ export interface BotConfiguration {
     updatedAt: Date;
 }
 
+/** Whose a Brick that stands in a room is (#2005): the person it walks beside, by their game uuid, and their name for the card. */
+export interface BrickCompany {
+    ownerUuid: string;
+    ownerName: string | null;
+}
+
+function companyOf(value: unknown): BrickCompany | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const { ownerUuid, ownerName } = value as { ownerUuid?: unknown; ownerName?: unknown };
+    if (typeof ownerUuid !== 'string' || !ownerUuid) return undefined;
+    return { ownerUuid, ownerName: typeof ownerName === 'string' && ownerName.trim() ? ownerName.trim().slice(0, 100) : null };
+}
+
 /** Whose Brick a configuration from Orbit is (#1995), or null for a room bot and for anything that isn't shaped like one. */
-function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?: boolean } | null {
+function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?: boolean; visiting?: BrickCompany; home?: BrickCompany } | null {
     const brick = (data as { brick?: unknown } | null)?.brick;
     if (!brick || typeof brick !== 'object') return null;
-    const { ownerId, isDefault, deleted } = brick as { ownerId?: unknown; isDefault?: unknown; deleted?: unknown };
-    return typeof ownerId === 'string' && ownerId ? { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}) } : null;
+    const { ownerId, isDefault, deleted, visiting, home } = brick as { ownerId?: unknown; isDefault?: unknown; deleted?: unknown; visiting?: unknown; home?: unknown };
+    if (typeof ownerId !== 'string' || !ownerId) return null;
+    const company = companyOf(visiting);
+    const lives = companyOf(home);
+    return { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}), ...(company ? { visiting: company } : {}), ...(lives ? { home: lives } : {}) };
 }
 
 /** One Instant App tool as Orbit offers it to a Brick right now (Orbit `GET /api/instant/tools`). The schema goes to the model as it is. */
@@ -464,6 +490,8 @@ export type GuestBrickAllowance =
     | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
 
 const BRICK_CALL_TIMEOUT_MS = 8_000;
+/** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
+const RUNNING_PAGES_MAX = 100;
 
 function brickCardOf(data: unknown): BrickCard | null {
     const card = data as Partial<BrickCard> | null;
@@ -545,6 +573,8 @@ export type BotAiCredentialsAnswer =
           keyAddressTyped?: boolean;
           standingInFor?: string;
           movedFromKey?: string;
+          /** Orbit says the answer is for someone the Brick does not belong to (#2005): its owner's apps, files and computer stay out of the reply. */
+          forOthers?: boolean;
       })
     | { source: 'resting'; keyOwnerId: string; restingLine: string };
 
@@ -741,6 +771,54 @@ export class AdminApiService {
             captureException(error);
             throw error;
         }
+    }
+
+    /**
+     * The Bricks that walk beside the given people in this room (#2005), each in the Brick shape with `brick.visiting`.
+     * Asking is also how Orbit learns the person is here, which is how a Brick follows them room to room. Orbit answers
+     * nothing where the universe does not take visits. Throws when Orbit cannot answer: the caller leaves what it has.
+     */
+    async getVisitingBricks(roomUrl: string, people: string[], since?: { at: number; clientId: string }): Promise<BotConfiguration[]> {
+        if (!this.isConfigured() || people.length === 0) return [];
+        const response = await this.brickCall<BotConfiguration[]>('post', 'api/brick-visits/room', { roomUrl, people, ...(since ? { enteredAt: since.at, clientId: since.clientId } : {}) });
+        const list = Array.isArray(response.data) ? response.data : [];
+        const configs: BotConfiguration[] = [];
+        for (const config of list) {
+            const brick = brickOf(config);
+            // Only a Brick that names the person it walks beside is a visitor
+            if (!brick?.visiting || typeof config.botId !== 'string') continue;
+            configs.push({ ...config, brick, createdAt: new Date(config.createdAt), updatedAt: new Date(config.updatedAt) });
+        }
+        return configs;
+    }
+
+    /**
+     * This Brick's own client sees its owner in this room (#2005): Orbit sees the visit now. Answers whether the visit is still
+     * alive (false: it ended, ran out, the Brick is off, or the place no longer takes it) or undefined when Orbit did not say.
+     * Throws when Orbit cannot answer: the caller leaves the Brick as it is.
+     */
+    async keepVisitAlive(botId: string, ownerUuid: string, roomUrl: string): Promise<boolean | undefined> {
+        if (!this.isConfigured()) return undefined;
+        const response = await this.brickCall<{ alive?: unknown }>('post', 'api/brick-visits/seen', { botId, ownerUuid, roomUrl });
+        return typeof response.data?.alive === 'boolean' ? response.data.alive : undefined;
+    }
+
+    /**
+     * The Bricks that live in this room (#2005), each in the Brick shape with `brick.home`, the room's URLs and how it
+     * stands there. Throws when Orbit cannot answer: the caller leaves the ones it has on the map.
+     */
+    async getHomedBricks(roomUrl: string): Promise<BotConfiguration[]> {
+        if (!this.isConfigured()) return [];
+        const response = await this.brickCall<BotConfiguration[]>('post', 'api/brick-homes/room', { roomUrl });
+        const list = Array.isArray(response.data) ? response.data : [];
+        const configs: BotConfiguration[] = [];
+        for (const config of list) {
+            const brick = brickOf(config);
+            // Only a Brick that names whose it is, and where, is one that lives in a room
+            if (!brick?.home || typeof config.botId !== 'string' || typeof config.roomUrl !== 'string') continue;
+            configs.push({ ...config, brick, createdAt: new Date(config.createdAt), updatedAt: new Date(config.updatedAt) });
+        }
+        return configs;
     }
 
     /**
@@ -1172,10 +1250,14 @@ export class AdminApiService {
      * retry never share one, and a run that was handed out and never reported, again with the same run id. Throws when Orbit cannot
      * be asked: nothing is lost, the runs are handed out again.
      */
-    async claimDueItems(): Promise<DueRun[]> {
-        const response = await this.brickCall<{ runs?: unknown }>('post', 'api/bricks/items/due', { kinds: RUNNABLE_KINDS });
+    async claimDueItems(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[] }> {
+        const response = await this.brickCall<{ runs?: unknown; held?: unknown }>('post', 'api/bricks/items/due', { kinds });
         const runs = Array.isArray(response.data?.runs) ? response.data.runs : [];
-        return runs.map(dueRunOf).filter((run): run is DueRun => run !== null);
+        const held = Array.isArray(response.data?.held) ? response.data.held : [];
+        return {
+            runs: runs.map(dueRunOf).filter((run): run is DueRun => run !== null),
+            held: held.map(heldNoticeOf).filter((notice): notice is HeldNotice => notice !== null),
+        };
     }
 
     /** May this run take its next step? No once its item was paused, finished, deleted or changed, or its Brick switched off or deleted. */
@@ -1191,24 +1273,69 @@ export class AdminApiService {
         }
     }
 
-    /** Keeps the chat event a run's message got. True when Orbit kept it (or already had this one). */
-    async keepItemDelivered(runId: string, eventId: string): Promise<boolean> {
+    /**
+     * Keeps the chat event a run's message got, and with it how the run is to be reported (a goal that reached its outcome, its progress).
+     * True when Orbit kept it (or already had this one). An Orbit from before the report is kept refuses the call that carries one: the
+     * event id is then kept alone, because where the message went matters more than how the run is reported.
+     */
+    async keepItemDelivered(runId: string, eventId: string, report?: { outcome?: string; result?: string; progress?: unknown; reached?: boolean }): Promise<boolean> {
+        const path = `api/bricks/items/runs/${encodeURIComponent(runId)}/delivered`;
+        for (const body of report ? [{ eventId, report: this.withoutEmpty(report) }, { eventId }] : [{ eventId }]) {
+            try {
+                await this.brickCall('post', path, body);
+                return true;
+            } catch (error) {
+                console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+            }
+        }
+        return false;
+    }
+
+    private withoutEmpty(report: Record<string, unknown>): Record<string, unknown> {
+        return Object.fromEntries(Object.entries(report).filter(([, value]) => value !== undefined));
+    }
+
+    /** How a run went. What Orbit answered (whether the person is to be told of a row of failures), or null when it did not record it. */
+    async reportItemRun(runId: string, report: RunReport): Promise<ReportAnswer | null> {
         try {
-            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}/delivered`, { eventId });
+            const response = await this.brickCall<{ tellPerson?: unknown; askPerson?: unknown }>('post', `api/bricks/items/runs/${encodeURIComponent(runId)}`, report);
+            const asked = response.data?.askPerson;
+            return { tellPerson: response.data?.tellPerson === true, askPerson: asked === 'unsure' || asked === 'date_passed' ? asked : null };
+        } catch (error) {
+            console.warn('[AdminApiService] Could not report a run:', error instanceof Error ? error.message : error);
+            return null;
+        }
+    }
+
+    /** The person was asked a goal's one question. Called only after it went out. True when Orbit kept it. */
+    async keepItemAsked(runId: string): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}/asked`, {});
             return true;
         } catch (error) {
-            console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+            console.warn('[AdminApiService] Could not keep that a goal asked its person:', error instanceof Error ? error.message : error);
             return false;
         }
     }
 
-    /** How a run went. True when Orbit recorded it. */
-    async reportItemRun(runId: string, report: RunReport): Promise<boolean> {
+    /** The person was told about a row of failures. Called only after the tell went out. True when Orbit kept it. */
+    async keepItemTold(runId: string): Promise<boolean> {
         try {
-            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}`, report);
+            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}/told`, {});
             return true;
         } catch (error) {
-            console.warn('[AdminApiService] Could not report a run:', error instanceof Error ? error.message : error);
+            console.warn('[AdminApiService] Could not keep that a run told its person:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /** The person was told their goal or task waits for usage. Called only after it went out. True when Orbit kept it. */
+    async keepItemHeldTold(itemId: string, waitId: string): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/bricks/items/held/${encodeURIComponent(itemId)}/told`, { waitId });
+            return true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not keep that a wait was told:', error instanceof Error ? error.message : error);
             return false;
         }
     }
@@ -1335,12 +1462,12 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; writes?: boolean }
+        ask: { title: string; brief?: string; writes?: boolean }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string }> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
-            { userId, title: ask.title, ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
+            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
         );
         const data = response.data;
         const job = data?.job;
@@ -1355,13 +1482,16 @@ export class AdminApiService {
     }
 
     /** A job as it stands (#2000), or null when it is not there. */
+    /** The job as Orbit has it; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
     async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string } | null> {
         try {
             const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
-            return job && typeof job.id === 'string' && typeof job.status === 'string' ? { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' } : null;
-        } catch {
-            return null;
+            if (job && typeof job.id === 'string' && typeof job.status === 'string') return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' };
+            throw new Error('Orbit gave no job');
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
         }
     }
 
@@ -1369,6 +1499,93 @@ export class AdminApiService {
     async computerJobAction(viaBotId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
         const response = await this.brickCall<Record<string, unknown>>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`, body);
         return response.data ?? {};
+    }
+
+    /**
+     * The three calls the model relay makes of Orbit about a computer's model call (identify the key, take room, settle). The relay
+     * says what to do with each answer, so a status Orbit gives is passed on (a refused key is a 200 with ok: false). Throws when
+     * Orbit cannot be reached or fails.
+     */
+    async computerRelayCall(step: 'identify' | 'authorize' | 'settle', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/llm/${step}`, body).catch((error: unknown) => {
+            // A 404 from settle means "no such call" (nothing was written): an answer, not a failure
+            if (axios.isAxiosError(error) && error.response && error.response.status < 500) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
+    /** The screen gateway's two calls to Orbit (open a socket with a ticket, check an open one): the status is passed on, never thrown for a 4xx. */
+    async computerScreenCall(step: 'open' | 'check', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/screen/${step}`, body).catch((error: unknown) => {
+            if (axios.isAxiosError(error) && error.response && error.response.status < 500) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
+    /**
+     * The jobs Brick is working on now, with the words for the agent (#2000). Orbit gives them a page at a time and every page is read, so no
+     * running job stays out of sight when there are many. Throws when Orbit cannot be reached.
+     */
+    async computerRunningJobs(): Promise<Array<{ jobId: string; botId: string; title: string; brief: string | null; writes: boolean; hasTurn: boolean }>> {
+        const found: Array<{ jobId: string; botId: string; title: string; brief: string | null; writes: boolean; hasTurn: boolean }> = [];
+        const seen = new Set<string>();
+        let cursor: string | null = null;
+        for (let page = 0; page < RUNNING_PAGES_MAX; page++) {
+            // eslint-disable-next-line no-await-in-loop
+            const response: AxiosResponse<{ jobs?: unknown; nextCursor?: unknown }> = await this.brickCall<{ jobs?: unknown; nextCursor?: unknown }>(
+                'get',
+                'api/computer/jobs/running',
+                undefined,
+                cursor ? { cursor } : undefined
+            );
+            const jobs: unknown[] = Array.isArray(response.data?.jobs) ? response.data.jobs : [];
+            for (const entry of jobs) {
+                const job = entry as Record<string, unknown>;
+                if (typeof job?.jobId === 'string' && typeof job.botId === 'string' && typeof job.title === 'string' && !seen.has(job.jobId)) {
+                    seen.add(job.jobId);
+                    found.push({ jobId: job.jobId, botId: job.botId, title: job.title, brief: typeof job.brief === 'string' ? job.brief : null, writes: job.writes !== false, hasTurn: job.hasTurn === true });
+                }
+            }
+            const next: unknown = response.data?.nextCursor;
+            // A cursor that does not move on ends the walk, so a broken answer never loops
+            if (typeof next !== 'string' || next === '' || next === cursor) break;
+            cursor = next;
+        }
+        return found;
+    }
+
+    /** One call to a computer's broker route in Orbit that answers with JSON (prepare, cancel): the status is passed on, never thrown for a 4xx or 5xx. */
+    async computerBroker(jobId: string, step: 'prepare' | 'cancel', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/jobs/${encodeURIComponent(jobId)}/${step}`, body).catch((error: unknown) => {
+            if (axios.isAxiosError(error) && error.response) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
+    /**
+     * Opens a computer's turn in Orbit as a stream: `turn` sends the agent a message, `stream` reconnects to the turn it is on. A 200 is
+     * the events; any other answer is its JSON ({ reason, responseId? }). Throws when Orbit cannot be reached.
+     */
+    async computerOpenTurn(
+        jobId: string,
+        step: 'turn' | 'stream',
+        input: string | null,
+        signal: AbortSignal
+    ): Promise<{ ok: true; body: ReadableStream<Uint8Array> } | { ok: false; status: number; reason: string; responseId?: string }> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
+        const answer = await fetch(resolveAdminApiEndpoint(this.adminApiUrl, `api/computer/jobs/${encodeURIComponent(jobId)}/${step}`), {
+            method: step === 'turn' ? 'POST' : 'GET',
+            headers: { Authorization: `Bearer ${botServiceToken}`, 'Cache-Control': 'no-store', ...(step === 'turn' ? { 'Content-Type': 'application/json' } : {}), Accept: 'text/event-stream' },
+            ...(step === 'turn' ? { body: JSON.stringify({ input }) } : {}),
+            signal,
+        });
+        if (answer.ok && answer.body) return { ok: true, body: answer.body };
+        const data = (await answer.json().catch(() => ({}))) as { reason?: unknown; responseId?: unknown };
+        return { ok: false, status: answer.status, reason: typeof data.reason === 'string' ? data.reason : 'failed', ...(typeof data.responseId === 'string' ? { responseId: data.responseId } : {}) };
     }
 
     /** Has Orbit stop jobs that stopped renewing and try the ones in line again (#2000). Never throws. */
@@ -1397,7 +1614,7 @@ export class AdminApiService {
      * or (when the owner chose "Stop replying" for a key that is down) with a resting line and no provider at all.
      * Returns null when Orbit does not know the bot or has no such route yet.
      */
-    async getBotAiCredentials(botId: string): Promise<BotAiCredentialsAnswer | null> {
+    async getBotAiCredentials(botId: string, forOthers?: { asker: string; roomUrl?: string }): Promise<BotAiCredentialsAnswer | null> {
         if (!this.isConfigured()) {
             return null;
         }
@@ -1410,12 +1627,22 @@ export class AdminApiService {
         try {
             const response: AxiosResponse = await axios.get(
                 `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/ai-credentials`,
-                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 15000 }
+                {
+                    headers: { Authorization: `Bearer ${botServiceToken}` },
+                    timeout: 15000,
+                    // A Brick that walks beside its owner (#2005) is asked about who is about to be answered, and where
+                    ...(forOthers ? { params: { asker: forOthers.asker, ...(forOthers.roomUrl ? { roomUrl: forOthers.roomUrl } : {}) } } : {}),
+                }
             );
             return response.data;
         } catch (error) {
             if (axios.isAxiosError(error) && error.response?.status === 404) {
                 return null;
+            }
+            // A Brick that runs on its owner's own key, where the key is not lent to this universe (#2005): it is not
+            // moved off its key, it just cannot answer this person here
+            if (axios.isAxiosError(error) && error.response?.status === 403 && error.response.data?.code === 'key_not_lent') {
+                return { source: 'resting', keyOwnerId: '', restingLine: KEY_NOT_LENT_LINE } as BotAiCredentialsAnswer;
             }
             console.error('[AdminApiService] Error getting bot AI credentials:', error);
             captureException(error as Error);
@@ -2023,7 +2250,8 @@ export class AdminApiService {
     async checkBotAccess(
         botId: string,
         action: BotAccessAction,
-        person: BotAccessPerson
+        person: BotAccessPerson,
+        roomUrl?: string
     ): Promise<BotAccessAnswer> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!botServiceToken) {
@@ -2034,6 +2262,8 @@ export class AdminApiService {
             resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/access`),
             {
                 action,
+                // A Brick that walks beside its owner (#2005) is reached only from the room it is in
+                ...(roomUrl ? { roomUrl } : {}),
                 person: {
                     signedIn: person.signedIn,
                     ...(person.identifier ? { identifier: person.identifier } : {}),
@@ -2285,7 +2515,10 @@ export class AdminApiService {
         error?: boolean;
         timestamp?: string;
         /** Where the reply was given: direct messages or nearby chat (Orbit #491). */
-        channel?: "dm" | "nearby";
+        channel?: "dm" | "nearby" | "task";
+        /** A call a goal or task made (channel "task"): the run it was for and this call's own id, so a retried report is one call (Orbit #930, #938). */
+        runId?: string;
+        eventId?: string;
         /** Who it was for, as the bot knows them (WorkAdventure uuid or email); Orbit matches it to their account. */
         userId?: string;
         isGuest?: boolean;
@@ -2321,6 +2554,8 @@ export class AdminApiService {
                 error: usage.error || false,
                 timestamp: usage.timestamp || new Date().toISOString(),
                 ...(usage.channel ? { channel: usage.channel } : {}),
+                ...(usage.runId ? { runId: usage.runId } : {}),
+                ...(usage.eventId ? { eventId: usage.eventId } : {}),
                 ...(usage.userId ? { userId: usage.userId } : {}),
                 ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
                 // A greeting the bot made on its own: the payer's usage, never counted against the person it greeted
@@ -2339,6 +2574,8 @@ export class AdminApiService {
                         Authorization: `Bearer ${botServiceToken}`,
                         'Content-Type': 'application/json',
                     },
+                    // A report that never comes back must not hold what waits on it (a run's next step) for ever
+                    timeout: 10_000,
                 }
             );
 

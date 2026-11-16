@@ -40,6 +40,8 @@ export interface BrickPageWay extends BrickDeleteAsk {
     save: (change: BrickChange) => Promise<boolean>;
     /** Opens the Apps page, looking for this app (a Brick made from a template that needs one: "Connect Gmail"). */
     openApps?: (search: string) => void;
+    /** Opens "Everything Brick did", the page of every run this Brick made by itself (game #2002). */
+    openDid?: () => void;
 }
 
 export interface BotData {
@@ -50,6 +52,8 @@ export interface BotData {
     characterTexture?: string;
     characterTextureIds?: string[];
     behaviorType?: "idle" | "patrol" | "social";
+    /** One of the person's own Bricks being given a home in this room (game #2005): it is placed on the map, not made. */
+    brickHome?: boolean;
     behaviorConfig: {
         // Behavior type (redundant with behaviorType for flexibility)
         behaviorType?: "idle" | "patrol" | "social";

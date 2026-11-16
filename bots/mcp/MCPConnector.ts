@@ -9,9 +9,11 @@
  * - Auth: Bearer token or X-API-Key header
  */
 
+import { keyAppTools, loadKeyApps, type KeyApp } from './KeyApps';
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
+import { sanitizedError } from '../utils/sanitizedError';
 import { linkExternalAbort } from '../ai/providers/abortUtils';
 import { checkOutboundUrl, guardedLookup } from './outboundGuard';
 import {
@@ -89,6 +91,8 @@ export interface ToolServerEntry {
     /** A ready-made App: its messages go through Orbit's link route, never to the stored link (#2001). */
     readyMade?: boolean;
     orbitUrl?: string;
+    /** An App with a key (#2044): the operation and the version of its definition. Every call goes through Orbit, which holds the key; there is no address here. */
+    keyApp?: { definitionHash: string; operation: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -626,11 +630,6 @@ async function sendJsonRpc(
             }
         } else if (axios.isAxiosError(error)) {
             const status = error.response?.status;
-            const detail = error.response?.data
-                ? typeof error.response.data === 'string'
-                    ? error.response.data.slice(0, 200)
-                    : JSON.stringify(error.response.data).slice(0, 200)
-                : error.message;
             const sanitizedUrl = (() => {
                 try {
                     const u = new URL(serverUrl);
@@ -640,9 +639,10 @@ async function sendJsonRpc(
                 }
             })();
             console.warn(
-                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}: ${detail}`
+                // No words from the answer or the error: they can quote what was asked of the tool (an email, a file)
+                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}`
             );
-            Sentry.captureException(new Error(`MCPConnector HTTP ${status || 'error'} on ${method}`));
+            Sentry.captureException(sanitizedError(error, `MCPConnector HTTP ${status || 'error'} on ${method}`));
             // Invalidate session cache on HTTP errors for non-initialize methods.
             // Handles server restarts, session expiry, and stale session reuse
             // after bot respawn — without this, a dead session is retried for up
@@ -653,8 +653,10 @@ async function sendJsonRpc(
             const neverRan = requestNeverRan(error, sessionId !== undefined);
             return { data: null, neverRan, retryable: neverRan };
         } else {
-            console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
-            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            // The error's words can quote what was asked of the tool: only the method and the kind of error are kept
+            const kind = error instanceof Error ? error.name : 'Error';
+            console.warn(`[MCPConnector] Error on ${method}: ${kind}`);
+            Sentry.captureException(sanitizedError(error, `MCPConnector error on ${method} (${kind})`));
         }
         return NOT_ANSWERED;
     } finally {
@@ -812,13 +814,14 @@ export class MCPConnector {
         tools: McpToolDefinition[];
         toolServerMap: Map<string, ToolServerEntry>;
     }> {
-        void botServiceToken;
         const toolServerMap = new Map<string, ToolServerEntry>();
-
         // Fetch MCP server configs from admin API
         let servers: McpServerConfig[] = [];
+        const loading = this.loadServers(botId, adminApiUrl, adminApiToken);
+        // Asked at the same time as the servers (after their request is sent), so Apps with a key add no waiting of their own
+        const keyApps = loadKeyApps(botId, adminApiUrl, botServiceToken);
         try {
-            servers = await this.loadServers(botId, adminApiUrl, adminApiToken);
+            servers = await loading;
         } catch (error: any) {
             if (axios.isAxiosError(error) && error.response?.status === 404) {
                 // No MCP servers configured — not an error
@@ -832,7 +835,8 @@ export class MCPConnector {
                     error instanceof Error ? error : new Error(String(error))
                 );
             }
-            return { tools: [], toolServerMap };
+            // Apps with a key come from another list: this one failing does not take them away
+            return this.withKeyApps(keyApps, { tools: [], toolServerMap });
         }
 
         // Query each enabled server and collect tools
@@ -921,7 +925,23 @@ export class MCPConnector {
             }
         }
 
-        return { tools: allTools, toolServerMap };
+        return this.withKeyApps(keyApps, { tools: allTools, toolServerMap });
+    }
+
+    /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner. */
+    private static async withKeyApps(
+        keyApps: Promise<KeyApp[]>,
+        found: { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }
+    ): Promise<{ tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }> {
+        const keyed = keyAppTools(await keyApps);
+        for (const tool of keyed.tools) {
+            const name = tool.function.name;
+            const entry = keyed.entries.get(name);
+            if (!entry || found.toolServerMap.has(name)) continue;
+            found.tools.push(tool);
+            found.toolServerMap.set(name, entry);
+        }
+        return found;
     }
 
     /** Saves one server's list to Orbit in the background. A failure is logged; Orbit keeps what it had. */
@@ -1045,7 +1065,8 @@ export class MCPConnector {
 
         if (response.error) {
             const errMsg = response.error.message || JSON.stringify(response.error);
-            console.warn(`[MCPConnector] Tool ${toolName} returned error: ${errMsg}`);
+            // The server's words can quote what the tool was given (an email, a file): the log keeps the outcome only
+            console.warn(`[MCPConnector] Tool ${toolName} returned an error`);
             return { error: `Tool error: ${errMsg}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 
@@ -1057,7 +1078,7 @@ export class MCPConnector {
                 .map((item) => item.text)
                 .join(' ')
                 .trim();
-            console.warn(`[MCPConnector] Tool ${toolName} failed: ${why || 'no reason given'}`);
+            console.warn(`[MCPConnector] Tool ${toolName} failed`);
             return { error: `Tool error: ${why || `${toolName} failed`}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 

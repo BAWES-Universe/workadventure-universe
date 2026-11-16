@@ -39,6 +39,7 @@ import type { ChatUpload, SentMedia } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
+import { sanitizedError } from '../utils/sanitizedError';
 import { VoiceCalls } from '../voice/VoiceCalls';
 import { WorkerLink } from '../voice/VoiceLink';
 import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
@@ -98,9 +99,17 @@ const WORLD_SPACE = 'allWorldUser';
 /** What the pusher starts the space user id of a call-only connection with (it has no room number). */
 const CALL_ONLY_SPACE_USER_PREFIX = 'call_';
 
+/** A view wide enough for any map: the whole room. */
+const WHOLE_ROOM_RADIUS = 100_000;
+
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
+    /**
+     * The same, by room: user ids are only unique within a room, so "is this user a bot" about someone in a given room is
+     * answered from the bots that joined that room, never from the numbers of every room together.
+     */
+    private static botUserIdsByRoom: Map<string, Set<number>> = new Map();
     /** Max URLs extracted from a single chat message (bounds downstream classification/sniffing). */
     private static readonly MAX_CHAT_URLS = 10;
     
@@ -256,6 +265,13 @@ export class BotClient {
         return Array.from(BotClient.botUserIds);
     }
 
+    /** The tag that names the person a visiting Brick walks with, for the game's caption under its name (#2005). */
+    private visitingTag(): string[] {
+        const visiting = this.fullConfig?.brick?.visiting;
+        const name = visiting?.ownerName?.replace(/\s+/g, ' ').trim().slice(0, 40);
+        return name ? [`visiting:${name}`] : [];
+    }
+
     /**
      * Generate a JWT token for this bot
      */
@@ -268,7 +284,8 @@ export class BotClient {
             identifier: botIdentifier,
             username: this.config.name,
             // A voice bot is the only kind of bot the game opens an audio connection with
-            tags: this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot'],
+            // `visiting:<name>` makes the map say who a visiting Brick walks with (#2005)
+            tags: [...(this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot']), ...this.visitingTag()],
         };
         
         return jwt.sign(tokenData, SECRET_KEY, { expiresIn: '30d' });
@@ -386,6 +403,9 @@ export class BotClient {
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
+            const here = BotClient.botUserIdsByRoom.get(this.config.roomUrl);
+            here?.delete(this.userId);
+            if (here?.size === 0) BotClient.botUserIdsByRoom.delete(this.config.roomUrl);
         }
         
         if (this.ws) {
@@ -476,6 +496,8 @@ export class BotClient {
         person: Parameters<BotAccessGate['check']>[2]
     ): Promise<BotAccessVerdict> {
         try {
+            // A Brick that walks beside its owner, or lives in a room (#2005), is asked about from the room it is in
+            if (this.fullConfig?.brick?.visiting || this.fullConfig?.brick?.home) return await gate.check(this.config.botId, 'chat', person, this.config.name, this.config.roomUrl);
             return await gate.check(this.config.botId, 'chat', person, this.config.name);
         } catch (error) {
             // The gate does not throw; if that ever changes, a failed check must not let a chat through
@@ -1558,7 +1580,7 @@ export class BotClient {
         if (!to) return;
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] Sending chat message to space ${spaceName}: "${message}"`);
+            console.log(`[Bot ${this.config.botId}] Sending chat message to space ${spaceName} (${message.length} characters)`);
         }
 
         // Chat messages are sent via PublicEvent with spaceMessage, not updateSpaceUserMessage
@@ -2201,7 +2223,7 @@ export class BotClient {
         }
 
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] Sending stream chunk to space ${spaceName}: token="${token.substring(0, 30)}", isFinal=${isFinal}`);
+            console.log(`[Bot ${this.config.botId}] Sending stream chunk to space ${spaceName} (${token.length} characters), isFinal=${isFinal}`);
         }
 
         // A reply written for someone alone with the bot is delivered to them and nobody else, to its last piece (#1993)
@@ -2538,8 +2560,9 @@ export class BotClient {
         if (this.isMeetingSpace(spaceName)) return false;
         if (this.accessGate && !(await this.chatAllowed(this.accessGate, spaceName, playerId))) return false;
         this.behavior.onChatMessage(spaceName, text, playerId).catch((error) => {
-            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer:`, error);
-            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer: ${error?.name ?? 'Error'}`);
+            Sentry.captureException(sanitizedError(error, `onChatMessage failed for a card answer (${error?.name ?? 'Error'})`));
         });
         return true;
     }
@@ -2708,7 +2731,8 @@ export class BotClient {
         // Anybody in the room, whether or not they have come close enough to the bot to be in one of its spaces.
         const seenInRoom = [...this.players.values()].find((candidate) => candidate.uuid === uuid);
         const userId = seenInRoom?.userId ?? this.behavior?.getUserIdForUuid(uuid);
-        if (userId === undefined || BotClient.isBot(userId)) {
+        // A bot of this room only: the same number in another room is someone else (the numbers are per room)
+        if (userId === undefined || BotClient.botUserIdsByRoom.get(this.config.roomUrl)?.has(userId) === true) {
             return undefined;
         }
         const player = this.players.get(userId);
@@ -3466,6 +3490,7 @@ export class BotClient {
                 this.userId = message.roomJoinedMessage.currentUserId;
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
+                BotClient.botUserIdsByRoom.set(this.config.roomUrl, (BotClient.botUserIdsByRoom.get(this.config.roomUrl) ?? new Set()).add(this.userId));
                 this.markJoined();
                 this.startVoice();
                 for (const variable of message.roomJoinedMessage.areaPropertyVariable ?? []) {
@@ -3749,7 +3774,7 @@ export class BotClient {
                     // When the line reached the bot, before anything is asked about it: a card shown after is not answered by it (#1661)
                     const heardAt = Date.now();
                     if (chatMessage && this.behavior) {
-                        console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
+                        console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage (${chatMessage.length} characters) from user ${message.updateSpaceUserMessage.userId}`);
                         // With others in the bubble, only what is said to the bot reaches it (#1220)
                         if (!this.attention.hears(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, chatMessage)) {
                             break;
@@ -3773,8 +3798,9 @@ export class BotClient {
                             undefined,
                             heardAt
                         ).catch(error => {
-                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error: ${error?.name ?? 'Error'}`);
+                            Sentry.captureException(sanitizedError(error, `onChatMessage failed (${error?.name ?? 'Error'})`));
                         });
                     }
                 }
@@ -3792,7 +3818,7 @@ export class BotClient {
                     const senderUserId = message.publicEvent.senderUserId; // spaceUserId format: "roomID_userID"
                     
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage: "${spaceMessage.message}" from ${senderName}, senderUserId: ${senderUserId}, players map size: ${this.players.size}`);
+                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage (${spaceMessage.message.length} characters) from ${senderName}, senderUserId: ${senderUserId}, players map size: ${this.players.size}`);
                     }
                     
                     // Extract numeric userId from senderUserId (format: "roomID_userID")
@@ -3892,7 +3918,7 @@ export class BotClient {
                         // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
                         if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
+                            console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage (${spaceMessage.message.length} characters) from ${senderName} (userId: ${senderId})`);
                         }
                         // Detect URL from message text independently of uploads —
                         // previously `url || extractUrlFromText` short-circuited,
@@ -3924,8 +3950,9 @@ export class BotClient {
                             BotClient.uploadsOf(spaceMessage, detectedMime),
                             heardAt
                         ).catch(error => {
-                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error: ${error?.name ?? 'Error'}`);
+                            Sentry.captureException(sanitizedError(error, `onChatMessage failed (${error?.name ?? 'Error'})`));
                         });
                     } else {
                         if (senderId === 0) {
@@ -4293,12 +4320,21 @@ export class BotClient {
         }
     }
 
-    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
+    /**
+     * Asks to be told about everyone in the room, wherever they stand, until the next move narrows the view again. A
+     * visiting Brick does it before it decides its person has left: a person can go further than the usual view in one
+     * hop on a large map, and is still in the room.
+     */
+    public lookAcrossTheRoom(): void {
+        const state = this.getState();
+        this.sendPosition(state.getPosition(), state.getDirection(), false, WHOLE_ROOM_RADIUS);
+    }
+
+    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean, viewportRadius = 2000): void {
         // Safety checks for undefined values
         const x = position?.x ?? 0;
         const y = position?.y ?? 0;
         // Update viewport to be centered on current position with large radius
-        const viewportRadius = 2000;
         const top = Math.max(0, y - viewportRadius);
         const bottom = y + viewportRadius;
         const left = Math.max(0, x - viewportRadius);

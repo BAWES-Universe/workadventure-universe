@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     getMyApps: vi.fn<() => Promise<unknown>>(),
     getAppCatalog: vi.fn<() => Promise<unknown>>(),
     getReadyMadeApps: vi.fn<() => Promise<unknown>>(),
+    getInstantApps: vi.fn<() => Promise<unknown>>(),
     getMyApp: vi.fn<(id: string) => Promise<unknown>>(),
     getMyAppUniverses: vi.fn<() => Promise<unknown>>(),
     getUniverseApps: vi.fn<(id: string) => Promise<unknown>>(),
@@ -29,7 +30,12 @@ const game = vi.hoisted(() => ({
     disconnectTeamApp: vi.fn<(id: string) => Promise<unknown>>(),
     getAppsABotCouldUse: vi.fn<(botId: string) => Promise<unknown>>(),
     letBotUseApp: vi.fn<(botId: string, connectionId: string) => Promise<unknown>>(),
+    discoverMcpOAuthEndpoints: vi.fn<(url: string, callback: string) => Promise<unknown>>(),
+    addMyApp: vi.fn<(app: unknown) => Promise<unknown>>(),
+    getMyAppThings: vi.fn<(id: string) => Promise<unknown>>(),
     getBotMcpServers: vi.fn<(botId: string) => Promise<unknown>>(),
+    saveGitHubKey: vi.fn<(key: string) => Promise<unknown>>(),
+    dropGitHubKey: vi.fn<() => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the pages read on mount.
@@ -41,6 +47,7 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMyApps: game.getMyApps,
         getAppCatalog: game.getAppCatalog,
         getReadyMadeApps: game.getReadyMadeApps,
+        getInstantApps: game.getInstantApps,
         getMyApp: game.getMyApp,
         getMyAppUniverses: game.getMyAppUniverses,
         getUniverseApps: game.getUniverseApps,
@@ -56,9 +63,14 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         disconnectTeamApp: game.disconnectTeamApp,
         getAppsABotCouldUse: game.getAppsABotCouldUse,
         letBotUseApp: game.letBotUseApp,
+        discoverMcpOAuthEndpoints: game.discoverMcpOAuthEndpoints,
+        addMyApp: game.addMyApp,
+        getMyAppThings: game.getMyAppThings,
         getBotMcpServers: game.getBotMcpServers,
         // What the Brick's own screens ask for once opened: these tests only check that they open
         getMcpServerTools: () => new Promise(() => {}),
+        saveGitHubKey: game.saveGitHubKey,
+        dropGitHubKey: game.dropGitHubKey,
     },
 }));
 // A Brick wearing a WOKA is drawn by the game's picture loader, which has nothing to do with these pages
@@ -87,8 +99,12 @@ vi.mock("../../../../Stores/MapEditorStore", async () => {
     const store = await import("svelte/store");
     return { mapEditorVisibilityStore: store.writable(false) };
 });
-vi.mock("../Reconnect", () => ({ reconnectApp: vi.fn(() => Promise.resolve("done")) }));
+vi.mock("../Reconnect", () => ({
+    reconnectApp: vi.fn(() => Promise.resolve("done")),
+    signInInPopup: vi.fn(() => Promise.resolve("done")),
+}));
 
+import { reconnectApp } from "../Reconnect";
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
 import AddManagerSheet from "../AddManagerSheet.svelte";
@@ -111,6 +127,9 @@ const tavily = (over: Record<string, unknown> = {}) => ({
     signInLostAt: null,
     connectedAt: "2026-11-04T09:00:00.000Z",
     lendable: true,
+    kind: "mcp",
+    keyLast4: null,
+    keyMode: null,
     bricks: [{ botId: "b1", botName: "Brick", serverId: "s1", enabled: true, headings: HEADINGS }],
     ...over,
 });
@@ -193,6 +212,7 @@ describe("the Apps pages (#2001)", () => {
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getAppCatalog.mockResolvedValue({ apps: [] });
         game.getReadyMadeApps.mockResolvedValue({ apps: [] });
+        game.getInstantApps.mockResolvedValue({ apps: [] });
         game.getMyApp.mockResolvedValue(appPage());
         game.lendApp.mockResolvedValue({});
         game.changeAppLend.mockResolvedValue({});
@@ -230,6 +250,161 @@ describe("the Apps pages (#2001)", () => {
             expect(rows[0]).toBe("Gmail Used by Brick");
             expect(rows[1]).toBe("Tavily Added by you · Used by Brick");
             expect(byId("appsUniverses")).toBeNull();
+        });
+
+        it("lists the Instant Apps as Ready to use, with no Connect button, and no section when there are none", async () => {
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsInstant")).toBeNull();
+            expect(allById("appsInstantRow")).toHaveLength(0);
+            page.$destroy();
+            game.getInstantApps.mockResolvedValue({
+                apps: [
+                    { key: "instant-video", name: "Instant video", blurb: "Make short videos" },
+                    { key: "instant-flights", name: "Instant flights", blurb: "" },
+                ],
+            });
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(words(byId("appsInstant"))).toBe("Ready to use");
+            const rows = allById("appsInstantRow");
+            expect(rows.map(words)).toEqual(["Instant video Make short videos", "Instant flights"]);
+            expect(rows[0].querySelector('[data-testid="appsConnect"]')).toBeNull();
+            expect(rows[0].tagName).toBe("DIV");
+        });
+
+        it("searches the Instant Apps by name and line, and shows no price or provider", async () => {
+            game.getInstantApps.mockResolvedValue({
+                apps: [
+                    { key: "instant-video", name: "Instant video", blurb: "Make short videos" },
+                    { key: "instant-flights", name: "Instant flights", blurb: "Find flights" },
+                ],
+            });
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            const input = byId("appsSearchInput") as HTMLInputElement;
+            input.value = "flights";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+            expect(allById("appsInstantRow").map(words)).toEqual(["Instant flights Find flights"]);
+            expect(words(byId("appsFound"))).toBe("1 app");
+            expect(document.body.textContent).not.toMatch(/\$|composio|per use|credit/i);
+        });
+
+        it("shows the rest of the page when the Instant Apps could not be read", async () => {
+            game.getInstantApps.mockRejectedValue(new Error("offline"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            warn.mockRestore();
+            expect(allById("appsRow")).toHaveLength(2);
+            expect(byId("appsInstant")).toBeNull();
+            expect(byId("appsLoadFailed")).toBeNull();
+        });
+
+        it("treats an Instant Apps answer it cannot read as a failed read, with the message and Try again in a search", async () => {
+            game.getInstantApps.mockResolvedValue({ apps: [{ name: "Instant video", blurb: "Make short videos" }] });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsInstant")).toBeNull();
+            const input = byId("appsSearchInput") as HTMLInputElement;
+            input.value = "video";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+            expect(byId("appsInstantFailed")).not.toBeNull();
+            expect(byId("appsNoMatch")).toBeNull();
+            game.getInstantApps.mockResolvedValue({
+                apps: [{ key: "instant-video", name: "Instant video", blurb: "Make short videos" }],
+            });
+            await click("appsInstantTryAgain");
+            warn.mockRestore();
+            expect(byId("appsInstantFailed")).toBeNull();
+            expect(allById("appsInstantRow").map(words)).toEqual(["Instant video Make short videos"]);
+        });
+
+        it("keeps the Instant Apps when an older read ends after the newer one", async () => {
+            let answerFirst: (answer: unknown) => void = () => undefined;
+            game.getInstantApps.mockReset();
+            game.getInstantApps
+                .mockReturnValueOnce(
+                    new Promise((resolve) => {
+                        answerFirst = resolve;
+                    })
+                )
+                .mockResolvedValue({
+                    apps: [{ key: "instant-video", name: "Instant video", blurb: "Make short videos" }],
+                });
+            game.getAppCatalog.mockRejectedValueOnce(new Error("offline"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsConnectListFailed")).not.toBeNull();
+            // The retry starts a second read, which answers with the list while the first is still out
+            await click("appsConnectListTryAgain");
+            expect(allById("appsInstantRow")).toHaveLength(1);
+            answerFirst({ apps: [] });
+            await settle();
+            warn.mockRestore();
+            expect(allById("appsInstantRow")).toHaveLength(1);
+            expect(byId("appsInstant")).not.toBeNull();
+        });
+
+        it("says the ready-to-use apps could not be read when a search needs them, and reads them again", async () => {
+            game.getInstantApps.mockReset();
+            game.getInstantApps.mockRejectedValueOnce(new Error("offline")).mockResolvedValue({
+                apps: [{ key: "instant-flights", name: "Instant flights", blurb: "Find flights" }],
+            });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsInstantFailed")).toBeNull();
+            const input = byId("appsSearchInput") as HTMLInputElement;
+            input.value = "flights";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+            // No claim of "no match" and no count that leaves them out
+            expect(byId("appsNoMatch")).toBeNull();
+            expect(byId("appsFound")).toBeNull();
+            expect(words(byId("appsInstantFailed"))).toBe(
+                "Couldn't load the ready-to-use apps, so they are not in these results."
+            );
+            await click("appsInstantTryAgain");
+            warn.mockRestore();
+            expect(byId("appsInstantFailed")).toBeNull();
+            expect(allById("appsInstantRow").map(words)).toEqual(["Instant flights Find flights"]);
+            expect(words(byId("appsFound"))).toBe("1 app");
+        });
+
+        it("has Add your own app as its last row, which opens the sheet, and Done opens the new app's page to choose Bricks", async () => {
+            game.discoverMcpOAuthEndpoints.mockResolvedValue({
+                discovered: true,
+                name: "Zapier",
+                signsInWith: "Zapier",
+                authorizeUrl: "https://zapier.com/authorize",
+                tokenUrl: "https://zapier.com/token",
+                clientId: "c1",
+                registrationStatus: "auto",
+            });
+            game.addMyApp.mockResolvedValue({ id: "zapier", name: "Zapier" });
+            game.getMyAppThings.mockResolvedValue({ things: ["Find Events"] });
+            game.getMyApp.mockResolvedValue(appPage({ app: tavily({ id: "zapier", name: "Zapier" }) }));
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(words(byId("appsAddOwn"))).toBe("Add your own app Paste its link, like Firecrawl");
+            expect(byId("addAppSheet")).toBeNull();
+            await click("appsAddOwn");
+            expect(byId("addAppSheet")).not.toBeNull();
+            const link = byId("addAppLink") as HTMLInputElement;
+            link.value = "https://mcp.zapier.com/api/mcp/mcp";
+            link.dispatchEvent(new InputEvent("input", { inputType: "insertFromPaste", bubbles: true }));
+            await settle();
+            await click("addAppSignIn");
+            expect(byId("addAppConnected")).not.toBeNull();
+            await click("addAppDone");
+            expect(byId("addAppSheet")).toBeNull();
+            expect(game.getMyApp).toHaveBeenCalledWith("zapier");
+            expect(byId("appPage")).not.toBeNull();
         });
 
         it("says so when no Brick uses an app yet, and when its sign-in ended", async () => {
@@ -464,6 +639,180 @@ describe("the Apps pages (#2001)", () => {
             await open("gmail");
             expect(words(byId("appSignInEnded"))).toContain("Your Bricks can't use Gmail until you reconnect it.");
             expect(words(byId("appReconnect"))).toBe("Reconnect Gmail");
+        });
+    });
+
+    describe("GitHub (#2041)", () => {
+        const github = (over: Record<string, unknown> = {}) =>
+            appPage({
+                app: tavily({ id: "gh", name: "GitHub", authType: "oauth", source: "github", lendable: false }),
+                canLendTo: [],
+                canLetUse: [],
+                github: {
+                    login: "BAWES",
+                    ownKey: false,
+                    places: [
+                        {
+                            account: "BAWES",
+                            type: "User",
+                            repos: "all",
+                            manageUrl: "https://github.com/settings/installations/1",
+                        },
+                        {
+                            account: "BAWES-Universe",
+                            type: "Organization",
+                            repos: "all",
+                            manageUrl: "https://github.com/x/2",
+                        },
+                    ],
+                    waiting: [{ account: "acme-corp", type: "Organization" }],
+                    addPlaceUrl: "https://github.com/apps/bawes-universe/installations/select_target",
+                    installUrl: "https://github.com/apps/bawes-universe/installations/new",
+                    ownKeyPage: "https://github.com/settings/tokens/new",
+                    known: true,
+                    ...over,
+                },
+            });
+        const open = async () => {
+            page = new AppPage({ target, props: { appId: "gh", onBack: () => {} } });
+            await settle();
+        };
+        const type = async (value: string) => {
+            const input = byId("gitHubKeyInput") as HTMLInputElement;
+            input.value = value;
+            input.dispatchEvent(new Event("input"));
+            await settle();
+        };
+
+        beforeEach(() => {
+            game.getMyApp.mockResolvedValue(github());
+            game.saveGitHubKey.mockResolvedValue({ id: "gh", login: "BAWES" });
+            game.dropGitHubKey.mockResolvedValue({ id: "gh" });
+        });
+
+        it("says who it is signed in as, where it works, what waits for an owner, and that Bricks work as the person", async () => {
+            await open();
+            expect(words(byId("appPage"))).toContain("Signed in as @BAWES");
+            expect(allById("gitHubPlace").map(words)).toEqual([
+                "BAWES Your account · all repos",
+                "BAWES-Universe All repos",
+            ]);
+            expect(words(byId("gitHubWaiting"))).toBe("acme-corp Waiting for an owner's OK");
+            expect(words(byId("gitHubAddPlace"))).toBe("Add a place or change repos Opens GitHub");
+            expect(words(byId("appPage"))).toContain(
+                "Your Bricks work as you. What they push, open and merge shows as @BAWES on GitHub."
+            );
+            expect(words(byId("appOnlyForYou"))).toContain("GitHub is signed in as you");
+            expect(words(byId("gitHubUseKey"))).toContain("Use my own GitHub key instead");
+            expect(words(byId("appPage"))).toContain(
+                "Every Brick stops using it at once. Nothing on GitHub is deleted."
+            );
+            expect(byId("gitHubKeyEverywhere")).toBeNull();
+        });
+
+        it("says it could not check with GitHub, and says when it is added nowhere yet", async () => {
+            game.getMyApp.mockResolvedValue(github({ known: false, places: [], waiting: [] }));
+            await open();
+            expect(words(byId("appPage"))).toContain("Couldn't check with GitHub just now.");
+            page?.$destroy();
+            game.getMyApp.mockResolvedValue(github({ places: [], waiting: [] }));
+            await open();
+            expect(words(byId("appPage"))).toContain("Not added anywhere yet.");
+        });
+
+        it("opens GitHub to add a place, and reads the page again on coming back", async () => {
+            const opened = vi.spyOn(window, "open").mockReturnValue(null);
+            await open();
+            await click("gitHubAddPlace");
+            expect(opened).toHaveBeenCalledWith(
+                "https://github.com/apps/bawes-universe/installations/select_target",
+                "_blank",
+                "noopener"
+            );
+            game.getMyApp.mockClear();
+            window.dispatchEvent(new Event("focus"));
+            await settle();
+            expect(game.getMyApp).toHaveBeenCalledTimes(1);
+            window.dispatchEvent(new Event("focus"));
+            await settle();
+            expect(game.getMyApp).toHaveBeenCalledTimes(1);
+            opened.mockRestore();
+        });
+
+        it("never lets a slower reading from coming back to the page undo the key that was just saved", async () => {
+            const opened = vi.spyOn(window, "open").mockReturnValue(null);
+            await open();
+            await click("gitHubAddPlace");
+            let answerLate: (value: unknown) => void = () => undefined;
+            game.getMyApp.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerLate = resolve;
+                })
+            );
+            window.dispatchEvent(new Event("focus"));
+            await settle();
+            game.getMyApp.mockResolvedValue(github({ ownKey: true }));
+            await click("gitHubUseKey");
+            await type("ghp_abcdefghij1234");
+            await click("gitHubKeySave");
+            expect(words(byId("appPage"))).toContain("Your own key · @BAWES");
+            answerLate(github());
+            await settle();
+            expect(words(byId("appPage"))).toContain("Your own key · @BAWES");
+            expect(byId("gitHubKeyEverywhere")).not.toBeNull();
+            opened.mockRestore();
+        });
+
+        it("shows the waiting sheet with the link to send, and goes on to the key from there", async () => {
+            await open();
+            await click("gitHubWaiting");
+            expect(words(byId("gitHubWaitingSheet"))).toContain("Waiting for acme-corp");
+            expect(words(byId("gitHubInstallLink"))).toBe("github.com/apps/bawes-universe/installations/new");
+            await click("gitHubCantWait");
+            expect(byId("gitHubWaitingSheet")).toBeNull();
+            expect(byId("gitHubKeySheet")).not.toBeNull();
+        });
+
+        it("saves a pasted key cleaned of spaces, says when GitHub refuses one, and closes when it is taken", async () => {
+            await open();
+            await click("gitHubUseKey");
+            expect((byId("gitHubKeySave") as HTMLButtonElement).disabled).toBe(true);
+            game.saveGitHubKey.mockRejectedValueOnce(
+                Object.assign(new Error("GitHub did not take this key"), { code: "refused" })
+            );
+            await type(" ghp_abcdefghij\n1234 ");
+            await click("gitHubKeySave");
+            expect(game.saveGitHubKey).toHaveBeenCalledWith("ghp_abcdefghij1234");
+            expect(words(byId("gitHubKeyProblem"))).toContain("GitHub didn't take this key");
+            game.saveGitHubKey.mockRejectedValueOnce(new Error("Orbit did not answer in time"));
+            await click("gitHubKeySave");
+            expect(words(byId("gitHubKeyProblem"))).toContain("Couldn't reach GitHub just now");
+            game.getMyApp.mockResolvedValue(github({ ownKey: true }));
+            await click("gitHubKeySave");
+            expect(byId("gitHubKeySheet")).toBeNull();
+            expect(words(byId("appPage"))).toContain("Your own key · @BAWES");
+        });
+
+        it("with the person's own key: works everywhere it does, switches back through GitHub's sign-in, and offers no key", async () => {
+            game.getMyApp.mockResolvedValue(github({ ownKey: true }));
+            await open();
+            expect(words(byId("gitHubKeyEverywhere"))).toBe(
+                "Everywhere your key works Every repo you can reach on GitHub"
+            );
+            expect(byId("gitHubPlace")).toBeNull();
+            expect(byId("gitHubAddPlace")).toBeNull();
+            expect(byId("gitHubUseKey")).toBeNull();
+            await click("gitHubSwitchBack");
+            expect(reconnectApp).toHaveBeenCalledWith("gh");
+            expect(game.dropGitHubKey).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the key when the sign-in is stopped", async () => {
+            vi.mocked(reconnectApp).mockResolvedValueOnce("stopped");
+            game.getMyApp.mockResolvedValue(github({ ownKey: true }));
+            await open();
+            await click("gitHubSwitchBack");
+            expect(game.dropGitHubKey).not.toHaveBeenCalled();
         });
     });
 

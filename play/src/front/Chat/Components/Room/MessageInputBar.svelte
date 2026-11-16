@@ -12,6 +12,9 @@
     import { selectedChatMessageToReply } from "../../Stores/ChatStore";
     import LL from "../../../../i18n/i18n-svelte";
     import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
+    import KeyPasteStrip from "../../Bricks/Apps/KeyPasteStrip.svelte";
+    import { looksLikeAKeyPastedWords } from "../../Bricks/Apps/KeyShapes";
+    import { openAppsPage } from "../../Bricks/Apps/OpenApps";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import {
@@ -245,7 +248,19 @@
         }
     }
 
+    // Something that looks like a key, written to a Brick: held here and never sent (game #2044). The server takes it out too.
+    // Tracked on its own: a partner that turns out to be a bot after the box opened holds the text too (Sentry on #2048)
+    $: keysHeldHere = partner?.isBot === true || room instanceof GuestBrickChatRoom;
+    $: keyHeld = keysHeldHere && looksLikeAKeyPastedWords(message);
+
+    function clearHeldKey() {
+        const held = message;
+        message = "";
+        composerDraftStore.clearIfUnchanged(draftRoomId, held);
+    }
+
     async function sendMessage(typedMessage: string) {
+        if (keyHeld) return;
         // Every send path (Enter, the Send button, files) ends the typing status.
         stopTypingNow();
         let messageToSend = withoutBlankEdges(
@@ -559,7 +574,10 @@
             : await draftMessageService.loadDraft(draftId);
         if (draft) {
             // A draft saved as a lone <br> counts as empty: the hint shows again.
-            message = isEmptyMessage(draft.message) ? "" : draft.message;
+            // A key is never kept as a draft: one saved by an earlier version is written over at once, not when the chat closes
+            const draftHoldsAKey = keysHeldHere && looksLikeAKeyPastedWords(draft.message);
+            if (draftHoldsAKey) forgetSavedDraft();
+            message = isEmptyMessage(draft.message) || draftHoldsAKey ? "" : draft.message;
             if (draft.replyingToMessageId) {
                 if (room instanceof MatrixChatRoom) {
                     let loadReplyMessage = await room.getMessageById(draft.replyingToMessageId);
@@ -569,6 +587,27 @@
         }
         draftLoaded = true;
     });
+
+    // Writes an empty draft over the saved one, wherever drafts of this chat are kept
+    function forgetSavedDraft() {
+        if (hasSpaceDrafts) {
+            composerDraftStore.save(draftRoomId, {
+                message: "",
+                replyingToMessageId: null,
+                spaceGeneration: spaceGenerationOf(room),
+            });
+        } else if (keepsDraft) {
+            draftMessageService.saveDraft({
+                id: draftId,
+                roomId: room.id,
+                userId: localUserStore.getChatId(),
+                message: "",
+                replyingToMessageId: null,
+            });
+        }
+    }
+    // A key held in the box (typed, pasted or restored before the partner was known to be a bot): what was saved before goes now
+    $: if (keyHeld && draftLoaded) forgetSavedDraft();
 
     onDestroy(() => {
         unsubscribeComposerFocusRequest();
@@ -588,18 +627,20 @@
         ) {
             keepVoiceNoteIn(room, voiceSessionId);
         }
+        // A key held in the box is never kept as a draft, on screen or on this device (game #2044)
+        const draftText = keyHeld ? "" : message;
         if (
             room instanceof ProximityChatRoom &&
             mountSessionId !== undefined &&
             room.currentSessionId !== mountSessionId
         ) {
             // The stay ended while the composer was open: what it still holds belongs to that stay.
-            room.keepUnsentDraft(mountSessionId, message);
+            room.keepUnsentDraft(mountSessionId, draftText);
         } else if (hasSpaceDrafts) {
             // Stamped with the space the composer is in now: while the thread stayed open, the text was visible
             // under that space's "Now" line.
             composerDraftStore.save(draftRoomId, {
-                message,
+                message: draftText,
                 replyingToMessageId: replyMessageId ?? null,
                 spaceGeneration: spaceGenerationOf(room),
             });
@@ -608,7 +649,7 @@
                 id: draftId,
                 roomId: room.id,
                 userId: localUserStore.getChatId(),
-                message,
+                message: draftText,
                 replyingToMessageId: replyMessageId ?? null,
             });
         }
@@ -1083,7 +1124,13 @@
         {#if $selectedChatMessageToReply !== null}
             <ReplyPreview message={$selectedChatMessageToReply} onClose={unselectChatMessageToReply} />
         {/if}
-        <ComposerLinkPreview {message} bind:closedLinks={closedLinkPreviews} />
+        {#if keyHeld}
+            <KeyPasteStrip onClear={clearHeldKey} onApps={() => openAppsPage()} />
+        {/if}
+        <!-- A held key can be a link: no preview is asked for while it is held -->
+        {#if !keyHeld}
+            <ComposerLinkPreview {message} bind:closedLinks={closedLinkPreviews} />
+        {/if}
     </div>
     <!-- The field and its buttons give way to the recorder while a voice note is being made. -->
     <div class="contents" class:voice-hidden={voiceActive}>

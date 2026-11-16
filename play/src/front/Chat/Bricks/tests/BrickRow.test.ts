@@ -138,7 +138,7 @@ describe("a person's own Brick in Chats, before its chat was ever opened (#1995)
         expect(text()).toContain("Brick");
         expect(byId("roomRowTime")?.textContent).toBe("now");
         expect(byId("roomRowPreview")?.textContent).toBe(
-            "Hi Khalid, I'm Brick, your own helper in Universe. Ask me anything, or hand me a job."
+            "Hi Khalid, I'm Brick, your own helper in Universe. Ask me anything, hand me a job, or give me a goal and I'll keep at it while you're away."
         );
         expect(target.querySelector("img")?.getAttribute("src")).toBe("/static/images/bricks/brick-orange.png");
     });
@@ -154,7 +154,7 @@ describe("a person's own Brick in Chats, before its chat was ever opened (#1995)
         game.playerName = null;
         await show(brick({ name: "Recipe Brick" }));
         expect(byId("roomRowPreview")?.textContent).toBe(
-            "Hi, I'm Recipe Brick, your own helper in Universe. Ask me anything, or hand me a job."
+            "Hi, I'm Recipe Brick, your own helper in Universe. Ask me anything, hand me a job, or give me a goal and I'll keep at it while you're away."
         );
     });
 

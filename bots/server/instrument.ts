@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import { withoutConsoleBreadcrumbs } from "../utils/sentryBreadcrumbs";
 
 const SENTRY_DSN = process.env.SENTRY_DSN_BOT;
 // "" must read as unset: the image default is ENV RELEASE_VERSION="", and an empty string
@@ -27,6 +28,8 @@ if (SENTRY_DSN) {
             // streamGenAiSpans: true is REQUIRED for Conversations tab.
             streamGenAiSpans: true,
             attachStacktrace: true,
+            // Console lines are not kept as breadcrumbs: they can hold what somebody said (#1841)
+            beforeBreadcrumb: withoutConsoleBreadcrumbs,
             // Only capture warn/error logs to avoid spamming from debug logging
             enableLogs: true,
             integrations: [

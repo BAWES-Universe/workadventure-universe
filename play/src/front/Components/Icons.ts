@@ -118,6 +118,7 @@ export { default as IconMusicShare } from "~icons/tabler/music-share";
 export { default as IconTableOptions } from "~icons/tabler/table-options";
 export { default as IconVideoOff } from "~icons/tabler/video-off";
 export { default as IconLock } from "~icons/tabler/lock";
+export { default as IconBuilding } from "~icons/tabler/building";
 export { default as IconLockOpen } from "~icons/tabler/lock-open";
 export { default as IconXIcon } from "~icons/tabler/x";
 export { default as IconWorldSearch } from "~icons/tabler/world-search";
@@ -234,3 +235,7 @@ export { default as IconCrown } from "~icons/tabler/crown";
 export { default as IconTemplate } from "~icons/tabler/template";
 export { default as IconPlugConnectedX } from "~icons/tabler/plug-connected-x";
 export { default as IconBolt } from "~icons/tabler/bolt";
+// Goals and tasks on a Brick's page (game #2002)
+export { default as IconTargetArrow } from "~icons/tabler/target-arrow";
+export { default as IconCalendarRepeat } from "~icons/tabler/calendar-repeat";
+export { default as IconRadar } from "~icons/tabler/radar";

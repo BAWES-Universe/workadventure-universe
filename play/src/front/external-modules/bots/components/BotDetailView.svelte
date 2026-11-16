@@ -1,6 +1,11 @@
 <script context="module" lang="ts">
     // The group left open, so the next bot opens on the same one
     let lastOpenGroup: string | undefined;
+
+    /** The next page opens on this group: a goal tapped on the Goals and tasks page opens on its Brick's own Goals and tasks. */
+    export function openNextOn(group: string): void {
+        lastOpenGroup = group;
+    }
 </script>
 
 <script lang="ts">
@@ -31,6 +36,7 @@
     import type { UsageScreen } from "../usageModel";
     import type { ToolsScreen } from "../toolsModel";
     import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
+    import BrickGoalsGroup from "../../../Chat/Bricks/BrickGoalsGroup.svelte";
     import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
     import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
     import BrickMadeFrom from "../../../Chat/Bricks/Templates/BrickMadeFrom.svelte";
@@ -940,6 +946,10 @@
                 </button>
             </div>
         {/if}
+        {#if brick}
+            <!-- What a Brick says about visiting (game #2005): Bring along, or End visit, under its name -->
+            <slot name="visit" />
+        {/if}
         {#if switchError}
             <p class="bp-error" role="alert">{switchError}</p>
         {/if}
@@ -995,9 +1005,17 @@
                         onToggle={toggleGroup}
                     />
                 {/if}
-                <!-- What it remembers about its owner, and its files (game #2003) -->
+                <!-- What it keeps for its owner: goals, briefings, watches and reminders (game #2002), then what it
+                     remembers about them and its files (game #2003) -->
                 <!-- Keyed by the Brick: each reads its list once, so another Brick must start them over -->
                 {#key currentBot.id}
+                    <BrickGoalsGroup
+                        botId={currentBot.id}
+                        name={currentBot.name || "Brick"}
+                        open={openGroup === "goals"}
+                        onToggle={toggleGroup}
+                        onOpenDid={brick?.openDid}
+                    />
                     <BrickMemoryGroup
                         botId={currentBot.id}
                         name={currentBot.name || "Brick"}

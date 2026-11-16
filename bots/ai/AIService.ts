@@ -11,7 +11,7 @@
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer, InstantListing } from '../server/AdminApiService';
-import { reachFor } from '../server/AdminApiService';
+import { KEY_NOT_LENT_LINE, reachFor } from '../server/AdminApiService';
 import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
@@ -22,7 +22,8 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
-import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { sanitizedError } from '../utils/sanitizedError';
+import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -36,7 +37,7 @@ import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
 import { mayUse, SOMEONE_UNKNOWN, viewFor } from '../memory/Heard';
 import { MarkerWatch, PrivateAnswers, answeredPrivatelyLine, continuedIn, emotionBlockOf, onlyForThemRule, othersHereRule, privateAnswerRule, privateBodyOf, type PrivateAnswerCopies } from './PrivateAnswers';
-import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
+import { describeStep, resultOf, showsAsStep, stepDetails, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
 import { normalizeWebUrl } from '../utils/chatLinks';
@@ -103,7 +104,7 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
-import { buildRecentFilesLine, buildSystemPromptWithEnds } from './systemPrompt';
+import { buildRecentFilesLine, buildSystemPromptWithEnds, visitingRule } from './systemPrompt';
 import type { FileStore, MadeWith } from '../services/ChatFiles';
 import { replyProblem } from './replyProblem';
 import { providerErrorText } from './providers/ownKeyHttp';
@@ -129,6 +130,8 @@ import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, 
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
+import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
+import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
 import {
     INSTANT_GIVE_BACK_TOOL,
@@ -143,7 +146,7 @@ import {
     runInstantTool,
 } from './InstantTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
-import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_REMINDER_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
+import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
@@ -201,10 +204,10 @@ function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefin
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 /** Where a reply was given and who it was for, sent with its usage (Orbit #491). */
-type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean; greeting?: boolean };
+type UsageTalker = { channel: 'dm' | 'nearby' | 'task'; userId?: string; isGuest?: boolean; greeting?: boolean; runId?: string; eventId?: string };
 
 type ResolvedProvider =
-    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
+    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key'; forOthers?: boolean }
     | { resting: true; line: string };
 
 /** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
@@ -266,7 +269,11 @@ export class AIService {
      * key can go down or be pulled, and each of those must reach the bot's next reply, not the next hour.
      */
     private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number; staleUntil: number }> = new Map();
+    /** Counts each time a Brick's credential answers were thrown away (it moved rooms), so a lookup that began before cannot be kept. */
+    private botCredentialVersion: Map<string, number> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
+    /** How each Brick's computer reaches its AI, kept for the same short time (relayRoute). */
+    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null; expiresAt: number }>();
     /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
     private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
     private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
@@ -364,6 +371,14 @@ export class AIService {
         return found.toolServerMap.get(toolName) ?? null;
     }
 
+    /** The tools a bot's Apps give, as the model is offered them, and where each lives. Read from the cached list: no model is asked. Throws when they cannot be listed. */
+    async appToolsOf(botId: string): Promise<{ tools: any[]; servers: Map<string, ToolServerEntry> }> {
+        const adminApiToken = this.adminApiService?.['adminApiToken'];
+        if (!adminApiToken) return { tools: [], servers: new Map() };
+        const found = await MCPConnector.discoverToolsWithMapping(botId, this.adminApiUrl, adminApiToken, process.env.BOT_SERVICE_TOKEN || '');
+        return { tools: sortToolsByName(found.tools), servers: found.toolServerMap };
+    }
+
     /** Runs a tool call a person approved on a card (#1657), the way a reply would, with the bot's own Patience. */
     async runApprovedTool(
         botId: string,
@@ -390,6 +405,19 @@ export class AIService {
         use?: AppUseRequest & { botId: string }
     ): Promise<any> {
         try {
+            // An App with a key (#2044) is used only through Orbit, which holds the key, checks the use again and answers with the fields
+            // the App lists: nothing here ever reaches the service
+            if (entry.keyApp) {
+                return await callKeyApp(
+                    { adminApiUrl: this.adminApiUrl, serviceToken: process.env.BOT_SERVICE_TOKEN || '' },
+                    entry,
+                    args,
+                    { botId: use?.botId ?? '', callId: use?.callId ?? '', ...(use?.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use?.forOwner ? { forOwner: true } : {}) },
+                    abortSignal,
+                    // The bot's Patience, with the default every other tool has
+                    toolTimeoutMs(toolTimeoutSeconds) ?? REQUEST_TIMEOUT
+                );
+            }
             // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
             // spent or a switch turned off stops it at once. No answer is a no.
             if (entry.connectionId) {
@@ -420,8 +448,11 @@ export class AIService {
             }
             return rawResult;
         } catch (mcpError: any) {
-            console.error(`[AIService] Error executing MCP tool ${toolName}:`, mcpError);
-            Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+            // The error's words can quote what was passed to the tool or what came back (an email, a file), and logs and
+            // Sentry keep what they are given: only the tool's name and the kind of error leave this function
+            const kind = mcpError instanceof Error ? mcpError.name : 'Error';
+            console.error(`[AIService] Error executing MCP tool ${toolName}: ${kind}`);
+            Sentry.captureException(sanitizedError(mcpError, `MCP tool ${toolName} failed (${kind})`), { tags: { area: 'bot-tools' } });
             return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
         }
     }
@@ -518,8 +549,12 @@ export class AIService {
      * provider, and every call without a bot id, is fetched by provider id exactly as before. A bot that is resting
      * has no provider to give, so this throws for it: the quick helper paths treat that as "unavailable".
      */
-    private async getProviderCredentials(providerId: string, botId?: string): Promise<AIProviderConfig> {
-        const resolved = await this.resolveProvider(providerId, botId);
+    private async getProviderCredentials(providerId: string, botId?: string, asker?: string): Promise<AIProviderConfig> {
+        // A small call for a named person on a Brick is answered for them, as a reply is (#2005): never on its owner's key for someone else
+        // Everything that is for a person names them, and a person present but not named is asked about as 'unknown'. With nobody
+        // named it is the Brick's own business (its owner's tool headings): asked as its owner, so Orbit never has to guess.
+        const who = asker ?? this.ownerRefOf(botId);
+        const resolved = await this.resolveProvider(providerId, botId, who ? this.brickAsk(botId, who) : undefined);
         if (resolved.resting) {
             throw new Error(`Bot ${botId} is resting: its AI key is down`);
         }
@@ -530,16 +565,19 @@ export class AIService {
      * Resolve a bot's provider. Orbit is asked by bot id only for Universe AI and a person's own key; if it does not
      * know the bot (or is an older Orbit without the route) the provider is fetched by id as before.
      */
-    private async resolveProvider(providerId: string, botId?: string): Promise<ResolvedProvider> {
+    private async resolveProvider(providerId: string, botId?: string, forOthers?: { asker: string; roomUrl?: string }): Promise<ResolvedProvider> {
         if (botId && needsBotRoute(providerId)) {
-            const cacheKey = `${botId}:${providerId}`;
+            // A Brick that stands in a room (#2005) is answered by who is asking, so each asker has their own answer
+            // and in which room: a Brick that moved on is asked about again, never answered from the room it left
+            const cacheKey = `${botId}:${providerId}${forOthers ? `:${forOthers.asker}:${forOthers.roomUrl ?? ''}` : ''}`;
             const cached = this.botCredentialCache.get(cacheKey);
+            const versionAtAsk = this.botCredentialVersion.get(botId) ?? 0;
             if (cached && Date.now() < cached.expiresAt) {
                 return cached.resolved;
             }
             let answer: BotAiCredentialsAnswer | null;
             try {
-                answer = await this.adminApiService.getBotAiCredentials(botId);
+                answer = forOthers ? await this.adminApiService.getBotAiCredentials(botId, forOthers) : await this.adminApiService.getBotAiCredentials(botId);
             } catch (error) {
                 // Orbit could not be reached: carry on with its last answer for a while, trying again soon, rather than
                 // failing every reply (and waiting out its timeout each time) for as long as the outage lasts
@@ -549,13 +587,23 @@ export class AIService {
                 }
                 throw error;
             }
+            // A Brick asked about for someone, and Orbit has nobody to serve (it is not visiting, or not anywhere that takes visits):
+            // it never falls back to a provider found by id, which could be its owner's. It cannot answer them, and says so.
+            // Its owner is not "someone": Orbit not knowing the Brick (an older Orbit without the route) is then what it always was,
+            // and the provider is found by id as before. The owner is told by the id this server knows them by (a map's) or, off a
+            // map, by Orbit's own last answer for this person, which did not say "for others" (the ids differ off a map).
+            const orbitServedThemAsOwner = !!cached && Date.now() < cached.staleUntil && !cached.resolved.resting && cached.resolved.forOthers !== true;
+            if (!answer && forOthers && forOthers.asker !== this.ownerRefOf(botId) && !orbitServedThemAsOwner) return { resting: true, line: KEY_NOT_LENT_LINE };
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
-                this.botCredentialCache.set(cacheKey, {
-                    resolved,
-                    expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
-                    staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
-                });
+                // The Brick moved rooms (or changed hands) while Orbit was answering: that answer serves this one reply only
+                if ((this.botCredentialVersion.get(botId) ?? 0) === versionAtAsk) {
+                    this.botCredentialCache.set(cacheKey, {
+                        resolved,
+                        expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
+                        staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
+                    });
+                }
                 if (!resolved.resting && resolved.config.limits) {
                     this.botLimits.set(botId, resolved.config.limits);
                     if (this.botLimits.get(botId)?.files === true) this.orbitKeepsFiles = true;
@@ -578,11 +626,33 @@ export class AIService {
      */
     async replySource(providerId: string, botId: string): Promise<'universe-ai' | 'provider' | 'own-key' | null> {
         try {
-            const resolved = await this.resolveProvider(providerId, botId);
+            // What a reply for its owner would run on (a Brick greets nobody else): asked as its owner
+            const owner = this.ownerRefOf(botId);
+            const resolved = await this.resolveProvider(providerId, botId, owner ? this.brickAsk(botId, owner) : undefined);
             return resolved.resting ? null : resolved.source;
         } catch {
             return null;
         }
+    }
+
+    /**
+     * How a Brick's computer reaches its AI (the model relay): the same answer a reply gets from Orbit, by Brick, with the key still
+     * encrypted. Null when Orbit does not know the Brick or its key is resting (nothing is called then). Kept for the same short
+     * time as a reply's, so a run of calls does not ask Orbit each time; a Brick moved to another AI is followed within seconds.
+     */
+    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null> {
+        const cacheKey = `relay:${botId}`;
+        const cached = this.relayRouteCache.get(cacheKey);
+        if (cached && Date.now() < cached.expiresAt) return cached.route;
+        const answer = await this.adminApiService.getBotAiCredentials(botId);
+        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null = null;
+        if (answer && answer.source !== 'resting') {
+            const resolved = this.resolvedFromAnswer(answer);
+            if ('config' in resolved) route = { config: resolved.config, source: resolved.source, keyOwnerId: answer.source === 'own-key' ? (answer.keyOwnerId ?? null) : null };
+        }
+        this.relayRouteCache.set(cacheKey, { route, expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL });
+        if (this.relayRouteCache.size > 500) this.relayRouteCache.delete(this.relayRouteCache.keys().next().value!);
+        return route;
     }
 
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
@@ -609,7 +679,7 @@ export class AIService {
             // Orbit always says; if it ever didn't, the safe reading is that the person typed the address
             config.ownKey = { addressTyped: answer.keyAddressTyped !== false };
         }
-        return { resting: false, config, source: answer.source };
+        return { resting: false, config, source: answer.source, ...(answer.forOthers ? { forOthers: true } : {}) };
     }
 
     private buildProviderConfig(credentialsData: AIProviderCredentials): AIProviderConfig {
@@ -1131,13 +1201,15 @@ export class AIService {
         let usageProviderId = providerId;
         // A reply through a person's own key tells Orbit how it went, so a key that keeps failing is marked Down
         let reportHealth = false;
-        // A private bot's failure is logged without the error's words, which could quote what was said (#1166). Until the
-        // bot is known not to be private, a failure counts as private.
-        let privateTurn = true;
 
         try {
+            // Who is talking comes first: a Brick that stands in a room (#2005) is served by who is asking
+            const talker = this.whoTalked(botId, playerId, channel);
+            const visit = this.roomBrickFor(botId, talker.userId);
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
-            const resolved = await this.resolveProvider(providerId, botId);
+            // Every reply of a Brick asks Orbit who it is for, whether or not this server has it on a map (a direct message, a restart,
+            // a Brick that was moved): the owner's key and things never serve anyone else on what this server happens to remember
+            const resolved = await this.resolveProvider(providerId, botId, this.brickAsk(botId, talker.userId, visit?.roomUrl));
             if (resolved.resting) {
                 // The key is down and its owner chose Stop replying: say the one fixed line, call no AI, track nothing
                 this.restingLines.add(resolved.line.trim());
@@ -1148,7 +1220,6 @@ export class AIService {
             // Reply limits (#1159): asked before any AI call, once the bot knows who is talking and what the reply
             // would run on. At a limit nothing is called and nothing is tracked; the caller shows the fixed card. A retry
             // makes the same reply again, already allowed, so it is never asked twice.
-            const talker = this.whoTalked(botId, playerId, channel);
             if (talker.userId && !isRetry && !greeting) {
                 const allowance = await (adminApiService || this.adminApiService).checkReplyAllowance?.(botId, {
                     userId: talker.userId,
@@ -1351,6 +1422,9 @@ export class AIService {
             // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
             const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
 
+            // Anyone but the owner, in a Brick standing in a room: nothing of the owner's Apps goes into what the model is told (#2005)
+            const forOthers = visit?.forOthers === true || (resolved as { forOthers?: boolean }).forOthers === true;
+
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
             // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
@@ -1368,6 +1442,7 @@ export class AIService {
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
                     // A person's own Brick can lead them to connect an App (game #2001)
                     channel === 'dm' && botId && playerId !== undefined ? await this.appsNoteFor(botId, playerId, botClient, adminApiService) : '',
+                    channel === 'dm' && botId && playerId !== undefined && !forOthers ? await this.keyAppsNoteFor(botId, botClient, adminApiService) : '',
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
@@ -1401,13 +1476,21 @@ export class AIService {
                       instantListing,
                       instantGiveBack
                   );
-            if (taskSettings) this.offerTaskTools(tools, toolServerMap);
+            // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
+            if (forOthers) {
+                for (let at = tools.length - 1; at >= 0; at--) {
+                    const name: string = tools[at]?.function?.name ?? '';
+                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
+                }
+                toolServerMap.clear();
+            }
+            if (taskSettings && !forOthers) this.offerTaskTools(tools, toolServerMap);
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -1419,9 +1502,8 @@ export class AIService {
             let completionTokens = 0;
             let error = false;
             let errorStatus: number | undefined;
-            // What the provider said when a call failed, and why the reply's call ended, for the line logged when a
-            // reply comes back with nothing (#1498)
-            let errorText: string | undefined;
+            // Why the reply's call ended, for the line logged when a reply comes back with nothing (#1498). What the
+            // provider said when a call failed is not kept: it can quote the conversation.
             let finishReason: string | undefined;
             let streamCompleted = false;
             let accumulatedContent = '';
@@ -1434,6 +1516,8 @@ export class AIService {
             let followUpStartTime = 0;
             let firstCallStartTime = 0;
             let hadToolCalls = false;
+            // Names of the tools this turn used, for the PostHog trace: names only, never what was passed or came back
+            const turnToolNames: string[] = [];
             let pendingToolCalls: ToolCall[] = [];
             let initialGenCaptured = false;
             let followUpGenCaptured = false;
@@ -1446,7 +1530,7 @@ export class AIService {
             let askedAgainForLength = false;
             // The error a failed call's $ai_generation carries, like the turn's trace does (#1498)
             const failedCall = (failed: boolean, status?: number) =>
-                failed ? { error: replyProblem({ error: true, errorStatus: status, errorText, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
+                failed ? { error: replyProblem({ error: true, errorStatus: status, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -1487,7 +1571,6 @@ export class AIService {
             // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
             // An answer only its person reads is kept out of them the same way (#1993)
             const privateBot = options?.onlyForThem === true || (await this.isPrivateBot(botId));
-            privateTurn = privateBot;
             // Every PostHog capture of this turn goes through here, so a private bot cannot miss one
             const captureGeneration: typeof captureAiGeneration = (params) => {
                 if (!privateBot) captureAiGeneration(params);
@@ -1690,7 +1773,6 @@ export class AIService {
                         if (chunk.metadata?.error) {
                             followUpFailedForHealth = true;
                             if (chunk.metadata.errorStatus) followUpErrorStatus = chunk.metadata.errorStatus;
-                            errorText ??= chunk.metadata.errorText;
                         }
 
                         // Capture $ai_generation for the initial LLM call NOW —
@@ -1708,8 +1790,7 @@ export class AIService {
                                 sessionId: `conversation-${botId}-player-${playerId}`,
                                 model: config.model,
                                 provider: config.type,
-                                input: userMessageForQwen,
-                                output: firstCallContent,
+                                toolNames: Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean),
                                 inputTokens: promptTokens,
                                 cachedInputTokens: cachedPromptTokens,
                                 outputTokens: completionTokens,
@@ -1802,7 +1883,6 @@ export class AIService {
                                     if (retryChunk.done && retryChunk.metadata?.error) {
                                         followUpFailedForHealth = true;
                                         if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
-                                        errorText ??= retryChunk.metadata.errorText;
                                     }
                                 }
                             } catch (retryError) {
@@ -1910,7 +1990,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
                             const sharedLineIds = sharedLineIdsOf(toolResults);
@@ -1919,7 +1999,13 @@ export class AIService {
                             // The steps line marks each shown call done or failed before the bot carries on (#1545)
                             const toolStepResults = toolResults
                                 .filter((tr) => showsAsStep(tr.name, toolServerMap.has(tr.name)))
-                                .map((tr) => resultOf(tr.id, tr.result));
+                                .map((tr) => {
+                                    const ended = { ...resultOf(tr.id, tr.result), ...(tr.endedAt ? { at: tr.endedAt } : {}) };
+                                    // In a direct message only the person reads it: a step can open to what it sent (#2061)
+                                    if (channel !== 'dm' || forOthers || !toolServerMap.has(tr.name)) return ended;
+                                    const shows = stepDetails(pendingToolCalls.find((call) => call.id === tr.id)?.arguments, ended.ok ? tr.result : undefined);
+                                    return shows ? { ...ended, shows } : ended;
+                                });
                             if (toolStepResults.length) yield {content: '', done: false, toolStepResults};
                             if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
 
@@ -1978,6 +2064,7 @@ export class AIService {
                             );
                             stepRoom.add(step);
 
+                            turnToolNames.push(...pendingToolCalls.map(tc => tc.name).filter(Boolean));
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -2009,7 +2096,6 @@ export class AIService {
                                 const errorBefore = followUpError;
                                 const failedBefore = followUpFailedForHealth;
                                 const errorStatusBefore = followUpErrorStatus;
-                                const errorTextBefore = errorText;
                                 let refusedForLength = false;
                                 for await (const resultChunk of sharedLine ? this.saySharedLine(sharedLine, sharedLineIds) : this.meteredStream(
                                     ledger,
@@ -2044,7 +2130,6 @@ export class AIService {
                                         followUpError = true;
                                         followUpFailedForHealth = true;
                                         if (resultChunk.metadata.errorStatus) followUpErrorStatus = resultChunk.metadata.errorStatus;
-                                        errorText ??= resultChunk.metadata.errorText;
                                     }
                                     // Accumulate content from follow-up response (same as main stream)
                                     if (resultChunk.content) {
@@ -2110,7 +2195,6 @@ export class AIService {
                                 followUpError = errorBefore;
                                 followUpFailedForHealth = failedBefore;
                                 followUpErrorStatus = errorStatusBefore;
-                                errorText = errorTextBefore;
                                 lastFollowUpDoneChunk = null;
                             }
 
@@ -2144,8 +2228,7 @@ export class AIService {
                                             sessionId: `conversation-${botId}-player-${playerId}`,
                                             model: config.model,
                                             provider: config.type,
-                                            input: followUpInput,
-                                            output: followUpContent,
+                                            toolNames: pendingToolCalls.map(tc => tc.name).filter(Boolean),
                                             inputTokens: followUpPromptTokens,
                                             cachedInputTokens: followUpCachedPromptTokens,
                                             outputTokens: followUpCompletionTokens,
@@ -2403,7 +2486,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (retryChunk.done && retryChunk.metadata?.error) {
                                             followUpFailedForHealth = true;
                                             if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
-                                            errorText ??= retryChunk.metadata.errorText;
                                         }
                                     }
                                 } catch (retryError) {
@@ -2514,8 +2596,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     sessionId: `conversation-${botId}-player-${playerId}`,
                                     model: config.model,
                                     provider: config.type,
-                                    input: followUpInput,
-                                    output: followUpContent,
                                     inputTokens: followUpPromptTokens,
                                     cachedInputTokens: followUpCachedPromptTokens,
                                     outputTokens: followUpCompletionTokens,
@@ -2585,7 +2665,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.error) {
                         error = true;
                         if (chunk.metadata.errorStatus) errorStatus = chunk.metadata.errorStatus;
-                        errorText ??= chunk.metadata.errorText;
                     }
                     if (chunk.done) {
                         streamCompleted = true;
@@ -2656,8 +2735,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                               // is no problem, and any call that ended the reply failing is, whatever was said before it
                               error: !!lastCall?.failed,
                               errorStatus: lastCall?.status,
-                              // A private bot's provider text can quote the conversation: only its status is kept
-                              errorText: privateBot ? 'details left out for a private bot' : lastCall?.errorText,
                               finishReason,
                               answered: !!accumulatedContent.trim() || hadToolCalls,
                               outputTokens: completionTokens,
@@ -2680,8 +2757,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: userMessageForQwen,
-                            output: firstCallContent,
                             inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
                             cachedInputTokens: followUpCachedPromptTokens !== undefined && cachedPromptTokens !== undefined ? cachedPromptTokens - followUpCachedPromptTokens : cachedPromptTokens,
                             outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
@@ -2712,8 +2787,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: followUpInput,
-                            output: followUpContent,
                             inputTokens: followUpPromptTokens,
                             cachedInputTokens: followUpCachedPromptTokens,
                             outputTokens: followUpCompletionTokens,
@@ -2738,14 +2811,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (!privateBot && streamCompleted && (accumulatedContent || error || problem)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
+                            toolNames: turnToolNames,
                             ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: message,
-                            output: accumulatedContent || '',
                             inputTokens: promptTokens,
                             cachedInputTokens: cachedPromptTokens,
                             outputTokens: completionTokens,
@@ -2874,7 +2946,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 console.error('[AIService] Error generating response:', error);
             }
             // Before this, a reply that broke here left no trace outside debug mode (#1498)
-            console.error(`[AIService] Bot ${botId} could not answer: ${privateTurn ? (error?.name ?? 'Error') : providerErrorText(error)}`);
+            console.error(`[AIService] Bot ${botId} could not answer: ${error?.name ?? 'Error'}`);
 
             // Track error. What an earlier answer to the same message cost is on the same ledger, so it is kept (#1993).
             if (options?.usage) options.usage.held = undefined;
@@ -3404,6 +3476,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         // Tool: offer to connect an App from the chat (game #2001). Any of a person's own Bricks, in its owner's direct messages.
         if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...appToolDefinitions());
+        // Tools: lead the owner to add a key for a service, and make a page take a payment (game #2044). The same Bricks, in the same chats.
+        if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...keyToolDefinitions());
 
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
@@ -3490,6 +3564,54 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return MCPConnector.refreshServerTools(botId, serverId, this.adminApiUrl, admin['adminApiToken'], this.toolSuggesterFor(providerId, botId));
     }
 
+    /** Every Brick this server has seen (a direct message, a map): a reply or a small call for one is always asked about by who it is for (#2005). */
+    private knownBricks = new Set<string>();
+    /** Whose each known Brick is, by their Orbit id (from the Brick's own settings): who its own small calls are asked as. */
+    private brickOwners = new Map<string, string>();
+
+    /** Who a Brick's own business is asked as: its owner, by the WorkAdventure id a map told us, else the Orbit id its settings carry. */
+    private ownerRefOf(botId: string | undefined): string | undefined {
+        if (!botId) return undefined;
+        return this.roomBricks.get(botId)?.ownerUuid ?? this.brickOwners.get(botId);
+    }
+
+    /**
+     * Who Orbit is asked about for a Brick's reply or small call: the person being answered, by their WorkAdventure id, or
+     * 'unknown' for someone who cannot be named (never taken for its owner). Undefined for a bot that is no Brick. A small call
+     * with nobody named never comes here (see getProviderCredentials).
+     */
+    private brickAsk(botId: string | undefined, asker: string | undefined, roomUrl?: string): { asker: string; roomUrl?: string } | undefined {
+        if (!botId || !(this.knownBricks.has(botId) || this.roomBricks.has(botId))) return undefined;
+        return { asker: asker ?? 'unknown', ...(roomUrl ? { roomUrl } : {}) };
+    }
+
+    /** The Bricks that stand in a room right now (#2005), with whose they are: set when one is put on a map, cleared when it leaves. */
+    private roomBricks = new Map<string, { ownerUuid: string; ownerName: string | null; roomUrl: string }>();
+
+    noteRoomBrick(botId: string, brick: { ownerUuid: string; ownerName: string | null; roomUrl: string } | undefined): void {
+        const known = this.roomBricks.get(botId);
+        if (known?.ownerUuid === brick?.ownerUuid && known?.roomUrl === brick?.roomUrl && known?.ownerName === brick?.ownerName) return;
+        if (brick) {
+            this.roomBricks.set(botId, brick);
+            // Once a Brick has stood on a map it stays a Brick here: a turn still under way when it is taken out or the room is
+            // read again asks Orbit about who it is for, and never falls back to the owner's key for someone else
+            this.knownBricks.add(botId);
+        } else this.roomBricks.delete(botId);
+        // What Orbit answered for one asker is not the answer for the next
+        this.botCredentialVersion.set(botId, (this.botCredentialVersion.get(botId) ?? 0) + 1);
+        for (const key of [...this.botCredentialCache.keys()]) if (key.startsWith(`${botId}:`)) this.botCredentialCache.delete(key);
+    }
+
+    /**
+     * A Brick that stands in a room, with who is talking to it: `asker` is who Orbit is asked about (a person it cannot
+     * name is never taken for its owner), `forOthers` whether it is anyone but its owner. Undefined for every other bot.
+     */
+    private roomBrickFor(botId: string | undefined, talkerId: string | undefined): { asker: string; roomUrl: string; ownerName: string | null; forOthers: boolean } | undefined {
+        const brick = botId ? this.roomBricks.get(botId) : undefined;
+        if (!brick) return undefined;
+        return { asker: talkerId ?? 'unknown', roomUrl: brick.roomUrl, ownerName: brick.ownerName, forOthers: talkerId !== brick.ownerUuid };
+    }
+
     /** Orbit keeps files in this bot's chats (it served their limits), so the file tools can be offered and run. */
     /**
      * The Bricks that are the one every account gets (game #1996): in its owner's direct messages such a Brick can make
@@ -3497,7 +3619,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private helperBricks = new Set<string>();
 
-    noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean } | undefined): void {
+    noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean; ownerId?: string } | undefined): void {
+        if (brick && !brick.deleted) this.knownBricks.add(botId);
+        else this.knownBricks.delete(botId);
+        if (brick && !brick.deleted && brick.ownerId) this.brickOwners.set(botId, brick.ownerId);
+        else this.brickOwners.delete(botId);
         if (brick?.isDefault && !brick.deleted) this.helperBricks.add(botId);
         else this.helperBricks.delete(botId);
         if (brick && !brick.deleted) this.ownBricks.add(botId);
@@ -3610,7 +3736,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
-    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; apps?: string[] }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
         const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
         if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
@@ -3619,6 +3745,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             admin,
             botId,
             userId,
+            apps: where.apps,
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time
@@ -3630,6 +3757,112 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /**
+     * One run of a goal or task that needs a model (#2002): its own context, never the person's chat, saving nothing into memory. Rounds of
+     * the model and its tools go on until `final` is called (that call ends it, after it ran), the model stops calling tools, or the steps
+     * are used up. Every model call is its own usage row on the task channel under the run's id, so what a run costs is on the books call by
+     * call. `permit` is asked before every model call and every tool: a run that was paused, finished, deleted or changed stops there.
+     */
+    async runBrickTask(opts: {
+        botId: string;
+        providerId: string;
+        system: string;
+        user: string;
+        tools: any[];
+        maxSteps: number;
+        signal?: AbortSignal;
+        permit: () => Promise<boolean>;
+        runTool: (name: string, args: Record<string, unknown>) => Promise<string>;
+        final: string;
+        usage: { runId: string; attempt: number; userId?: string };
+    }): Promise<{ ended: 'final' | 'no_tool' | 'steps' | 'not_permitted' | 'resting' | 'failed'; error?: string; status?: number }> {
+        const resolved = await this.resolveProvider(opts.providerId, opts.botId);
+        if (resolved.resting) return { ended: 'resting' };
+        const config = resolved.config;
+        const rounds: ReplySteps = { steps: [] };
+        // A model that answers in words instead of calling a tool is asked once more, then it is a no
+        let user = opts.user;
+        let nudged = false;
+        for (let round = 1; round <= opts.maxSteps; round++) {
+            if (opts.signal?.aborted) return { ended: 'failed', error: 'stopped' };
+            if (!(await opts.permit())) return { ended: 'not_permitted' };
+            // One ledger for each call: each is a usage row of its own
+            const ledger = new UsageLedger();
+            const startedAt = Date.now();
+            let content = '';
+            let reasoning: string | undefined;
+            let meta: AIStreamChunk['metadata'] | undefined;
+            const calls = new Map<string, { id: string; name: string; arguments: string }>();
+            let failed: string | null = null;
+            try {
+                for await (const chunk of this.meteredStream(ledger, config.providerId, opts.system, user, config, opts.tools, opts.signal, undefined, rounds.steps.length > 0 ? rounds : undefined)) {
+                    if (chunk.content) content += chunk.content;
+                    for (const call of chunk.toolCalls ?? []) {
+                        const known = call.id ? calls.get(call.id) : Array.from(calls.values()).pop();
+                        if (known) {
+                            if (call.arguments && call.arguments !== '{}') known.arguments += call.arguments;
+                            if (call.name) known.name = call.name;
+                        } else if (call.id) {
+                            calls.set(call.id, { id: call.id, name: call.name || '', arguments: call.arguments && call.arguments !== '{}' ? call.arguments : '' });
+                        }
+                    }
+                    if (chunk.done) {
+                        meta = chunk.metadata;
+                        if (chunk.reasoning) reasoning = chunk.reasoning;
+                    }
+                }
+            } catch (error) {
+                failed = providerErrorText(error);
+            }
+            const errored = failed !== null || !!meta?.error;
+            // The call's own row, whether it worked or not: a call that was made was paid for, and one that never started adds a zero
+            await this.trackUsage(
+                opts.botId,
+                config.providerId,
+                {
+                    tokensUsed: meta?.tokensUsed ?? 0,
+                    promptTokens: meta?.promptTokens ?? 0,
+                    completionTokens: meta?.completionTokens ?? 0,
+                    ...(meta?.cacheReadTokens || meta?.cacheWriteTokens ? { cacheReadTokens: meta.cacheReadTokens ?? 0, cacheWriteTokens: meta.cacheWriteTokens ?? 0 } : {}),
+                    latency: Date.now() - startedAt,
+                    error: errored,
+                },
+                ledger.summary(),
+                { channel: 'task', runId: opts.usage.runId, eventId: `${opts.usage.attempt}.${round}`, ...(opts.usage.userId ? { userId: opts.usage.userId } : {}) }
+            );
+            if (errored) return { ended: 'failed', error: failed ?? meta?.errorText ?? 'The model did not answer', ...(meta?.errorStatus ? { status: meta.errorStatus } : {}) };
+            const pending = Array.from(calls.values()).filter((call) => call.name.trim() !== '');
+            if (pending.length === 0) {
+                if (nudged || round >= opts.maxSteps) return { ended: 'no_tool' };
+                nudged = true;
+                user = `${opts.user}\n\nAnswer by calling a tool this time: end the check by calling ${opts.final}, not with plain words.`;
+                continue;
+            }
+            const results: { id: string; name: string; text: string }[] = [];
+            let finished = false;
+            for (const call of pending) {
+                if (!(await opts.permit())) return { ended: 'not_permitted' };
+                const args = this.safeParseToolArgs(call.arguments || '{}');
+                let text: string;
+                try {
+                    text = await opts.runTool(call.name, args);
+                } catch (error) {
+                    text = JSON.stringify({ error: 'That did not work just now.' });
+                    console.warn(`[AIService] A step of a goal or task failed (${call.name}):`, error instanceof Error ? error.message : error);
+                }
+                results.push({ id: call.id, name: call.name, text });
+                // The first finish that was accepted ends it: nothing after it in the same round runs or changes what it said
+                if (call.name === opts.final && !text.includes('"error"')) {
+                    finished = true;
+                    break;
+                }
+            }
+            if (finished) return { ended: 'final' };
+            rounds.steps.push(stepOf(round, content, pending, results, reasoning));
+        }
+        return { ended: 'steps' };
     }
 
     /**
@@ -3719,6 +3952,22 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             admin.brickOffersFor(botId, userId).catch(() => null),
         ]);
         return appsNote(apps, offers?.topics ?? []);
+    }
+
+    /** What such a Brick is told about Apps with a key: the services it can lead them to set up, and the ones they have. Empty when Orbit cannot say. */
+    private async keyAppsNoteFor(botId: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<string> {
+        if (!this.appToolsOn(botId, botClient, adminApiService)) return '';
+        const { apps, services } = await loadKeyAppList(botId, this.adminApiUrl, process.env.BOT_SERVICE_TOKEN || '');
+        return keyAppsNote(apps, services);
+    }
+
+    /** Runs ask_for_key or take_payments_on_page for the owner in this direct message. Never throws. */
+    private async runKeyToolCall(name: string, args: Record<string, unknown>, where: { botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        const side = { adminApiUrl: this.adminApiUrl, serviceToken: process.env.BOT_SERVICE_TOKEN || '' };
+        const { apps } = await loadKeyAppList(where.botId, side.adminApiUrl, side.serviceToken);
+        return runKeyTool(name, args, { where: side, botId: where.botId, userId: memory.userUuid, apps });
     }
 
     /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
@@ -4065,8 +4314,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** Set when other people read the reply (#1993): everyone else who is there, by who they are. */
         present?: readonly string[],
         /** This reply was offered the reminder tools (#2002): a call to one of them from a reply that was not offered them is not run. */
-        taskToolsOffered = false
-    ): Promise<Array<{ id: string; name: string; result: any }>> {
+        taskToolsOffered = false,
+        /** The reply is for someone but the Brick's owner (#2005): a call to anything of the owner's is not run, whatever the model asks for. */
+        forOthers = false
+    ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
         // Filter out invalid tool calls (empty name, undefined, etc.)
@@ -4092,7 +4343,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
                 // An Instant App's name is made from its tool, so it has no case of its own: it is told apart here. A tool server's tool of the same name stays that tool's
                 const instantRun = isInstantTool(toolCall.name) && !toolServerMap?.has(toolCall.name);
-                switch (instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
+                // A visitor's turn never runs the owner's artifacts, files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
+                const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
+                switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4401,6 +4654,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         break;
 
                     case SET_REMINDER_TOOL:
+                    case SET_BRIEFING_TOOL:
+                    case SET_WATCH_TOOL:
+                    case SET_GOAL_TOOL:
                     case MY_TASKS_TOOL:
                     case CHANGE_TASK_TOOL:
                     case KEEP_WORKDAYS_TOOL:
@@ -4417,6 +4673,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case ASK_FOR_KEY_TOOL:
+                    case PAYMENT_TOOL:
+                        result = await this.runKeyToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botId, playerId }
                         );
                         break;
 
@@ -4454,7 +4719,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case COMPUTER_TOOL:
                         result = await this.runComputerToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { adminApiService, botId, playerId }
+                            { adminApiService, botId, playerId, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
                         );
                         break;
 
@@ -4478,7 +4743,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     default: {
                         // Check if this is an MCP tool (not a hardcoded one)
-                        const mcpServerConfig = toolServerMap?.get(toolCall.name);
+                        // (a visitor's turn has no Apps: its list is empty, and a name from it is refused here as well)
+                        const mcpServerConfig = forOthers ? undefined : toolServerMap?.get(toolCall.name);
                         if (mcpServerConfig) {
                             // One check right before the call starts (#1656): the model's list is only a convenience
                             const verdict = botId
@@ -4530,12 +4796,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     }
                 }
 
-                return { id: toolCall.id, name: toolCall.name, result };
+                // When this call settled, so a quick call is not timed with the slowest one it ran beside (#2061)
+                return { id: toolCall.id, name: toolCall.name, result, endedAt: Date.now() };
             } catch (error: any) {
                 return {
                     id: toolCall.id,
                     name: toolCall.name,
                     result: { error: error.message || 'Tool execution failed' },
+                    endedAt: Date.now(),
                 };
             }
         });
@@ -4571,7 +4839,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (!label) return false;
             let yes = false;
             try {
-                yes = isConfirm(await this.quickGenerate(providerId, CONFIRM_SYSTEM, message.slice(0, 300), botId, CONFIRM_TIMEOUT_MS));
+                yes = isConfirm(await this.quickGenerate(providerId, CONFIRM_SYSTEM, message.slice(0, 300), botId, CONFIRM_TIMEOUT_MS, person.uuid));
             } catch {
                 // Not knowing is not a yes: the card closes and the person asks again
             }
@@ -5757,7 +6025,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         providerId: string,
         call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>,
         botId?: string,
-        timeoutMs: number = QUICK_LLM_TIMEOUT_MS
+        timeoutMs: number = QUICK_LLM_TIMEOUT_MS,
+        asker?: string
     ): Promise<T | undefined> {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         let lookupTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -5767,7 +6036,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // own deadline: the provider call below then still has its full time, instead of
             // starting already aborted after a slow lookup.
             const config = await Promise.race([
-                this.getProviderCredentials(providerId, botId),
+                this.getProviderCredentials(providerId, botId, asker),
                 new Promise<never>((_resolve, reject) => {
                     lookupTimeoutId = setTimeout(() => reject(new Error("credential lookup timed out")), QUICK_LLM_TIMEOUT_MS);
                 }),
@@ -5794,7 +6063,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * interruption feature works for bots on any provider.
      * Returns the action and a message to say as a followup.
      */
-    async quickClassify(providerId: string, currentTask: string, newMessage: string, botId?: string): Promise<{ action: InterruptionAction; message: string }> {
+    async quickClassify(providerId: string, currentTask: string, newMessage: string, botId?: string, asker?: string): Promise<{ action: InterruptionAction; message: string }> {
         const prompt = `Current task: "${currentTask}"
 New message: "${newMessage}"
 
@@ -5821,7 +6090,9 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
                 undefined,
                 signal
             ),
-            botId
+            botId,
+            undefined,
+            asker
         );
         if (!result) return { action: 'queue', message: '' };
 
@@ -5843,7 +6114,7 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
      * Returns '' on failure so callers stay silent rather than fall back to
      * hardcoded text.
      */
-    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string, timeoutMs?: number): Promise<string> {
+    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string, timeoutMs?: number, asker?: string): Promise<string> {
         // Same bounded-abort pattern as quickClassify: the overflow ack runs in
         // the interruption-routing path — a slow provider must not delay it for
         // the provider's own (30s+) timeout, and the call must actually be
@@ -5851,7 +6122,8 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
         const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
             provider.generate(systemPrompt, userPrompt, config, undefined, signal),
             botId,
-            timeoutMs
+            timeoutMs,
+            asker
         );
         return (result?.content || '').trim();
     }

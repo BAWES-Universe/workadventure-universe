@@ -8,6 +8,7 @@
     import { bricksPageOpenStore } from "../Stores/ChatStore";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import PageGroup from "../../external-modules/bots/components/page/PageGroup.svelte";
+    import { openNextOn } from "../../external-modules/bots/components/BotDetailView.svelte";
     import { shortDay, type BrickCard, type DeletedBrickCard } from "./Brick";
     import BrickPage from "./BrickPage.svelte";
     import BrickPicture from "./BrickPicture.svelte";
@@ -27,16 +28,21 @@
     import { appsPageRequest, takeAppsPageRequest } from "./Apps/OpenApps";
     import { brickPageRequest, takeBrickPageRequest } from "./Templates/OpenBrick";
     import UsagePage from "./UsagePage.svelte";
+    import { takeUsagePageRequest, usagePageRequest } from "./OpenUsage";
     import { fullAgainWhen } from "./Usage";
     import { loadMyUsage, myUsageStore } from "./UsageStore";
-    import { IconApps, IconChartBar, IconChevronDown, IconPlus } from "@wa-icons";
+    import { myGoalsList, sayBrief } from "./BrickGoals";
+    import GoalsPage from "./GoalsPage.svelte";
+    import { goalsPageRequest, takeGoalsPageRequest } from "./OpenGoals";
+    import { IconApps, IconChartBar, IconChevronDown, IconPlus, IconTargetArrow } from "@wa-icons";
 
     /**
      * The Bricks page (game #1995): the person's own Bricks, each with its switch. The Bricks button in the Chats footer
      * opens it over the chat list, the way "Find a group" opens. A tap on a Brick opens its own page (#1996), as a tap on a
      * bot opens its page in the map editor, and its chat is in Chats. New Brick on top makes another one (#1996); a
-     * deleted Brick waits under Deleted with Undo until the day it is gone for good. Goals and tasks and apps come to this page with their
-     * own issues. The Usage row at the bottom opens the Usage page (#1999).
+     * deleted Brick waits under Deleted with Undo until the day it is gone for good. Under the list, the Goals and tasks row
+     * opens everything the person gave any of their Bricks (#2002), the Apps row the Apps page (#2001), and the Usage row the
+     * Usage page (#1999).
      *
      * Drawn like the bots list of the map editor (BotList and BotRow): the same header, sections, rows and switch.
      */
@@ -51,19 +57,40 @@
     // The Brick whose own page is open over the list
     let pageOfId: string | undefined;
     let undoing = new Set<string>();
-    // The Usage page, open over the list
+    // The Usage page, open over the list. A link in a Brick's answer ("What it used") asks for it, with one receipt open.
     let usageOpen = false;
+    let usageReceiptId: string | undefined;
     // The Apps page, open over the list. A link or a card elsewhere (a Brick's "Connect my apps") asks for it to open.
     let appsOpen = false;
+    // The Goals and tasks page, open over the list. A Brick's own page opened from it goes back to it.
+    let goalsOpen = false;
+    // "Goals and tasks" in a Brick's words, after it set one: the page opens over whatever was open
+    $: if ($goalsPageRequest) {
+        appsOpen = false;
+        usageOpen = false;
+        pageOfId = undefined;
+        goalsOpen = true;
+        takeGoalsPageRequest();
+    }
     $: if ($appsPageRequest) {
+        goalsOpen = false;
         appsOpen = true;
         takeAppsPageRequest();
+    }
+    $: if ($usagePageRequest) {
+        appsOpen = false;
+        goalsOpen = false;
+        pageOfId = undefined;
+        usageReceiptId = $usagePageRequest.receiptId;
+        usageOpen = true;
+        takeUsagePageRequest();
     }
 
     // A Brick just made from a template opens on its own page: that is where "Setup required" and "Made from" are
     $: if ($brickPageRequest) {
         appsOpen = false;
         usageOpen = false;
+        goalsOpen = false;
         pageOfId = $brickPageRequest;
         takeBrickPageRequest();
     }
@@ -97,8 +124,40 @@
             ? appsRowNames(myApps, appsText.and(), (count) => appsText.more({ count }))
             : appsText.rowNone();
 
+    $: brickLooks = Object.fromEntries((bricks ?? []).map((brick) => [brick.id, brick.characterTextureId]));
+    $: brickNames = Object.fromEntries((bricks ?? []).map((brick) => [brick.id, brick.name]));
+    // The Goals and tasks row says what is going on in a line, across all Bricks
+    const { items: myGoals, state: myGoalsState } = myGoalsList;
+    $: goalsBrief = $myGoalsState === "ready" ? sayBrief($myGoals, Date.now(), $LL, $locale) : "";
+
+    // A Brick's own page can change its goals and tasks (Pause, Mark done, Reopen): reading again when it closes keeps this row's line true
+    let hadBrickPage = false;
+    $: {
+        const has = pageOfId !== undefined;
+        if (hadBrickPage && !has) myGoalsList.load().catch((error) => console.error(error));
+        hadBrickPage = has;
+    }
+
+    /** A goal or task tapped on the Goals and tasks page: its Brick's page, open on Goals and tasks. */
+    function openGoalOn(brickId: string) {
+        openNextOn("goals");
+        pageOfId = brickId;
+    }
+
     function usageBriefOf(chat: typeof usageChat, language: string | undefined): string {
         if (!chat) return usageText.rowUnknown();
+        if (chat.unavailable) return usageText.rowUnknown();
+        const replies = chat.replies;
+        if (replies) {
+            // Real counts: what is available out of what the person has, never "plenty"
+            if (chat.extra?.noLimit) return usageText.rowNoLimit();
+            if (!replies.running) return usageText.rowRepliesIdle({ count: replies.total });
+            if (replies.available === 0) {
+                const when = fullAgainWhen(chat.fullAgainAt, language);
+                return when ? usageText.rowRepliesOut({ when }) : usageText.rowRepliesOutNoTime();
+            }
+            return usageText.rowReplies({ available: replies.available, total: replies.total });
+        }
         if (chat.words === "plenty" || chat.words === "half") return usageText.rowPlenty();
         const when = fullAgainWhen(chat.fullAgainAt, language);
         if (chat.words === "low") return when ? usageText.rowLow({ when }) : usageText.rowLowNoTime();
@@ -122,6 +181,8 @@
         loadMyUsage().catch((error) => console.error(error));
         // The Apps row's line; the row works without it
         loadMyApps().catch((error) => console.error(error));
+        // The Goals and tasks row's line; the row works without it
+        myGoalsList.load().catch((error) => console.error(error));
         loadMyBricks()
             .catch((error) => console.error(error))
             .finally(() => (loading = false));
@@ -152,9 +213,11 @@
 {#if appsOpen}
     <AppsPage onBack={() => (appsOpen = false)} />
 {:else if usageOpen}
-    <UsagePage onBack={() => (usageOpen = false)} />
+    <UsagePage onBack={() => (usageOpen = false)} receiptId={usageReceiptId} looks={brickLooks} />
 {:else if pageOf}
     <BrickPage brick={pageOf} onBack={() => (pageOfId = undefined)} onDeleted={() => (pageOfId = undefined)} />
+{:else if goalsOpen}
+    <GoalsPage onBack={() => (goalsOpen = false)} onOpen={openGoalOn} looks={brickLooks} names={brickNames} />
 {:else}
     <div class="bk flex h-full min-h-0 flex-col" data-testid="bricksPage">
         <PanelHeader
@@ -260,6 +323,16 @@
                 {/if}
             </div>
             <div class="bk-use">
+                <div data-testid="bricksGoalsRow">
+                    <PageGroup
+                        id="goals"
+                        icon={IconTargetArrow}
+                        title={$LL.chat.brick.goals.title()}
+                        brief={goalsBrief}
+                        link
+                        onToggle={() => (goalsOpen = true)}
+                    />
+                </div>
                 <div data-testid="bricksAppsRow">
                     <PageGroup
                         id="apps"
@@ -277,7 +350,10 @@
                         title={usageText.title()}
                         brief={usageBrief}
                         link
-                        onToggle={() => (usageOpen = true)}
+                        onToggle={() => {
+                            usageReceiptId = undefined;
+                            usageOpen = true;
+                        }}
                     />
                 </div>
             </div>

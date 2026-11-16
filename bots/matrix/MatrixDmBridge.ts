@@ -16,6 +16,7 @@ import {
     type BotNoteState,
     type NoteLanguage,
 } from './BotStatusNotes';
+import { holdsAKey, keyInChatReply } from './KeyInChat';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
@@ -32,6 +33,8 @@ import type { SpokeAnswer } from '../server/BrickRunner';
 export const ROOM_LINK_KEY = 'universe.room_link';
 /** The words of a voice note the bot heard, carried by a notice that points at the note: `{ v: 1, for, state, text }`. */
 export const TRANSCRIPT_KEY = 'universe.transcript';
+/** What `hearNote` returns when the words heard look like a key (not a real transcript: it cannot be spoken). */
+const HEARD_A_KEY = '\u0000key';
 /** Marks the one copy, in a direct chat, of an answer its person got in nearby chat with others around (game #1993). */
 export const ANSWERED_NEARBY_KEY = 'universe.answered_nearby';
 /** On a person's message: the starter they tapped under a Brick's hello (game #1995). The message is the starter's own words. */
@@ -179,7 +182,7 @@ export interface MatrixDmBridgeDeps {
     /** Hearing for voice notes (#1979 follow-up): without it a note reaches the bot as the audio file it always was. */
     noteHearing?: Pick<NoteHearingService, 'hear' | 'canHear' | 'limits'>;
     /** One short in-character "not now" from a resting bot, or '' to leave only the plain note. */
-    restingLine?(config: BotConfiguration, text: string): Promise<string>;
+    restingLine?(config: BotConfiguration, text: string, asker?: string): Promise<string>;
     /** The bot's Woka as a PNG for its chat picture, or null when it has none. Without it bots keep no picture. */
     wokaPicture?(config: BotConfiguration): Promise<Buffer | null>;
     /**
@@ -775,7 +778,23 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
      */
     async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer> {
-        // "No chat" and "not allowed" are said only when the answer was certain; a look that failed is "could not tell"
+        const room = await this.roomToSpeakIn(botId, matrixUserId);
+        if ('reason' in room) return { ok: false, reason: room.reason };
+        try {
+            const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text }, transactionId);
+            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+    }
+
+    /**
+     * The direct chat a Brick may speak in to this person right now, for what is said on a run (a message, or the card a goal puts up): the
+     * chat the two share alone, and only for someone Orbit says may message the bot. It never makes a chat. "No chat" and "not allowed" are
+     * said only when the answer was certain; a look that failed is "could not tell".
+     */
+    async roomToSpeakIn(botId: string, matrixUserId: string): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' }> {
         let looked: { roomId: string | null; unsure: boolean };
         try {
             looked = await this.lookUpDirectRoom(botId, matrixUserId);
@@ -796,13 +815,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!mayChat(access)) return { ok: false, reason: 'not_allowed' };
         // Asked while this waited: someone else may have joined the room meanwhile, and then nothing goes there (the next try looks again and finds it is not theirs)
         if (!this.stillTheirs(looked.roomId, this.botUserId(botId), matrixUserId)) return { ok: false, reason: 'unsure' };
-        try {
-            const eventId = await this.client.sendMessage(this.botUserId(botId), looked.roomId, { msgtype: 'm.text', body: text }, transactionId);
-            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
-        } catch (error: any) {
-            console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
-            return { ok: false, reason: 'unsure' };
-        }
+        return { ok: true, roomId: looked.roomId };
     }
 
     /**
@@ -849,6 +862,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const members = this.roomMembers.get(roomId);
         if (!members) return true;
         return members.size === 2 && members.has(botUserId) && members.has(matrixUserId);
+    }
+
+    /** Whether this room is still only the bot's and this person's, by what the bot was last told (asked right before a card goes into it). */
+    roomStillTheirs(botId: string, roomId: string, matrixUserId: string): boolean {
+        return this.stillTheirs(roomId, this.botUserId(botId), matrixUserId);
     }
 
     private botUserId(botId: string): string {
@@ -1251,10 +1269,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         // Chats started before bots had pictures get theirs with the next message; after that this costs nothing.
         void this.avatars?.update(this.botUserId(botId), config);
+        // A key typed into the chat (game #2044): never answered, never remembered (not even for a resting Brick), never given to the
+        // model. The Brick says where keys go.
+        const refuseKey = async () => {
+            if (catchUp) return;
+            // Every paste gets the answer: the person is waiting on this message, like any other, and a dropped one would leave them guessing
+            await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).catch(() => undefined);
+        };
+        if (holdsAKey(String(content.body ?? ''))) {
+            await refuseKey();
+            return;
+        }
         if (config.enabled === false) {
             // Resting again is not a failed answer, so a message already tried keeps its count.
             await this.rememberWaiting(botId, event, attemptsOf(event));
-            if (!catchUp) await this.sayResting(botId, event, config, language);
+            if (!catchUp) await this.sayResting(botId, event, config, language, user.uuid);
             return;
         }
         if (!config.aiProviderRef) {
@@ -1265,10 +1294,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const read = await this.readMessage(botUserId, content);
         const { attachments, failed } = read;
         let text = read.text;
+        if (holdsAKey(text) || holdsAKey(String(content.body ?? ''))) {
+            await refuseKey();
+            return;
+        }
         if (read.note && this.deps.noteHearing) {
             // A voice note is heard once, here: the bot answers the words, and the note shows what was heard (or that it could not be)
             const heard = await this.hearNote(botUserId, botId, event, read.note, { userId: user.uuid, isGuest: user.isGuest });
             if (heard === 'unheard') return;
+            // Words heard in a note are screened like typed ones: never shown, remembered or given to the model
+            if (heard === HEARD_A_KEY) {
+                await refuseKey();
+                return;
+            }
             if (heard) text = text ? `${text}\n[Voice note] ${heard}` : `[Voice note] ${heard}`;
         }
         if (!text && attachments.length === 0) {
@@ -1494,10 +1532,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** A resting bot says "not now" in its own voice now and then, and the plain note says why. */
-    private async sayResting(botId: string, event: MatrixEvent, config: BotConfiguration, language: NoteLanguage): Promise<void> {
+    private async sayResting(botId: string, event: MatrixEvent, config: BotConfiguration, language: NoteLanguage, asker?: string): Promise<void> {
         const roomId = event.room_id;
         if (this.deps.restingLine && !this.recentlySent(this.lastRestingLine, roomId, RESTING_LINE_REPEAT_MS)) {
-            const line = await this.deps.restingLine(config, String(event.content?.body ?? '')).catch(() => '');
+            const line = await this.deps.restingLine(config, String(event.content?.body ?? ''), asker).catch(() => '');
             const sent = line
                 ? await this.client.sendText(this.botUserId(botId), roomId, line).then(
                       () => true,
@@ -1737,6 +1775,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (!words) {
                 await show('failed');
                 return 'unheard';
+            }
+            // A key read out loud is held back like a typed one: the transcript row is not shown with it, and the bot never gets it.
+            // The whole transcript is read, before it is cut to fit: a key past the cut (or across it) must not slip by.
+            if (holdsAKey(heard.text)) {
+                await show('failed');
+                return HEARD_A_KEY;
             }
             await show('heard', words);
             return words;

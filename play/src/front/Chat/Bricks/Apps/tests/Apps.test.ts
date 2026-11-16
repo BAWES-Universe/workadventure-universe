@@ -26,6 +26,9 @@ const app = (over: Record<string, unknown> = {}) => ({
     signInLostAt: null,
     connectedAt: "2026-11-04T09:00:00.000Z",
     lendable: true,
+    kind: "mcp",
+    keyLast4: null,
+    keyMode: null,
     bricks: [brick],
     ...over,
 });
@@ -65,6 +68,13 @@ describe("reading Orbit's answers about apps (#2001)", () => {
         expect(parseMyApp({ ...app(), id: "" })).toBeUndefined();
         expect(parseMyApps({ apps: [app(), { nonsense: true }], bricks: [] })).toBeUndefined();
         expect(parseMyApps({ apps: [app()], bricks: [{ id: "b1", name: "Brick" }] })?.apps).toHaveLength(1);
+    });
+
+    it("reads an app added with a key as one, with only how the key ends and whether it is a test key", () => {
+        const read = parseMyApp(app({ kind: "direct", keyLast4: "ab12", keyMode: "live", key: "sk_live_secret" }));
+        expect(read).toMatchObject({ kind: "direct", keyLast4: "ab12", keyMode: "live" });
+        expect(JSON.stringify(read)).not.toContain("sk_live_secret");
+        expect(parseMyApp(app({ kind: "other", keyMode: "weird" }))).toMatchObject({ kind: "mcp", keyMode: null });
     });
 
     it("never calls an app lendable unless Orbit said so", () => {

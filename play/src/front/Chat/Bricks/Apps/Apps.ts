@@ -5,6 +5,8 @@
  * whether it still works.
  */
 
+import { parseGitHubWhere, type GitHubWhere } from "./GitHub";
+
 /** The four things bots may use an app for, as Orbit names them for a lend. */
 export const THINGS = ["lookUp", "make", "change", "deleteSend"] as const;
 export type Thing = (typeof THINGS)[number];
@@ -32,6 +34,11 @@ export interface MyApp {
     connectedAt: string;
     /** Whether it can be lent to a universe: only an app added with a link and a key or nothing, never one signed in as the person */
     lendable: boolean;
+    /** "direct" for an app with a key the person added on the safe form (game #2044); everything else signs in or is a link. */
+    kind: "mcp" | "direct";
+    /** For a key app: how the key ends, and whether it is a test key or a real one. Never more. */
+    keyLast4: string | null;
+    keyMode: "test" | "live" | null;
     bricks: AppBrick[];
 }
 
@@ -72,6 +79,8 @@ export interface MyAppPage {
     canLetUse: BrickChoice[];
     lentTo: Lend[];
     canLendTo: UniverseChoice[];
+    /** The person's GitHub (game #2041): where it works, and where it waits for an owner's OK */
+    github?: GitHubWhere;
 }
 
 export interface Person {
@@ -186,6 +195,9 @@ export function parseMyApp(value: unknown): MyApp | undefined {
         signInLostAt: when(value.signInLostAt),
         connectedAt: when(value.connectedAt) ?? "",
         lendable: value.lendable === true,
+        kind: value.kind === "direct" ? "direct" : "mcp",
+        keyLast4: text(value.keyLast4) ?? null,
+        keyMode: value.keyMode === "test" || value.keyMode === "live" ? value.keyMode : null,
         bricks,
     };
 }
@@ -253,7 +265,9 @@ export function parseMyAppPage(value: unknown): MyAppPage | undefined {
     const canLetUse = list(value.canLetUse, parseBrickChoice);
     const lentTo = list(value.lentTo, lend);
     const canLendTo = list(value.canLendTo, universeChoice);
-    return app && canLetUse && lentTo && canLendTo ? { app, canLetUse, lentTo, canLendTo } : undefined;
+    if (!app || !canLetUse || !lentTo || !canLendTo) return undefined;
+    const github = app.source === "github" ? parseGitHubWhere(value.github) : undefined;
+    return { app, canLetUse, lentTo, canLendTo, ...(github ? { github } : {}) };
 }
 
 function person(value: unknown): Person | undefined {

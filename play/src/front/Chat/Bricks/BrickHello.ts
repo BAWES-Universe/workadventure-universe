@@ -5,7 +5,8 @@ import { STARTER_IDEAS, type AppOffer, type BrickOffer } from "./Brick";
 /**
  * The fixed words of a person's own Brick (game #1995): its hello, the ways to start under it, and the ideas under its
  * "what I can do" answer. The game shows them itself, so they cost nothing and nothing is sent until the person taps
- * or writes. They list only what a Brick can do today; more arrive with the issues that build them.
+ * or writes. They list only what a Brick can do today; more arrive with the issues that build them. A Brick can keep a reminder,
+ * a briefing, a watch or a goal for its owner (#2002), so the hello and the ideas say so.
  */
 
 /**
@@ -42,6 +43,8 @@ export const BRICK_STARTERS_CARD = "brick.starters";
 export const STARTER_MAKE = "make";
 /** The starter that opens the Apps page (#2001). Nothing is sent: the page opens. */
 export const STARTER_APPS = "apps";
+/** The starter that gives the Brick a goal (#2002): sent as the person's own words, and the Brick asks what the goal is. */
+export const STARTER_GOAL = "goal";
 export const BRICK_IDEAS_CARD = "brick.ideas";
 
 /** The ways to start under the hello, on the question card. Only starters that work today. */
@@ -49,6 +52,7 @@ export function brickStartersCard(ll: TranslationFunctions): BotAsk {
     return ownCard(BRICK_STARTERS_CARD, ll.chat.brick.startTitle(), [
         { id: STARTER_IDEAS, label: ll.chat.brick.seeWhatICanDo(), line: ll.chat.brick.seeWhatICanDoLine() },
         { id: STARTER_APPS, label: ll.chat.brick.connectMyApps(), line: ll.chat.brick.connectMyAppsLine() },
+        { id: STARTER_GOAL, label: ll.chat.brick.giveGoal(), line: ll.chat.brick.giveGoalLine() },
         { id: STARTER_MAKE, label: ll.chat.brick.makeAnother(), line: ll.chat.brick.makeAnotherLine() },
     ]);
 }
@@ -97,13 +101,16 @@ export function brickAppCard(offer: AppOffer, ll: TranslationFunctions): BotAsk 
     return ownCard(BRICK_APP_CARD, offer.ask || text.askByName({ name: offer.name }), choices);
 }
 
-export const BRICK_IDEAS = ["write", "web", "file", "think"] as const;
+export const BRICK_IDEAS = ["brief", "watch", "goal", "write", "web", "file", "think"] as const;
 export type BrickIdea = (typeof BRICK_IDEAS)[number];
 
 /** The ideas under the Brick's "what I can do" answer, in its own voice. */
 export function brickIdeasCard(ll: TranslationFunctions): BotAsk {
     const ideas = ll.chat.brick.ideas;
     return ownCard(BRICK_IDEAS_CARD, ll.chat.brick.ideasTitle(), [
+        { id: "brief", label: ideas.brief(), line: ideas.briefLine() },
+        { id: "watch", label: ideas.watch(), line: ideas.watchLine() },
+        { id: "goal", label: ideas.goal(), line: ideas.goalLine() },
         { id: "write", label: ideas.write(), line: ideas.writeLine() },
         { id: "web", label: ideas.web(), line: ideas.webLine() },
         { id: "file", label: ideas.file(), line: ideas.fileLine() },
@@ -115,6 +122,12 @@ export function brickIdeasCard(ll: TranslationFunctions): BotAsk {
 export function brickIdeaWords(idea: string, ll: TranslationFunctions): string | undefined {
     const ideas = ll.chat.brick.ideas;
     switch (idea) {
+        case "brief":
+            return ideas.briefAsk();
+        case "watch":
+            return ideas.watchAsk();
+        case "goal":
+            return ideas.goalAsk();
         case "write":
             return ideas.writeAsk();
         case "web":

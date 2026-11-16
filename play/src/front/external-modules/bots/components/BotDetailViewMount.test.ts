@@ -33,6 +33,8 @@ vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
 vi.mock("../../../Connection/LocalUserStore", () => ({
     localUserStore: new Proxy({}, { get: () => () => undefined }),
 }));
+// A Brick's page opens its chat from Goals and tasks; this page is no Brick's
+vi.mock("../../../Chat/Bricks/BrickChat", () => ({ openBrickChat: () => Promise.resolve(undefined) }));
 vi.mock("../../admin-api/index", () => ({ canOpenOrbit: () => false, openOrbitPage: () => {} }));
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";

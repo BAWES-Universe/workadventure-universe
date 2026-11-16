@@ -63,7 +63,13 @@
         bot ? { kind: "bot", state: botDotState } : { kind: "person", place: partner.place, lastSeenAt }
     ) as ChatStatusFacts;
     $: dot = statusDotColour(facts, $LL);
-    $: words = bot ? undefined : statusWords(facts, $LL, $locale, Date.now());
+    $: statusLine = bot ? undefined : statusWords(facts, $LL, $locale, Date.now());
+    // On a call with a Brick: a label after the status words, never a status (game #2004)
+    $: partnerOnACall = partner.user?.onACall ?? readable(false);
+    $: words =
+        statusLine && $partnerOnACall
+            ? `${statusLine}${$LL.chat.topRow.separator()}${$LL.chat.brickCall.onACall()}`
+            : statusLine;
 </script>
 
 <button

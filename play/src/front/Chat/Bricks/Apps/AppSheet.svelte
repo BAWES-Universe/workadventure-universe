@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { IconX } from "@wa-icons";
 
     /**
      * A sheet for a choice about an app (Lend, Add a manager): it rises from the bottom on a phone and sits in the middle on
@@ -10,6 +11,10 @@
     export let sub = "";
     export let onClose: () => void;
     export let testId = "app-sheet";
+    /** A close mark in the corner, for a sheet with a form: its own label for screen readers */
+    export let closeLabel: string | undefined = undefined;
+    /** The buttons stay in view at the foot of a sheet that scrolls, on a small phone */
+    export let stickyButtons = false;
 
     let sheet: HTMLDivElement | undefined;
 
@@ -76,10 +81,21 @@
         data-testid={testId}
         on:click|stopPropagation
     >
-        <h2 class="sh-title">{title}</h2>
+        {#if closeLabel}
+            <div class="sh-xrow">
+                <button
+                    type="button"
+                    class="u-close sh-x"
+                    aria-label={closeLabel}
+                    data-testid="appSheetClose"
+                    on:click={onClose}><IconX font-size="20" /></button
+                >
+            </div>
+        {/if}
+        <h2 class="sh-title" class:with-x={!!closeLabel}>{title}</h2>
         {#if sub}<p class="sh-sub">{sub}</p>{/if}
         <slot />
-        <div class="sh-btns"><slot name="buttons" /></div>
+        <div class="sh-btns" class:stick={stickyButtons}><slot name="buttons" /></div>
     </div>
 </div>
 
@@ -116,6 +132,39 @@
             max-width: none;
             padding-bottom: calc(20px + env(safe-area-inset-bottom));
             border-radius: 20px 20px 0 0;
+        }
+    }
+    .sh-sheet {
+        position: relative;
+    }
+    /* Takes no room, and stays at the top of the sheet while a long sheet scrolls under it */
+    .sh-xrow {
+        position: sticky;
+        top: -6px;
+        z-index: 1;
+        height: 0;
+        margin: -6px 0;
+    }
+    .sh-x {
+        position: absolute;
+        top: 0;
+        inset-inline-end: -6px;
+    }
+    .sh-title.with-x {
+        padding-inline-end: 40px;
+    }
+    .sh-btns.stick {
+        position: sticky;
+        bottom: -20px;
+        margin: 4px -20px -20px;
+        padding: 12px 20px 20px;
+        background: linear-gradient(rgba(21, 18, 31, 0), #15121f 30%);
+    }
+    @media (max-width: 640px) {
+        /* The sheet's bottom padding grows by the home-indicator inset, so the buttons' own padding does too */
+        .sh-btns.stick {
+            margin-bottom: calc(-20px - env(safe-area-inset-bottom));
+            padding-bottom: calc(20px + env(safe-area-inset-bottom));
         }
     }
     .sh-title {
