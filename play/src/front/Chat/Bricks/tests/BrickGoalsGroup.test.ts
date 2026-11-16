@@ -323,6 +323,25 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
         expect(game.openBrickChat).toHaveBeenCalledWith(BOT);
     });
 
+    it("ends Done with Everything Brick did, which opens its page, and shows it only when there is something", async () => {
+        const open = vi.fn<() => void>();
+        await show([goal({ state: "done", doneAt: new Date(2026, 10, 12).toISOString(), result: "visa saved" })], {
+            onOpenDid: open,
+        });
+        expect(text(byId("goalsDidRow"))).toBe("Everything Brick didEach run, with its result");
+        await press("goalsDidRow");
+        expect(open).toHaveBeenCalledTimes(1);
+        part?.$destroy();
+        target.innerHTML = "";
+        // With nothing set there are no runs to show; and without a way to open it the row is not drawn
+        await show([], { onOpenDid: open });
+        expect(byId("goalsDidRow")).toBeNull();
+        part?.$destroy();
+        target.innerHTML = "";
+        await show([goal()]);
+        expect(byId("goalsDidRow")).toBeNull();
+    });
+
     it("says so, with Try again, when it cannot read the list", async () => {
         game.getBrickItems.mockRejectedValueOnce(new Error("offline"));
         part = new BrickGoalsGroup({

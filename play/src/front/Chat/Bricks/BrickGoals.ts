@@ -251,6 +251,12 @@ export function sayNext(ms: number | null, now: number, ll: TranslationFunctions
     return `${sayDay(ms, now, ll, locale)}, ${at(ms, locale)}`;
 }
 
+/** When something happened, as a short phrase that starts a line ("Today, 8:00 AM", "Sat 14 Nov, 8:00 AM"). */
+export function sayMoment(ms: number, now: number, ll: TranslationFunctions, locale?: string): string {
+    const when = sayNext(ms, now, ll, locale);
+    return when ? when[0].toUpperCase() + when.slice(1) : "";
+}
+
 /** How often and when it runs, in a few words: "Daily, 8:00 AM", "Sun to Thu, 7:30 AM", "Sun 15 Nov, 4:00 PM", "Every 6 hours". */
 export function sayWhen(
     item: GoalItem,

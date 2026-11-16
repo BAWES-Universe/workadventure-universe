@@ -40,6 +40,8 @@ export interface BrickPageWay extends BrickDeleteAsk {
     save: (change: BrickChange) => Promise<boolean>;
     /** Opens the Apps page, looking for this app (a Brick made from a template that needs one: "Connect Gmail"). */
     openApps?: (search: string) => void;
+    /** Opens "Everything Brick did", the page of every run this Brick made by itself (game #2002). */
+    openDid?: () => void;
 }
 
 export interface BotData {

@@ -16,7 +16,16 @@
         type GoalItem,
         type GoalTap,
     } from "./BrickGoals";
-    import { IconBell, IconCalendarRepeat, IconCircleCheck, IconRadar, IconSparkles, IconTargetArrow } from "@wa-icons";
+    import {
+        IconBell,
+        IconCalendarRepeat,
+        IconChevronRight,
+        IconCircleCheck,
+        IconHistory,
+        IconRadar,
+        IconSparkles,
+        IconTargetArrow,
+    } from "@wa-icons";
     import "./BrickGroups.css";
 
     /**
@@ -29,6 +38,8 @@
     export let name: string;
     export let open = false;
     export let onToggle: (id: string) => void;
+    /** Opens "Everything Brick did"; without it the row is not shown. */
+    export let onOpenDid: (() => void) | undefined = undefined;
 
     /** The first Done rows before "See all": a person who has finished many does not scroll past them. */
     const FIRST_DONE = 5;
@@ -246,6 +257,18 @@
                         >
                     </button>
                 {/if}
+            {/if}
+            {#if onOpenDid && $items.length > 0}
+                <!-- Under Done, as in the mock: shown whenever it has anything, since a failed run shows there at once -->
+                <button type="button" class="bkg-tap" data-testid="goalsDidRow" on:click={onOpenDid}>
+                    <span class="bkg-ico"><IconHistory font-size="20" /></span>
+                    <span class="bkg-mtx"
+                        ><span class="bkg-t">{$LL.chat.brick.goals.didRow({ name })}</span><span class="bkg-cn"
+                            >{$LL.chat.brick.goals.didRowNote()}</span
+                        ></span
+                    >
+                    <IconChevronRight class="bkg-go" font-size="18" />
+                </button>
             {/if}
             <div class="bkg-off">
                 <PageButton tall testId="goalsNew" on:click={openChat}

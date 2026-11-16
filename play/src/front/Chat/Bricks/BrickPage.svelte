@@ -10,6 +10,7 @@
     import { livesHere } from "../../external-modules/bots/roomBricksModel";
     import { openAppsPage } from "./Apps/OpenApps";
     import { brickPageBot, shortDay, type BrickCard } from "./Brick";
+    import BrickDidPage from "./BrickDidPage.svelte";
     import BrickPicture from "./BrickPicture.svelte";
     import { brickHomeStore, loadBrickHome, showBrickOnMap, takeBrickOutOfHome } from "./BrickHomeStore";
     import { canOfferBringAlong } from "./BrickVisit";
@@ -38,6 +39,9 @@
     let deleting = false;
     let loadedFor: string | undefined;
     let visitBusy = false;
+    // "Everything Brick did" (#2002), open over the page: the page stays under it, so Back finds it as it was
+    let didOpen = false;
+    $: if (brick.id !== loadedFor) didOpen = false;
 
     // What the page says about visiting (#2005), for the room the person is in: read again for each Brick it opens on.
     // The read comes first: it clears the last Brick's answer at once, and the line after it must see that, not the old one
@@ -72,6 +76,9 @@
     $: way = {
         save: (change: BrickChange) => changeMyBrick(brick.id, change),
         openApps: (search: string) => openAppsPage({ search }),
+        openDid: () => {
+            didOpen = true;
+        },
         undoLine: undoUntil ? $LL.chat.brick.undoUntil({ day: undoUntil }) : $LL.chat.brick.undoLater(),
         // Its computer's files are offered here once a Brick has a computer (game #2000)
         files: undefined,
@@ -145,7 +152,10 @@
     }
 </script>
 
-<div class="bkp flex h-full min-h-0 flex-col" data-testid="brickPage">
+{#if didOpen}
+    <BrickDidPage botId={brick.id} name={brick.name} onBack={() => (didOpen = false)} />
+{/if}
+<div class="bkp flex h-full min-h-0 flex-col" class:hidden={didOpen} data-testid="brickPage">
     <PanelHeader title={$LL.chat.brick.bricks()} {onBack} backLabel={$LL.chat.brick.backToBricks()} canHide={false} />
     <div class="bkp-scroll">
         {#if bot}
@@ -218,6 +228,9 @@
         gap: 10px;
         padding: 12px 14px 14px;
         color: #fff;
+    }
+    .bkp.hidden {
+        display: none;
     }
     .bkp-scroll {
         display: flex;

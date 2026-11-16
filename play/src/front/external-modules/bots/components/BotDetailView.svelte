@@ -1014,6 +1014,7 @@
                         name={currentBot.name || "Brick"}
                         open={openGroup === "goals"}
                         onToggle={toggleGroup}
+                        onOpenDid={brick?.openDid}
                     />
                     <BrickMemoryGroup
                         botId={currentBot.id}

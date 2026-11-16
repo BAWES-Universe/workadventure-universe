@@ -1739,6 +1739,12 @@ export class BotApiService {
         return await this.brickWrite("/api/bricks/items", {});
     }
 
+    /** Everything one Brick did by itself for its owner, newest first (game #2002): `{ runs, next }`; `before` is the last page's `next`. */
+    async getBrickDid(brickId: string, before?: string): Promise<unknown> {
+        const query = before ? `?before=${encodeURIComponent(before)}` : "";
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/did${query}`, {});
+    }
+
     /** The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze or Keep going. Answers `{ item }`. */
     async tapBrickItem(brickId: string, itemId: string, action: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items/${encodeURIComponent(itemId)}`, {
