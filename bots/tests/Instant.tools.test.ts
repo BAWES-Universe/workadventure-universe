@@ -751,6 +751,43 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(broken.end).toHaveBeenCalledTimes(1);
     });
 
+    it('a reply written again after the receipt was closed runs under a task of its own, so its charge is never under a receipt that already says refunded', async () => {
+        const refused: InstantRunAnswer = { status: 'refused', reason: 'paused', message: 'This is paused for now.', stop: false, renewsAt: undefined, canAskForMore: undefined };
+        const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValueOnce(refused).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await ai.endInstantTurn(BRICK, 1);
+        const first = orbit.instantRun.mock.calls[0][1].taskKey;
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: first, state: 'refunded' });
+        // the reply is asked for again (a retry keeps the turn's memory): the same tool with other arguments, and it works
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        const second = orbit.instantRun.mock.calls[1][1].taskKey;
+        expect(second).not.toBe(first);
+        expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(2);
+        expect(orbit.openTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ taskKey: second }));
+        await ai.endInstantTurn(BRICK, 1);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2);
+        expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: second, state: 'done' });
+        // a close is never sent twice for a key, and the same call asked again is still the same answer with no new receipt
+        await ai.endInstantTurn(BRICK, 1);
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2);
+        expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(2);
+        expect(memory.instantTask).toMatchObject({ key: second, closed: true });
+    });
+
+    it('a rule that said no still stops a reply written again, even after the receipt was closed', async () => {
+        const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'No.', stop: true, renewsAt: undefined, canAskForMore: undefined };
+        const { ai, orbit } = service({ instantRun: vi.fn().mockResolvedValue(rule) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await ai.endInstantTurn(BRICK, 1);
+        expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'other' }, where)).toMatchObject({ reason: 'rule' });
+        expect(orbit.instantRun).toHaveBeenCalledTimes(1);
+        expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(1);
+    });
+
     it('a new turn is not stopped by the last turn’s rule', async () => {
         const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'No.', stop: true, renewsAt: undefined, canAskForMore: undefined };
         const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValueOnce(rule).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });

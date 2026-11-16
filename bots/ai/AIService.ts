@@ -3700,7 +3700,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const tool = InstantOffers.toolNamed(listing, name);
             if (!tool) return { success: false, outcome: 'not_sent', error: 'That Instant App is not available right now.', note: 'Nothing ran. Say so in one plain sentence and carry on another way. Do not try it again in this reply.' };
             // One task for this turn: its receipt is opened before its first run, and its key goes with every run
-            const task = memory ? (memory.instantTask ??= newInstantTask()) : newInstantTask();
+            // A task whose receipt was closed is not used again (a reply written again runs under a task of its own)
+            if (memory && (!memory.instantTask || memory.instantTask.closed)) memory.instantTask = { ...newInstantTask(), stopped: memory.instantTask?.stopped };
+            const task = memory?.instantTask ?? newInstantTask();
             const opened = await openInstantReceipt(admin, botId, userId, task, instantReceiptTitle(tool));
             const ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: task.key, receiptLink: opened?.link });
             task.ended.push(ran.ended);

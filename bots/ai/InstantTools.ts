@@ -358,7 +358,8 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
 
 /**
  * What one chat turn's Instant runs are, for Orbit: a key every run carries, the receipt opened before the first of them, and how each ended,
- * so the receipt can be closed once at the end. Runtime only; a new turn starts a new one, a repeat of the same turn keeps it.
+ * so the receipt can be closed once at the end. Runtime only; a new turn starts a new one. A reply written again keeps it until its receipt
+ * was closed, and runs after that go under a new one.
  */
 export interface InstantTask {
     key: string;
@@ -370,6 +371,9 @@ export interface InstantTask {
     ended: InstantEnded[];
     /** A rule said no: what every later run in this task is answered with, without asking Orbit. */
     stopped?: Record<string, unknown>;
+    /** Orbit took the close of its receipt. A closed task is never used again: Orbit keeps a done or refunded receipt as it ended, so a run that
+     * came after (a reply written again) goes under a task of its own, with its own key and receipt. */
+    closed?: boolean;
 }
 
 export const newInstantTask = (): InstantTask => ({ key: `instant-${randomUUID()}`, ended: [] });
@@ -411,7 +415,8 @@ export async function endInstantTask(admin: Pick<AdminApiService, 'closeTaskRece
         // Orbit said no to opening (a guest has no Activity, or it could not): there is nothing to close
         if (!opened) return;
         // Not taken: kept, so the next end of this task says it again
-        if (!(await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(ended) }))) task.ended.unshift(...ended);
+        if (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(ended) })) task.closed = true;
+        else task.ended.unshift(...ended);
     } catch {
         task.ended.unshift(...ended);
     }
