@@ -95,7 +95,7 @@ describe('every use of an App on a connection', () => {
         const check = vi.fn<AppUseCheck>(async () => ({ allowed: true }));
         const [result] = await call(service(check));
         expect(result.result).toBe('done');
-        expect(check).toHaveBeenCalledWith('b1', 's1', { botId: 'b1', callId: 'call-7', heading: 'looksUp', requesterKey: 'u-sara' });
+        expect(check).toHaveBeenCalledWith('b1', 's1', { botId: 'b1', callId: 'call-7', heading: 'looksUp', requesterKey: 'u-sara', tool: 'search', argumentNames: [] });
         expect(execute).toHaveBeenCalledTimes(1);
     });
 
@@ -149,7 +149,7 @@ describe('every use of an App on a connection', () => {
         const ai = service(check);
         const entry = LENT.get('search') as never;
         expect(await ai.runApprovedTool('b1', entry, 'search', {}, 'u-sara', 60, { heading: 'deletesOrSends', callId: 'attempt-3' })).toBe('done');
-        expect(check).toHaveBeenCalledWith('b1', 's1', { botId: 'b1', requesterKey: 'u-sara', heading: 'deletesOrSends', callId: 'attempt-3' });
+        expect(check).toHaveBeenCalledWith('b1', 's1', { botId: 'b1', requesterKey: 'u-sara', heading: 'deletesOrSends', callId: 'attempt-3', tool: 'search', argumentNames: [] });
         expect(execute).toHaveBeenCalledTimes(1);
         // With no heading and call id it cannot be asked about: not run
         execute.mockClear();

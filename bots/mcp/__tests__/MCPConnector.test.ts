@@ -869,6 +869,33 @@ describe('MCPConnector', () => {
     // --- discoverToolsWithMapping ----------------------------------------
 
     describe('discoverToolsWithMapping', () => {
+        it('marks the tools an owner shared as jobs other people may ask for (#2006), and no other', async () => {
+            mockedAxios.get.mockResolvedValueOnce({
+                data: [
+                    {
+                        id: 'server-1',
+                        botId: 'bot-123',
+                        name: 'ACE-Step',
+                        serverUrl: 'https://weather.example.com/mcp',
+                        authType: 'none' as const,
+                        enabled: true,
+                        connectionId: 'conn-1',
+                        shared: { jobs: [{ tool: 'get_weather', inputs: ['location'], returns: null }, { tool: 'bad', inputs: [1], returns: null }] },
+                    },
+                ],
+            });
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                return { data: MOCK_WEATHER_TOOLS_RESPONSE };
+            });
+            const result = await MCPConnector.discoverToolsWithMapping('bot-123', 'https://admin.example.com', 'admin-token', 'bot-service-token');
+            expect(result.toolServerMap.get('get_weather')?.sharedJob).toEqual({ inputs: ['location'] });
+            expect(result.toolServerMap.get('get_weather')?.connectionId).toBe('conn-1');
+            // A tool the owner did not pick has none
+            const others = [...result.toolServerMap.entries()].filter(([name]) => name !== 'get_weather');
+            expect(others.every(([, entry]) => entry.sharedJob === undefined)).toBe(true);
+        });
+
         it('returns both tools and tool→server map', async () => {
             mockedAxios.get.mockResolvedValueOnce({ data: MOCK_CONFIGS });
 

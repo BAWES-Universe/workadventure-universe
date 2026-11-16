@@ -1565,6 +1565,41 @@ export class BotApiService {
         });
     }
 
+    /**
+     * "Other people" on an app's page for one Brick of the person's (game #2006): whether others can ask it for jobs from this app,
+     * which jobs, and the two limits. Never the app's link, key or account.
+     */
+    async getAppShare(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId));
+    }
+
+    /** "Let others use it": starts with the jobs picked (none picked is the one job there is). Answers what is shared. */
+    async startAppShare(
+        appId: string,
+        botId: string,
+        start: { jobs?: unknown[]; usesPerDayEveryone?: number; usesPerDayPerson?: number } = {}
+    ): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "POST", body: JSON.stringify(start) });
+    }
+
+    /** "Change": the whole list of jobs people can ask for (one left out stops at once) and the two limits. */
+    async changeAppShare(
+        appId: string,
+        botId: string,
+        change: { jobs?: unknown[]; usesPerDayEveryone?: number; usesPerDayPerson?: number }
+    ): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "PATCH", body: JSON.stringify(change) });
+    }
+
+    /** "Stop letting others use it": every later ask is refused at once, in a chat that is already open too. */
+    async stopAppShare(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "DELETE" });
+    }
+
+    private shareUrl(appId: string, botId: string): string {
+        return `/api/me/apps/${encodeURIComponent(appId)}/bricks/${encodeURIComponent(botId)}/share`;
+    }
+
     /** Disconnects one of the person's apps: every Brick and bot stops using it at once. */
     async disconnectMyApp(appId: string): Promise<unknown> {
         return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`, { method: "DELETE" });

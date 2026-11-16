@@ -50,6 +50,32 @@ export interface McpServerConfig {
     readyMade?: boolean;
     /** Where Orbit is, set when `readyMade`. Never sent anywhere else. */
     orbitUrl?: string;
+    /** The jobs its owner lets other people ask this Brick for, with the inputs people may fill in and what may come back (#2006). Only an App on a person's connection has any. */
+    shared?: { jobs: SharedJob[] };
+}
+
+/** One job an owner shared: the tool, the names of the inputs people may fill in, and the names of what may come back (null: the whole answer). */
+export interface SharedJob {
+    tool: string;
+    inputs: string[];
+    returns: string[] | null;
+}
+
+/** The entry's `sharedJob` for a tool of a server, when its owner shared that tool as a job (#2006). Orbit's list is read strictly: anything odd is not shared. */
+function sharedJobOf(server: McpServerConfig, tool: string): { sharedJob: { inputs: string[] } } | undefined {
+    const jobs = Array.isArray(server.shared?.jobs) ? server.shared.jobs : [];
+    const job = jobs.find((entry) => entry && entry.tool === tool);
+    if (!job || !Array.isArray(job.inputs) || !job.inputs.every((input) => typeof input === 'string')) return undefined;
+    return { sharedJob: { inputs: job.inputs } };
+}
+
+/** A tool's definition held to the inputs its owner shared: nobody else is shown, or can fill in, any other. */
+export function narrowedToInputs(tool: McpToolDefinition, inputs: readonly string[]): McpToolDefinition {
+    const keep = new Set(inputs);
+    const parameters = tool.function.parameters ?? {};
+    const properties = parameters.properties && typeof parameters.properties === 'object' ? Object.fromEntries(Object.entries(parameters.properties as Record<string, unknown>).filter(([name]) => keep.has(name))) : {};
+    const required = Array.isArray(parameters.required) ? (parameters.required as unknown[]).filter((name) => typeof name === 'string' && keep.has(name)) : undefined;
+    return { type: 'function', function: { ...tool.function, parameters: { ...parameters, type: 'object', properties, ...(required ? { required } : {}) } } };
 }
 
 export interface McpToolDefinition {
@@ -93,6 +119,8 @@ export interface ToolServerEntry {
     orbitUrl?: string;
     /** An App with a key (#2044): the operation and the version of its definition. Every call goes through Orbit, which holds the key; there is no address here. */
     keyApp?: { definitionHash: string; operation: string };
+    /** Set when its owner shared this tool as a job other people may ask for (#2006): the inputs people may fill in. Nobody but its owner is offered a tool without it. */
+    sharedJob?: { inputs: string[] };
 }
 
 // ---------------------------------------------------------------------------
@@ -863,6 +891,7 @@ export class MCPConnector {
                     ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
                     ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
                     ...(title ? { title } : {}),
+                    ...(sharedJobOf(server, tool.function.name) ?? {}),
                 });
             }
         }

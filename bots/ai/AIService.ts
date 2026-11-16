@@ -23,12 +23,12 @@ import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { sanitizedError } from '../utils/sanitizedError';
-import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { MCPConnector, REQUEST_TIMEOUT, narrowedToInputs, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
-import { appNotUsedLine, type AppUseAnswer, type AppUseCheck, type AppUseRequest } from '../mcp/AppUse';
+import { alreadyAskedLine, appNotUsedLine, narrowToReturns, ownerNoteText, settleOutcomeOf, type AppUseAnswer, type AppUseCheck, type AppUseContext, type AppUseRequest, type AppUseSettle, type OwnerNote } from '../mcp/AppUse';
 import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
@@ -301,6 +301,8 @@ export class AIService {
     private nearbyAsks?: BotAsksPort;
     /** Asks Orbit before every use of an App on a connection (#2001). Without it such an App is not used. */
     private appUse?: AppUseCheck;
+    private appSettle?: AppUseSettle;
+    private ownerNotes?: (botId: string, note: OwnerNote) => Promise<void>;
     /** The replies only one person saw, where other people were (#1993). */
     private readonly privateAnswers = new PrivateAnswers();
 
@@ -360,6 +362,32 @@ export class AIService {
     /** Where the check before every use of an App on a connection is asked (#2001). */
     useAppUse(check: AppUseCheck): void {
         this.appUse = check;
+    }
+
+    /** Where what a try at a shared job came to is told (#2006), and where the owner is told once that the day's uses ran out. */
+    useAppSettle(settle: AppUseSettle, tellOwner?: (botId: string, note: OwnerNote) => Promise<void>): void {
+        this.appSettle = settle;
+        this.ownerNotes = tellOwner;
+    }
+
+    /** Tells Orbit what a shared try came to. Never throws: when Orbit cannot be told the try stays counted, which is the safe side. */
+    private async settleShared(use: { botId: string; callId: string }, serverId: string, result: unknown): Promise<void> {
+        try {
+            await this.appSettle?.(use.botId, serverId, use.callId, settleOutcomeOf(result));
+        } catch (error) {
+            console.warn('[AIService] Could not settle a shared try:', error instanceof Error ? error.message : error);
+        }
+    }
+
+    /** Who a line about a shared App is about: the App's name, and its owner when the Brick knows them. */
+    private appContextOf(entry: ToolServerEntry, botId: string): AppUseContext {
+        return { ...(entry.serverName ? { app: entry.serverName } : {}), owner: this.roomBricks.get(botId)?.ownerName ?? null };
+    }
+
+    /** The owner is told once, in their own chat with the Brick, that today's uses for other people ran out. Never throws. */
+    private tellOwner(botId: string, note: OwnerNote | undefined): void {
+        if (!note || !this.ownerNotes) return;
+        this.ownerNotes(botId, note).catch((error) => console.warn('[AIService] Could not tell the owner about the limit:', error instanceof Error ? error.message : error));
     }
 
     /** Where an answer only one person saw in nearby chat is found again: their direct messages with the bot (#1993). */
@@ -424,33 +452,60 @@ export class AIService {
             }
             // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
             // spent or a switch turned off stops it at once. No answer is a no.
+            // Someone else asking for a job its owner shared (#2006) is told so here: what comes back is held to what was picked, and what
+            // the try came to is told to Orbit, which only gives the use back for a failure it can be sure of
+            let shared: { returns: string[] | null } | undefined;
             if (entry.connectionId) {
-                const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, use) : { allowed: false, reason: 'unavailable' };
-                if (!answer.allowed) return { error: appNotUsedLine(answer.reason ?? 'gone'), outcome: 'not_sent' };
+                const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, { ...use, tool: toolName, argumentNames: Object.keys(args ?? {}) }) : { allowed: false, reason: 'unavailable' };
+                this.tellOwner(use?.botId ?? '', answer.ownerNote);
+                if (!answer.allowed) {
+                    const context = this.appContextOf(entry, use?.botId ?? '');
+                    const reason = answer.reason ?? 'gone';
+                    // A refusal only someone asking for a shared job can meet names the App; the owner's own refusals read as before
+                    const sharedReason = reason === 'not_shared' || reason === 'busy' || reason === 'already_asked' || (reason === 'limit_reached' && use?.requesterKey && !use.forOwner && answer.resetsAt);
+                    return {
+                        error: reason === 'already_asked' ? alreadyAskedLine(answer.earlier, context) : appNotUsedLine(reason, sharedReason ? context : {}),
+                        outcome: 'not_sent',
+                    };
+                }
+                shared = answer.shared;
             }
-            const rawResult = await MCPConnector.executeToolCall(
-                entry.serverId,
-                entry.serverUrl,
-                toolName,
-                args,
-                entry.authType,
-                entry.authConfig,
-                entry.headers,
-                playerUuid,
-                abortSignal,
-                toolTimeoutMs(toolTimeoutSeconds),
-                // A ready-made App is reached only through Orbit, which holds the key its link needs
-                entry.readyMade && entry.orbitUrl && use
-                    ? { orbitUrl: entry.orbitUrl, botId: use.botId, serverId: entry.serverId, callId: use.callId, ...(use.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use.forOwner ? { forOwner: true } : {}) }
-                    : undefined
-            );
-            // Process MCP resource blobs (base64 binary data) by uploading to CDN
-            // and returning CDN URLs so the AI can use send_image/send_audio/etc.
-            if (Array.isArray(rawResult)) {
-                const processed = await this.processMcpResourceContent(rawResult);
-                return processed.content;
+            let sharedTry = !!shared && !!use;
+            try {
+                const rawResult = await MCPConnector.executeToolCall(
+                    entry.serverId,
+                    entry.serverUrl,
+                    toolName,
+                    args,
+                    entry.authType,
+                    entry.authConfig,
+                    entry.headers,
+                    playerUuid,
+                    abortSignal,
+                    toolTimeoutMs(toolTimeoutSeconds),
+                    // A ready-made App is reached only through Orbit, which holds the key its link needs
+                    entry.readyMade && entry.orbitUrl && use
+                        ? { orbitUrl: entry.orbitUrl, botId: use.botId, serverId: entry.serverId, callId: use.callId, ...(use.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use.forOwner ? { forOwner: true } : {}) }
+                        : undefined
+                );
+                // What the try came to is told to Orbit before anything else is done with it: a use is given back only for a failure that is sure
+                if (sharedTry && use) {
+                    sharedTry = false;
+                    await this.settleShared(use, entry.serverId, rawResult);
+                }
+                // Process MCP resource blobs (base64 binary data) by uploading to CDN
+                // and returning CDN URLs so the AI can use send_image/send_audio/etc.
+                const narrowed = shared ? narrowToReturns(rawResult, shared.returns) : rawResult;
+                if (Array.isArray(narrowed)) {
+                    const processed = await this.processMcpResourceContent(narrowed);
+                    return processed.content;
+                }
+                return narrowed;
+            } catch (afterSend) {
+                // Something broke after the use was taken and before Orbit was told what it came to: it may have run, so the try stays counted
+                if (sharedTry && use) await this.settleShared(use, entry.serverId, { error: 'unknown' });
+                throw afterSend;
             }
-            return rawResult;
         } catch (mcpError: any) {
             // The error's words can quote what was passed to the tool or what came back (an email, a file), and logs and
             // Sentry keep what they are given: only the tool's name and the kind of error leave this function
@@ -1493,13 +1548,19 @@ export class AIService {
                       computerOn,
                       instantListing
                   );
-            // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
+            // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005), except a job from an App
+            // its owner shared (#2006): only the jobs they picked, with only the inputs they picked. The rest of the App is not even listed.
             if (forOthers) {
                 for (let at = tools.length - 1; at >= 0; at--) {
                     const name: string = tools[at]?.function?.name ?? '';
+                    const sharedJob = toolServerMap.get(name)?.sharedJob;
+                    if (sharedJob && toolServerMap.get(name)?.connectionId) {
+                        tools[at] = narrowedToInputs(tools[at], sharedJob.inputs);
+                        continue;
+                    }
                     if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
                 }
-                toolServerMap.clear();
+                for (const [name, entry] of [...toolServerMap]) if (!entry.sharedJob || !entry.connectionId) toolServerMap.delete(name);
             }
             if (taskSettings && !forOthers) this.offerTaskTools(tools, toolServerMap);
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
@@ -1507,7 +1568,7 @@ export class AIService {
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers, forOthers && toolServerMap.size > 0) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -4792,7 +4853,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     default: {
                         // Check if this is an MCP tool (not a hardcoded one)
                         // (a visitor's turn has no Apps: its list is empty, and a name from it is refused here as well)
-                        const mcpServerConfig = forOthers ? undefined : toolServerMap?.get(toolCall.name);
+                        // Someone else is offered only what its owner shared (#2006); the check with Orbit at the call holds it again
+                        const found = toolServerMap?.get(toolCall.name);
+                        const mcpServerConfig = forOthers ? (found?.sharedJob && found.connectionId ? found : undefined) : found;
                         if (mcpServerConfig) {
                             // One check right before the call starts (#1656): the model's list is only a convenience
                             const verdict = botId
@@ -4807,7 +4870,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 result = this.toolNotRun(verdict);
                                 break;
                             }
-                            if (verdict.kind === 'ask') {
+                            // Picking the job to share is the owner's OK: someone else is not asked for it on a card (#2006)
+                            if (verdict.kind === 'ask' && !forOthers) {
                                 // A card in a direct message asks for the OK; the call waits there, not here (#1657)
                                 const asked = await this.askForOk(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
                                 if (asked.kind === 'result') {
@@ -4816,7 +4880,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 }
                             }
                             let release: (() => void) | undefined;
-                            if (verdict.kind === 'run' && verdict.heading === 'makesNew') {
+                            if (verdict.kind === 'run' && verdict.heading === 'makesNew' && !forOthers) {
                                 // Runs right away, until a request would make more than the bot's limit (#1662)
                                 const counted = await this.checkHowMany(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
                                 if (counted.kind === 'result') {
@@ -4830,7 +4894,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 botId: botId!,
                                 callId: toolCall.id,
                                 ...(verdict.heading ? { heading: verdict.heading } : {}),
-                                ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
+                                // Someone else is counted by who they are; a guest by their own session, so each has a day of their own (#2006)
+                                ...(asker.signedIn && asker.identifier
+                                    ? { requesterKey: asker.identifier }
+                                    : forOthers && playerId !== undefined
+                                      ? { requesterKey: this.chatCallFor(botId!, playerId, botClient, spaceName)?.person.identifier || `guest:${playerId}` }
+                                      : {}),
                             });
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
