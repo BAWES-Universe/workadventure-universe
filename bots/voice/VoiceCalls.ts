@@ -1236,10 +1236,15 @@ export class VoiceCalls {
      */
     private handlePlayback(message: Extract<FromWorker, { type: 'playback.progress' }>): void {
         const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
-        if (!bubble) return;
+        // The last report of a reply cut by the end of its session (left, closed, opened again) arrives after the bubble was forgotten: what was
+        // played was still paid for, so it is booked all the same
+        if (!bubble) {
+            if (message.finished) this.bookSpoken(message);
+            return;
+        }
         if (message.playedMs > 0) this.onHeard?.(bubble.spaceName, message.segmentId);
         if (!message.finished) return;
-        this.bookSpoken(bubble, message);
+        this.bookSpoken(message);
         this.onPlayed?.(bubble.spaceName, message.segmentId);
         // It was for one person alone and the worker could not keep it to them: that person is told why they did not hear it
         if (message.reason === 'private') {
@@ -1332,13 +1337,13 @@ export class VoiceCalls {
     }
 
     /** The seconds of a reply that were played, booked for the person it was written for and whoever paid for the voice. */
-    private bookSpoken(bubble: Bubble, message: Extract<FromWorker, { type: 'playback.progress' }>): void {
+    private bookSpoken(message: Extract<FromWorker, { type: 'playback.progress' }>): void {
         const owner = this.sessions.get(message.sessionId)?.speech.owner;
         if (!this.meter || owner === undefined || !(message.playedMs > 0)) return;
         const player = this.playerOfSegment?.(message.segmentId);
         this.meter.add({
             part: 'speaking',
-            key: `${bubble.sessionId}:${message.segmentId}`,
+            key: `${message.sessionId}:${message.segmentId}`,
             ms: message.playedMs,
             who: player ? this.talkerOf?.(player) ?? null : null,
             owner,

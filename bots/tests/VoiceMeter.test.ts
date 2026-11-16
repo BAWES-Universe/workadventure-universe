@@ -243,6 +243,18 @@ describe('a live call is booked in Orbit', () => {
         ]);
     });
 
+    it('books the seconds played of a reply cut by the end of its call: the worker\u2019s last report arrives after the bubble was forgotten', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        await b.connect('room_8');
+        await b.say(reply(1, 8), 'For the guest.');
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 1500, totalMs: 4000, finished: false, interrupted: false });
+        b.calls.spaceLeft(SPACE);
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 2500, totalMs: 4000, finished: true, interrupted: true, reason: 'session_end' }, 'room_8');
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(b.requests.flat().map((e) => [e.detail.part, e.quantity, e.userId, e.isGuest])).toEqual([['speaking', 3, 'uuid-room_8', true]]);
+    });
+
     it('books nothing for a reply of which no moment was heard', async () => {
         const b = bot({ recognition: false, speech: false });
         await b.connect();
