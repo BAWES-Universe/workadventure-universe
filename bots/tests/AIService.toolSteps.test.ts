@@ -147,8 +147,8 @@ describe("AIService – the steps a reply shows (#1545)", () => {
         expect(ended).toMatchObject({ content: "", done: false });
         // A direct message also carries what each step sent, so a step can open to show it (#2061)
         expect(ended.toolStepResults).toEqual([
-            { id: "c1", ok: true, shows: [{ label: "Prompt", text: "upbeat 8-bit funk" }] },
-            { id: "c2", ok: false, note: "daily limit reached", shows: [{ label: "Prompt", text: "same, meaner bass" }] },
+            { id: "c1", ok: true, at: expect.any(Number), shows: [{ label: "Prompt", text: "upbeat 8-bit funk" }] },
+            { id: "c2", ok: false, note: "daily limit reached", at: expect.any(Number), shows: [{ label: "Prompt", text: "same, meaner bass" }] },
         ]);
         expect(chunks.indexOf(ended)).toBeGreaterThan(chunks.indexOf(reset));
         expect(chunks.map((chunk) => chunk.content).join("")).toBe("Here it is.");

@@ -237,6 +237,24 @@ describe('waiting, times and what a step did (#2061)', () => {
         expect(steps.field().took).toBe(9);
     });
 
+    it('times each call by when it settled, not by when the slowest one beside it did', () => {
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'a', name: 'get_draft' }), describeStep({ id: 'b', name: 'get_draft' })], 0);
+        steps.finish([{ ...resultOf('a', { ok: true }), at: 200 }, { ...resultOf('b', { ok: true }), at: 30_000 }], 30_500);
+        expect(steps.field().steps.map((step) => step.secs)).toEqual([0.2, 30]);
+    });
+
+    it('times a step the answer or a failure ended before its result came', () => {
+        const ended = new ReplySteps(0);
+        ended.start([describeStep({ id: 'a', name: 'get_draft' })], 0);
+        ended.end(4200);
+        expect(ended.field().steps[0]).toMatchObject({ state: 'done', secs: 4.2 });
+        const stopped = new ReplySteps(0);
+        stopped.start([describeStep({ id: 'a', name: 'get_draft' })], 0);
+        stopped.stop(7000);
+        expect(stopped.field().steps[0]).toMatchObject({ state: 'failed', secs: 7 });
+    });
+
     it('lists what a call sent as plain lines, keeping an address but never a key, a token or data', () => {
         const lines = stepDetails(
             { to: 'info@meetingcpp.com', subject: 'Review draft', api_key: 'abc', note: 'x'.repeat(30) + '1', options: { a: 1 }, tags: ['a', 'b'], link: 'https://x.test/p?token=zz#h' },
@@ -249,6 +267,10 @@ describe('waiting, times and what a step did (#2061)', () => {
             { label: 'Link', text: 'https://x.test/p' },
             { label: 'Result', text: 'Draft updated' },
         ]);
+    });
+
+    it('never shows JSON held in an argument, so a password under a key it cannot see stays hidden', () => {
+        expect(stepDetails({ payload: '{"password":"hunter2"}', list: ['[1,2]', 'ok'], note: 'fine' })).toEqual([{ label: 'Note', text: 'fine' }]);
     });
 
     it('shows no result that is data, and nothing when there is nothing to show', () => {

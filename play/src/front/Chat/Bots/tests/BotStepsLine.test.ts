@@ -100,10 +100,32 @@ describe("the steps line: waiting, times and what a step did (#2061)", () => {
         again: false,
     };
 
-    it("shows a step that waits for an OK with its note, and no failure mark", () => {
+    it("shows a step that waits for an OK with its note, and no failure mark", async () => {
         mount({ state: "done", line: "Used Get a draft", startedAt: 0, steps: [{ ...read, secs: 1 }, waiting] });
         expect(target.querySelector(".bot-steps-icon.bad")).toBeNull();
         expect(target.querySelector(".bad")).toBeNull();
+        // The folded line shows the waiting clock, not a check or a cross
+        expect(target.querySelector('[data-testid="botStepsSummary"] svg')).not.toBeNull();
+        target.querySelector<HTMLButtonElement>('[data-testid="botStepsSummary"]')!.click();
+        await tick();
+        const items = [...target.querySelectorAll('[data-testid="botStepItem"]')];
+        expect(items).toHaveLength(2);
+        expect(items[1].textContent).toContain("Waiting for your OK. Nothing ran yet");
+        expect(items[1].querySelector('[data-testid="botStepSecs"]')).toBeNull();
+        expect(target.querySelector(".bad")).toBeNull();
+    });
+
+    it("keeps a lone finished step openable, so what it sent stays reachable", async () => {
+        mount({
+            state: "done",
+            line: "Used Update a draft",
+            startedAt: 0,
+            steps: [{ ...read, secs: 2, shows: [{ label: "Subject", text: "Review draft" }] }],
+        });
+        expect(target.querySelector('[data-testid="botStepsSingleOpen"]')).not.toBeNull();
+        target.querySelector<HTMLButtonElement>('[data-testid="botStepOpen"]')!.click();
+        await tick();
+        expect(target.querySelector('[data-testid="botStepShows"]')?.textContent).toContain("Review draft");
     });
 
     it("shows the total time on the folded line and each step's time once opened", async () => {

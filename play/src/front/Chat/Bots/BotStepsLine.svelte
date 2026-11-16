@@ -74,6 +74,11 @@
                     {/each}
                 </ol>
             {/if}
+        {:else if single && single.shows?.length && shown.state !== "stopped"}
+            <!-- A lone step that sent something still opens to say what it did (#2061) -->
+            <ol class="bot-steps-list alone" data-testid="botStepsSingleOpen">
+                <BotStepItem step={single} iconSize={16} />
+            </ol>
         {:else if single}
             <div class="bot-steps-row static" data-testid="botStepsSingle">
                 {#if single.state === "failed" || shown.state === "stopped"}
@@ -251,6 +256,11 @@
         display: grid;
         gap: 2px;
         min-width: 0;
+    }
+    .bot-steps-list.alone {
+        margin: 0;
+        padding: 0;
+        border-left: none;
     }
     .bot-steps-list :global(li) {
         display: flex;

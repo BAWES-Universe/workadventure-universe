@@ -49,6 +49,8 @@ export interface ToolStepResult {
     unknown?: boolean;
     /** Why it didn't work, short and without links. */
     note?: string;
+    /** When the call settled, so a quick call is not timed with the slowest one it ran beside (#2061). */
+    at?: number;
     /** What the step says once it has ended, when "Forgot" or "Read a page" would be untrue ("Didn't forget anything"). */
     done?: string;
 }
@@ -260,7 +262,7 @@ export class ReplySteps {
             const step = this.steps.find((s) => s.id === result.id && s.state === 'running');
             if (!step) continue;
             step.state = result.ok ? 'done' : result.waiting ? 'waiting' : result.unknown ? 'unknown' : 'failed';
-            step.secs = secondsBetween(step.began, now);
+            step.secs = secondsBetween(step.began, result.at ?? now);
             if (result.shows?.length) step.shows = result.shows;
             if (result.note) step.note = result.note;
             if (result.done) step.done = result.done;
@@ -271,7 +273,11 @@ export class ReplySteps {
 
     /** The answer came: anything still running counts as done, since its result was used. */
     end(now = Date.now()): void {
-        for (const step of this.steps) if (step.state === 'running') step.state = 'done';
+        for (const step of this.steps) {
+            if (step.state !== 'running') continue;
+            step.state = 'done';
+            step.secs = secondsBetween(step.began, now);
+        }
         this.state = 'done';
         this.endedAt = now;
     }
@@ -279,7 +285,9 @@ export class ReplySteps {
     /** The reply failed part-way: what didn't finish stays unfinished. */
     stop(now = Date.now()): void {
         for (const step of this.steps) {
-            if (step.state === 'running') step.state = 'failed';
+            if (step.state !== 'running') continue;
+            step.state = 'failed';
+            step.secs = secondsBetween(step.began, now);
         }
         this.state = 'stopped';
         this.endedAt = now;
@@ -409,6 +417,8 @@ function plainValue(value: unknown): string | undefined {
         return parts.length > 0 && parts.every((part) => part !== undefined) ? oneLine(parts.join(', '), LINE_TEXT_MAX) : undefined;
     }
     if (typeof value !== 'string') return undefined;
+    // A string that holds JSON is data, and may hold a password under a key we cannot see
+    if (/^\s*[[{]/.test(value)) return undefined;
     const bare = bareLinks(value);
     if (TOKEN_LIKE.test(bare)) return undefined;
     return oneLine(bare, LINE_TEXT_MAX);
