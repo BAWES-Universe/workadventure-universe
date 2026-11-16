@@ -345,6 +345,10 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                 };
             }
             case 'rejected':
+                // An earlier asking got no answer, or Orbit said it was checking: that run may have started, and a refusal of only this asking does not undo it
+                if (noAnswers > 0 || checks > 0) {
+                    return unsure('It may have run, and it settles by itself. Say you are checking whether it worked, that it will show in their Usage ([Usage](#usage)), and do not run it again in this reply.');
+                }
                 // Orbit refused the request before any run: nothing ran, so nothing is unsure and nothing was taken
                 return {
                     ...base,
@@ -390,8 +394,11 @@ export interface InstantTask {
     settling?: Promise<void>;
     /** A rule said no: what every later run in this task is answered with, without asking Orbit. */
     stopped?: Record<string, unknown>;
-    /** Orbit took the close of its receipt. A closed task is never used again: Orbit keeps a done or refunded receipt as it ended, so a run that
-     * came after (a reply written again) goes under a task of its own, with its own key and receipt. */
+    /** Runs of this task in flight. Its receipt is not closed while any is: a close is final for done and refunded, so a run that lands after
+     * it would sit under a receipt that says something else. */
+    running?: number;
+    /** A close was sent (whether or not Orbit took it). A closed task is never used again: Orbit keeps a done or refunded receipt as it ended, so a run
+     * that came after (a reply written again) goes under a task of its own, with its own key and receipt. */
     closed?: boolean;
 }
 
@@ -403,6 +410,8 @@ export interface InstantTurn {
     tasks: InstantTask[];
     /** The turn's end came. A run still in flight that lands after it ends its own task itself, since nothing else will. */
     over?: boolean;
+    /** Tasks of earlier turns whose close Orbit has not taken yet, kept here and asked again until it is. */
+    owed?: InstantTask[];
 }
 
 /** The words a receipt carries for what ran: "Exa search". Only the person it belongs to reads them. */
@@ -451,15 +460,17 @@ export function endInstantTask(
 ): Promise<void> {
     if (!task || !instantTaskPending(task)) return Promise.resolve();
     const settled = (task.settling ?? Promise.resolve()).then(async () => {
-        if (!instantTaskPending(task)) return;
-        const count = task.ended.length;
+        // A run still in flight lands first: it ends the task itself when it does, if its turn is over
+        if (!instantTaskPending(task) || task.running) return;
         try {
             // The close never overtakes the open
             const opened = (task.receipt ? await task.receipt : null) ?? (await openInstantReceipt(admin, botId, userId, task, task.title ?? ''));
-            if (opened && (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(task.ended.slice(0, count)) }))) {
-                task.closed = true;
-                task.reported = count;
-            }
+            // A run that began while the receipt was being opened lands first, in the same way
+            if (!opened || task.running) return;
+            const count = task.ended.length;
+            // From here no run joins this task: what it is closed with may be final
+            task.closed = true;
+            if (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(task.ended.slice(0, count)) })) task.reported = count;
         } catch {
             // kept: the next end says it again
         }
@@ -483,4 +494,16 @@ export function formatInstantResult(name: string, result: Record<string, unknown
     }
     const error = typeof result.error === 'string' ? `${result.error} ` : '';
     return `${name}: ${error}${note}${receipt}`.trim();
+}
+
+/** JSON with the keys of every object in sorted order (arrays keep theirs): the same arguments in another order are the same. */
+export function stableJson(value: unknown): string {
+    const sorted = (one: unknown): unknown => {
+        if (Array.isArray(one)) return one.map(sorted);
+        if (one && typeof one === 'object') {
+            return Object.fromEntries(Object.keys(one as Record<string, unknown>).sort().map((key) => [key, sorted((one as Record<string, unknown>)[key])]));
+        }
+        return one;
+    };
+    return JSON.stringify(sorted(value)) ?? 'undefined';
 }

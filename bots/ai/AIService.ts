@@ -142,10 +142,12 @@ import {
     instantToolsNote,
     isInstantTool,
     newInstantTask,
+    instantTaskPending,
     openInstantReceipt,
     type InstantTask,
     type InstantTurn,
     runInstantTool,
+    stableJson,
 } from './InstantTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
@@ -2074,7 +2076,7 @@ export class AIService {
                                 followUpIterations,
                                 roundContent,
                                 pendingToolCalls,
-                                toolResults.map((r) => ({ id: r.id, name: r.name, text: this.formatToolResult(r, botId) })),
+                                toolResults.map((r) => ({ id: r.id, name: r.name, text: this.formatToolResult(r, botId, toolServerMap.has(r.name)) })),
                                 roundReasoning
                             );
                             stepRoom.add(step);
@@ -3513,11 +3515,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     process.env.BOT_SERVICE_TOKEN || '',
                     { suggest: this.toolSuggesterFor(providerId, botId) }
                 );
-                const mcpTools = mcpResult.tools;
+                // An Instant App's name is ours (`instant_app_<slug>`): when a tool server has a tool of that very name, the Instant App is the one
+                // offered and the one run, so the definition the model reads and the call that runs always belong together
+                const instantNames = new Set(tools.filter((tool) => isInstantTool(tool.function?.name ?? '')).map((tool) => tool.function.name));
+                const mcpTools = (mcpResult.tools as any[]).filter((tool) => !instantNames.has(tool.function?.name));
 
                 // Transfer tool→server mapping to the outer-scope map
                 for (const [key, value] of mcpResult.toolServerMap) {
-                    toolServerMap.set(key, value);
+                    if (!instantNames.has(key)) toolServerMap.set(key, value);
                 }
 
                 // Tools this person can't use are not offered to the model (#1656). The call is checked again when it is made.
@@ -3694,13 +3699,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const botId = where.botId;
         const playerId = where.playerId;
 
-        const repeatKey = `${name}:${JSON.stringify(args)}`;
+        const repeatKey = `${name}:${stableJson(args)}`;
         const earlier = memory?.instantCalls?.get(repeatKey);
         if (earlier) return earlier;
 
         const run = (async (): Promise<Record<string, unknown>> => {
+            // The turn this run belongs to, taken before anything is awaited: a newer turn starting meanwhile never lends its task or receipt to it
+            const turn = memory ? (memory.instantTurn ??= { tasks: [] }) : { tasks: [] as InstantTask[] };
             // A rule they said in chat ended this task: nothing more is tried for it, and Orbit is not asked again
-            const stopped = memory?.instantTurn?.tasks.find((one) => one.stopped)?.stopped;
+            const stopped = turn.tasks.find((one) => one.stopped)?.stopped;
             if (stopped) return stopped;
             // Offered now, to the Brick's owner: a call from a reply that was not offered it, or after it was switched off or paused, is not run
             const listing = await this.instantFor(botId, playerId, undefined, admin);
@@ -3708,17 +3715,24 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (!tool) return { success: false, outcome: 'not_sent', error: 'That Instant App is not available right now.', note: 'Nothing ran. Say so in one plain sentence and carry on another way. Do not try it again in this reply.' };
             // One task for this turn: its receipt is opened before its first run, and its key goes with every run. A task whose receipt was
             // closed is not used again (a reply written again runs under a task of its own)
-            const turn = memory ? (memory.instantTurn ??= { tasks: [] }) : { tasks: [] as InstantTask[] };
             let task = turn.tasks[turn.tasks.length - 1];
             if (!task || task.closed) turn.tasks.push((task = newInstantTask()));
-            const opened = await openInstantReceipt(admin, botId, userId, task, instantReceiptTitle(tool));
-            const ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: task.key, receiptLink: opened?.link });
-            task.ended.push(ran.ended);
+            // A run in flight holds its task open: the receipt is not closed (and so not made final) until the run has landed and is counted
+            const mine = task;
+            mine.running = (mine.running ?? 0) + 1;
+            let ran: Awaited<ReturnType<typeof runInstantTool>>;
+            try {
+                const opened = await openInstantReceipt(admin, botId, userId, mine, instantReceiptTitle(tool));
+                ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: mine.key, receiptLink: opened?.link });
+                mine.ended.push(ran.ended);
+            } finally {
+                mine.running--;
+            }
             // The turn this run belongs to ended while it was in flight (an update cut the reply short): nothing else will close its receipt
-            if (turn.over) void endInstantTask(admin, botId, userId, task);
+            if (turn.over) void endInstantTask(admin, botId, userId, mine);
             // What Orbit offers may change with a run (credit spent, a pause): read it again next time
             if (ran.ended !== 'failed') this.instantOffers.forget(botId, userId);
-            if (ran.stop) task.stopped = ran.result;
+            if (ran.stop) mine.stopped = ran.result;
             let result = ran.result;
             if (ran.carryOn) {
                 // The credit ran out: one card asks how to carry on, whatever "asks which way to go" says, since this is a recovery
@@ -3726,7 +3740,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (asked.error) result = { ...result, note: "Nothing ran and nothing was taken: their Instant Apps credit does not cover it. Say so in one plain sentence, add [Usage](#usage), and carry on another way." };
             }
             // A run that was not sent (refused) may be asked again in a later turn; one that ran, or may have run, is never asked again in this one
-            if (ran.notSent && !ran.stop) memory?.instantCalls?.delete(repeatKey);
+            if (ran.notSent && !ran.stop && memory?.instantCalls?.get(repeatKey) === run) memory.instantCalls.delete(repeatKey);
             return result;
         })();
         if (memory) (memory.instantCalls ??= new Map()).set(repeatKey, run);
@@ -3745,7 +3759,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const admin = adminApiService ?? this.adminApiService;
         if (left && admin && memory.userUuid) {
             left.over = true;
-            for (const task of left.tasks) void endInstantTask(admin, botId, memory.userUuid, task);
+            // Every task of the last turns whose close Orbit has not taken stays owed to this turn, until it is taken: none is dropped
+            const owing = [...(left.owed ?? []), ...left.tasks].filter(instantTaskPending);
+            for (const task of owing) void endInstantTask(admin, botId, memory.userUuid, task);
+            if (owing.length) turn.owed = owing;
         }
         return turn;
     }
@@ -3759,7 +3776,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const admin = adminApiService ?? this.adminApiService;
             if (!turn || !admin || !userId) return;
             turn.over = true;
-            for (const task of [...turn.tasks]) await endInstantTask(admin, botId, userId, task);
+            for (const task of [...(turn.owed ?? []), ...turn.tasks]) await endInstantTask(admin, botId, userId, task);
         } catch {
             // A receipt is never in the way of a reply
         }
@@ -4371,7 +4388,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                // An Instant App's name is made from its tool, so it has no case of its own: it is told apart here. A tool server's tool of the same name stays that tool's
+                // An Instant App's name is made from its tool, so it has no case of its own: it is told apart here. A tool server's tool of the same name is
+                // never offered next to it (the Instant App is), so a name that is in the server map is that server's alone
                 const instantRun = isInstantTool(toolCall.name) && !toolServerMap?.has(toolCall.name);
                 // A visitor's turn never runs the owner's artifacts, files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
                 const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
@@ -5655,12 +5673,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Format tool results for AI
      */
-    private formatToolResults(results: Array<{ id: string; name: string; result: any }>, botId?: string): string {
-        return results.map((r) => this.formatToolResult(r, botId)).join('\n');
+    private formatToolResults(results: Array<{ id: string; name: string; result: any }>, botId?: string, toolServerMap?: Map<string, unknown>): string {
+        return results.map((r) => this.formatToolResult(r, botId, !!toolServerMap?.has(r.name))).join('\n');
     }
 
     /** One tool result as the model reads it. */
-    private formatToolResult(r: { id: string; name: string; result: any }, botId?: string): string {
+    private formatToolResult(r: { id: string; name: string; result: any }, botId?: string, fromToolServer = false): string {
         // Format results in a more readable way for the AI
         if (r.name === 'get_people_on_map' && Array.isArray(r.result)) {
             if (r.result.length === 0) {
@@ -5698,7 +5716,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (isFileTool(r.name) && r.result && this.keepsFiles(botId)) {
             return formatFileResult(r.name, r.result);
         }
-        if (isInstantTool(r.name) && r.result && typeof r.result === 'object') {
+        // Only what an Instant App's own run answered: a tool server's tool that happens to have such a name is read as any other
+        if (isInstantTool(r.name) && !fromToolServer && r.result && typeof r.result === 'object') {
             return formatInstantResult(r.name, r.result);
         }
         if (r.name === READ_WEB_PAGE_TOOL && r.result) {

@@ -14,6 +14,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 import axios from 'axios';
 import { AdminApiService, type InstantListing, type InstantRunAnswer } from '../server/AdminApiService';
 import { AIService } from '../ai/AIService';
+import { MCPConnector } from '../mcp/MCPConnector';
 import {
     InstantOffers,
     carryOnCard,
@@ -28,6 +29,7 @@ import {
     openInstantReceipt,
     receiptStateOf,
     runInstantTool,
+    stableJson,
 } from '../ai/InstantTools';
 import { describeStep, resultOf, showsAsStep } from '../ai/ToolSteps';
 
@@ -427,6 +429,19 @@ describe('one Instant run', () => {
     });
 });
 
+describe('a refusal of a later asking', () => {
+    it('is not “nothing ran” when an earlier asking got no answer, or Orbit was already checking: the run may have started', async () => {
+        for (const first of [{ status: 'unreachable', retry: true } as InstantRunAnswer, { status: 'checking' } as InstantRunAnswer]) {
+            const instantRun = vi.fn().mockResolvedValueOnce(first).mockResolvedValue({ status: 'rejected' } satisfies InstantRunAnswer);
+            const ran = await runInstantTool({ admin: { instantRun }, botId: BRICK, who: { requesterKey: 'uuid-alice' }, tool: TOOL, arguments: { query: 'x' }, sleep: async () => undefined, now: () => 0 });
+            expect(ran).toMatchObject({ ended: 'unsure', notSent: false });
+        }
+        // refused on the very first asking, nothing could have run
+        const instantRun = vi.fn().mockResolvedValue({ status: 'rejected' } satisfies InstantRunAnswer);
+        expect(await runInstantTool({ admin: { instantRun }, botId: BRICK, who: { requesterKey: 'uuid-alice' }, tool: TOOL, arguments: {}, sleep: async () => undefined, now: () => 0 })).toMatchObject({ ended: 'not_sent', notSent: true });
+    });
+});
+
 describe('one task, one receipt', () => {
     it('a task has its own key, and a receipt is titled from what ran, in plain words', () => {
         expect(newInstantTask().key).toMatch(/^instant-/);
@@ -532,7 +547,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         startInstantTurn(botId: string, memory: unknown, admin?: unknown): { tasks: unknown[] } | undefined;
         runInstantToolCall(name: string, args: Record<string, unknown>, where: Record<string, unknown>): Promise<Record<string, unknown>>;
         buildTools(...args: unknown[]): Promise<{ tools: Array<{ function: { name: string } }> }>;
-        formatToolResult(r: { id: string; name: string; result: unknown }): string;
+        formatToolResult(r: { id: string; name: string; result: unknown }, botId?: string, fromToolServer?: boolean): string;
         askPerson: ReturnType<typeof vi.fn>;
     };
 
@@ -1006,5 +1021,117 @@ describe('in a Brick’s owner chat (AIService)', () => {
     it('formats an Instant result for the model, not as an MCP answer', () => {
         const { ai } = service();
         expect(ai.formatToolResult({ id: 't', name: 'instant_app_exa_search', result: { success: true, data: { r: 1 }, note: 'Answer from it.' } })).toMatch(/BEGIN INSTANT APP DATA/);
+    });
+    it('the same arguments in another order are the same call, so a regenerated reply never runs it twice', async () => {
+        expect(stableJson({ b: 1, a: { d: [2, { y: 1, x: 2 }], c: 3 } })).toBe(stableJson({ a: { c: 3, d: [2, { x: 2, y: 1 }] }, b: 1 }));
+        expect(stableJson([1, 2])).not.toBe(stableJson([2, 1]));
+        const { ai, orbit } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'q', numResults: 2 }, where);
+        await ai.runInstantToolCall('instant_app_exa_search', { numResults: 2, query: 'q' }, where);
+        expect(orbit.instantRun).toHaveBeenCalledTimes(1);
+    });
+
+    it('a run that was not sent only forgets its own entry, never a newer turn’s run of the same call', async () => {
+        let letFirstGo: (answer: InstantRunAnswer) => void = () => undefined;
+        const first = new Promise<InstantRunAnswer>((resolve) => (letFirstGo = resolve));
+        const { ai, orbit, memory } = service({ instantRun: vi.fn().mockReturnValueOnce(first).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const older = ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
+        // the next turn begins and asks the same call: its own run
+        (memory.instantCalls as Map<string, unknown>).clear();
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
+        expect(orbit.instantRun).toHaveBeenCalledTimes(2);
+        // the older one now comes back refused before any run: it must not drop the newer one's entry
+        letFirstGo({ status: 'rejected' });
+        await older;
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
+        expect(orbit.instantRun).toHaveBeenCalledTimes(2);
+    });
+
+    it('a run belongs to the turn it began in, even when a newer turn starts while it waits for Orbit’s list', async () => {
+        let letListGo: (found: InstantListing) => void = () => undefined;
+        const slow = new Promise<InstantListing>((resolve) => (letListGo = resolve));
+        const { ai, orbit, memory } = service({ instantTools: vi.fn().mockReturnValue(slow) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const older = ai.startInstantTurn(BRICK, memory) as { tasks: unknown[] };
+        const running = ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
+        const newer = ai.startInstantTurn(BRICK, memory) as { tasks: unknown[] };
+        letListGo(listing());
+        await running;
+        expect(older.tasks).toHaveLength(1);
+        expect(newer.tasks).toHaveLength(0);
+        expect(orbit.openTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ taskKey: (older.tasks[0] as { key: string }).key }));
+    });
+
+    it('a receipt is not closed while a run of its task is in flight, so a late run is never under a receipt already final as refunded', async () => {
+        const failed: InstantRunAnswer = { status: 'failed', reason: 'provider_error', message: 'It did not work.' };
+        let letSecondGo: (answer: InstantRunAnswer) => void = () => undefined;
+        const second = new Promise<InstantRunAnswer>((resolve) => (letSecondGo = resolve));
+        const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValueOnce(failed).mockReturnValueOnce(second) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const turn = ai.startInstantTurn(BRICK, memory);
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        const slow = ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(2));
+        // the turn ends while the second run is still out: nothing is closed yet
+        await ai.endInstantTurn(BRICK, 'uuid-alice', turn);
+        expect(orbit.closeTaskReceipt).not.toHaveBeenCalled();
+        // it lands, worked: the task closes once, as what all of it came to
+        letSecondGo({ status: 'done', data: 1, chargedMicros: 1 });
+        await slow;
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1));
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: orbit.instantRun.mock.calls[0][1].taskKey, state: 'done' });
+    });
+
+    it('a close Orbit still does not take stays owed from turn to turn until it does', async () => {
+        const { ai, orbit, memory } = service({ closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const first = ai.startInstantTurn(BRICK, memory);
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', first);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
+        // two more turns begin and each asks again; the third answer is a yes
+        ai.startInstantTurn(BRICK, memory);
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        ai.startInstantTurn(BRICK, memory);
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(3));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        ai.startInstantTurn(BRICK, memory);
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(4));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        // taken at last: not asked again
+        ai.startInstantTurn(BRICK, memory);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(4);
+    });
+
+    it('an Instant App is the one offered and run when a tool server has a tool of that very name', async () => {
+        const mcp = { type: 'function', function: { name: 'instant_app_exa_search', description: 'Something else', parameters: { type: 'object', properties: {} } } };
+        const other = { type: 'function', function: { name: 'other_tool', description: 'Other', parameters: { type: 'object', properties: {} } } };
+        (MCPConnector as unknown as { discoverToolsWithMapping: unknown }).discoverToolsWithMapping = vi.fn().mockResolvedValue({
+            tools: [mcp, other],
+            toolServerMap: new Map([
+                ['instant_app_exa_search', { serverName: 'x' }],
+                ['other_tool', { serverName: 'x' }],
+            ]),
+        });
+        const { ai } = service();
+        const built = (await ai.buildTools(BRICK, undefined, {}, 'dm', undefined, undefined, false, listing())) as unknown as { tools: Array<{ function: { name: string; description: string } }>; toolServerMap: Map<string, unknown> };
+        const named = built.tools.filter((tool) => tool.function.name === 'instant_app_exa_search');
+        expect(named).toHaveLength(1);
+        expect(named[0].function.description).not.toBe('Something else');
+        expect(built.toolServerMap.has('instant_app_exa_search')).toBe(false);
+        expect(built.toolServerMap.has('other_tool')).toBe(true);
+        expect(built.tools.some((tool) => tool.function.name === 'other_tool')).toBe(true);
+    });
+
+    it('a tool server’s tool with an Instant-looking name is read as a tool server’s answer, not as an Instant result', () => {
+        const { ai } = service();
+        const text = ai.formatToolResult({ id: 't', name: 'instant_app_exa_search', result: { content: [{ type: 'text', text: 'plain answer' }] } }, BRICK, true);
+        expect(text).toContain('plain answer');
+        expect(text).not.toMatch(/INSTANT APP DATA/);
     });
 });
