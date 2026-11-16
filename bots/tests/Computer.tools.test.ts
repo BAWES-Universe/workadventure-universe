@@ -92,6 +92,11 @@ describe('use_computer (#2000)', () => {
         expect(String((await run(asking({ ok: false, reason: 'broken_start' }))).note)).toMatch(/isn't starting right now/);
         expect(String((await run(asking({ ok: false, reason: 'off' }))).note)).toMatch(/is off/);
         expect(String((await run(asking({ ok: false, reason: 'not_owner' }))).note)).toMatch(/can't be done/);
+        // The team paused computers: said kindly, nothing is lost, and no price or reason is offered
+        const paused = String((await run(asking({ ok: false, reason: 'paused' }))).note);
+        expect(paused).toMatch(/paused for a while/);
+        expect(paused).toMatch(/nothing is lost/i);
+        expect(paused).toMatch(/Do not offer a price or a reason/);
         const down = { startComputerJob: vi.fn().mockRejectedValue(new Error('offline')) };
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         expect(await run(down)).toMatchObject({ started: false });
@@ -102,7 +107,7 @@ describe('use_computer (#2000)', () => {
     it('marks a job that did not start as a failed step, and a job that is running or waiting its turn as one that worked', async () => {
         const down = { startComputerJob: vi.fn().mockRejectedValue(new Error('offline')) };
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-        const refused = ['off', 'broken_start', 'not_owner', 'not_open', 'not_set', 'something_new'];
+        const refused = ['off', 'broken_start', 'not_owner', 'not_open', 'not_set', 'paused', 'something_new'];
         expect(resultOf('c1', await run(down))).toMatchObject({ ok: false });
         warn.mockRestore();
         for (const reason of refused) {

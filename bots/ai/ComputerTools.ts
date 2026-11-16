@@ -109,6 +109,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                 return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
             case 'broken_start':
                 return { started: false, success: false, note: "Your computer isn't starting right now, so this job has to wait. Say so in plain words: you can still chat and use their apps, and you'll tell them the moment it is back. Do not offer a price or a reason." };
+            case 'paused':
+                // The team paused computers: nothing is lost, and it works again by itself once they resume it
+                return { started: false, success: false, note: "Computers are paused for a while, so this job did not start. Say so in one plain sentence: nothing is lost, you can still chat and use their apps, and you'll tell them when computers are back. Do not offer a price or a reason." };
             case 'not_owner':
             case 'not_open':
             case 'not_set':
