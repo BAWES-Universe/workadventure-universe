@@ -1395,7 +1395,6 @@ describe("the Bricks page (#1995)", () => {
                         at: new Date().toISOString(),
                         spentMicros: 60000,
                         category: "apps",
-                        canReport: true,
                         lines: [{ label: "Instant research", amountMicros: 60000 }],
                     },
                 ],

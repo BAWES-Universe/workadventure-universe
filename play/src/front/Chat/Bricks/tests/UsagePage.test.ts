@@ -4,7 +4,6 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 const game = vi.hoisted(() => ({
     getMyUsage: vi.fn<() => Promise<unknown>>(),
     askForMoreUsage: vi.fn<(category?: string) => Promise<unknown>>(),
-    reportActivityProblem: vi.fn<(id: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the page reads the usage on mount.
@@ -14,7 +13,6 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
     botApiService: {
         getMyUsage: game.getMyUsage,
         askForMoreUsage: game.askForMoreUsage,
-        reportActivityProblem: game.reportActivityProblem,
     },
 }));
 // The pictures are not what these tests are about
@@ -459,7 +457,6 @@ describe("the Usage page (#1999)", () => {
             { label: "Instant research, 2 searches", amountMicros: 60_000 },
             { label: "Made a page", note: "Nothing" },
         ],
-        canReport: true,
         ...over,
     });
 
@@ -494,7 +491,9 @@ describe("the Usage page (#1999)", () => {
         expect(receipt).toContain("Instant research, 2 searches$0.06");
         expect(receipt).toContain("Made a pageNothing");
         expect(receipt).toContain("Paid by you");
-        expect(text()).toContain("One line for each task. Tap one to see what it used.");
+        expect(text()).toContain(
+            "Tap a task to see what it used. If one fails on our side, it's given back by itself. A task that ran is paid for, even if it wasn't what you hoped. Ask your Brick to try again."
+        );
         target.querySelector<HTMLElement>('[data-activity="act_1"]')?.click();
         await settle();
         expect(byId("usageReceipt")).toBeNull();
@@ -515,7 +514,7 @@ describe("the Usage page (#1999)", () => {
         expect(byId("usagePage")).not.toBeNull();
     });
 
-    it("says a refunded task as refunded with nothing taken, and offers no Didn't work", async () => {
+    it("says a refunded task as refunded with nothing taken, and why, and offers no Didn't work", async () => {
         game.getMyUsage.mockResolvedValue(
             live(
                 {},
@@ -534,55 +533,31 @@ describe("the Usage page (#1999)", () => {
         await open({ receiptId: "act_3" });
         expect(text()).toContain("Refunded, nothing taken");
         expect(byId("usageReceipt")?.textContent).toContain("Refunded");
+        expect(byId("usageReceiptWhy")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+            "This didn't go through on our side, so nothing was taken. You didn't have to ask."
+        );
         expect(byId("usageDidntWork")).toBeNull();
     });
 
-    it("says a task Orbit is still checking, with no amount made up", async () => {
-        game.getMyUsage.mockResolvedValue(live({}, { activity: [task({ state: "checking", spentMicros: null })] }));
-        await open();
-        expect(text()).toMatch(/Today, .+ · Checking/);
-    });
-
-    it("sends Didn't work, says what it came to, and reads the usage again", async () => {
+    it("offers no Didn't work on a task that ran, and says it is paid for", async () => {
         game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
-        game.reportActivityProblem.mockResolvedValue({ outcome: "refunded" });
         await open({ receiptId: "act_1" });
-        game.getMyUsage.mockClear();
-        byId("usageDidntWork")?.click();
-        await settle();
-        expect(game.reportActivityProblem).toHaveBeenCalledWith("act_1");
-        expect(byId("usageReported")?.textContent).toBe("Sorry about that. It's been refunded.");
+        expect(byId("usageReceipt")?.textContent).toContain("Paid by you");
+        expect(byId("usageReceiptWhy")).toBeNull();
         expect(byId("usageDidntWork")).toBeNull();
-        expect(game.getMyUsage).toHaveBeenCalled();
+        expect(text()).toContain("A task that ran is paid for");
     });
 
-    it("ends on the new balance when the read that was out returns the old one after the refund", async () => {
-        const before = live({}, { activity: [task()], apps: money({ availableMicros: 1_000_000 }) });
-        const after = live({}, { activity: [task()], apps: money({ availableMicros: 1_920_000 }) });
-        // The first page open reads once and settles; the second open's read is still out when the refund goes through
-        game.getMyUsage.mockResolvedValue(before);
-        await open({ receiptId: "act_1" });
-        page?.$destroy();
-        let answerOld: (answer: unknown) => void = () => undefined;
-        game.getMyUsage
-            .mockReturnValueOnce(
-                new Promise((resolve) => {
-                    answerOld = resolve;
-                })
+    it("leaves out a task the system is still looking up (an older Orbit sends it as checking)", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                { activity: [task({ id: "act_9", title: "Flight search", state: "checking", spentMicros: null })] }
             )
-            .mockResolvedValue(after);
-        game.reportActivityProblem.mockResolvedValue({ outcome: "refunded" });
-        page = new UsagePage({ target, props: { onBack: back, receiptId: "act_1" } });
-        await settle();
-        // The old balance is on screen from the earlier visit while the new read is pending
-        expect(text()).toContain("$1 of $5 available");
-        byId("usageDidntWork")?.click();
-        await settle();
-        answerOld(before);
-        await settle();
-        expect(byId("usageReported")?.textContent).toBe("Sorry about that. It's been refunded.");
-        expect(text()).toContain("$1.92 of $5 available");
-        expect(text()).not.toContain("$1 of $5 available");
+        );
+        await open();
+        expect(text()).not.toContain("Flight search");
+        expect(text()).not.toMatch(/checking/i);
     });
 
     it("says the reset time again in the new language when the language changes while the page is open", async () => {
@@ -598,19 +573,6 @@ describe("the Usage page (#1999)", () => {
         } finally {
             setLocale("en-US");
         }
-    });
-
-    it("warns, and keeps the button, when Didn't work could not be sent", async () => {
-        game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
-        game.reportActivityProblem.mockRejectedValue(new Error("down"));
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-        await open({ receiptId: "act_1" });
-        byId("usageDidntWork")?.click();
-        await settle();
-        warn.mockRestore();
-        expect(game.warn).toHaveBeenCalledWith("Couldn't send that. Try again.");
-        expect(byId("usageDidntWork")).not.toBeNull();
-        expect(byId("usageReported")).toBeNull();
     });
 
     it("says who pays for storage when Orbit says Universe does", async () => {

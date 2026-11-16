@@ -20,18 +20,9 @@
         type CreditCategory,
         type ExtraCredit,
         type Replies,
-        type ReportOutcome,
     } from "./Usage";
     import UsageMoney from "./UsageMoney.svelte";
-    import {
-        askMyUsageForMore,
-        loadMyUsage,
-        myUsageFailed,
-        myUsageSettled,
-        myUsageStore,
-        refreshMyUsage,
-        reportMyActivity,
-    } from "./UsageStore";
+    import { askMyUsageForMore, loadMyUsage, myUsageFailed, myUsageSettled, myUsageStore } from "./UsageStore";
     import { IconChevronDown } from "@wa-icons";
 
     /**
@@ -56,9 +47,6 @@
     $: computer = usage?.computer ?? null;
     let asking: CreditCategory | undefined;
     let openId: string | undefined = receiptId;
-    let reporting: string | undefined;
-    // What "Didn't work?" came to, by task: it stays said while the page is open
-    let reported: Record<string, ReportOutcome> = {};
     let scrolledTo: string | undefined;
     let body: HTMLDivElement | undefined;
 
@@ -154,7 +142,6 @@
     function activityHint(item: ActivityItem): string {
         const when = activityWhen(item.at);
         if (item.state === "refunded") return `${when} · ${text.activityRefunded()}`;
-        if (item.state === "checking") return `${when} · ${text.activityChecking()}`;
         if (item.payer !== "you") return `${when} · ${paidBy(item)}`;
         const what =
             item.category === "apps"
@@ -172,17 +159,6 @@
         return note ?? text.activityNothingTaken();
     }
 
-    const reportLine = (outcome: ReportOutcome) =>
-        outcome === "refunded"
-            ? text.reportRefunded()
-            : outcome === "redelivered"
-            ? text.reportRedelivered()
-            : outcome === "retrying"
-            ? text.reportRetrying()
-            : outcome === "credit"
-            ? text.reportCredit()
-            : text.reportSent();
-
     async function onAsk(category: CreditCategory) {
         if (asking) return;
         asking = category;
@@ -190,21 +166,6 @@
         // eslint-disable-next-line require-atomic-updates
         asking = undefined;
         if (!sent) warningMessageStore.addWarningMessage(text.askFailed());
-    }
-
-    async function onReport(item: ActivityItem) {
-        if (reporting) return;
-        reporting = item.id;
-        const outcome = await reportMyActivity(item.id);
-        // eslint-disable-next-line require-atomic-updates
-        reporting = undefined;
-        if (!outcome) {
-            warningMessageStore.addWarningMessage(text.reportFailed());
-            return;
-        }
-        reported = { ...reported, [item.id]: outcome };
-        // A refund changes what is available: read it again, from a request that begins now (one already out may be older)
-        refreshMyUsage().catch((error) => console.error(error));
     }
 
     function load() {
@@ -373,21 +334,12 @@
                                     <span>{line.label}</span><b>{lineValue(line.amountMicros, line.note)}</b>
                                 </div>
                             {/each}
+                            {#if item.state === "refunded"}
+                                <p class="why" data-testid="usageReceiptWhy">{text.receiptRefundedWhy()}</p>
+                            {/if}
                             <div class="rfoot">
                                 <span class="paid">{item.state === "refunded" ? text.refunded() : paidBy(item)}</span>
-                                {#if item.canReport && item.state !== "refunded" && !reported[item.id]}
-                                    <button
-                                        type="button"
-                                        class="dw"
-                                        disabled={reporting === item.id}
-                                        data-testid="usageDidntWork"
-                                        on:click={() => onReport(item)}>{text.didntWork()}</button
-                                    >
-                                {/if}
                             </div>
-                            {#if reported[item.id]}
-                                <p class="reported" data-testid="usageReported">{reportLine(reported[item.id])}</p>
-                            {/if}
                         </div>
                     {/if}
                 {/each}
@@ -561,22 +513,7 @@
         border: 1px solid rgba(255, 255, 255, 0.25);
         color: rgba(244, 242, 250, 0.8);
     }
-    .dw {
-        min-height: 44px;
-        padding: 0 4px;
-        border: 0;
-        background: none;
-        color: #b9a4ff;
-        font: inherit;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-    }
-    .dw:disabled {
-        opacity: 0.5;
-        cursor: default;
-    }
-    .reported {
+    .why {
         margin: 6px 0 0;
         font-size: 13px;
         line-height: 1.4;
