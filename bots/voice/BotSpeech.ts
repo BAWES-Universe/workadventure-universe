@@ -170,6 +170,12 @@ export class BotSpeech {
     /** A reply began to be heard (true), or its audio is over (false), however it ended (round 8). Never twice the same way for a segment. */
     onSpeaking?: (spaceName: string, responseId: string, speaking: boolean) => void;
 
+    /** The person (their player id) the reply that was said as this segment was for, when it is still remembered. */
+    playerOfSegment(segmentId: string): number | undefined {
+        const segment = this.segments.get(segmentId);
+        return segment ? playerOf(segment.responseId) : undefined;
+    }
+
     /** Whether a reply for this person is being played now. */
     isSpeakingTo(personId: number): boolean {
         for (const segmentId of this.unfinished.keys()) {

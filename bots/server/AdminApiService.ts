@@ -11,6 +11,7 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
+import type { SpeechEvent } from '../voice/VoiceMeter';
 import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
@@ -1790,6 +1791,20 @@ export class AdminApiService {
             timeout: timeoutMs,
         });
         return response.data;
+    }
+
+    /**
+     * Writes what live calls used into Orbit's books (POST /api/meter/events). Orbit writes each event once under its id and answers each one,
+     * so a bad event never hides a good one and a repeat adds nothing: True once Orbit answered (nothing is sent again), false when it could not
+     * be asked, refused the token, or failed. Never throws.
+     */
+    async recordMeterEvents(events: SpeechEvent[]): Promise<boolean> {
+        try {
+            const response = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, 'api/meter/events'), { events }, { headers: this.voiceHeaders(), timeout: 10_000, validateStatus: () => true });
+            return response.status === 200;
+        } catch {
+            return false;
+        }
     }
 
     /** Reserves one voice note before anything is paid. */

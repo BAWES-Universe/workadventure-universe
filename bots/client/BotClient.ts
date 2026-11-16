@@ -49,6 +49,7 @@ import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
 import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
 import { ListeningBudget } from '../voice/VoiceListening';
+import { VoiceMeter } from '../voice/VoiceMeter';
 import { sharedNoteHearing } from '../voice/NoteHearingWiring';
 import { tidyTranscript } from '../voice/NoteHearing';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
@@ -3072,6 +3073,12 @@ export class BotClient {
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
+        // What live calls use (the audio heard, the seconds spoken) is booked in Orbit, against the person and whoever paid (0.5.0 spend caps)
+        if (adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN) {
+            this.voice.meter = new VoiceMeter(this.config.botId, adminApiService, (message) => console.warn(`[Bot ${this.config.botId}] ${message}`));
+            this.voice.talkerOf = (playerId) => this.behavior?.getTalker(playerId) ?? null;
+            this.voice.playerOfSegment = (segmentId) => this.speech?.playerOfSegment(segmentId);
+        }
         // A reply for one person alone that others would have heard is not said, and that person is told why (#1993)
         this.voice.aloneWith = (spaceName, personId) => this.aloneWith(spaceName, BotClient.playerIdOf(personId));
         this.voice.onKeptQuiet = (spaceName, segmentId, heard) => {

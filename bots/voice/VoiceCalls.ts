@@ -27,6 +27,7 @@ import { SAY_ONLY_FOR } from './protocol';
 import type { FromWorker, LeaveReason, ListenInfo, ListenReason, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { RepliesLeft, TurnGate } from './VoiceAllowance';
+import type { VoiceMeter, VoiceWho } from './VoiceMeter';
 import type { VoiceLink } from './VoiceLink';
 import { hearingTerms } from './VoiceTerms';
 import type { ListeningBudget } from './VoiceListening';
@@ -217,6 +218,16 @@ export class VoiceCalls {
      * a reply to one person: it then speaks such a reply only while nobody else is there. Not set: never alone.
      */
     aloneWith?: (spaceName: string, personId: string) => boolean;
+    /**
+     * What a live call uses is booked in Orbit (see VoiceMeter): the audio the hearing took for each stretch of speech and the seconds of a reply
+     * that were played. Only for a session whose hearing or voice Orbit chose (a bubble on the worker's built-in test engine costs nothing). Not set:
+     * nothing is booked.
+     */
+    meter?: VoiceMeter;
+    /** Who a player is, as Orbit counts people: for hearing, the person who spoke. Not set, or null: Orbit names the Brick's maker. */
+    talkerOf?: (playerId: number) => VoiceWho | null;
+    /** The player a reply that was said as this segment was written for, for the seconds of it that were played. */
+    playerOfSegment?: (segmentId: string) => number | undefined;
     /** Called when a reply's segment ended without any of it being heard (see `handlePlayback`). */
     onUnplayed?: (spaceName: string, segmentId: string) => void;
     /** Called when some of a reply's segment has been heard (the worker reports what it played). */
@@ -1228,6 +1239,7 @@ export class VoiceCalls {
         if (!bubble) return;
         if (message.playedMs > 0) this.onHeard?.(bubble.spaceName, message.segmentId);
         if (!message.finished) return;
+        this.bookSpoken(bubble, message);
         this.onPlayed?.(bubble.spaceName, message.segmentId);
         // It was for one person alone and the worker could not keep it to them: that person is told why they did not hear it
         if (message.reason === 'private') {
@@ -1252,6 +1264,8 @@ export class VoiceCalls {
      */
     private handleSpeech(message: Extract<FromWorker, { type: 'user.speech_started' | 'user.partial' | 'user.turn' }>): void {
         const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
+        // The hearing provider took this audio whatever came of the words, and whether or not the person is still here: it is booked first
+        if (bubble && message.type === 'user.turn') this.bookHeard(message);
         // The person must still be in the bubble: the words of someone who left are nobody's to see
         if (!bubble || !this.roster.get(bubble.spaceName)?.has(message.participantId)) {
             this.stats.staleFromWorker++;
@@ -1301,6 +1315,34 @@ export class VoiceCalls {
             this.remember(spaceName, to, message.turnId, message.text);
             this.draft(spaceName, to, { turnId: message.turnId, state: 'lost', text: message.text, reason: message.outcome === 'final' ? 'path' : message.reason });
         }
+    }
+
+    /** The audio the hearing took for one stretch of speech, booked for the person who spoke and whoever paid for the hearing. */
+    private bookHeard(message: Extract<FromWorker, { type: 'user.turn' }>): void {
+        const owner = this.sessions.get(message.sessionId)?.recognition.owner;
+        if (!this.meter || owner === undefined) return;
+        const player = this.playerIdOf?.(message.participantId) ?? 0;
+        this.meter.add({
+            part: 'hearing',
+            key: `${message.sessionId}:${message.participantId}:${message.epoch}:${message.turnId}`,
+            ms: message.audioMs,
+            who: player ? this.talkerOf?.(player) ?? null : null,
+            owner,
+        });
+    }
+
+    /** The seconds of a reply that were played, booked for the person it was written for and whoever paid for the voice. */
+    private bookSpoken(bubble: Bubble, message: Extract<FromWorker, { type: 'playback.progress' }>): void {
+        const owner = this.sessions.get(message.sessionId)?.speech.owner;
+        if (!this.meter || owner === undefined || !(message.playedMs > 0)) return;
+        const player = this.playerOfSegment?.(message.segmentId);
+        this.meter.add({
+            part: 'speaking',
+            key: `${bubble.sessionId}:${message.segmentId}`,
+            ms: message.playedMs,
+            who: player ? this.talkerOf?.(player) ?? null : null,
+            owner,
+        });
     }
 
     private draft(spaceName: string, personId: string, draft: VoiceDraft): void {
@@ -1696,6 +1738,7 @@ export class VoiceCalls {
         this.modes.clear();
         this.sentModes.clear();
         this.listening?.shutdown();
+        void this.meter?.shutdown();
         this.told.clear();
         this.left.clear();
         this.toldLeft.clear();
