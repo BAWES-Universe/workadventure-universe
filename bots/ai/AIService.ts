@@ -860,6 +860,8 @@ export class AIService {
         // The turn's Instant tasks are its own: a newer turn starting meanwhile never ends them, and this one never ends the newer turn's
         const memory = playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : undefined;
         const instantTurn = isRetry ? (memory ? (memory.instantTurn ??= { tasks: [] }) : undefined) : this.startInstantTurn(botId, memory, adminApiService);
+        // A reply written again is the same turn, running again
+        if (instantTurn) instantTurn.over = false;
         try {
             yield* this.streamBotResponse(...args);
         } finally {
@@ -3742,7 +3744,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         memory.instantTurn = turn;
         const admin = adminApiService ?? this.adminApiService;
         if (left && admin && memory.userUuid) {
-            for (const task of left.tasks) if (!task.closed && task.ended.length > 0) void endInstantTask(admin, botId, memory.userUuid, task);
+            left.over = true;
+            for (const task of left.tasks) void endInstantTask(admin, botId, memory.userUuid, task);
         }
         return turn;
     }
@@ -4729,6 +4732,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         break;
 
                     case INSTANT_RUN_CASE:
+                        // A reply cut off by its length limit may carry half a request (the arguments are repaired to be read at all): nothing is run, or paid for, from it
+                        if (replyCutOff) {
+                            result = { success: false, outcome: 'not_sent', error: 'That request was cut off before it was complete.', note: 'Nothing ran and nothing was taken, because your request was cut off before it was whole. Say so in one plain sentence and, if they still want it, ask for it again in a shorter way.' };
+                            break;
+                        }
                         result = await this.runInstantToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},

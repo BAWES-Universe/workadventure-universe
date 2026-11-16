@@ -849,6 +849,67 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: newKey, state: 'done' });
     });
 
+    it('a reply cut off by its length limit runs nothing, because its request may be half of one; a whole one runs', async () => {
+        const { ai, orbit } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        const call = { id: 't1', name: 'instant_app_exa_search', arguments: '{"query":"ram' };
+        const run = (cut: boolean) =>
+            (ai as unknown as { executeToolCalls(...args: unknown[]): Promise<Array<{ result: Record<string, unknown> }>> }).executeToolCalls([call], undefined, orbit, undefined, 'uuid-alice', 'matrix-dm', BRICK, 1, undefined, undefined, cut);
+        const [cutOff] = await run(true);
+        expect(cutOff.result).toMatchObject({ success: false, outcome: 'not_sent' });
+        expect(String(cutOff.result.note)).toMatch(/cut off/);
+        expect(orbit.instantRun).not.toHaveBeenCalled();
+        expect(orbit.openTaskReceipt).not.toHaveBeenCalled();
+        const [whole] = await run(false);
+        expect(whole.result).toMatchObject({ success: true });
+        expect(orbit.instantRun).toHaveBeenCalledTimes(1);
+    });
+
+    it('two runs of a reply written again that land together close the receipt once, as what the whole task came to', async () => {
+        const answers = [
+            { status: 'failed', reason: 'provider_failed', message: 'It did not work.' },
+            { status: 'done', data: 1, chargedMicros: 1 },
+        ] as InstantRunAnswer[];
+        const { ai, orbit, memory } = service({ instantRun: vi.fn().mockImplementation(async () => answers.shift()) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const turn = ai.startInstantTurn(BRICK, memory) as { over?: boolean };
+        await ai.endInstantTurn(BRICK, 'uuid-alice', turn);
+        expect(turn.over).toBe(true);
+        // asked again: the same turn, running again (what generateBotResponseStream does for a retry)
+        turn.over = false;
+        await Promise.all([ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where), ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where)]);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', turn);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ state: 'done' }));
+    });
+
+    it('two ends of one task never run at once, and the second says only what is new', async () => {
+        const task = newInstantTask();
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const states: string[] = [];
+        const admin = {
+            openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null }),
+            closeTaskReceipt: vi.fn().mockImplementation(async (_b: string, _u: string, one: { state: string }) => {
+                states.push(one.state);
+                await gate;
+                return true;
+            }),
+        };
+        await openInstantReceipt(admin, BRICK, 'u', task, 'x');
+        task.ended.push('failed');
+        const first = endInstantTask(admin, BRICK, 'u', task);
+        await vi.waitFor(() => expect(states).toEqual(['refunded']));
+        task.ended.push('worked');
+        const second = endInstantTask(admin, BRICK, 'u', task);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(admin.closeTaskReceipt).toHaveBeenCalledTimes(1);
+        release();
+        await Promise.all([first, second]);
+        // the first ended it as it was then; the second says what the whole task came to
+        expect(states).toEqual(['refunded', 'done']);
+    });
+
     it('a run still in flight when its turn ended closes its own task when it lands', async () => {
         let land: (answer: InstantRunAnswer) => void = () => undefined;
         const slow = new Promise<InstantRunAnswer>((resolve) => (land = resolve));

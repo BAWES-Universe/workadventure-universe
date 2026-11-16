@@ -381,8 +381,12 @@ export interface InstantTask {
     receipt?: Promise<TaskReceiptOpened | null>;
     /** The title the receipt was opened under. */
     title?: string;
-    /** How each run ended since the receipt was last closed. */
+    /** How each run of the task ended, all of them: the receipt ends as what the whole task came to. */
     ended: InstantEnded[];
+    /** How many of those the receipt was closed with, so what is new since is known. */
+    reported?: number;
+    /** The close in progress (or the last one): a second end of this task waits for it, so two never race. */
+    settling?: Promise<void>;
     /** A rule said no: what every later run in this task is answered with, without asking Orbit. */
     stopped?: Record<string, unknown>;
     /** Orbit took the close of its receipt. A closed task is never used again: Orbit keeps a done or refunded receipt as it ended, so a run that
@@ -429,31 +433,38 @@ export function receiptStateOf(ended: readonly InstantEnded[]): TaskReceiptState
     return 'refunded';
 }
 
+/** Whether the task has outcomes its receipt was not closed with yet. */
+export const instantTaskPending = (task: InstantTask): boolean => !!task.title && task.ended.length > (task.reported ?? 0);
+
 /**
- * Ends the task's receipt, once for what ran since it was last ended. Nothing happens when nothing was run. What the task used is never sent:
+ * Ends the task's receipt, once for what ran since it was last ended. Nothing happens when nothing new ran. What the task used is never sent:
  * Orbit reads it from its books by the task's key, and settles a receipt left in "checking" by itself. A receipt that could not be opened is
- * opened now, and what ran is kept when it still cannot be (or when Orbit does not take the close) for the next end. Never throws.
+ * opened now, and what ran is kept when it still cannot be (or when Orbit does not take the close) for the next end. Two ends of one task never
+ * run at once: the second waits for the first, then finds nothing new or says what is. Never throws.
  */
-export async function endInstantTask(
+export function endInstantTask(
     admin: Pick<AdminApiService, 'openTaskReceipt' | 'closeTaskReceipt'>,
     botId: string,
     userId: string,
     task: InstantTask | undefined
 ): Promise<void> {
-    if (!task?.title || task.ended.length === 0) return;
-    const ended = task.ended.splice(0, task.ended.length);
-    try {
-        // The close never overtakes the open
-        const opened = (task.receipt ? await task.receipt : null) ?? (await openInstantReceipt(admin, botId, userId, task, task.title));
-        if (opened && (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(ended) }))) {
-            task.closed = true;
-            return;
+    if (!task || !instantTaskPending(task)) return Promise.resolve();
+    const settled = (task.settling ?? Promise.resolve()).then(async () => {
+        if (!instantTaskPending(task)) return;
+        const count = task.ended.length;
+        try {
+            // The close never overtakes the open
+            const opened = (task.receipt ? await task.receipt : null) ?? (await openInstantReceipt(admin, botId, userId, task, task.title ?? ''));
+            if (opened && (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(task.ended.slice(0, count)) }))) {
+                task.closed = true;
+                task.reported = count;
+            }
+        } catch {
+            // kept: the next end says it again
         }
-    } catch {
-        // kept below
-    }
-    // Not taken: kept, so the next end of this task says it again
-    task.ended.unshift(...ended);
+    });
+    task.settling = settled;
+    return settled;
 }
 
 /* ------------------------------------ what the model reads ------------------------------------ */
