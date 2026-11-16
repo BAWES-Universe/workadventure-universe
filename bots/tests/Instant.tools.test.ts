@@ -524,8 +524,8 @@ describe('in a Brick’s owner chat (AIService)', () => {
     type Ai = {
         noteBrick: AIService['noteBrick'];
         instantFor(botId: string, playerId: number, botClient?: unknown, admin?: unknown): Promise<InstantListing | null>;
-        endInstantTurn(botId: string, playerId: number | undefined, admin?: unknown): Promise<void>;
-        startInstantTurn(botId: string, memory: unknown, admin?: unknown): void;
+        endInstantTurn(botId: string, userId: string | undefined, turn: unknown, admin?: unknown): Promise<void>;
+        startInstantTurn(botId: string, memory: unknown, admin?: unknown): { tasks: unknown[] } | undefined;
         runInstantToolCall(name: string, args: Record<string, unknown>, where: Record<string, unknown>): Promise<Record<string, unknown>>;
         buildTools(...args: unknown[]): Promise<{ tools: Array<{ function: { name: string } }> }>;
         formatToolResult(r: { id: string; name: string; result: unknown }): string;
@@ -668,7 +668,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(orbit.openTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: key, title: 'Exa search', category: 'apps' });
         expect(first).toMatchObject({ receipt: '[What it used](#usage=act_1)' });
         // a new turn is a new task
-        memory.instantTask = undefined;
+        memory.instantTurn = undefined;
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'c' }, where);
         expect(orbit.instantRun.mock.calls[2][1].taskKey).not.toBe(key);
         expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(2);
@@ -687,34 +687,34 @@ describe('in a Brick’s owner chat (AIService)', () => {
     it('closes the receipt once when the turn ends: done when it worked, refunded when nothing was taken, and nothing when nothing ran', async () => {
         const worked = service();
         worked.ai.noteBrick(BRICK, { isDefault: false });
-        await worked.ai.endInstantTurn(BRICK, 1);
+        await worked.ai.endInstantTurn(BRICK, 'uuid-alice', worked.memory.instantTurn);
         expect(worked.orbit.closeTaskReceipt).not.toHaveBeenCalled();
         await worked.ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
         await worked.ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
         expect(worked.orbit.closeTaskReceipt).not.toHaveBeenCalled();
-        await worked.ai.endInstantTurn(BRICK, 1);
-        await worked.ai.endInstantTurn(BRICK, 1);
+        await worked.ai.endInstantTurn(BRICK, 'uuid-alice', worked.memory.instantTurn);
+        await worked.ai.endInstantTurn(BRICK, 'uuid-alice', worked.memory.instantTurn);
         expect(worked.orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
         expect(worked.orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: worked.orbit.instantRun.mock.calls[0][1].taskKey, state: 'done' });
 
         const failed = service({ instantRun: vi.fn().mockResolvedValue({ status: 'failed', reason: 'provider_failed', message: 'It did not work. You were not charged.' }) });
         failed.ai.noteBrick(BRICK, { isDefault: false });
         await failed.ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
-        await failed.ai.endInstantTurn(BRICK, 1);
+        await failed.ai.endInstantTurn(BRICK, 'uuid-alice', failed.memory.instantTurn);
         expect(failed.orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ state: 'refunded' }));
 
         const lost = service({ instantRun: vi.fn().mockResolvedValue({ status: 'unreachable', retry: false }) });
         lost.ai.noteBrick(BRICK, { isDefault: false });
         await lost.ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
-        await lost.ai.endInstantTurn(BRICK, 1);
+        await lost.ai.endInstantTurn(BRICK, 'uuid-alice', lost.memory.instantTurn);
         expect(lost.orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ state: 'checking' }));
         // no person to end for
-        await expect(lost.ai.endInstantTurn(BRICK, undefined)).resolves.toBeUndefined();
+        await expect(lost.ai.endInstantTurn(BRICK, undefined, lost.memory.instantTurn)).resolves.toBeUndefined();
     });
 
     it('a rule that says no stops the task: Orbit’s words, no card for more credit, and no other Instant App is tried after it', async () => {
         const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: '2026-12-01T00:00:00Z', canAskForMore: true };
-        const { ai, orbit } = service({ instantRun: vi.fn().mockResolvedValueOnce(rule).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });
+        const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValueOnce(rule).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });
         ai.noteBrick(BRICK, { isDefault: false });
         const first = await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
         expect(first).toMatchObject({ success: false, reason: 'rule', error: 'You said no more than a dollar a day.' });
@@ -726,7 +726,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         // the same ask again is also the same answer
         expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where)).toBe(first);
         expect(orbit.instantRun).toHaveBeenCalledTimes(1);
-        await ai.endInstantTurn(BRICK, 1);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn);
         expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ state: 'refunded' }));
     });
 
@@ -744,7 +744,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         });
         for await (const chunk of whole.stream) void chunk;
         expect(whole.end).toHaveBeenCalledTimes(1);
-        expect(whole.end).toHaveBeenCalledWith(BRICK, 1, 'orbit');
+        expect(whole.end).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ tasks: [] }), 'orbit');
 
         // a caller that stops at the first done
         const early = make(async function* () {
@@ -774,7 +774,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValueOnce(refused).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });
         ai.noteBrick(BRICK, { isDefault: false });
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
-        await ai.endInstantTurn(BRICK, 1);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn);
         const first = orbit.instantRun.mock.calls[0][1].taskKey;
         expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
         expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: first, state: 'refunded' });
@@ -784,23 +784,23 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(second).not.toBe(first);
         expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(2);
         expect(orbit.openTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ taskKey: second }));
-        await ai.endInstantTurn(BRICK, 1);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn);
         expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2);
         expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: second, state: 'done' });
         // a close is never sent twice for a key, and the same call asked again is still the same answer with no new receipt
-        await ai.endInstantTurn(BRICK, 1);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn);
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
         expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2);
         expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(2);
-        expect(memory.instantTask).toMatchObject({ key: second, closed: true });
+        expect((memory.instantTurn as { tasks: unknown[] }).tasks.at(-1)).toMatchObject({ key: second, closed: true });
     });
 
     it('a rule that said no still stops a reply written again, even after the receipt was closed', async () => {
         const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'No.', stop: true, renewsAt: undefined, canAskForMore: undefined };
-        const { ai, orbit } = service({ instantRun: vi.fn().mockResolvedValue(rule) });
+        const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValue(rule) });
         ai.noteBrick(BRICK, { isDefault: false });
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
-        await ai.endInstantTurn(BRICK, 1);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn);
         expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'other' }, where)).toMatchObject({ reason: 'rule' });
         expect(orbit.instantRun).toHaveBeenCalledTimes(1);
         expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(1);
@@ -810,7 +810,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         const { ai, orbit, memory } = service({ closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true) });
         ai.noteBrick(BRICK, { isDefault: false });
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
-        await ai.endInstantTurn(BRICK, 1);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn);
         const key = orbit.instantRun.mock.calls[0][1].taskKey;
         expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
         // the next turn begins: the old task is closed on its own and the memory is clear for the new one
@@ -820,7 +820,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: key, state: 'done' });
         // one that was closed, or never ran, is not said again
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
-        await ai.endInstantTurn(BRICK, 1);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn);
         expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(3);
         ai.startInstantTurn(BRICK, memory);
         ai.startInstantTurn(BRICK, memory);
@@ -828,12 +828,62 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(3);
     });
 
+    it('a newer turn starting while an older one ends never ends the newer turn’s tasks, and the older one’s own are not lost', async () => {
+        const { ai, orbit, memory } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        const older = ai.startInstantTurn(BRICK, memory);
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'old' }, where);
+        const oldKey = orbit.instantRun.mock.calls[0][1].taskKey;
+        // the person writes again before the older reply is over: the newer turn starts, and runs its own
+        const newer = ai.startInstantTurn(BRICK, memory);
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1));
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'new' }, where);
+        const newKey = orbit.instantRun.mock.calls[1][1].taskKey;
+        expect(newKey).not.toBe(oldKey);
+        // the older turn's end closes only the older turn's task (already closed above, so nothing is said twice) and leaves the newer one running
+        await ai.endInstantTurn(BRICK, 'uuid-alice', older);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: oldKey, state: 'done' });
+        await ai.endInstantTurn(BRICK, 'uuid-alice', newer);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2);
+        expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: newKey, state: 'done' });
+    });
+
+    it('a receipt Orbit could not open is asked for again by the next run and again at the end, and its outcomes are kept until it is closed', async () => {
+        const { ai, orbit, memory } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        orbit.openTaskReceipt.mockRejectedValueOnce(new Error('down')).mockResolvedValue({ link: '[What it used](#usage=act_1)', paidBy: null });
+        const turn = ai.startInstantTurn(BRICK, memory);
+        // the run goes on without a receipt
+        expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where)).toMatchObject({ success: true });
+        expect(orbit.instantRun).toHaveBeenCalledTimes(1);
+        // the next run asks again, and this time it is opened
+        expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where)).toMatchObject({ success: true, receipt: '[What it used](#usage=act_1)' });
+        expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(2);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', turn);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: orbit.instantRun.mock.calls[0][1].taskKey, state: 'done' });
+    });
+
+    it('when it still cannot be opened at the end, what ran is kept and the next turn start says it', async () => {
+        const { ai, orbit, memory } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        orbit.openTaskReceipt.mockRejectedValueOnce(new Error('down')).mockRejectedValueOnce(new Error('down')).mockResolvedValue({ link: null, paidBy: null });
+        const turn = ai.startInstantTurn(BRICK, memory);
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await ai.endInstantTurn(BRICK, 'uuid-alice', turn);
+        expect(orbit.closeTaskReceipt).not.toHaveBeenCalled();
+        ai.startInstantTurn(BRICK, memory);
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1));
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: orbit.instantRun.mock.calls[0][1].taskKey, state: 'done' });
+    });
+
     it('a new turn is not stopped by the last turn’s rule', async () => {
         const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'No.', stop: true, renewsAt: undefined, canAskForMore: undefined };
         const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValueOnce(rule).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });
         ai.noteBrick(BRICK, { isDefault: false });
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
-        memory.instantTask = undefined;
+        memory.instantTurn = undefined;
         (memory.instantCalls as Map<string, unknown>).clear();
         expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where)).toMatchObject({ success: true });
         expect(orbit.instantRun).toHaveBeenCalledTimes(2);

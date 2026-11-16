@@ -144,6 +144,7 @@ import {
     newInstantTask,
     openInstantReceipt,
     type InstantTask,
+    type InstantTurn,
     runInstantTool,
 } from './InstantTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
@@ -855,11 +856,15 @@ export class AIService {
      * corrected, or an acknowledgement ahead of the work, is never said.
      */
     async *generateBotResponseStream(...args: Parameters<AIService['streamBotResponse']>): AsyncGenerator<AIStreamChunk> {
+        const [botId, playerId, , , , , , , adminApiService, , , , , , , isRetry] = args;
+        // The turn's Instant tasks are its own: a newer turn starting meanwhile never ends them, and this one never ends the newer turn's
+        const memory = playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : undefined;
+        const instantTurn = isRetry ? (memory ? (memory.instantTurn ??= { tasks: [] }) : undefined) : this.startInstantTurn(botId, memory, adminApiService);
         try {
             yield* this.streamBotResponse(...args);
         } finally {
-            // However the turn ends, an Instant task it ran gets its receipt closed once (game #2053)
-            await this.endInstantTurn(args[0], args[1], args[8]);
+            // However the turn ends, the Instant tasks it ran get their receipts closed once (game #2053)
+            await this.endInstantTurn(botId, memory?.userUuid, instantTurn, adminApiService);
         }
     }
 
@@ -1197,7 +1202,6 @@ export class AIService {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
-            this.startInstantTurn(botId, memory, adminApiService);
             memory?.sentAgain?.clear();
             memory?.cardsAgain?.clear();
         }
@@ -3694,15 +3698,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         const run = (async (): Promise<Record<string, unknown>> => {
             // A rule they said in chat ended this task: nothing more is tried for it, and Orbit is not asked again
-            if (memory?.instantTask?.stopped) return memory.instantTask.stopped;
+            const stopped = memory?.instantTurn?.tasks.find((one) => one.stopped)?.stopped;
+            if (stopped) return stopped;
             // Offered now, to the Brick's owner: a call from a reply that was not offered it, or after it was switched off or paused, is not run
             const listing = await this.instantFor(botId, playerId, undefined, admin);
             const tool = InstantOffers.toolNamed(listing, name);
             if (!tool) return { success: false, outcome: 'not_sent', error: 'That Instant App is not available right now.', note: 'Nothing ran. Say so in one plain sentence and carry on another way. Do not try it again in this reply.' };
-            // One task for this turn: its receipt is opened before its first run, and its key goes with every run
-            // A task whose receipt was closed is not used again (a reply written again runs under a task of its own)
-            if (memory && (!memory.instantTask || memory.instantTask.closed)) memory.instantTask = { ...newInstantTask(), stopped: memory.instantTask?.stopped };
-            const task = memory?.instantTask ?? newInstantTask();
+            // One task for this turn: its receipt is opened before its first run, and its key goes with every run. A task whose receipt was
+            // closed is not used again (a reply written again runs under a task of its own)
+            const turn = memory ? (memory.instantTurn ??= { tasks: [] }) : { tasks: [] as InstantTask[] };
+            let task = turn.tasks[turn.tasks.length - 1];
+            if (!task || task.closed) turn.tasks.push((task = newInstantTask()));
             const opened = await openInstantReceipt(admin, botId, userId, task, instantReceiptTitle(tool));
             const ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: task.key, receiptLink: opened?.link });
             task.ended.push(ran.ended);
@@ -3724,29 +3730,30 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * A new turn is a new Instant task, with its own receipt. The last one, when Orbit did not take the close of its receipt as that turn ended, is
-     * closed now, without holding this turn up: it is never dropped with its receipt left open.
+     * A new turn has Instant tasks of its own, with their own receipts. The last turn's, when Orbit did not take the close of a receipt as that turn
+     * ended, are closed now, without holding this turn up: none is dropped with its receipt left open.
      */
-    private startInstantTurn(botId: string, memory: { instantTask?: InstantTask; userUuid?: string } | undefined, adminApiService?: AdminApiService): void {
-        if (!memory) return;
-        const left = memory.instantTask;
-        memory.instantTask = undefined;
+    private startInstantTurn(botId: string, memory: { instantTurn?: InstantTurn; userUuid?: string } | undefined, adminApiService?: AdminApiService): InstantTurn | undefined {
+        if (!memory) return undefined;
+        const left = memory.instantTurn;
+        const turn: InstantTurn = { tasks: [] };
+        memory.instantTurn = turn;
         const admin = adminApiService ?? this.adminApiService;
-        if (left && !left.closed && left.ended.length > 0 && admin && memory.userUuid) void endInstantTask(admin, botId, memory.userUuid, left);
+        if (left && admin && memory.userUuid) {
+            for (const task of left.tasks) if (!task.closed && task.ended.length > 0) void endInstantTask(admin, botId, memory.userUuid, task);
+        }
+        return turn;
     }
 
     /**
-     * The turn is over (answered, cut short or failed): the Instant task it had gets its receipt closed, once, as what it ended as. Nothing
-     * happens when no Instant App was run. Never throws, and never waits for anything but Orbit's own answer.
+     * The turn is over (answered, cut short or failed): its Instant tasks get their receipts closed, once each, as what they ended as. Nothing happens
+     * when no Instant App was run. Never throws, and never waits for anything but Orbit's own answer.
      */
-    private async endInstantTurn(botId: string, playerId: number | undefined, adminApiService?: AdminApiService): Promise<void> {
+    private async endInstantTurn(botId: string, userId: string | undefined, turn: InstantTurn | undefined, adminApiService?: AdminApiService): Promise<void> {
         try {
-            if (playerId === undefined) return;
-            const memory = this.conversationMemory?.getMemory(botId, playerId);
             const admin = adminApiService ?? this.adminApiService;
-            const userId = memory?.userUuid;
-            if (!memory?.instantTask || !admin || !userId) return;
-            await endInstantTask(admin, botId, userId, memory.instantTask);
+            if (!turn || !admin || !userId) return;
+            for (const task of [...turn.tasks]) await endInstantTask(admin, botId, userId, task);
         } catch {
             // A receipt is never in the way of a reply
         }

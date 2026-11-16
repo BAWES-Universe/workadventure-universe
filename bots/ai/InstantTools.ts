@@ -392,6 +392,12 @@ export interface InstantTask {
 
 export const newInstantTask = (): InstantTask => ({ key: `instant-${randomUUID()}`, ended: [] });
 
+/** What one chat turn ran: its tasks in order (a reply written again after a receipt was closed runs under a new one). The turn holds its own, so
+ * a newer turn starting while it ends never ends the wrong tasks. */
+export interface InstantTurn {
+    tasks: InstantTask[];
+}
+
 /** The words a receipt carries for what ran: "Exa search". Only the person it belongs to reads them. */
 export const instantReceiptTitle = (tool: InstantToolInfo): string => {
     const words = tool.name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -402,9 +408,14 @@ export const instantReceiptTitle = (tool: InstantToolInfo): string => {
 export function openInstantReceipt(admin: Pick<AdminApiService, 'openTaskReceipt'>, botId: string, userId: string, task: InstantTask, title: string): Promise<TaskReceiptOpened | null> {
     if (!task.receipt) {
         task.title = title;
-        task.receipt = Promise.resolve()
+        const opening: Promise<TaskReceiptOpened | null> = Promise.resolve()
             .then(() => admin.openTaskReceipt(botId, userId, { taskKey: task.key, title, category: 'apps' }))
             .catch(() => null);
+        task.receipt = opening;
+        // No answer is not kept as the answer: the next run, or the end of the task, asks again
+        void opening.then((opened) => {
+            if (opened === null && task.receipt === opening) task.receipt = undefined;
+        });
     }
     return task.receipt;
 }
@@ -417,23 +428,30 @@ export function receiptStateOf(ended: readonly InstantEnded[]): TaskReceiptState
 }
 
 /**
- * Ends the task's receipt, once for what ran since it was last ended. Nothing happens when nothing was run (no receipt was opened). What the
- * task used is never sent: Orbit reads it from its books by the task's key, and settles a receipt left in "checking" by itself. Never throws.
+ * Ends the task's receipt, once for what ran since it was last ended. Nothing happens when nothing was run. What the task used is never sent:
+ * Orbit reads it from its books by the task's key, and settles a receipt left in "checking" by itself. A receipt that could not be opened is
+ * opened now, and what ran is kept when it still cannot be (or when Orbit does not take the close) for the next end. Never throws.
  */
-export async function endInstantTask(admin: Pick<AdminApiService, 'closeTaskReceipt'>, botId: string, userId: string, task: InstantTask | undefined): Promise<void> {
-    if (!task?.receipt || task.ended.length === 0) return;
+export async function endInstantTask(
+    admin: Pick<AdminApiService, 'openTaskReceipt' | 'closeTaskReceipt'>,
+    botId: string,
+    userId: string,
+    task: InstantTask | undefined
+): Promise<void> {
+    if (!task?.title || task.ended.length === 0) return;
     const ended = task.ended.splice(0, task.ended.length);
     try {
         // The close never overtakes the open
-        const opened = await task.receipt;
-        // Orbit said no to opening (a guest has no Activity, or it could not): there is nothing to close
-        if (!opened) return;
-        // Not taken: kept, so the next end of this task says it again
-        if (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(ended) })) task.closed = true;
-        else task.ended.unshift(...ended);
+        const opened = (task.receipt ? await task.receipt : null) ?? (await openInstantReceipt(admin, botId, userId, task, task.title));
+        if (opened && (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(ended) }))) {
+            task.closed = true;
+            return;
+        }
     } catch {
-        task.ended.unshift(...ended);
+        // kept below
     }
+    // Not taken: kept, so the next end of this task says it again
+    task.ended.unshift(...ended);
 }
 
 /* ------------------------------------ what the model reads ------------------------------------ */
