@@ -1822,9 +1822,11 @@ const chat: BaseTranslation = {
                 limits: "{everyone:number} uses a day for everyone · {person:number} for each person",
                 today: "Today: {used:number} of {limit:number} used. Your own chats never count.",
                 stop: "Stop letting others use it",
-                stopLine: "Anyone asking after this gets nothing from {app:string}, also in a chat that is already open.",
+                stopLine:
+                    "Anyone asking after this gets nothing from {app:string}, also in a chat that is already open.",
                 sheetTitle: "{app:string} for other people",
-                sheetSub: "People who chat with {brick:string} can ask for what you pick here. Nothing else of {app:string} can be reached.",
+                sheetSub:
+                    "People who chat with {brick:string} can ask for what you pick here. Nothing else of {app:string} can be reached.",
                 whatTheyCanAsk: "What they can ask for",
                 onlyYou: "Only you",
                 paused: "It changed since you shared it, so it is paused. Pick it again to share it.",
@@ -1838,7 +1840,8 @@ const chat: BaseTranslation = {
                 usesEveryone: "Uses a day, for everyone",
                 usesPerson: "Uses a day for each person",
                 note: "A use is one time someone else's request runs one of these. Your own chats never count, and a failed try gives the use back. When it runs out, the Brick says so kindly and tells you once.",
-                unreachable: "{app:string} didn't answer just now, so what people can ask for can't be picked. Try again soon.",
+                unreachable:
+                    "{app:string} didn't answer just now, so what people can ask for can't be picked. Try again soon.",
                 loadFailed: "Couldn't read who can ask for this.",
                 nothing: "There is nothing in {app:string} yet that other people could ask for.",
             },
