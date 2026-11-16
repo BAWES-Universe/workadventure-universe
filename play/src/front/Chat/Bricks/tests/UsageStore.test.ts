@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
     getMyUsage: vi.fn<() => Promise<unknown>>(),
     askForMoreUsage: vi.fn<(category?: string) => Promise<unknown>>(),
-    reportActivityProblem: vi.fn<(id: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: api }));
 vi.mock("../../../Stores/MenuStore", async () => {
@@ -22,7 +21,6 @@ import {
     myUsageFailed,
     myUsageSettled,
     myUsageStore,
-    reportMyActivity,
 } from "../UsageStore";
 
 const out = {
@@ -154,23 +152,6 @@ describe("a person's usage in the game (#1999)", () => {
         api.getMyUsage.mockResolvedValueOnce({ ...out, storage: { bytes: 40 } });
         await loadMyUsage();
         expect(get(myUsageStore)?.storageBytes).toBe(40);
-    });
-
-    it('says what "Didn\'t work?" came to, and reads anything unknown as sent', async () => {
-        api.reportActivityProblem.mockResolvedValueOnce({ outcome: "refunded" });
-        expect(await reportMyActivity("act_1")).toBe("refunded");
-        expect(api.reportActivityProblem).toHaveBeenCalledWith("act_1");
-        api.reportActivityProblem.mockResolvedValueOnce({ outcome: "free money" });
-        expect(await reportMyActivity("act_1")).toBe("sent");
-        api.reportActivityProblem.mockResolvedValueOnce(null);
-        expect(await reportMyActivity("act_1")).toBe("sent");
-    });
-
-    it("says nothing was sent when Orbit refused", async () => {
-        api.reportActivityProblem.mockRejectedValue(new Error("404"));
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-        expect(await reportMyActivity("act_9")).toBeUndefined();
-        warn.mockRestore();
     });
 
     it("reads again from a request that begins after the call, and ignores the answer already on its way", async () => {

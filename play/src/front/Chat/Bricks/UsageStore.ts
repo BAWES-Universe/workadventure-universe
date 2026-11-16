@@ -2,7 +2,7 @@ import { get, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { userIsConnected } from "../../Stores/MenuStore";
-import { parseUsage, type CreditCategory, type MyUsage, type ReportOutcome } from "./Usage";
+import { parseUsage, type CreditCategory, type MyUsage } from "./Usage";
 
 /**
  * The signed-in person's usage (game #1999), as Orbit last said. Undefined until it answered once. A later failed read
@@ -106,25 +106,6 @@ export async function askMyUsageForMore(category: CreditCategory = "computer"): 
         return { ...current, computer: { ...asked(current.computer), money: money ? asked(money) : null } };
     });
     return true;
-}
-
-const OUTCOMES: ReportOutcome[] = ["refunded", "redelivered", "retrying", "credit", "sent"];
-
-/**
- * "Didn't work?" on one task: Orbit looks at it and answers what it came to. Anything it says that is not one of the
- * known outcomes reads as "sent". Undefined when Orbit refused or could not be reached: nothing was sent. What it changed
- * (a refund) shows the next time the usage is read, so the page reads it again.
- */
-export async function reportMyActivity(activityId: string): Promise<ReportOutcome | undefined> {
-    let answer: unknown;
-    try {
-        answer = await botApiService.reportActivityProblem(activityId);
-    } catch (error) {
-        console.warn("Could not send that", error);
-        return undefined;
-    }
-    const outcome = (answer as { outcome?: unknown } | null | undefined)?.outcome;
-    return OUTCOMES.find((known) => known === outcome) ?? "sent";
 }
 
 /** Forgets what was read: when the person signs out, and for tests. */

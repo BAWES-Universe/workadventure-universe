@@ -1425,17 +1425,6 @@ export class BotApiService {
     }
 
     /**
-     * "Didn't work?" on one task in Activity: Orbit looks at it and answers what it came to (refunded, delivered again,
-     * trying again, credit, or just sent). Throws when Orbit refuses or can't be reached.
-     */
-    async reportActivityProblem(activityId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/me/usage/activity/${encodeURIComponent(activityId)}/didnt-work`, {
-            method: "POST",
-        });
-        return response.json();
-    }
-
-    /**
      * One call about Apps (game #2001), with a deadline like a Brick's. Orbit answers some writes with nothing (204): that
      * is `undefined`, not an error. Throws when Orbit refuses or can't be reached.
      */

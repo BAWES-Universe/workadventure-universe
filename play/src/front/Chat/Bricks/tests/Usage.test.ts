@@ -210,7 +210,6 @@ describe("real numbers (credits and grants)", () => {
                             { label: "Instant video", amountMicros: 0 },
                             { label: "", note: "x" },
                         ],
-                        canReport: true,
                     },
                     { id: "bad id!", title: "x", at: "2026-11-15T11:16:00.000Z" },
                     { id: "act_2", title: "No time", at: "soon" },
@@ -235,7 +234,6 @@ describe("real numbers (credits and grants)", () => {
             payer: "sponsor",
             payerName: "BAWES Universe",
             category: "apps",
-            canReport: true,
             lines: [{ label: "Instant video", amountMicros: 0, note: null }],
         });
         expect(usage?.storagePaidByUniverse).toBe(true);

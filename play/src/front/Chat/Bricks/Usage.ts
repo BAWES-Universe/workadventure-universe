@@ -77,7 +77,7 @@ export interface BotSpend {
     uses: CreditCategory[];
 }
 
-export type ActivityState = "done" | "refunded" | "checking";
+export type ActivityState = "done" | "refunded";
 export type ActivityPayer = "you" | "universe" | "sponsor";
 
 /** One line of a receipt: what was used and what it took ("Nothing" is a note). */
@@ -99,12 +99,7 @@ export interface ActivityItem {
     payer: ActivityPayer;
     payerName: string | null;
     lines: ReceiptLine[];
-    /** "Didn't work?" is offered */
-    canReport: boolean;
 }
-
-/** What "Didn't work?" came to */
-export type ReportOutcome = "refunded" | "redelivered" | "retrying" | "credit" | "sent";
 
 /** This month's computer time. Only for someone whose Brick uses a computer. */
 export interface ComputerUsage {
@@ -277,17 +272,19 @@ function parseActivity(value: unknown): ActivityItem[] {
         const at = when(item.at);
         // One task that cannot be read is left out, never the whole list
         if (!id || !title || !at) continue;
+        // A task the system is still looking up (an older Orbit may send it as "checking") is not a state anyone can act on: it is
+        // left out and shows when it has settled
+        if (item.state === "checking") continue;
         out.push({
             id,
             title,
             at,
-            state: item.state === "refunded" ? "refunded" : item.state === "checking" ? "checking" : "done",
+            state: item.state === "refunded" ? "refunded" : "done",
             spentMicros: micros(item.spentMicros) ?? null,
             category: item.category === "apps" || item.category === "computer" ? item.category : null,
             payer: item.payer === "universe" ? "universe" : item.payer === "sponsor" ? "sponsor" : "you",
             payerName: short(item.payerName) ?? null,
             lines: parseLines(item.lines),
-            canReport: item.canReport === true,
         });
         if (out.length >= ACTIVITY_MAX) break;
     }
