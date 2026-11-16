@@ -1,0 +1,1384 @@
+source	label	reason	detail
+ar/cancel/00000001_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لك"; voice found: 440 ms
+ar/cancel/00000002_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "في مرع"; voice found: 620 ms
+ar/cancel/00000002_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إنر"; voice found: 600 ms
+ar/cancel/00000003_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الهات"; voice found: 610 ms
+ar/cancel/00000003_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نلغة"; voice found: 750 ms
+ar/cancel/00000003_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الهات"; voice found: 950 ms
+ar/cancel/00000003_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ويلاحق"; voice found: 1000 ms
+ar/cancel/00000004_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرا"; voice found: 770 ms
+ar/cancel/00000005_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الراق"; voice found: 710 ms
+ar/cancel/00000006_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "للاحار"; voice found: 570 ms
+ar/cancel/00000006_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرا"; voice found: 620 ms
+ar/cancel/00000007_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لرى"; voice found: 550 ms
+ar/cancel/00000007_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرب"; voice found: 560 ms
+ar/cancel/00000007_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إلرا"; voice found: 770 ms
+ar/cancel/00000007_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفا"; voice found: 410 ms
+ar/cancel/00000008_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لغاء"; voice found: 980 ms
+ar/cancel/00000008_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نحر"; voice found: 560 ms
+ar/cancel/00000008_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرا"; voice found: 560 ms
+ar/cancel/00000009_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إنراء"; voice found: 450 ms
+ar/cancel/00000009_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إلرا"; voice found: 460 ms
+ar/cancel/00000009_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الوقت"; voice found: 490 ms
+ar/cancel/00000009_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "إلا"; voice found: 470 ms
+ar/cancel/00000010_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دلغة"; voice found: 600 ms
+ar/cancel/00000010_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الواقع"; voice found: 620 ms
+ar/cancel/00000010_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرا"; voice found: 630 ms
+ar/cancel/00000010_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "الغر"; voice found: 570 ms
+ar/cancel/00000011_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إنرا"; voice found: 750 ms
+ar/cancel/00000012_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد لا"; voice found: 680 ms
+ar/cancel/00000012_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا لا لا لا لا لا"; voice found: 720 ms
+ar/cancel/00000013_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دين رقص"; voice found: 510 ms
+ar/cancel/00000013_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إبثار"; voice found: 480 ms
+ar/cancel/00000013_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إذن صع"; voice found: 550 ms
+ar/cancel/00000013_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نمك سعر"; voice found: 600 ms
+ar/cancel/00000013_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "سمسا"; voice found: 480 ms
+ar/cancel/00000013_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وطلع"; voice found: 520 ms
+ar/cancel/00000013_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إليها"; voice found: 570 ms
+ar/cancel/00000014_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إن رو"; voice found: 560 ms
+ar/cancel/00000014_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "الغر"; voice found: 550 ms
+ar/cancel/00000014_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "امرا"; voice found: 580 ms
+ar/cancel/00000014_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "إلغة"; voice found: 540 ms
+ar/cancel/00000015_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "إلا"; voice found: 780 ms
+ar/cancel/00000015_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "المزا"; voice found: 660 ms
+ar/cancel/00000016_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لك"; voice found: 620 ms
+ar/cancel/00000016_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لنعود"; voice found: 600 ms
+ar/cancel/00000016_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تلغى"; voice found: 630 ms
+ar/cancel/00000016_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الوقت"; voice found: 610 ms
+ar/cancel/00000017_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دلبا"; voice found: 660 ms
+ar/cancel/00000017_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "إلا فا"; voice found: 770 ms
+ar/cancel/00000018_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تلك"; voice found: 480 ms
+ar/cancel/00000018_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الزهور"; voice found: 510 ms
+ar/cancel/00000018_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ملحة"; voice found: 710 ms
+ar/cancel/00000018_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد فعل"; voice found: 570 ms
+ar/cancel/00000018_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد"; voice found: 510 ms
+ar/cancel/00000018_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لفا"; voice found: 500 ms
+ar/cancel/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "حيث"; voice found: 510 ms
+ar/cancel/00000019_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نمتع"; voice found: 530 ms
+ar/cancel/00000019_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "انه رب"; voice found: 560 ms
+ar/cancel/00000020_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الواقع"; voice found: 760 ms
+ar/cancel/00000020_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نرى"; voice found: 680 ms
+ar/cancel/00000020_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الهى"; voice found: 570 ms
+ar/cancel/00000020_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "الغاق"; voice found: 670 ms
+ar/cancel/00000021_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إلخة"; voice found: 560 ms
+ar/cancel/00000021_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "إلا غاة"; voice found: 740 ms
+ar/cancel/00000021_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد"; voice found: 540 ms
+ar/cancel/00000021_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لغة"; voice found: 540 ms
+ar/cancel/00000022_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "إلا را"; voice found: 610 ms
+ar/cancel/00000023_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لها"; voice found: 750 ms
+ar/cancel/00000023_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إِن لك"; voice found: 760 ms
+ar/cancel/00000023_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نعم"; voice found: 990 ms
+ar/cancel/00000023_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نحن نحن"; voice found: 880 ms
+ar/cancel/00000023_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نجا"; voice found: 600 ms
+ar/cancel/00000024_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تنها"; voice found: 740 ms
+ar/cancel/00000024_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوزة"; voice found: 690 ms
+ar/cancel/00000024_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "المتحدة"; voice found: 760 ms
+ar/cancel/00000024_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تتوقف"; voice found: 650 ms
+ar/cancel/00000024_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "فرصة"; voice found: 710 ms
+ar/cancel/00000024_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "الغراء"; voice found: 670 ms
+ar/cancel/00000024_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "كان هنا"; voice found: 820 ms
+ar/cancel/00000025_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "يم رأ"; voice found: 520 ms
+ar/cancel/00000025_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "يلا با"; voice found: 590 ms
+ar/cancel/00000026_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إنه"; voice found: 710 ms
+ar/cancel/00000026_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نورا"; voice found: 700 ms
+ar/cancel/00000026_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لنغا"; voice found: 630 ms
+ar/cancel/00000026_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نرى"; voice found: 680 ms
+ar/cancel/00000027_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نحن"; voice found: 690 ms
+ar/cancel/00000027_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مقاب"; voice found: 730 ms
+ar/cancel/00000027_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد أمك"; voice found: 760 ms
+ar/cancel/00000027_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "كذلك"; voice found: 710 ms
+ar/cancel/00000027_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرا"; voice found: 700 ms
+ar/cancel/00000028_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد"; voice found: 610 ms
+ar/cancel/00000028_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "إنغاء"; voice found: 590 ms
+ar/cancel/00000028_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نرى"; voice found: 630 ms
+ar/cancel/00000029_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرا"; voice found: 730 ms
+ar/cancel/00000029_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرا"; voice found: 790 ms
+ar/cancel/00000029_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الرو"; voice found: 750 ms
+ar/cancel/00000029_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لها"; voice found: 670 ms
+ar/cancel/00000030_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نتوقع"; voice found: 570 ms
+ar/cancel/00000030_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الهار"; voice found: 550 ms
+ar/cancel/00000030_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "المغاق"; voice found: 550 ms
+ar/cancel/00000030_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نرى"; voice found: 550 ms
+ar/close/00000001_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ربلا"; voice found: 650 ms
+ar/close/00000001_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الوقت"; voice found: 620 ms
+ar/close/00000001_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد حدث"; voice found: 590 ms
+ar/close/00000001_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "توقف"; voice found: 590 ms
+ar/close/00000002_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إز لق"; voice found: 870 ms
+ar/close/00000002_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "از مق"; voice found: 770 ms
+ar/close/00000002_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إِلما"; voice found: 420 ms
+ar/close/00000003_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أهل لعب"; voice found: 740 ms
+ar/close/00000003_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أدريك"; voice found: 820 ms
+ar/close/00000004_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاق"; voice found: 750 ms
+ar/close/00000004_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "اخلوق"; voice found: 630 ms
+ar/close/00000004_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "اغلق"; voice found: 620 ms
+ar/close/00000004_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "اغلق"; voice found: 710 ms
+ar/close/00000005_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "أغلق"; voice found: 600 ms
+ar/close/00000005_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "أغلاق"; voice found: 770 ms
+ar/close/00000005_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الغر"; voice found: 750 ms
+ar/close/00000006_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "رلا"; voice found: 740 ms
+ar/close/00000006_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إذا لا"; voice found: 780 ms
+ar/close/00000007_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "رلاق"; voice found: 740 ms
+ar/close/00000007_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "رلا"; voice found: 570 ms
+ar/close/00000007_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تفلا"; voice found: 800 ms
+ar/close/00000007_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "أغلاق"; voice found: 840 ms
+ar/close/00000008_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "أغلا"; voice found: 640 ms
+ar/close/00000008_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "اغلاق"; voice found: 740 ms
+ar/close/00000008_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أهلا"; voice found: 690 ms
+ar/close/00000008_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "أغلاق"; voice found: 650 ms
+ar/close/00000008_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "أغلا"; voice found: 650 ms
+ar/close/00000009_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاق"; voice found: 630 ms
+ar/close/00000009_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "اغلاق"; voice found: 500 ms
+ar/close/00000009_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاق"; voice found: 530 ms
+ar/close/00000010_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إزلا"; voice found: 740 ms
+ar/close/00000010_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "اغناء"; voice found: 760 ms
+ar/close/00000010_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ازلوا"; voice found: 840 ms
+ar/close/00000011_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الهلاق"; voice found: 780 ms
+ar/close/00000011_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "الغلق"; voice found: 760 ms
+ar/close/00000011_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "انفلاق"; voice found: 750 ms
+ar/close/00000011_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "أصلاق"; voice found: 750 ms
+ar/close/00000011_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "إذلاق"; voice found: 750 ms
+ar/close/00000012_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "أزلق"; voice found: 690 ms
+ar/close/00000012_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "اغلير"; voice found: 640 ms
+ar/close/00000012_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "زمت"; voice found: 820 ms
+ar/close/00000013_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "أزلق"; voice found: 700 ms
+ar/close/00000013_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "أغنق"; voice found: 490 ms
+ar/close/00000013_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "افلاق"; voice found: 610 ms
+ar/close/00000013_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أغماء"; voice found: 550 ms
+ar/close/00000013_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أزلاؤ"; voice found: 590 ms
+ar/close/00000014_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاق"; voice found: 600 ms
+ar/close/00000014_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "اغلاق"; voice found: 690 ms
+ar/close/00000014_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاب"; voice found: 470 ms
+ar/close/00000014_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاق"; voice found: 490 ms
+ar/close/00000015_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ايجنا"; voice found: 800 ms
+ar/close/00000016_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاق"; voice found: 660 ms
+ar/close/00000016_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "في غبام"; voice found: 690 ms
+ar/close/00000017_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إذن لا"; voice found: 700 ms
+ar/close/00000017_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد نمه"; voice found: 760 ms
+ar/close/00000017_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نعم"; voice found: 790 ms
+ar/close/00000017_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نعب"; voice found: 800 ms
+ar/close/00000017_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الزلاب"; voice found: 740 ms
+ar/close/00000018_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "رغلوق"; voice found: 490 ms
+ar/close/00000018_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لقد لقد"; voice found: 580 ms
+ar/close/00000018_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "اغلق"; voice found: 580 ms
+ar/close/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إرلا"; voice found: 610 ms
+ar/close/00000019_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "تغلق"; voice found: 570 ms
+ar/close/00000019_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الوقت"; voice found: 540 ms
+ar/close/00000019_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "اغلاق"; voice found: 480 ms
+ar/close/00000019_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وحن"; voice found: 490 ms
+ar/close/00000020_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "اغلاق"; voice found: 650 ms
+ar/close/00000021_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الغوص"; voice found: 750 ms
+ar/close/00000021_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "رلا"; voice found: 580 ms
+ar/close/00000021_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "رلا"; voice found: 630 ms
+ar/close/00000022_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إيهلا"; voice found: 620 ms
+ar/close/00000022_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إرلا"; voice found: 820 ms
+ar/close/00000022_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "إفلاق"; voice found: 670 ms
+ar/close/00000022_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "افنق"; voice found: 680 ms
+ar/close/00000023_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إلا"; voice found: 750 ms
+ar/close/00000023_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاق"; voice found: 740 ms
+ar/close/00000024_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "يغلو"; voice found: 770 ms
+ar/close/00000024_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تفعله"; voice found: 780 ms
+ar/close/00000024_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "يغلق"; voice found: 670 ms
+ar/close/00000025_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "سيفة لعب"; voice found: 660 ms
+ar/close/00000025_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الزال"; voice found: 700 ms
+ar/close/00000026_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "إغلا"; voice found: 750 ms
+ar/close/00000026_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "إغلاق"; voice found: 720 ms
+ar/close/00000026_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نحن"; voice found: 720 ms
+ar/close/00000027_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تجنع"; voice found: 620 ms
+ar/close/00000027_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ايه ناو"; voice found: 700 ms
+ar/close/00000027_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "إذا لا"; voice found: 710 ms
+ar/close/00000028_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "في القرآن"; voice found: 580 ms
+ar/close/00000028_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "فيناك"; voice found: 640 ms
+ar/close/00000028_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "رلا"; voice found: 620 ms
+ar/close/00000028_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أخلو"; voice found: 570 ms
+ar/close/00000029_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "تغلق"; voice found: 790 ms
+ar/close/00000029_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أمك"; voice found: 640 ms
+ar/close/00000029_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "اوهلا"; voice found: 550 ms
+ar/close/00000030_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "الغلاق"; voice found: 630 ms
+ar/close/00000030_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أزلاء"; voice found: 690 ms
+ar/close/00000030_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "الغلق"; voice found: 620 ms
+ar/close/00000030_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الزلاق"; voice found: 710 ms
+ar/close/00000030_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الزلاق"; voice found: 710 ms
+ar/close/00000030_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الزلاب"; voice found: 670 ms
+ar/no/00000001_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 500 ms
+ar/no/00000001_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 490 ms
+ar/no/00000001_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 460 ms
+ar/no/00000001_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 450 ms
+ar/no/00000001_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 490 ms
+ar/no/00000001_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 480 ms
+ar/no/00000002_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 570 ms
+ar/no/00000002_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 1000 ms
+ar/no/00000002_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ن"; voice found: 460 ms
+ar/no/00000003_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 650 ms
+ar/no/00000003_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 490 ms
+ar/no/00000004_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 470 ms
+ar/no/00000004_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 360 ms
+ar/no/00000004_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 490 ms
+ar/no/00000004_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 400 ms
+ar/no/00000004_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 420 ms
+ar/no/00000005_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لعب"; voice found: 460 ms
+ar/no/00000005_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 330 ms
+ar/no/00000005_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 340 ms
+ar/no/00000006_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 440 ms
+ar/no/00000006_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 470 ms
+ar/no/00000006_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 460 ms
+ar/no/00000006_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 540 ms
+ar/no/00000006_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لام"; voice found: 460 ms
+ar/no/00000007_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 410 ms
+ar/no/00000007_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 280 ms
+ar/no/00000007_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 530 ms
+ar/no/00000007_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 290 ms
+ar/no/00000008_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 500 ms
+ar/no/00000009_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 290 ms
+ar/no/00000009_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 370 ms
+ar/no/00000009_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 360 ms
+ar/no/00000010_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 490 ms
+ar/no/00000010_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 580 ms
+ar/no/00000010_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 400 ms
+ar/no/00000010_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 380 ms
+ar/no/00000011_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 430 ms
+ar/no/00000011_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 470 ms
+ar/no/00000011_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 470 ms
+ar/no/00000011_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 480 ms
+ar/no/00000012_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "اللّة"; voice found: 400 ms
+ar/no/00000012_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 490 ms
+ar/no/00000013_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 460 ms
+ar/no/00000013_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 450 ms
+ar/no/00000013_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 470 ms
+ar/no/00000014_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 440 ms
+ar/no/00000014_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 480 ms
+ar/no/00000014_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 480 ms
+ar/no/00000015_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 490 ms
+ar/no/00000016_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 510 ms
+ar/no/00000016_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 450 ms
+ar/no/00000016_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 410 ms
+ar/no/00000016_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 380 ms
+ar/no/00000016_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 480 ms
+ar/no/00000018_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 360 ms
+ar/no/00000018_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 390 ms
+ar/no/00000018_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 440 ms
+ar/no/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 380 ms
+ar/no/00000019_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 350 ms
+ar/no/00000019_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 350 ms
+ar/no/00000020_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 620 ms
+ar/no/00000020_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 400 ms
+ar/no/00000020_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 400 ms
+ar/no/00000020_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 430 ms
+ar/no/00000020_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 440 ms
+ar/no/00000021_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 440 ms
+ar/no/00000021_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 430 ms
+ar/no/00000021_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 340 ms
+ar/no/00000021_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 400 ms
+ar/no/00000022_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 530 ms
+ar/no/00000022_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 480 ms
+ar/no/00000022_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 550 ms
+ar/no/00000023_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 480 ms
+ar/no/00000023_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 470 ms
+ar/no/00000023_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 510 ms
+ar/no/00000024_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 670 ms
+ar/no/00000024_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 560 ms
+ar/no/00000024_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 540 ms
+ar/no/00000024_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 590 ms
+ar/no/00000024_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 560 ms
+ar/no/00000025_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 390 ms
+ar/no/00000026_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 360 ms
+ar/no/00000026_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 400 ms
+ar/no/00000026_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 510 ms
+ar/no/00000026_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 500 ms
+ar/no/00000026_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 520 ms
+ar/no/00000027_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 430 ms
+ar/no/00000027_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 460 ms
+ar/no/00000027_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 480 ms
+ar/no/00000027_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 470 ms
+ar/no/00000027_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 450 ms
+ar/no/00000028_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 410 ms
+ar/no/00000028_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 470 ms
+ar/no/00000028_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نو"; voice found: 460 ms
+ar/no/00000028_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 460 ms
+ar/no/00000029_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 510 ms
+ar/no/00000029_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لغة"; voice found: 510 ms
+ar/no/00000029_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ل"; voice found: 500 ms
+ar/no/00000029_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 710 ms
+ar/no/00000030_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "لا"; voice found: 430 ms
+ar/ok/00000001_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وصب"; voice found: 630 ms
+ar/ok/00000001_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لسك"; voice found: 540 ms
+ar/ok/00000001_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفق"; voice found: 650 ms
+ar/ok/00000001_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواصف"; voice found: 600 ms
+ar/ok/00000002_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موسك"; voice found: 710 ms
+ar/ok/00000002_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موانسة"; voice found: 570 ms
+ar/ok/00000003_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ماذا"; voice found: 620 ms
+ar/ok/00000003_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ماذا؟"; voice found: 600 ms
+ar/ok/00000004_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفق"; voice found: 700 ms
+ar/ok/00000004_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موزك"; voice found: 610 ms
+ar/ok/00000005_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موحك"; voice found: 580 ms
+ar/ok/00000005_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواصف"; voice found: 620 ms
+ar/ok/00000005_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موحك"; voice found: 610 ms
+ar/ok/00000005_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نوازق"; voice found: 600 ms
+ar/ok/00000006_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "مواشق"; voice found: 700 ms
+ar/ok/00000006_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موعسط"; voice found: 720 ms
+ar/ok/00000006_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مو أسط"; voice found: 680 ms
+ar/ok/00000006_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مو عسط"; voice found: 750 ms
+ar/ok/00000007_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نوح"; voice found: 530 ms
+ar/ok/00000007_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نوع سك"; voice found: 610 ms
+ar/ok/00000008_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواصف"; voice found: 680 ms
+ar/ok/00000008_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفق"; voice found: 710 ms
+ar/ok/00000008_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواصف"; voice found: 670 ms
+ar/ok/00000009_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نوهفق"; voice found: 560 ms
+ar/ok/00000009_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موثق"; voice found: 620 ms
+ar/ok/00000010_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نوافق"; voice found: 780 ms
+ar/ok/00000010_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "موافق"; voice found: 920 ms
+ar/ok/00000011_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نواتك"; voice found: 650 ms
+ar/ok/00000011_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مرحب"; voice found: 610 ms
+ar/ok/00000011_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نواتك"; voice found: 740 ms
+ar/ok/00000012_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مو أثق"; voice found: 610 ms
+ar/ok/00000012_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواتف"; voice found: 620 ms
+ar/ok/00000013_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موفرق"; voice found: 630 ms
+ar/ok/00000013_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نعم"; voice found: 670 ms
+ar/ok/00000013_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفق"; voice found: 650 ms
+ar/ok/00000013_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "موفق"; voice found: 650 ms
+ar/ok/00000013_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "موفق"; voice found: 590 ms
+ar/ok/00000014_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفر"; voice found: 550 ms
+ar/ok/00000014_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أولفق"; voice found: 620 ms
+ar/ok/00000014_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "أصدق"; voice found: 620 ms
+ar/ok/00000015_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ملاسة"; voice found: 640 ms
+ar/ok/00000015_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ملافة"; voice found: 730 ms
+ar/ok/00000015_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ملافس"; voice found: 660 ms
+ar/ok/00000015_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "بلافة"; voice found: 670 ms
+ar/ok/00000016_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "موافر"; voice found: 610 ms
+ar/ok/00000016_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الفيق"; voice found: 700 ms
+ar/ok/00000016_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفق"; voice found: 720 ms
+ar/ok/00000016_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موفك"; voice found: 720 ms
+ar/ok/00000016_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موفك"; voice found: 720 ms
+ar/ok/00000017_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مصد"; voice found: 680 ms
+ar/ok/00000017_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موسط"; voice found: 660 ms
+ar/ok/00000017_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وصف"; voice found: 660 ms
+ar/ok/00000017_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفت"; voice found: 670 ms
+ar/ok/00000018_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موالفر"; voice found: 760 ms
+ar/ok/00000018_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موصق"; voice found: 590 ms
+ar/ok/00000018_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفر"; voice found: 440 ms
+ar/ok/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواصة"; voice found: 610 ms
+ar/ok/00000019_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نحن"; voice found: 590 ms
+ar/ok/00000019_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواصة"; voice found: 590 ms
+ar/ok/00000019_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نوافق"; voice found: 520 ms
+ar/ok/00000019_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نواصف"; voice found: 550 ms
+ar/ok/00000019_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وصف"; voice found: 520 ms
+ar/ok/00000020_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفق"; voice found: 580 ms
+ar/ok/00000020_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مولفك"; voice found: 650 ms
+ar/ok/00000020_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "مافق"; voice found: 740 ms
+ar/ok/00000021_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواصف"; voice found: 700 ms
+ar/ok/00000021_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "بواصف"; voice found: 780 ms
+ar/ok/00000021_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لفق"; voice found: 720 ms
+ar/ok/00000022_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نافق"; voice found: 770 ms
+ar/ok/00000022_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مصحق"; voice found: 690 ms
+ar/ok/00000022_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نلاث"; voice found: 810 ms
+ar/ok/00000022_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ملحك"; voice found: 780 ms
+ar/ok/00000022_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موسك"; voice found: 860 ms
+ar/ok/00000023_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "بلا فق"; voice found: 900 ms
+ar/ok/00000023_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "موافق"; voice found: 800 ms
+ar/ok/00000024_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موافتي"; voice found: 600 ms
+ar/ok/00000025_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "مواطق"; voice found: 590 ms
+ar/ok/00000025_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وفف"; voice found: 690 ms
+ar/ok/00000025_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ملاف"; voice found: 590 ms
+ar/ok/00000025_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وارتك"; voice found: 620 ms
+ar/ok/00000026_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "موافة"; voice found: 720 ms
+ar/ok/00000026_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "موافق"; voice found: 850 ms
+ar/ok/00000027_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "الموالسة"; voice found: 760 ms
+ar/ok/00000027_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ملافة"; voice found: 730 ms
+ar/ok/00000027_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نوى فرق"; voice found: 810 ms
+ar/ok/00000027_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "مواصة"; voice found: 790 ms
+ar/ok/00000028_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نوفك"; voice found: 620 ms
+ar/ok/00000028_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نصق"; voice found: 660 ms
+ar/ok/00000028_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نوصق"; voice found: 630 ms
+ar/ok/00000028_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موحك"; voice found: 740 ms
+ar/ok/00000028_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موفك"; voice found: 690 ms
+ar/ok/00000028_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نعم"; voice found: 620 ms
+ar/ok/00000028_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موطق"; voice found: 640 ms
+ar/ok/00000029_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ووو فير"; voice found: 840 ms
+ar/ok/00000029_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "نوافق"; voice found: 900 ms
+ar/ok/00000029_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "موانفك"; voice found: 860 ms
+ar/ok/00000030_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "مافق"; voice found: 670 ms
+ar/ok/00000030_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لنصف"; voice found: 660 ms
+ar/ok/00000030_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نواصف"; voice found: 670 ms
+ar/ok/00000030_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نحن"; voice found: 480 ms
+ar/stop/00000001_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكة"; voice found: 560 ms
+ar/stop/00000001_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوقه"; voice found: 560 ms
+ar/stop/00000001_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكة"; voice found: 540 ms
+ar/stop/00000002_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوحكة"; voice found: 770 ms
+ar/stop/00000002_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 750 ms
+ar/stop/00000003_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكط"; voice found: 450 ms
+ar/stop/00000003_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوحة"; voice found: 490 ms
+ar/stop/00000003_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكة"; voice found: 730 ms
+ar/stop/00000003_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوحة"; voice found: 550 ms
+ar/stop/00000004_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكف"; voice found: 620 ms
+ar/stop/00000005_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تلور بطل"; voice found: 800 ms
+ar/stop/00000005_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكو"; voice found: 500 ms
+ar/stop/00000005_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوال"; voice found: 650 ms
+ar/stop/00000006_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكة"; voice found: 500 ms
+ar/stop/00000006_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكف"; voice found: 580 ms
+ar/stop/00000006_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكة"; voice found: 620 ms
+ar/stop/00000006_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكة"; voice found: 540 ms
+ar/stop/00000006_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوك"; voice found: 560 ms
+ar/stop/00000007_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طبقى"; voice found: 540 ms
+ar/stop/00000007_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكة"; voice found: 400 ms
+ar/stop/00000007_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طلق"; voice found: 350 ms
+ar/stop/00000007_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "دوقف"; voice found: 340 ms
+ar/stop/00000007_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوح قد"; voice found: 460 ms
+ar/stop/00000007_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكة"; voice found: 420 ms
+ar/stop/00000008_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طبحة"; voice found: 510 ms
+ar/stop/00000008_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوقع"; voice found: 530 ms
+ar/stop/00000008_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طاقة"; voice found: 550 ms
+ar/stop/00000008_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 530 ms
+ar/stop/00000008_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 540 ms
+ar/stop/00000008_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوح قص"; voice found: 540 ms
+ar/stop/00000009_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوك"; voice found: 370 ms
+ar/stop/00000009_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طواقع"; voice found: 490 ms
+ar/stop/00000009_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طواقر"; voice found: 510 ms
+ar/stop/00000010_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "توقع"; voice found: 590 ms
+ar/stop/00000010_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 610 ms
+ar/stop/00000010_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "طوى قف"; voice found: 690 ms
+ar/stop/00000011_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طلق"; voice found: 540 ms
+ar/stop/00000011_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكا"; voice found: 480 ms
+ar/stop/00000011_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكة"; voice found: 530 ms
+ar/stop/00000012_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكا"; voice found: 550 ms
+ar/stop/00000012_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكب"; voice found: 570 ms
+ar/stop/00000012_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكب"; voice found: 550 ms
+ar/stop/00000013_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طبقى"; voice found: 520 ms
+ar/stop/00000013_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "طوقف"; voice found: 590 ms
+ar/stop/00000014_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكف"; voice found: 560 ms
+ar/stop/00000014_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تبارك"; voice found: 520 ms
+ar/stop/00000014_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكة"; voice found: 520 ms
+ar/stop/00000015_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طواقف"; voice found: 610 ms
+ar/stop/00000015_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكف"; voice found: 690 ms
+ar/stop/00000015_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "توقع"; voice found: 580 ms
+ar/stop/00000015_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوركا"; voice found: 600 ms
+ar/stop/00000015_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طواقع"; voice found: 630 ms
+ar/stop/00000015_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دا وقا"; voice found: 600 ms
+ar/stop/00000016_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكة"; voice found: 550 ms
+ar/stop/00000016_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طواتك"; voice found: 590 ms
+ar/stop/00000016_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 520 ms
+ar/stop/00000017_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طواقع"; voice found: 580 ms
+ar/stop/00000017_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوك"; voice found: 590 ms
+ar/stop/00000017_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طبقا"; voice found: 570 ms
+ar/stop/00000018_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 640 ms
+ar/stop/00000018_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 550 ms
+ar/stop/00000018_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تبقى"; voice found: 450 ms
+ar/stop/00000018_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دعوك"; voice found: 430 ms
+ar/stop/00000018_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دعوك"; voice found: 490 ms
+ar/stop/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوقة"; voice found: 560 ms
+ar/stop/00000019_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 430 ms
+ar/stop/00000019_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوح"; voice found: 440 ms
+ar/stop/00000020_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 550 ms
+ar/stop/00000020_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 500 ms
+ar/stop/00000021_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكف"; voice found: 670 ms
+ar/stop/00000022_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 730 ms
+ar/stop/00000022_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوك"; voice found: 800 ms
+ar/stop/00000022_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 810 ms
+ar/stop/00000023_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طلوقف"; voice found: 820 ms
+ar/stop/00000023_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "العبب"; voice found: 800 ms
+ar/stop/00000023_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 770 ms
+ar/stop/00000023_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوكف"; voice found: 800 ms
+ar/stop/00000024_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "نوقف"; voice found: 860 ms
+ar/stop/00000024_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نور"; voice found: 920 ms
+ar/stop/00000024_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "العقر"; voice found: 670 ms
+ar/stop/00000024_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "توقع"; voice found: 580 ms
+ar/stop/00000025_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوط قوة"; voice found: 570 ms
+ar/stop/00000025_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ورقوا"; voice found: 550 ms
+ar/stop/00000025_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نحن"; voice found: 560 ms
+ar/stop/00000025_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تبعض قل"; voice found: 590 ms
+ar/stop/00000025_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوات كب"; voice found: 620 ms
+ar/stop/00000026_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "ثم القوة"; voice found: 560 ms
+ar/stop/00000027_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 670 ms
+ar/stop/00000027_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "وقفت"; voice found: 690 ms
+ar/stop/00000027_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دعوك"; voice found: 700 ms
+ar/stop/00000028_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دورقة"; voice found: 500 ms
+ar/stop/00000028_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دوكة"; voice found: 500 ms
+ar/stop/00000029_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نحن نحن"; voice found: 830 ms
+ar/stop/00000029_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "تبكف"; voice found: 760 ms
+ar/stop/00000029_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "كورك"; voice found: 800 ms
+ar/stop/00000029_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "توقف"; voice found: 770 ms
+ar/stop/00000029_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوط كف"; voice found: 740 ms
+ar/stop/00000029_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طوطكة"; voice found: 650 ms
+ar/stop/00000030_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "تلوقف"; voice found: 510 ms
+ar/stop/00000030_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "طبب"; voice found: 530 ms
+ar/yes/00000001_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 510 ms
+ar/yes/00000001_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 540 ms
+ar/yes/00000002_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 500 ms
+ar/yes/00000002_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 600 ms
+ar/yes/00000002_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 730 ms
+ar/yes/00000002_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 860 ms
+ar/yes/00000002_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 380 ms
+ar/yes/00000003_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 1000 ms
+ar/yes/00000003_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 440 ms
+ar/yes/00000003_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 620 ms
+ar/yes/00000003_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دع"; voice found: 640 ms
+ar/yes/00000003_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "دم"; voice found: 580 ms
+ar/yes/00000003_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 510 ms
+ar/yes/00000004_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 490 ms
+ar/yes/00000005_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 420 ms
+ar/yes/00000005_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 420 ms
+ar/yes/00000006_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 460 ms
+ar/yes/00000006_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 520 ms
+ar/yes/00000006_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 520 ms
+ar/yes/00000006_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 530 ms
+ar/yes/00000006_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 510 ms
+ar/yes/00000007_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 620 ms
+ar/yes/00000007_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "نم"; voice found: 400 ms
+ar/yes/00000007_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نم"; voice found: 320 ms
+ar/yes/00000008_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 480 ms
+ar/yes/00000008_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 500 ms
+ar/yes/00000008_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نم"; voice found: 490 ms
+ar/yes/00000008_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 500 ms
+ar/yes/00000008_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نوم"; voice found: 540 ms
+ar/yes/00000009_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نم"; voice found: 430 ms
+ar/yes/00000009_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "نم"; voice found: 460 ms
+ar/yes/00000010_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 520 ms
+ar/yes/00000010_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 440 ms
+ar/yes/00000010_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 510 ms
+ar/yes/00000012_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 450 ms
+ar/yes/00000012_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 420 ms
+ar/yes/00000012_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نم"; voice found: 470 ms
+ar/yes/00000012_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "نم"; voice found: 440 ms
+ar/yes/00000012_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 490 ms
+ar/yes/00000012_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 490 ms
+ar/yes/00000013_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 480 ms
+ar/yes/00000013_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 500 ms
+ar/yes/00000014_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 470 ms
+ar/yes/00000014_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 430 ms
+ar/yes/00000014_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 440 ms
+ar/yes/00000015_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 490 ms
+ar/yes/00000015_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 460 ms
+ar/yes/00000015_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 520 ms
+ar/yes/00000015_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 470 ms
+ar/yes/00000016_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 520 ms
+ar/yes/00000016_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 440 ms
+ar/yes/00000016_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 500 ms
+ar/yes/00000016_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 520 ms
+ar/yes/00000017_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 480 ms
+ar/yes/00000017_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 510 ms
+ar/yes/00000017_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 490 ms
+ar/yes/00000017_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 540 ms
+ar/yes/00000018_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 390 ms
+ar/yes/00000018_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 370 ms
+ar/yes/00000019_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 330 ms
+ar/yes/00000019_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 380 ms
+ar/yes/00000019_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 300 ms
+ar/yes/00000019_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 320 ms
+ar/yes/00000020_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 590 ms
+ar/yes/00000020_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 440 ms
+ar/yes/00000020_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 420 ms
+ar/yes/00000021_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نو"; voice found: 440 ms
+ar/yes/00000021_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نو"; voice found: 380 ms
+ar/yes/00000021_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 370 ms
+ar/yes/00000022_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نون"; voice found: 340 ms
+ar/yes/00000022_NO_08.wav	valid speech	Whisper hears the expected word	Whisper: "نم"; voice found: 460 ms
+ar/yes/00000022_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 570 ms
+ar/yes/00000022_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 560 ms
+ar/yes/00000023_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نوم"; voice found: 500 ms
+ar/yes/00000023_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 530 ms
+ar/yes/00000023_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 440 ms
+ar/yes/00000024_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 550 ms
+ar/yes/00000024_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 530 ms
+ar/yes/00000024_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "نع"; voice found: 500 ms
+ar/yes/00000024_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نعطة"; voice found: 530 ms
+ar/yes/00000024_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 450 ms
+ar/yes/00000025_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 460 ms
+ar/yes/00000025_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 470 ms
+ar/yes/00000025_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 500 ms
+ar/yes/00000025_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "لا"; voice found: 460 ms
+ar/yes/00000026_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 490 ms
+ar/yes/00000026_NO_02.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 600 ms
+ar/yes/00000026_NO_05.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 520 ms
+ar/yes/00000026_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 630 ms
+ar/yes/00000026_NO_10.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 570 ms
+ar/yes/00000027_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "now"; voice found: 510 ms
+ar/yes/00000027_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "نا"; voice found: 480 ms
+ar/yes/00000028_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "دعم"; voice found: 410 ms
+ar/yes/00000029_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 480 ms
+ar/yes/00000029_NO_09.wav	valid speech	Whisper hears the expected word	Whisper: "نعم"; voice found: 520 ms
+ar/yes/00000030_NO_01.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 460 ms
+ar/yes/00000030_NO_03.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 520 ms
+ar/yes/00000030_NO_04.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 460 ms
+ar/yes/00000030_NO_06.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 420 ms
+ar/yes/00000030_NO_07.wav	valid speech	Whisper hears the expected word	Whisper: "نام"; voice found: 460 ms
+en/go/0137b3f4_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 420 ms
+en/go/01bb6a2a_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 400 ms
+en/go/02746d24_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 490 ms
+en/go/0616de09_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 680 ms
+en/go/079d1020_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 540 ms
+en/go/0d53e045_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 1000 ms
+en/go/0eb48e10_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 520 ms
+en/go/0ff728b5_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 640 ms
+en/go/122c5aa7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 520 ms
+en/go/122c5aa7_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 500 ms
+en/go/14872d06_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 430 ms
+en/go/15f04ff8_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 750 ms
+en/go/1626bc5a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 1000 ms
+en/go/173ae793_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go."; voice found: 570 ms
+en/go/1a673010_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 610 ms
+en/go/1bb574f9_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 340 ms
+en/go/1bb6ed89_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 370 ms
+en/go/1d919a90_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 290 ms
+en/go/1e9b215e_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 450 ms
+en/go/1ed557b9_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 480 ms
+en/go/20174140_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 1000 ms
+en/go/2197f41c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 470 ms
+en/go/2335770e_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 540 ms
+en/go/25040e85_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 520 ms
+en/go/2bfe70ef_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 1000 ms
+en/go/2cf28b70_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 530 ms
+en/go/2f0a410b_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 470 ms
+en/go/30137d34_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 1000 ms
+en/go/31e686d2_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 650 ms
+en/go/333784b7_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 580 ms
+en/go/3402e488_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 440 ms
+en/go/35d1b6ee_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 510 ms
+en/go/37fc5d97_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 840 ms
+en/go/39543cfd_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "though"; voice found: 550 ms
+en/go/39999a0f_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 810 ms
+en/go/39999a0f_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 620 ms
+en/go/3a182c98_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 1000 ms
+en/go/3bc21161_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 490 ms
+en/go/3c8836dc_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 380 ms
+en/go/3d53244b_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 380 ms
+en/go/3ffa3457_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 1000 ms
+en/go/418e7158_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 510 ms
+en/go/422d3197_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 720 ms
+en/go/460f2bad_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 520 ms
+en/go/47565088_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go."; voice found: 420 ms
+en/go/4abb2400_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 570 ms
+en/go/4f2ab70c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go."; voice found: 530 ms
+en/go/4f5c0b28_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 340 ms
+en/go/50928b05_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 600 ms
+en/go/51055bda_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 440 ms
+en/go/5628d7b7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 960 ms
+en/go/5628d7b7_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go."; voice found: 980 ms
+en/go/56eab10e_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 540 ms
+en/go/56f8a100_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 360 ms
+en/go/5c8af87a_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Rico"; voice found: 440 ms
+en/go/5efb758c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 1000 ms
+en/go/5f8e50a0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go."; voice found: 590 ms
+en/go/617de221_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 640 ms
+en/go/65040d9b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 390 ms
+en/go/686d030b_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 470 ms
+en/go/69953f48_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 370 ms
+en/go/6aafb34f_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 530 ms
+en/go/6f7724f5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 440 ms
+en/go/71e6ab20_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 460 ms
+en/go/7211390b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 510 ms
+en/go/743edf9d_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 400 ms
+en/go/78102205_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 790 ms
+en/go/7846fd85_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 490 ms
+en/go/7846fd85_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 460 ms
+en/go/7910d292_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 530 ms
+en/go/798f702a_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 1000 ms
+en/go/7be5a0f3_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 940 ms
+en/go/7dc50b88_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 580 ms
+en/go/80fe1dc7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 420 ms
+en/go/8134f43f_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 950 ms
+en/go/8281a2a8_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 590 ms
+en/go/85834399_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 340 ms
+en/go/86f12ac0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 480 ms
+en/go/87728a88_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 880 ms
+en/go/881583a6_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 450 ms
+en/go/888a0c49_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 540 ms
+en/go/8a0457c9_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 430 ms
+en/go/8a194ee6_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Carl"; voice found: 480 ms
+en/go/8c3c4715_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 380 ms
+en/go/8e05039f_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 330 ms
+en/go/918a2473_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 340 ms
+en/go/9229bff9_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 890 ms
+en/go/96a48d28_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 490 ms
+en/go/96cd0255_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 880 ms
+en/go/9712cce0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 610 ms
+en/go/97f4c236_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 560 ms
+en/go/9a69672b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 280 ms
+en/go/9a69672b_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 560 ms
+en/go/9ff1b8b6_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Done"; voice found: 370 ms
+en/go/a0f93943_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 380 ms
+en/go/a108341b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 770 ms
+en/go/a1cff772_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 490 ms
+en/go/a3fc7884_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 760 ms
+en/go/a3fc7884_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 380 ms
+en/go/a4ca3afe_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 420 ms
+en/go/a6d586b7_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 440 ms
+en/go/a759efbc_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 640 ms
+en/go/a996cf66_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 810 ms
+en/go/ac652c60_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 510 ms
+en/go/acde7e73_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 320 ms
+en/go/aef8dcf5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 510 ms
+en/go/afd53389_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 800 ms
+en/go/aff582a1_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 420 ms
+en/go/b01c8f61_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 260 ms
+en/go/b16f2d0d_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 550 ms
+en/go/b25b6065_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 900 ms
+en/go/b4604db4_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 1000 ms
+en/go/b487da60_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 470 ms
+en/go/b7a0754f_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 520 ms
+en/go/b8b8cb52_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 460 ms
+en/go/baeac2ba_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 470 ms
+en/go/be91a00a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 480 ms
+en/go/c120e80e_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 550 ms
+en/go/c1d39ce8_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 410 ms
+en/go/c4e1f6e0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 1000 ms
+en/go/c948d727_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 450 ms
+en/go/c9b653a0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 620 ms
+en/go/ca48dc76_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 370 ms
+en/go/cb2929ce_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 420 ms
+en/go/cb2929ce_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 490 ms
+en/go/d0faf7e4_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Dao"; voice found: 610 ms
+en/go/d0faf7e4_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 850 ms
+en/go/d0faf7e4_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 590 ms
+en/go/d3a18257_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 390 ms
+en/go/d3badc9a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 380 ms
+en/go/d6360b32_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 710 ms
+en/go/d8c52371_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 330 ms
+en/go/d9d6559e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 470 ms
+en/go/dbaf8fc6_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 1000 ms
+en/go/dcc012ec_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go."; voice found: 380 ms
+en/go/de6eb27c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 420 ms
+en/go/df1d5024_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "go"; voice found: 490 ms
+en/go/e0315cf6_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Cool"; voice found: 350 ms
+en/go/e0ff1e9c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 410 ms
+en/go/e1469561_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 360 ms
+en/go/e41a903b_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 430 ms
+en/go/e7ea8b76_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 470 ms
+en/go/eb3d8eb1_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 480 ms
+en/go/f19c1390_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 450 ms
+en/go/f264e0df_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 410 ms
+en/go/f59d0771_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 380 ms
+en/go/f7b43563_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 840 ms
+en/go/fac7deca_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go!"; voice found: 540 ms
+en/go/fafe8101_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Go."; voice found: 460 ms
+en/go/fde2dee7_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Go"; voice found: 380 ms
+en/no/012c8314_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 380 ms
+en/no/01bb6a2a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No?"; voice found: 480 ms
+en/no/06a79a03_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 650 ms
+en/no/07ad9b59_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 590 ms
+en/no/096456f9_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Now"; voice found: 400 ms
+en/no/0c2d2ffa_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 440 ms
+en/no/0cd323ec_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 630 ms
+en/no/122c5aa7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 470 ms
+en/no/14587ff0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 430 ms
+en/no/14587ff0_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 480 ms
+en/no/14775481_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 510 ms
+en/no/14775481_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 470 ms
+en/no/15c563d7_nohash_1.wav	uncertain	the voice detector reacts but Whisper hears no words	Whisper: "(music)"; voice found: 960 ms
+en/no/172dc2b0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 500 ms
+en/no/173e6bbf_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "no"; voice found: 710 ms
+en/no/17c94b23_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No!"; voice found: 400 ms
+en/no/187af8be_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 500 ms
+en/no/1995cf9e_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 510 ms
+en/no/19b05529_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 520 ms
+en/no/19e246ad_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 950 ms
+en/no/1b4c9b89_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 390 ms
+en/no/1c1060b1_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 410 ms
+en/no/1c3f50ad_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 470 ms
+en/no/21307344_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 490 ms
+en/no/23059a35_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 600 ms
+en/no/24befdb3_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 550 ms
+en/no/24befdb3_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 840 ms
+en/no/2510c044_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 500 ms
+en/no/264f471d_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 410 ms
+en/no/28ed6bc9_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 450 ms
+en/no/2903efb3_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 300 ms
+en/no/2da58b32_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 610 ms
+en/no/2e0d80f7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 950 ms
+en/no/333784b7_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 460 ms
+en/no/33903159_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 590 ms
+en/no/35d1b6ee_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 480 ms
+en/no/36de13e1_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 710 ms
+en/no/37dca74f_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 300 ms
+en/no/39025b21_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 1000 ms
+en/no/3a70ab7f_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 480 ms
+en/no/3cfc6b3a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 520 ms
+en/no/3d53244b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 460 ms
+en/no/3e3fa7fd_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 1000 ms
+en/no/412c675c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 510 ms
+en/no/4249c833_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 540 ms
+en/no/459345ea_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Now"; voice found: 500 ms
+en/no/46a153d8_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Nice"; voice found: 970 ms
+en/no/471a0925_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 620 ms
+en/no/49af4432_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 470 ms
+en/no/4a1e736b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 720 ms
+en/no/4a1e736b_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Now"; voice found: 670 ms
+en/no/4bb1244f_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 460 ms
+en/no/4beff0c5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 580 ms
+en/no/4f5c0b28_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Never"; voice found: 410 ms
+en/no/4fe01997_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 1000 ms
+en/no/50928b05_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 700 ms
+en/no/520e8c0e_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 390 ms
+en/no/53578f4e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 1000 ms
+en/no/53fd1780_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 320 ms
+en/no/541e4079_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 350 ms
+en/no/563aa4e6_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 420 ms
+en/no/56eb74ae_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 550 ms
+en/no/573cdb8a_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 350 ms
+en/no/5c237956_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 800 ms
+en/no/5c39594f_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No?"; voice found: 390 ms
+en/no/5ff3f9a1_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 510 ms
+en/no/611d2b50_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 330 ms
+en/no/617de221_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 510 ms
+en/no/62641b88_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 420 ms
+en/no/62ff07ef_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 390 ms
+en/no/6414258b_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 900 ms
+en/no/686d030b_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 400 ms
+en/no/68effe85_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 740 ms
+en/no/692a88e6_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 670 ms
+en/no/692a88e6_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 200 ms
+en/no/6a2fb9a5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 730 ms
+en/no/6d818f6c_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 500 ms
+en/no/6e916de8_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 480 ms
+en/no/7211390b_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 480 ms
+en/no/735845ab_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 370 ms
+en/no/748cb308_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 660 ms
+en/no/7c1d8533_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 570 ms
+en/no/7cf14c54_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 330 ms
+en/no/7fd25f7c_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 380 ms
+en/no/82305c3a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 410 ms
+en/no/86cb59b2_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 960 ms
+en/no/876c84d6_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 680 ms
+en/no/8830e17f_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 580 ms
+en/no/8d9cc260_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 510 ms
+en/no/8eb4a1bf_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No!"; voice found: 660 ms
+en/no/902258bb_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 930 ms
+en/no/9712cce0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 800 ms
+en/no/97f4c236_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 490 ms
+en/no/981e2a16_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 590 ms
+en/no/9886d8bf_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 470 ms
+en/no/989a2213_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Now"; voice found: 300 ms
+en/no/9a69672b_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 460 ms
+en/no/9acd0254_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Now"; voice found: 440 ms
+en/no/9b402bc2_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 430 ms
+en/no/9e2ce5e3_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 510 ms
+en/no/a1cff772_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 560 ms
+en/no/a60a09cf_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 1000 ms
+en/no/a97017df_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 560 ms
+en/no/ab00c4b2_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 430 ms
+en/no/ad340ed7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 530 ms
+en/no/af8b2f2c_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 530 ms
+en/no/afbec28d_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 410 ms
+en/no/b43c8f2f_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 410 ms
+en/no/b5552931_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 300 ms
+en/no/b65f6015_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 440 ms
+en/no/b83c1acf_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 520 ms
+en/no/b8b8cb52_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 430 ms
+en/no/b8c48ffb_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 380 ms
+en/no/b97c9f77_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 740 ms
+en/no/bbb2eb5b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 430 ms
+en/no/be7fa0a3_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 520 ms
+en/no/be91a00a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 590 ms
+en/no/c08585c1_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 430 ms
+en/no/c0c0d87d_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 990 ms
+en/no/c38720cb_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Now"; voice found: 460 ms
+en/no/c4e1f6e0_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 270 ms
+en/no/c68cf200_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 440 ms
+en/no/c79159aa_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 480 ms
+en/no/cc71bada_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 550 ms
+en/no/ccb1266b_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 500 ms
+en/no/cd7f8c1b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 430 ms
+en/no/ced835d3_nohash_1.wav	uncertain	the voice detector reacts but Whisper hears no words	Whisper: "["; voice found: 320 ms
+en/no/cee22275_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 470 ms
+en/no/d0f7bef5_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 520 ms
+en/no/d6b155a5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 440 ms
+en/no/d91a159e_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 580 ms
+en/no/da584bc0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 470 ms
+en/no/dc6e9c04_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 870 ms
+en/no/df038de4_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 940 ms
+en/no/df1d5024_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 280 ms
+en/no/df280250_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 1000 ms
+en/no/e0315cf6_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 520 ms
+en/no/e14d3db8_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 670 ms
+en/no/e53139ad_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 360 ms
+en/no/e6515415_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 1000 ms
+en/no/e7ea8b76_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 570 ms
+en/no/e9287461_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 540 ms
+en/no/eb0676ec_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 360 ms
+en/no/eb67fcbc_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 780 ms
+en/no/ec201020_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 470 ms
+en/no/f5e5e8b0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 370 ms
+en/no/f9273a21_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 610 ms
+en/no/f9af823e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No"; voice found: 1000 ms
+en/no/fbf3dd31_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 480 ms
+en/no/fffcabd1_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "No."; voice found: 520 ms
+en/stop/0132a06d_nohash_3.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Stubber"; voice found: 470 ms
+en/stop/05739450_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 640 ms
+en/stop/07ad9b59_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 620 ms
+en/stop/0c40e715_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 960 ms
+en/stop/0ff728b5_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 500 ms
+en/stop/10ace7eb_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 480 ms
+en/stop/122c5aa7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 550 ms
+en/stop/15c563d7_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 670 ms
+en/stop/1890e5c3_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 550 ms
+en/stop/190821dc_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 490 ms
+en/stop/1b835b87_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 290 ms
+en/stop/2313e093_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 480 ms
+en/stop/24befdb3_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 430 ms
+en/stop/24befdb3_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 580 ms
+en/stop/2510c044_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 660 ms
+en/stop/25132942_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 370 ms
+en/stop/257251e0_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 990 ms
+en/stop/28ce0c58_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 590 ms
+en/stop/29fb33da_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/2bdbe5f7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 560 ms
+en/stop/2bfe70ef_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Start"; voice found: 290 ms
+en/stop/2da58b32_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 480 ms
+en/stop/2dcb6848_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 560 ms
+en/stop/30a09789_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 670 ms
+en/stop/30aabd44_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 560 ms
+en/stop/311fde72_nohash_4.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Start!"; voice found: 630 ms
+en/stop/33f60c62_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Start."; voice found: 450 ms
+en/stop/3777c08e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 900 ms
+en/stop/37fc5d97_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 380 ms
+en/stop/38d78313_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 630 ms
+en/stop/3a182c98_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/3bfd30e6_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 810 ms
+en/stop/3c257192_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 420 ms
+en/stop/3da7f617_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 510 ms
+en/stop/3ff840aa_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 410 ms
+en/stop/418e7158_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 640 ms
+en/stop/437455be_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/471a0925_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 520 ms
+en/stop/48a8a69d_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 550 ms
+en/stop/48bdc11c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 580 ms
+en/stop/48bfde8e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/4f8ef132_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 660 ms
+en/stop/51055bda_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 360 ms
+en/stop/51055bda_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 430 ms
+en/stop/53458368_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Start"; voice found: 350 ms
+en/stop/5e3dde6b_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Let's stop."; voice found: 750 ms
+en/stop/62581901_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/62641b88_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 680 ms
+en/stop/63996b7c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop Stop Stop Stop Stop Stop"; voice found: 650 ms
+en/stop/66aa0f29_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 670 ms
+en/stop/6727b579_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 590 ms
+en/stop/68dd409e_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 880 ms
+en/stop/6a014b29_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 490 ms
+en/stop/6c429c7b_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 340 ms
+en/stop/6d2d3b0d_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 410 ms
+en/stop/6e2ef3d5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 350 ms
+en/stop/6f689791_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 590 ms
+en/stop/6f689791_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "stop"; voice found: 390 ms
+en/stop/7014b07e_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 460 ms
+en/stop/712e4d58_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 740 ms
+en/stop/74b73f88_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 630 ms
+en/stop/76b58705_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Start"; voice found: 530 ms
+en/stop/778a4a01_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 460 ms
+en/stop/7e6bd776_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 730 ms
+en/stop/7ff4fc72_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 350 ms
+en/stop/826268f8_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/834f03fe_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 700 ms
+en/stop/834f03fe_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 590 ms
+en/stop/850e2222_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 890 ms
+en/stop/89865a6f_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 300 ms
+en/stop/8dc26a15_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop Stop Stop Stop Stop Stop"; voice found: 700 ms
+en/stop/8f4c551f_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 450 ms
+en/stop/918a2473_nohash_3.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Up"; voice found: 560 ms
+en/stop/92b2bf59_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 510 ms
+en/stop/94de6a6a_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 690 ms
+en/stop/94de6a6a_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stomp."; voice found: 300 ms
+en/stop/97f4c236_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 590 ms
+en/stop/9a7c1f83_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 570 ms
+en/stop/9acd0254_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 540 ms
+en/stop/9acd0254_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop Stop Stop Stop Stop Stop"; voice found: 520 ms
+en/stop/9d7036f9_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 580 ms
+en/stop/9db2bfe9_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 590 ms
+en/stop/9f6fbdb4_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 700 ms
+en/stop/a4ca3afe_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 580 ms
+en/stop/a4e8a997_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 720 ms
+en/stop/a8cf01bc_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 450 ms
+en/stop/a996cf66_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/ab71c9a7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 400 ms
+en/stop/ac652c60_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 510 ms
+en/stop/ad63d93c_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 520 ms
+en/stop/adc216c5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 480 ms
+en/stop/ae927455_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 930 ms
+en/stop/af130f12_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 820 ms
+en/stop/b1114e4f_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 800 ms
+en/stop/b3bdded5_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Start"; voice found: 400 ms
+en/stop/b87bdb22_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 500 ms
+en/stop/b8b8cb52_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 310 ms
+en/stop/b959cd0c_nohash_0.wav	uncertain	the voice detector reacts but Whisper hears no words	Whisper: "(upbeat music)"; voice found: 940 ms
+en/stop/b9cccd01_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 690 ms
+en/stop/bbd0bbd0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 530 ms
+en/stop/be7a5b2d_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "step step step step step step"; voice found: 590 ms
+en/stop/bed06fac_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 860 ms
+en/stop/bf8d5617_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 510 ms
+en/stop/bfdb9801_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 410 ms
+en/stop/c0fb6812_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 770 ms
+en/stop/c1d39ce8_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 800 ms
+en/stop/c1d39ce8_nohash_9.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 580 ms
+en/stop/c22d3f18_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 420 ms
+en/stop/c53b335a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 290 ms
+en/stop/c6ee87a7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 470 ms
+en/stop/c71e3acc_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 720 ms
+en/stop/c9b653a0_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 760 ms
+en/stop/cb164eea_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 450 ms
+en/stop/cb2929ce_nohash_5.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 520 ms
+en/stop/cd7f8c1b_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 360 ms
+en/stop/cd85758f_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 710 ms
+en/stop/ce7a8e92_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/ced4e2a1_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 450 ms
+en/stop/cf8d91cf_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 520 ms
+en/stop/d0faf7e4_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 230 ms
+en/stop/d1d3e64d_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 380 ms
+en/stop/d6b155a5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 530 ms
+en/stop/d90b4138_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 450 ms
+en/stop/da8fa823_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 610 ms
+en/stop/db7c95b0_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 740 ms
+en/stop/dbb40d24_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Yeah"; voice found: 920 ms
+en/stop/dbb40d24_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "done"; voice found: 190 ms
+en/stop/dca6b373_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 100 ms
+en/stop/e0ff1e9c_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "Start"; voice found: 470 ms
+en/stop/e32ff49d_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 530 ms
+en/stop/e7117d00_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 520 ms
+en/stop/e77d88fc_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 690 ms
+en/stop/e9287461_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 650 ms
+en/stop/e9b61425_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 550 ms
+en/stop/eb3f7d82_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 410 ms
+en/stop/ec201020_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 500 ms
+en/stop/ecbd8d66_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 510 ms
+en/stop/f0ae7203_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 560 ms
+en/stop/f104f742_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop Stop Stop Stop Stop Stop"; voice found: 490 ms
+en/stop/f2b8fc18_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop."; voice found: 540 ms
+en/stop/f33660af_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 500 ms
+en/stop/f4504600_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 650 ms
+en/stop/f5733968_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 420 ms
+en/stop/f632210f_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 830 ms
+en/stop/f8f60f59_nohash_1.wav	uncertain	the voice detector reacts but Whisper hears no words	Whisper: "(music)"; voice found: 610 ms
+en/stop/f8f60f59_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 480 ms
+en/stop/f9ebdba0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Stop"; voice found: 1000 ms
+en/stop/fd395b74_nohash_3.wav	no speech	Whisper hears no words and the voice detector finds under 100 ms of voice	Whisper: "[Music]"; voice found: 50 ms
+en/stop/fd395b74_nohash_4.wav	no speech	Whisper hears no words and the voice detector finds under 100 ms of voice	Whisper: "[Music]"; voice found: 0 ms
+en/stop/ffa76c4a_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Stop!"; voice found: 410 ms
+en/yes/060cd039_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 1000 ms
+en/yes/060cd039_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 770 ms
+en/yes/0685264e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 680 ms
+en/yes/105a0eea_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 510 ms
+en/yes/10627519_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 470 ms
+en/yes/106a6183_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 470 ms
+en/yes/106a6183_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 520 ms
+en/yes/15c563d7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 630 ms
+en/yes/161fcca8_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 570 ms
+en/yes/1746d7b6_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 280 ms
+en/yes/1942abd7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 560 ms
+en/yes/19b05529_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yeah"; voice found: 450 ms
+en/yes/1a892463_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 590 ms
+en/yes/1b4c9b89_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 510 ms
+en/yes/1cbcc7a7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 1000 ms
+en/yes/20d3f11f_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 310 ms
+en/yes/2197f41c_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 780 ms
+en/yes/229978fd_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 980 ms
+en/yes/24befdb3_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 640 ms
+en/yes/24c9f572_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "yes."; voice found: 680 ms
+en/yes/264f471d_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "yes"; voice found: 710 ms
+en/yes/28ce0c58_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 570 ms
+en/yes/28e47b1a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 720 ms
+en/yes/28ed6bc9_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 350 ms
+en/yes/29b81b73_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "yes"; voice found: 520 ms
+en/yes/300384f0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 350 ms
+en/yes/3209ec42_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 700 ms
+en/yes/324210dd_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 520 ms
+en/yes/32561e9e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 330 ms
+en/yes/32561e9e_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 480 ms
+en/yes/3402e488_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 470 ms
+en/yes/35d1b6ee_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 580 ms
+en/yes/36050ef3_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 590 ms
+en/yes/36050ef3_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 510 ms
+en/yes/370844f7_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 480 ms
+en/yes/38d78313_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 580 ms
+en/yes/3ab9ba07_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 940 ms
+en/yes/3b8406c0_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 580 ms
+en/yes/3bc21161_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 600 ms
+en/yes/3e31dffe_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 630 ms
+en/yes/41285056_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 560 ms
+en/yes/41285056_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 580 ms
+en/yes/421ed23f_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 450 ms
+en/yes/4620dc14_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 290 ms
+en/yes/46a153d8_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	Whisper: "please"; voice found: 670 ms
+en/yes/471a0925_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 570 ms
+en/yes/48a8a69d_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 470 ms
+en/yes/49af4432_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 480 ms
+en/yes/4a1e736b_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 620 ms
+en/yes/4c62312c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 590 ms
+en/yes/4f781a59_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 920 ms
+en/yes/50f55535_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 370 ms
+en/yes/5184ed3e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 480 ms
+en/yes/5195f0ec_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 390 ms
+en/yes/5588c7e6_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 560 ms
+en/yes/563aa4e6_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 470 ms
+en/yes/56eb74ae_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 680 ms
+en/yes/56eb74ae_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 680 ms
+en/yes/57376a4c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 660 ms
+en/yes/589bce2c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 1000 ms
+en/yes/59c3a7f2_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 600 ms
+en/yes/5fb88f4c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 1000 ms
+en/yes/617de221_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 920 ms
+en/yes/6205088b_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yeah"; voice found: 680 ms
+en/yes/62581901_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 410 ms
+en/yes/6c0f6493_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 570 ms
+en/yes/6f2f57c1_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 750 ms
+en/yes/6f689791_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 440 ms
+en/yes/70a00e98_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 560 ms
+en/yes/712e4d58_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 410 ms
+en/yes/71904de3_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 850 ms
+en/yes/71f6fed7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 430 ms
+en/yes/7211390b_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 680 ms
+en/yes/73124b26_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 440 ms
+en/yes/76424fa5_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 350 ms
+en/yes/7799c9cd_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 850 ms
+en/yes/7846fd85_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 470 ms
+en/yes/7846fd85_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 400 ms
+en/yes/7ca023e2_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 580 ms
+en/yes/7f74626f_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 680 ms
+en/yes/7ff085e1_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 600 ms
+en/yes/8012c69d_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 450 ms
+en/yes/8012c69d_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 510 ms
+en/yes/8056e897_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 860 ms
+en/yes/834f03fe_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 440 ms
+en/yes/86402da1_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "yes"; voice found: 630 ms
+en/yes/881583a6_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 510 ms
+en/yes/8931f494_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 280 ms
+en/yes/8a28231e_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 480 ms
+en/yes/8c7b691a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 790 ms
+en/yes/8d8d9855_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 560 ms
+en/yes/96a48d28_nohash_4.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 630 ms
+en/yes/977a3be4_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 670 ms
+en/yes/97ae8b25_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 380 ms
+en/yes/97f4c236_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 790 ms
+en/yes/99e6cab8_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 860 ms
+en/yes/9aa21fa9_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 550 ms
+en/yes/9db2bfe9_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 530 ms
+en/yes/a24cf51c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 1000 ms
+en/yes/a4b21cbc_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 420 ms
+en/yes/a4c938ce_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 770 ms
+en/yes/a5d485dc_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 310 ms
+en/yes/ac4b3fc3_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 510 ms
+en/yes/ad89eb1e_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "yes"; voice found: 710 ms
+en/yes/ae71797c_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 260 ms
+en/yes/af7a8296_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 260 ms
+en/yes/b00c4c53_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 310 ms
+en/yes/b41a92a3_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 350 ms
+en/yes/b4aa9fef_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 520 ms
+en/yes/b5552931_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 470 ms
+en/yes/b5552931_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 450 ms
+en/yes/b84f83d2_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 270 ms
+en/yes/b9f46737_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 630 ms
+en/yes/bbaa7946_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 720 ms
+en/yes/bd11a2e7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 470 ms
+en/yes/be7a5b2d_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 890 ms
+en/yes/bfaf2000_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 510 ms
+en/yes/c0445658_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 520 ms
+en/yes/c103a2d5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 750 ms
+en/yes/c120e80e_nohash_7.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 560 ms
+en/yes/c1d39ce8_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 780 ms
+en/yes/c1d39ce8_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 660 ms
+en/yes/c634a189_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 780 ms
+en/yes/c90c0105_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 520 ms
+en/yes/c93d5e22_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 280 ms
+en/yes/cb164eea_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 610 ms
+en/yes/cb2929ce_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 560 ms
+en/yes/cb2929ce_nohash_6.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 570 ms
+en/yes/cb8f8307_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 560 ms
+en/yes/cb8f8307_nohash_5.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 560 ms
+en/yes/cc6ee39b_nohash_3.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 610 ms
+en/yes/d0faf7e4_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 520 ms
+en/yes/d312f481_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 870 ms
+en/yes/d4d898d7_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 330 ms
+en/yes/d53e25ba_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 460 ms
+en/yes/d9d6559e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 450 ms
+en/yes/dabf67d9_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 670 ms
+en/yes/db72a474_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 360 ms
+en/yes/db9cd41d_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 580 ms
+en/yes/dbb7723a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 320 ms
+en/yes/df1d5024_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 340 ms
+en/yes/e0344f60_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 730 ms
+en/yes/e77d88fc_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes."; voice found: 590 ms
+en/yes/ec5ab5d5_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 460 ms
+en/yes/f2dd248e_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 620 ms
+en/yes/f34e6f44_nohash_2.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 490 ms
+en/yes/f3957e23_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 810 ms
+en/yes/f7879738_nohash_1.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 390 ms
+en/yes/f9318c93_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 480 ms
+en/yes/fe5c4a7a_nohash_0.wav	valid speech	Whisper hears the expected word	Whisper: "Yes"; voice found: 660 ms
+sent/clnsp1012.wav	valid speech	Whisper hears the expected word	Whisper: "These curves were derived by an analysis of extensive sky"; voice found: 3830 ms
+sent/clnsp103.wav	valid speech	Whisper hears the expected word	Whisper: "In earlier years, the preservation of food was essential."; voice found: 3480 ms
+sent/clnsp1044.wav	valid speech	Whisper hears the expected word	Whisper: "a flame with usap air. One of these is the solidarity and com-"; voice found: 3480 ms
+sent/clnsp1049.wav	valid speech	Whisper hears the expected word	Whisper: "weakness in leadership. She always could sense the shag and of a"; voice found: 3760 ms
+sent/clnsp1050.wav	valid speech	Whisper hears the expected word	Whisper: "Have you got enough blanket? Closer still regular barricades of."; voice found: 3630 ms
+sent/clnsp1053.wav	valid speech	Whisper hears the expected word	Whisper: "under this law, annual grants are given to systems in substantial amounts."; voice found: 3780 ms
+sent/clnsp1054.wav	valid speech	Whisper hears the expected word	Whisper: "Encourage them to exercise their benefits. Use deduct"; voice found: 3320 ms
+sent/clnsp1058.wav	valid speech	Whisper hears the expected word	Whisper: "The museum hires musicians every evening. A roll of wire lay near the wall."; voice found: 3600 ms
+sent/clnsp1067.wav	valid speech	Whisper hears the expected word	Whisper: "Okay, take the tray. That'll be plenty to eat by. Presently, his-"; voice found: 3130 ms
+sent/clnsp1078.wav	valid speech	Whisper hears the expected word	Whisper: "Drunkenness was no longer tolerated. It would be well to sh-"; voice found: 3750 ms
+sent/clnsp1081.wav	valid speech	Whisper hears the expected word	Whisper: "This is the second year your mother's donated my fishing tackle to the bizarre. She-"; voice found: 3580 ms
+sent/clnsp1083.wav	valid speech	Whisper hears the expected word	Whisper: "Stay right here where your kid, he cold. The kid has no manners."; voice found: 3470 ms
+sent/clnsp1093.wav	valid speech	Whisper hears the expected word	Whisper: "Another brand of indefinite reference arises out of the use of the double verb."; voice found: 3570 ms
+sent/clnsp1096.wav	valid speech	Whisper hears the expected word	Whisper: "No more startling contrast to a system of cell and satellites could..."; voice found: 3980 ms
+sent/clnsp1097.wav	valid speech	Whisper hears the expected word	Whisper: "may have a point in urging that decadent themes be given fewer prizes."; voice found: 3730 ms
+sent/clnsp110.wav	valid speech	Whisper hears the expected word	Whisper: "Fill small hole in bowl with clay. Chaser assembled in bowl."; voice found: 3500 ms
+sent/clnsp116.wav	valid speech	Whisper hears the expected word	Whisper: "His sure-sure was enthusiastic this time to care of him and maybe you'll make..."; voice found: 3680 ms
+sent/clnsp119.wav	valid speech	Whisper hears the expected word	Whisper: "They own a big house in the remote countryside. He picked up"; voice found: 3760 ms
+sent/clnsp123.wav	valid speech	Whisper hears the expected word	Whisper: "their curiosity went happily out of bounds. Yes, ma'am, the children-"; voice found: 3660 ms
+sent/clnsp125.wav	valid speech	Whisper hears the expected word	Whisper: "My sincere wish is that he continues to add to this record he said."; voice found: 3880 ms
+sent/clnsp127.wav	valid speech	Whisper hears the expected word	Whisper: "They were shown how to advance against an enemy outpost atop a cleared ring."; voice found: 3940 ms
+sent/clnsp132.wav	valid speech	Whisper hears the expected word	Whisper: "Thus far, the advances made have been almost entirely along fun."; voice found: 3660 ms
+sent/clnsp134.wav	valid speech	Whisper hears the expected word	Whisper: "to many experts, the strand was inevitable. They considered"; voice found: 3380 ms
+sent/clnsp146.wav	valid speech	Whisper hears the expected word	Whisper: "They all like long hot showers. A young mouse scampered across the field."; voice found: 3730 ms
+sent/clnsp154.wav	valid speech	Whisper hears the expected word	Whisper: "Where can we get this cereal he likes so much? Homemade"; voice found: 3550 ms
+sent/clnsp163.wav	valid speech	Whisper hears the expected word	Whisper: "He looked lazy, spoiled, a little quarreless."; voice found: 3370 ms
+sent/clnsp164.wav	valid speech	Whisper hears the expected word	Whisper: "Perhaps it was right, perhaps it was just. He merely said"; voice found: 3420 ms
+sent/clnsp175.wav	valid speech	Whisper hears the expected word	Whisper: "The ramifications of the issue are enormous."; voice found: 3630 ms
+sent/clnsp180.wav	valid speech	Whisper hears the expected word	Whisper: "Let us differentiate a few of these ideas. It is the"; voice found: 3270 ms
+sent/clnsp198.wav	valid speech	Whisper hears the expected word	Whisper: "but such cases were in the past unusual. When did women?"; voice found: 3870 ms
+sent/clnsp210.wav	valid speech	Whisper hears the expected word	Whisper: "He checked into a motel and drove downtown. The sheriff's swivel chair."; voice found: 3730 ms
+sent/clnsp215.wav	valid speech	Whisper hears the expected word	Whisper: "How come you're writing the rods kids like you? Now forget"; voice found: 3600 ms
+sent/clnsp233.wav	valid speech	Whisper hears the expected word	Whisper: "Hope to see you again. Two gas lamps were no more than a..."; voice found: 3560 ms
+sent/clnsp235.wav	valid speech	Whisper hears the expected word	Whisper: "Would you allow acts of violence? How do oysters make pearls?"; voice found: 3520 ms
+sent/clnsp236.wav	valid speech	Whisper hears the expected word	Whisper: "How's your luck honey? "Stake me" she said. And let me at the..."; voice found: 3070 ms
+sent/clnsp245.wav	valid speech	Whisper hears the expected word	Whisper: "We now generalize these ideas for general binomial experiments."; voice found: 3900 ms
+sent/clnsp246.wav	valid speech	Whisper hears the expected word	Whisper: "under this law, annual grants are given to systems in substantial amounts."; voice found: 3800 ms
+sent/clnsp251.wav	valid speech	Whisper hears the expected word	Whisper: "22 or 23. "Snakes are ugly," he said again."; voice found: 3340 ms
+sent/clnsp267.wav	valid speech	Whisper hears the expected word	Whisper: "Confusion became chaos. Each succeeding day brought new acts."; voice found: 3570 ms
+sent/clnsp27.wav	valid speech	Whisper hears the expected word	Whisper: "The Mayan neoclassic scholar disappeared while serving"; voice found: 3730 ms
+sent/clnsp278.wav	valid speech	Whisper hears the expected word	Whisper: "Why buy oil when you always use mine? They enjoy it when I add"; voice found: 3330 ms
+sent/clnsp280.wav	valid speech	Whisper hears the expected word	Whisper: "One could hear a very faint lady-like sigh of relief as a result."; voice found: 3560 ms
+sent/clnsp31.wav	valid speech	Whisper hears the expected word	Whisper: "He ate four extra eggs for breakfast. We plan to build a new beverage."; voice found: 3780 ms
+sent/clnsp317.wav	valid speech	Whisper hears the expected word	Whisper: "Last year's gas shortage caused steep price increases."; voice found: 3170 ms
+sent/clnsp318.wav	valid speech	Whisper hears the expected word	Whisper: "Alimony harms a divorced man's wealth. Illuminum silverware can't off."; voice found: 3630 ms
+sent/clnsp319.wav	valid speech	Whisper hears the expected word	Whisper: "He had not covered 100 yards before a gun crashed from somewhere behind."; voice found: 3630 ms
+sent/clnsp320.wav	valid speech	Whisper hears the expected word	Whisper: "Don't ask me to carry an oily rag like that. Soon the office..."; voice found: 3510 ms
+sent/clnsp322.wav	valid speech	Whisper hears the expected word	Whisper: "the government sought authorization of his citizenship. As Khaua"; voice found: 3640 ms
+sent/clnsp332.wav	valid speech	Whisper hears the expected word	Whisper: "Are you underwriting expensive team trips? Are you utilizing vending?"; voice found: 3630 ms
+sent/clnsp333.wav	valid speech	Whisper hears the expected word	Whisper: "help celebrate your brother's success. Only the most accomplished artists"; voice found: 3630 ms
+sent/clnsp339.wav	valid speech	Whisper hears the expected word	Whisper: "in the pity for them his loneliness was gone. It is the same all same"; voice found: 3710 ms
+sent/clnsp345.wav	valid speech	Whisper hears the expected word	Whisper: "The mixing head moves back and forth slowly across the width of the wrist."; voice found: 3750 ms
+sent/clnsp349.wav	valid speech	Whisper hears the expected word	Whisper: "is a dream simply a mental or cerebral movie in most"; voice found: 3690 ms
+sent/clnsp364.wav	valid speech	Whisper hears the expected word	Whisper: "Why pick me for your patty? Why accuse a shipmate of being behind?"; voice found: 3290 ms
+sent/clnsp374.wav	valid speech	Whisper hears the expected word	Whisper: "He reached once more into the carpet bag and brought up a package."; voice found: 3980 ms
+sent/clnsp381.wav	valid speech	Whisper hears the expected word	Whisper: "The Mayan neoclassic scholar disappeared while serving"; voice found: 3810 ms
+sent/clnsp383.wav	valid speech	Whisper hears the expected word	Whisper: "The fish began to leap frantically on the surface of the small"; voice found: 3940 ms
+sent/clnsp384.wav	valid speech	Whisper hears the expected word	Whisper: "The filtered air benefits allergies asthma sinus hay fever."; voice found: 3480 ms
+sent/clnsp385.wav	valid speech	Whisper hears the expected word	Whisper: "Encyclopedias seldom present anecdotal evidence."; voice found: 3520 ms
+sent/clnsp406.wav	valid speech	Whisper hears the expected word	Whisper: "There work mirrors the mentality of the psychopath,"; voice found: 3560 ms
+sent/clnsp408.wav	valid speech	Whisper hears the expected word	Whisper: "The deans can form an important bridge between the President and the faculty."; voice found: 3750 ms
+sent/clnsp410.wav	valid speech	Whisper hears the expected word	Whisper: "His history is his alone, yet each man must recognize his own"; voice found: 3810 ms
+sent/clnsp420.wav	valid speech	Whisper hears the expected word	Whisper: "How will we work it out? A lot of people will roam the streets and"; voice found: 3740 ms
+sent/clnsp422.wav	valid speech	Whisper hears the expected word	Whisper: "The farmer's life must be arranged to meet the demands of crops and life."; voice found: 3680 ms
+sent/clnsp436.wav	valid speech	Whisper hears the expected word	Whisper: "they consider it simply as a sign of our times. While he was in custody..."; voice found: 3190 ms
+sent/clnsp439.wav	valid speech	Whisper hears the expected word	Whisper: "This theory eventually proved in exact. The Heavens Refuge"; voice found: 3390 ms
+sent/clnsp44.wav	valid speech	Whisper hears the expected word	Whisper: "If they are not ellipsoids, the conclusions will be a reasonable approach."; voice found: 3910 ms
+sent/clnsp447.wav	valid speech	Whisper hears the expected word	Whisper: "A rabbit punch redoubled him. No more could he defend himself against them."; voice found: 3810 ms
+sent/clnsp45.wav	valid speech	Whisper hears the expected word	Whisper: "He showed puny men attacked by splendidly tyrannical machines."; voice found: 3910 ms
+sent/clnsp470.wav	valid speech	Whisper hears the expected word	Whisper: "I honor my mom."; voice found: 3640 ms
+sent/clnsp478.wav	valid speech	Whisper hears the expected word	Whisper: "Their results, a study of literature, freed from the tyranny of"; voice found: 3840 ms
+sent/clnsp485.wav	valid speech	Whisper hears the expected word	Whisper: "how much will it cost to do any necessary modernizing?"; voice found: 3810 ms
+sent/clnsp496.wav	valid speech	Whisper hears the expected word	Whisper: "Many selections are themselves convincing contributions to the surprising"; voice found: 3880 ms
+sent/clnsp500.wav	valid speech	Whisper hears the expected word	Whisper: "They'll move around that rock all day following the shade. He gaze."; voice found: 3400 ms
+sent/clnsp51.wav	valid speech	Whisper hears the expected word	Whisper: "Those who are not purest use canned vegetables when making stew the f-"; voice found: 3710 ms
+sent/clnsp510.wav	valid speech	Whisper hears the expected word	Whisper: "The failure to keep these two usages distinct present."; voice found: 3800 ms
+sent/clnsp512.wav	valid speech	Whisper hears the expected word	Whisper: "about dawn he got up to blow. It had assumed that"; voice found: 3530 ms
+sent/clnsp52.wav	valid speech	Whisper hears the expected word	Whisper: "many experts, this trend was inevitable. They consider it symph..."; voice found: 3380 ms
+sent/clnsp54.wav	valid speech	Whisper hears the expected word	Whisper: "One of the problems associated with the expressway stems from the basic"; voice found: 3670 ms
+sent/clnsp547.wav	valid speech	Whisper hears the expected word	Whisper: "it has multiple implications and possible headaches for your marketing."; voice found: 3870 ms
+sent/clnsp553.wav	valid speech	Whisper hears the expected word	Whisper: "all not coronals, arige and protein, the so-called"; voice found: 3420 ms
+sent/clnsp556.wav	valid speech	Whisper hears the expected word	Whisper: "Add intervals and alumni directories issued between meeting"; voice found: 3600 ms
+sent/clnsp560.wav	valid speech	Whisper hears the expected word	Whisper: "then the choreographer must arbitrate. He must rearrange"; voice found: 3520 ms
+sent/clnsp562.wav	valid speech	Whisper hears the expected word	Whisper: "Both eventualities are possible logically, but practically they are"; voice found: 3670 ms
+sent/clnsp567.wav	valid speech	Whisper hears the expected word	Whisper: "Too many new things are happening for it to be a complete"; voice found: 3490 ms
+sent/clnsp57.wav	valid speech	Whisper hears the expected word	Whisper: "She radiated warmth from good fellowship. We can die too. We can die."; voice found: 3440 ms
+sent/clnsp572.wav	valid speech	Whisper hears the expected word	Whisper: "His eyes burned feverishly. Come on, he whispered. A floor level's about three."; voice found: 3570 ms
+sent/clnsp584.wav	valid speech	Whisper hears the expected word	Whisper: "If any of us miss, they can pick up the pieces."; voice found: 3550 ms
+sent/clnsp586.wav	valid speech	Whisper hears the expected word	Whisper: "where only one club existed before he said "two will flourish.""; voice found: 3200 ms
+sent/clnsp587.wav	valid speech	Whisper hears the expected word	Whisper: "But if she wasn't interested, she'd just go back to the same life she'd left."; voice found: 3940 ms
+sent/clnsp593.wav	valid speech	Whisper hears the expected word	Whisper: "The misprint provoked an immediate disclaimer. A large household"; voice found: 3680 ms
+sent/clnsp594.wav	valid speech	Whisper hears the expected word	Whisper: "Women may never become completely equal to men."; voice found: 3530 ms
+sent/clnsp601.wav	valid speech	Whisper hears the expected word	Whisper: "All nut kernels are rich in protein, the so-called vegetable ivory."; voice found: 3690 ms
+sent/clnsp604.wav	valid speech	Whisper hears the expected word	Whisper: "His failure to open the store by 8 cost him his job."; voice found: 3540 ms
+sent/clnsp606.wav	valid speech	Whisper hears the expected word	Whisper: "Corey attacked the project with extra determination. You always come up with"; voice found: 3390 ms
+sent/clnsp608.wav	valid speech	Whisper hears the expected word	Whisper: "Family Loyalty's and corporate work have been unbroken for generations."; voice found: 3740 ms
+sent/clnsp611.wav	valid speech	Whisper hears the expected word	Whisper: "What elements of our behavior are decisive? American newspaper reviews"; voice found: 3610 ms
+sent/clnsp614.wav	valid speech	Whisper hears the expected word	Whisper: "He did not mind the useless kindly questions. Have you got enough f**k?"; voice found: 3580 ms
+sent/clnsp616.wav	valid speech	Whisper hears the expected word	Whisper: "her eyes were glazed as if she didn't hear or even see him. No girl."; voice found: 3600 ms
+sent/clnsp633.wav	valid speech	Whisper hears the expected word	Whisper: "Don't look for group valuables in a bank vault. Suburban housewife"; voice found: 3610 ms
+sent/clnsp652.wav	valid speech	Whisper hears the expected word	Whisper: "Some of them ignored the text and had apparently memorized the words"; voice found: 3850 ms
+sent/clnsp662.wav	valid speech	Whisper hears the expected word	Whisper: "their curiosity went happily out of bounds. Yes, ma'am, the children-"; voice found: 3630 ms
+sent/clnsp665.wav	valid speech	Whisper hears the expected word	Whisper: "Manual leveling requires an appropriate display of the accelerometer."; voice found: 3890 ms
+sent/clnsp680.wav	valid speech	Whisper hears the expected word	Whisper: "First add milk to the shredded cheese. Sveurical gifts are difficult."; voice found: 3640 ms
+sent/clnsp686.wav	valid speech	Whisper hears the expected word	Whisper: "In flammatory cells were strikingly absent. These were thought to"; voice found: 3630 ms
+sent/clnsp687.wav	valid speech	Whisper hears the expected word	Whisper: "He checked into a motel and drove downtown. The sheriff's swivel chair."; voice found: 3760 ms
+sent/clnsp699.wav	valid speech	Whisper hears the expected word	Whisper: "The groundhog clearly saw his shadow but stayed out only a minute."; voice found: 3300 ms
+sent/clnsp70.wav	valid speech	Whisper hears the expected word	Whisper: "Why said the teacher, "Are they so late? He who does not love.""; voice found: 3670 ms
+sent/clnsp709.wav	valid speech	Whisper hears the expected word	Whisper: "but it must be remembered that the plan should not be oriented to the geography."; voice found: 3690 ms
+sent/clnsp713.wav	valid speech	Whisper hears the expected word	Whisper: "There's still such a thing as mental illness. Her hum became a girl."; voice found: 3320 ms
+sent/clnsp727.wav	valid speech	Whisper hears the expected word	Whisper: "County officials have cooperated consistently with that herod."; voice found: 3470 ms
+sent/clnsp732.wav	valid speech	Whisper hears the expected word	Whisper: "All three must compare notes and agree to go. They were chasing a f-"; voice found: 3680 ms
+sent/clnsp734.wav	valid speech	Whisper hears the expected word	Whisper: "The structures housing the apartments are of masonry and frame"; voice found: 3920 ms
+sent/clnsp736.wav	valid speech	Whisper hears the expected word	Whisper: "My own experience has followed simpler lines. Religion thus"; voice found: 3420 ms
+sent/clnsp740.wav	valid speech	Whisper hears the expected word	Whisper: "Steve collects rare and novel coins. I'll receive the"; voice found: 3230 ms
+sent/clnsp741.wav	valid speech	Whisper hears the expected word	Whisper: "the farmer's wife must be arranged to meet the demand."; voice found: 3140 ms
+sent/clnsp749.wav	valid speech	Whisper hears the expected word	Whisper: "It does not indicate loose management in effective controls or poor p-"; voice found: 3750 ms
+sent/clnsp774.wav	valid speech	Whisper hears the expected word	Whisper: "the sides broken so chop the wood instead. With dry only as"; voice found: 3580 ms
+sent/clnsp783.wav	valid speech	Whisper hears the expected word	Whisper: "One of the most common of camp maladies was diarrhea."; voice found: 3620 ms
+sent/clnsp787.wav	valid speech	Whisper hears the expected word	Whisper: "breaks streaked behind us and what eyes they were."; voice found: 3660 ms
+sent/clnsp791.wav	valid speech	Whisper hears the expected word	Whisper: "The clouds bulge downward and burst settingly into a great..."; voice found: 3970 ms
+sent/clnsp792.wav	valid speech	Whisper hears the expected word	Whisper: "Fill that canteen with fresh spring water. Gently place"; voice found: 3520 ms
+sent/clnsp80.wav	valid speech	Whisper hears the expected word	Whisper: "There's no chance now of all of us getting away, you'll have to try it alone."; voice found: 3740 ms
+sent/clnsp803.wav	valid speech	Whisper hears the expected word	Whisper: "He wondered if it were the old anxiety or the old thoughts."; voice found: 3650 ms
+sent/clnsp806.wav	valid speech	Whisper hears the expected word	Whisper: "Our campus unfortunately owns no films. The battery"; voice found: 3310 ms
+sent/clnsp827.wav	valid speech	Whisper hears the expected word	Whisper: "Lifeboats were stuck fast. Even those ropes."; voice found: 3270 ms
+sent/clnsp832.wav	valid speech	Whisper hears the expected word	Whisper: "ideally he knew, it should be proceeded by concrete progress at low"; voice found: 3690 ms
+sent/clnsp835.wav	valid speech	Whisper hears the expected word	Whisper: "Mom strongly dislikes appetizers. She is thinner than I am."; voice found: 3520 ms
+sent/clnsp836.wav	valid speech	Whisper hears the expected word	Whisper: "Steam baths, rights. Do Steam baths have any..."; voice found: 2420 ms
+sent/clnsp842.wav	valid speech	Whisper hears the expected word	Whisper: "and a few caraway seats too if you'd like."; voice found: 3500 ms
+sent/clnsp846.wav	valid speech	Whisper hears the expected word	Whisper: "Eat your raisins, outdoors on the porch steps. Did you eat yet?"; voice found: 3570 ms
+sent/clnsp850.wav	valid speech	Whisper hears the expected word	Whisper: "Now don't tell me what a good ball player you are. Baseball is no cinch."; voice found: 3480 ms
+sent/clnsp851.wav	valid speech	Whisper hears the expected word	Whisper: "This may be of overriding importance in considering military"; voice found: 3870 ms
+sent/clnsp879.wav	valid speech	Whisper hears the expected word	Whisper: "Should the accelerating growth of technology then warn us?"; voice found: 3630 ms
+sent/clnsp884.wav	valid speech	Whisper hears the expected word	Whisper: "the plaintiff in school desegregation cases. Why else would Dan"; voice found: 3560 ms
+sent/clnsp893.wav	valid speech	Whisper hears the expected word	Whisper: "Knows the score with a supreme effort. He broke it off. Maybe they already..."; voice found: 3730 ms
+sent/clnsp908.wav	valid speech	Whisper hears the expected word	Whisper: "such legislation was clarified and extended from time"; voice found: 3780 ms
+sent/clnsp919.wav	valid speech	Whisper hears the expected word	Whisper: "Of course you can have another Tunifish sandwich. There was a gigantic..."; voice found: 3570 ms
+sent/clnsp923.wav	valid speech	Whisper hears the expected word	Whisper: "will rub and wear a yellow lily, swing your arm as high as you can."; voice found: 3770 ms
+sent/clnsp94.wav	valid speech	Whisper hears the expected word	Whisper: "where only one club existed before he said "two will flourish.""; voice found: 3160 ms
+sent/clnsp95.wav	valid speech	Whisper hears the expected word	Whisper: "The trouble is that like many symbols it doesn't seem a very realist"; voice found: 3930 ms
+sent/clnsp953.wav	valid speech	Whisper hears the expected word	Whisper: "Fiddles screeched a piano tingle. They stayed at hotels and"; voice found: 3320 ms
+sent/clnsp964.wav	valid speech	Whisper hears the expected word	Whisper: "Time and space have both become cinematic. Not surprised."; voice found: 3480 ms
+sent/clnsp968.wav	valid speech	Whisper hears the expected word	Whisper: "You young men get to be my age, you won't take flu so lightly. In the-"; voice found: 3580 ms
+sent/clnsp973.wav	valid speech	Whisper hears the expected word	Whisper: "They used pink tan or cream powder."; voice found: 3350 ms
+sent/clnsp976.wav	valid speech	Whisper hears the expected word	Whisper: "Does Hindu ideology honor cows? How ancient is this?"; voice found: 3510 ms
+sent/clnsp978.wav	valid speech	Whisper hears the expected word	Whisper: "My ideal morning begins with hot coffee. The Erate Actor Stun"; voice found: 3570 ms
+sent/clnsp980.wav	valid speech	Whisper hears the expected word	Whisper: "This viscosity of the material and the drops is, of course."; voice found: 3490 ms
+sent/clnsp982.wav	valid speech	Whisper hears the expected word	Whisper: "The causeway ended abruptly at the shore. Even I occasionally get"; voice found: 3570 ms
+sent/clnsp986.wav	valid speech	Whisper hears the expected word	Whisper: "Buying a thorough bread horse requires intuition and expertise."; voice found: 3780 ms
+asc/background_noise/cooking_1.wav	no speech	Whisper hears no words in any span where the detector fired	-25 dBFS 0.4-3.4 s: "(crickets chirping)"
+ms-snsd/noise_test/AirConditioner_9.wav	uncertain	Whisper hears words, but not the same words at the same place at two levels	-45 dBFS 38.9-41.9 s: "The future is going to be a great future."; -35 dBFS 0.0-2.1 s: "I'm going to put some paper on the paper"; -35 dBFS 38.6-41.6 s: "[Speaking in foreign language]"; -25 dBFS 0.0-1.9 s: "I'm going to start the work."
+ms-snsd/noise_test/AirportAnnouncements_2.wav	uncertain	Whisper hears words, but not the same words at the same place at two levels	-25 dBFS 1.8-4.8 s: "They have to be sure because any job might not be"
+ms-snsd/noise_test/AirportAnnouncements_4.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-2.1 s: "I'm sorry for having to ask you, sir."; -35 dBFS 0.0-2.0 s: "I'm not even having a chance to do so."; -25 dBFS 0.0-2.0 s: "I'm not even having a natural self."
+ms-snsd/noise_test/Babble_1.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 27.8-30.8 s: "Thank you."; -35 dBFS 0.0-2.6 s: "[MUSIC PLAYING]"; -35 dBFS 27.3-30.3 s: "Thank you."; -35 dBFS 34.8-37.8 s: "(indistinct chatter)"; -35 dBFS 49.8-52.8 s: "[MUSIC]"; -25 dBFS 0.0-2.8 s: "(speaking in foreign language)"
+ms-snsd/noise_test/Babble_7.wav	uncertain	Whisper hears words, but not the same words at the same place at two levels	-45 dBFS 1.4-4.3 s: "I will do a quick analysis now."; -45 dBFS 21.0-22.7 s: "[laughter]"; -35 dBFS 0.0-1.7 s: "[Music]"; -25 dBFS 0.0-1.7 s: "[Music]"
+ms-snsd/noise_test/Munching_2.wav	no speech	Whisper hears no words in any span where the detector fired	-35 dBFS 18.1-21.1 s: "(cough)"
+ms-snsd/noise_test/Munching_6.wav	no speech	Whisper hears no words in any span where the detector fired	-35 dBFS 2.7-5.7 s: "(crunching)"
+ms-snsd/noise_test/Neighbor_1.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-1.9 s: "10"; -35 dBFS 0.0-1.8 s: "10-h like oh I mean"; -25 dBFS 0.0-1.8 s: "10-inch like oh I mean"
+ms-snsd/noise_test/Neighbor_3.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-1.7 s: "falling into deep depression."; -35 dBFS 0.0-1.6 s: "falling into deep darkness."; -25 dBFS 0.0-1.6 s: "falling into deep darkness."
+ms-snsd/noise_test/Neighbor_5.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-1.8 s: "Lucky for this"; -35 dBFS 0.0-1.6 s: "Lucky for"; -25 dBFS 0.0-1.6 s: "Lucky for"
+ms-snsd/noise_test/Neighbor_7.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-1.9 s: "10"; -35 dBFS 0.0-1.8 s: "10-h like oh I mean"; -25 dBFS 0.0-1.8 s: "10-inch like oh I mean"
+ms-snsd/noise_test/Neighbor_9.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-35 dBFS 7.1-10.1 s: "I only want to talk once."; -25 dBFS 7.1-10.1 s: "I only want to talk once."
+ms-snsd/noise_train/AirportAnnouncements_4.wav	no speech	Whisper hears no words in any span where the detector fired	-25 dBFS 2.2-5.2 s: "[Music]"; -25 dBFS 46.8-49.8 s: "[Spanish]"; -25 dBFS 53.9-56.9 s: "(speaking in foreign language)"
+ms-snsd/noise_train/AirportAnnouncements_6.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 1.7-4.7 s: "It doesn't just climb either"; -35 dBFS 1.4-4.3 s: "with passengers climbing"; -25 dBFS 1.3-4.3 s: "with passengers climbing"
+ms-snsd/noise_train/AirportAnnouncements_8.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 1.4-4.4 s: "and her. Please wait for the smoke."; -35 dBFS 0.0-2.6 s: "Very rich ladies and gentlemen."; -25 dBFS 0.0-2.1 s: "Very rich ladies and gentlemen."
+ms-snsd/noise_train/Babble_1.wav	no speech	Whisper hears no words in any span where the detector fired	-45 dBFS 3.0-6.0 s: "(speaking in foreign language)"; -35 dBFS 0.3-3.3 s: "(speaking in foreign language) (upbeat music)"; -25 dBFS 0.0-1.8 s: "[inaudible]"
+ms-snsd/noise_train/Babble_10.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-2.4 s: "I'm not a cub, I'm a cunt, I'm"; -45 dBFS 22.2-25.2 s: "(speaking in foreign language)"; -35 dBFS 0.0-2.1 s: "I'm not a caggy, I'm a c"; -25 dBFS 0.0-1.9 s: "I'm not a caggy, I'm a"
+ms-snsd/noise_train/Babble_12.wav	uncertain	Whisper hears words, but not the same words at the same place at two levels	-45 dBFS 1.5-4.5 s: "I will tell you that my class is now closed."; -45 dBFS 21.2-23.1 s: "[laughter]"; -35 dBFS 0.0-2.4 s: "[Music]"; -25 dBFS 0.0-2.0 s: "[Music]"
+ms-snsd/noise_train/Babble_3.wav	uncertain	Whisper hears words, but not the same words at the same place at two levels	-25 dBFS 12.0-15.0 s: "I told you"; -25 dBFS 26.5-29.5 s: "(speaking in foreign language)"; -25 dBFS 36.5-39.5 s: "[MUSIC PLAYING]"
+ms-snsd/noise_train/Babble_7.wav	uncertain	Whisper hears words, but not the same words at the same place at two levels	-45 dBFS 5.2-8.2 s: "(speaking in foreign language)"; -45 dBFS 15.9-18.9 s: "[MUSIC PLAYING]"; -35 dBFS 4.3-7.3 s: "(speaking in foreign language)"; -35 dBFS 15.8-18.8 s: "[MUSIC PLAYING]"; -25 dBFS 0.0-2.1 s: "Stop! This is the end of the series."; -25 dBFS 12.3-15.3 s: "[INAUDIBLE]"
+ms-snsd/noise_train/Babble_9.wav	uncertain	Whisper hears words, but not the same words at the same place at two levels	-45 dBFS 2.9-5.9 s: "I'm saying"; -35 dBFS 0.3-3.3 s: "Yeah, we'll be sure"; -25 dBFS 0.0-2.1 s: "Yeah"
+ms-snsd/noise_train/Munching_2.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 10.7-13.7 s: "Hmm, I love potato"; -45 dBFS 26.0-28.2 s: "Hmm, I love potatoes."; -35 dBFS 10.7-13.7 s: "Hmm, I love potato"; -35 dBFS 25.8-28.2 s: "Hmm, I love potatoes."; -25 dBFS 10.7-13.7 s: "Hmm, I love potato"; -25 dBFS 25.5-28.2 s: "Hmm, I love potatoes."
+ms-snsd/noise_train/NeighborSpeaking_1.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-1.7 s: "You just know, man."; -35 dBFS 0.0-1.7 s: "You just know, man."; -25 dBFS 0.0-1.7 s: "You just knocked right"
+ms-snsd/noise_train/NeighborSpeaking_10.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-1.7 s: "cheese type of tasting"; -35 dBFS 0.0-1.6 s: "cheese type of tasting"; -25 dBFS 0.0-1.6 s: "cheese type of tasting"
+ms-snsd/noise_train/NeighborSpeaking_12.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-3.0 s: "Stat over in terms of large artificial intelligence."; -45 dBFS 19.0-22.0 s: "(indistinct chatter)"; -45 dBFS 21.4-24.4 s: "I do not like these chairs"; -45 dBFS 41.5-44.5 s: "I'm doing it. Yeah, they're doing it."; -35 dBFS 0.0-1.8 s: "Step over on terms of..."; -35 dBFS 18.9-21.9 s: "(chatter)"; -25 dBFS 0.0-1.8 s: "Step over on terms of..."; -25 dBFS 18.9-21.9 s: "(chatter)"
+ms-snsd/noise_train/NeighborSpeaking_14.wav	uncertain	Whisper hears words, but not the same words at the same place at two levels	-45 dBFS 0.0-2.8 s: "Because the eating of the crawfish is the same as you do"; -35 dBFS 0.0-2.3 s: "Because the urine got the colon part of the baby"; -25 dBFS 0.0-2.2 s: "I'm gonna go to the entrance of the girl's house"
+ms-snsd/noise_train/NeighborSpeaking_3.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-1.8 s: "[SPEAKING SPANISH]"; -45 dBFS 33.2-36.2 s: "So, these"; -35 dBFS 0.0-1.7 s: "[MUSIC PLAYING]"; -35 dBFS 33.2-36.2 s: "So, these..."; -25 dBFS 0.0-1.6 s: "[SPEAKING SPANISH]"; -25 dBFS 33.2-36.2 s: "So, these"
+ms-snsd/noise_train/NeighborSpeaking_5.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.8-3.8 s: "The ten each like a... I mean..."; -35 dBFS 0.8-3.8 s: "The tenage like a... I mean..."; -25 dBFS 0.6-3.6 s: "The ten each like a..."
+ms-snsd/noise_train/NeighborSpeaking_7.wav	no speech	Whisper hears no words in any span where the detector fired	-45 dBFS 0.0-1.8 s: "(speaking in foreign language)"; -35 dBFS 0.0-1.7 s: "(speaking in foreign language)"; -25 dBFS 0.0-1.6 s: "[Music]"
+ms-snsd/noise_train/NeighborSpeaking_9.wav	background voice	Whisper hears nearly the same words at the same place at two levels	-45 dBFS 0.0-2.0 s: "wanna rock right now"; -45 dBFS 10.3-13.3 s: "Do you want to hit it loose after me?"; -45 dBFS 14.3-17.3 s: "I was sure of both her, so you can always"; -45 dBFS 18.5-21.5 s: "This is made sure I take the wood"; -45 dBFS 23.1-26.1 s: "Oh, by the way, I'm recording this conversation."; -35 dBFS 0.0-1.6 s: "wanna rock right now"; -35 dBFS 23.1-26.1 s: "Oh, by the way, I'm recording this conversation."; -25 dBFS 0.0-1.6 s: "wanna rock right now"; -25 dBFS 23.1-26.1 s: "Oh, by the way, I'm recording this conversation."
+ms-snsd/noise_train/Office_1.wav	no speech	Whisper hears no words in any span where the detector fired	-25 dBFS 51.8-54.8 s: "(car engine rumbling)"
+ms-snsd/noise_train/SqueakyChair_1.wav	no speech	Whisper hears no words in any span where the detector fired	-35 dBFS 0.0-2.5 s: "[coughing]"; -25 dBFS 0.0-2.5 s: "(crashing)"

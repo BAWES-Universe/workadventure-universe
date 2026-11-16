@@ -6,6 +6,44 @@ export interface BotUser {
     email: string | null;
 }
 
+/** What a Brick's owner may change on its page (game #1996), through the Brick's own route: a Brick has no room. */
+export interface BrickChange {
+    name?: string;
+    description?: string | null;
+    chatInstructions?: string | null;
+    enabled?: boolean;
+    /** Its look: a Brick look or a WOKA id. */
+    characterTextureId?: string;
+    /** What it runs on (Universe AI or one of its owner's own keys) and its model on that key (game, Slice 13). */
+    aiProviderRef?: string | null;
+    aiModel?: string | null;
+    /** How it behaves: only the keys Orbit lets a Brick's page change, merged into what is saved. */
+    behaviorType?: "idle" | "patrol" | "social";
+    behaviorConfig?: Record<string, unknown>;
+    companionTextureId?: string | null;
+}
+
+/** What Delete asks on a Brick's page (game #1996), beside the words every Brick's question has. */
+export interface BrickDeleteAsk {
+    /** Until when Undo on the Bricks page gives it back, as a line. */
+    undoLine: string;
+    /** Its computer's files, offered for download before they go. None while it has none. */
+    files?: { size: string; download: () => void };
+}
+
+/**
+ * The bot page opened for a Brick (game #1996). Its changes are saved through the Brick's own route, and only the
+ * parts a Brick has so far are shown; the others come with their own issues.
+ */
+export interface BrickPageWay extends BrickDeleteAsk {
+    /** Saves one change. False when Orbit refused it or could not be reached: the page goes back to what was saved. */
+    save: (change: BrickChange) => Promise<boolean>;
+    /** Opens the Apps page, looking for this app (a Brick made from a template that needs one: "Connect Gmail"). */
+    openApps?: (search: string) => void;
+    /** Opens "Everything Brick did", the page of every run this Brick made by itself (game #2002). */
+    openDid?: () => void;
+}
+
 export interface BotData {
     id: string; // Unique identifier (required for stores/phaser)
     botId?: string; // Legacy/API identifier
@@ -14,6 +52,8 @@ export interface BotData {
     characterTexture?: string;
     characterTextureIds?: string[];
     behaviorType?: "idle" | "patrol" | "social";
+    /** One of the person's own Bricks being given a home in this room (game #2005): it is placed on the map, not made. */
+    brickHome?: boolean;
     behaviorConfig: {
         // Behavior type (redundant with behaviorType for flexibility)
         behaviorType?: "idle" | "patrol" | "social";

@@ -1,0 +1,31 @@
+{
+  "people": 20,
+  "recordings": [
+    "speech|en/stop/0ff728b5_nohash_4.wav|S20",
+    "speech|en/stop/a4e8a997_nohash_0.wav|S30",
+    "speech|en/no/19e246ad_nohash_1.wav|S40",
+    "noise|ms-snsd/noise_train/Babble_1.wav|-45",
+    "speech|en/yes/46a153d8_nohash_2.wav|N5",
+    "speech|en/yes/d4d898d7_nohash_0.wav|S20",
+    "speech|en/go/798f702a_nohash_1.wav|S30",
+    "noise|ms-snsd/noise_train/Typing_8.wav|-35",
+    "speech|ar/no/00000002_NO_03.wav|N10",
+    "speech|ar/no/00000026_NO_10.wav|N5",
+    "speech|ar/yes/00000024_NO_02.wav|S20",
+    "noise|ms-snsd/noise_train/Babble_10.wav|-25",
+    "speech|ar/close/00000019_NO_05.wav|S40",
+    "speech|ar/ok/00000017_NO_06.wav|N10",
+    "speech|sent/clnsp317.wav|N5",
+    "noise|ms-snsd/noise_train/VacuumCleaner_4.wav|-45",
+    "speech|en/stop/94de6a6a_nohash_3.wav|S30",
+    "speech|en/stop/ffa76c4a_nohash_1.wav|S40",
+    "speech|en/no/9b402bc2_nohash_0.wav|N10",
+    "noise|ms-snsd/noise_train/Babble_3.wav|-35"
+  ],
+  "windowsEach": 150,
+  "windowsCompared": 3000,
+  "calls": 200,
+  "speechWindows": 589,
+  "maxProbabilityDifference": 0,
+  "verdictsChanged": 0
+}
