@@ -59,6 +59,8 @@ export type SocketData = {
     batchedMessages: BatchMessage;
     batchTimeout: NodeJS.Timeout | null;
     backConnection?: BackConnection;
+    /** A bot's call-only connection (game #2004): it never joins the room, only the space of its call. */
+    callOnly?: boolean;
     listenedZones: Set<string>;
     pusherRoom: PusherRoom | undefined;
     spaces: Set<SpaceName>;

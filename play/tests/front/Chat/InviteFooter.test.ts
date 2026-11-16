@@ -38,6 +38,10 @@ vi.mock("../../../src/front/Chat/Components/Header/ChatHeaderNewMenu.svelte", as
 vi.mock("../../../src/front/Chat/Components/ChatHeader.svelte", async () => ({
     default: (await import("./stubs/Empty.svelte")).default,
 }));
+vi.mock("../../../src/front/Chat/Bricks/GuestBrickStore", () => ({ guestBrickEntries: readable([]) }));
+vi.mock("../../../src/front/Chat/Bricks/GuestBrickSignIn.svelte", async () => ({
+    default: (await import("./stubs/Empty.svelte")).default,
+}));
 // Every text is "": the test reads the buttons by their test ids.
 vi.mock("../../../src/i18n/i18n-svelte", () => {
     const deep = (): unknown => new Proxy(() => "", { get: () => deep() });

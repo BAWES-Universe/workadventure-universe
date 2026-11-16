@@ -713,3 +713,24 @@ describe('FileParser', () => {
         });
     });
 });
+
+describe('FileParser.validateUrl when DNS does not answer', () => {
+   it('says a lookup that timed out or failed is not answered just now (asked again later), and a name with no records is refused', async () => {
+      const { readReceiptFile } = await import('../server/UploadReceipts');
+      const claims = { fid: 'f1', sha256: '0'.repeat(64), size: 3 } as Parameters<typeof readReceiptFile>[0];
+      const classify = (error: unknown) => readReceiptFile(claims, 'https://uploader.test', 100, async () => Promise.reject(error));
+      const fail = (code: string) => Object.assign(new Error(`queryA ${code} uploader.test`), { code });
+
+      mockResolve4.mockRejectedValueOnce(fail('ETIMEOUT'));
+      mockResolve6.mockRejectedValueOnce(fail('ESERVFAIL'));
+      const timedOut = await FileParser.validateUrl('https://uploader.test/upload-file/f1').catch((error: unknown) => error);
+      expect(timedOut).toBeInstanceOf(Error);
+      expect(await classify(timedOut)).toEqual({ ok: false, reason: 'not-now' });
+
+      mockResolve4.mockRejectedValueOnce(fail('ENOTFOUND'));
+      mockResolve6.mockRejectedValueOnce(fail('ENOTFOUND'));
+      const missing = await FileParser.validateUrl('https://uploader.test/upload-file/f1').catch((error: unknown) => error);
+      expect((missing as Error).message).toMatch(/private\/internal/);
+      expect(await classify(missing)).toEqual({ ok: false, reason: 'gone' });
+   });
+});
