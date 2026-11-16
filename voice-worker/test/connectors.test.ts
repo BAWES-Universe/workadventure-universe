@@ -40,7 +40,7 @@ function speakerRig(speak: (request: { text: string; lang?: string; signal: Abor
     const progress: SpeakerRig['progress'] = [];
     const provider = { ok: 0, failed: [] as (number | undefined)[] };
     const counters = new Counters();
-    const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, sendFrame: (f) => frames.push(f), clear: () => undefined };
+    const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, reach: () => 'alone', sendFrame: (f) => frames.push(f), clear: () => undefined };
     const speaker = new Speaker({
         counters,
         voice: { speak },

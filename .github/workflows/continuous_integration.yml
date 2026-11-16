@@ -55,13 +55,26 @@ jobs:
         run: npm run typesafe-i18n
         working-directory: "play"
 
+      # The hosted runner has about 16 GB of RAM. The Play build was running it out of memory: node's heap grew to its
+      # limit while rendering chunks, and the runner was sometimes killed ("lost communication with the server") before node
+      # even failed. Two changes give it room: swap for the peak, and no source maps (these builds only feed the tests and
+      # nothing uploads the maps, so they cost memory for nothing). The heap limit stays at 16 GB.
+      - name: "Add swap for the build"
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: "Build"
         run: npm run build
         env:
           PUSHER_URL: "//localhost:3000"
           ADMIN_URL: "//localhost:80"
-          # upgrade RAM available to 16GB
           NODE_OPTIONS: --max-old-space-size=16384
+          GENERATE_SOURCEMAP: "false"
         working-directory: "play"
 
       - name: "Build iframe-api"

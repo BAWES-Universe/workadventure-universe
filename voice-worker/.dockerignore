@@ -1,3 +1,4 @@
 node_modules
+speech-observer/node_modules
 test
 Dockerfile

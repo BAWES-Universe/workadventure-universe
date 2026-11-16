@@ -53,3 +53,24 @@ export function isValidPlayGameSession(
     return false;
   }
 }
+
+/** The identifier of a real play session (guests too), or null: who a chat upload's receipt names. */
+export function playGameIdentifier(
+  token: string | undefined,
+  secretKey: string
+): string | null {
+  if (!token) {
+    return null;
+  }
+  try {
+    const payload = Jwt.verify(token, secretKey, { algorithms: ["HS256"] });
+    return typeof payload === "object" &&
+      payload !== null &&
+      typeof payload.identifier === "string" &&
+      payload.identifier !== ""
+      ? payload.identifier
+      : null;
+  } catch (e) {
+    return null;
+  }
+}
