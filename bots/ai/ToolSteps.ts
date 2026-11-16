@@ -8,6 +8,7 @@ import { MAKE_BRICK_TOOL } from './BrickTools';
 import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
 import { CHANGE_TASK_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL } from './BrickTasks';
+import { instantSlugOf, isInstantTool } from './InstantTools';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
 export type StepKind = 'read' | 'search' | 'write';
@@ -150,7 +151,8 @@ const NO_NAME = 'Use a tool';
 
 /** Whether the line shows this tool: the bot's tool servers, and our own tools above. */
 export function showsAsStep(name: string, fromToolServer: boolean): boolean {
-    return fromToolServer || name in OWN_STEPS;
+    // An Instant App run is work the person waits for, and the steps line is where "checking" shows
+    return fromToolServer || name in OWN_STEPS || isInstantTool(name);
 }
 
 /**
@@ -162,7 +164,7 @@ export function describeStep(call: { id: string; name: string; arguments?: unkno
     const args = parseArgs(call.arguments);
     const own = OWN_STEPS[call.name];
     if (own && !title) return { id: call.id, ...own(args) };
-    const words = oneLine(title, TITLE_MAX) ?? tidyName(call.name);
+    const words = oneLine(title, TITLE_MAX) ?? tidyName(instantSlugOf(call.name));
     const named = words !== NO_NAME;
     return {
         id: call.id,

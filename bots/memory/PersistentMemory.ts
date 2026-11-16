@@ -1003,6 +1003,8 @@ export class PersistentMemory extends ConversationMemory {
             dmRoomId: undefined,
             pointedArtifacts: undefined,
             artifactCalls: undefined,
+            instantCalls: undefined,
+            instantTurn: undefined,
             turnMedia: undefined,
             sentAgain: undefined,
             cardsAgain: undefined,

@@ -396,6 +396,65 @@ function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?
     return { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}), ...(company ? { visiting: company } : {}), ...(lives ? { home: lives } : {}) };
 }
 
+/** One Instant App tool as Orbit offers it to a Brick right now (Orbit `GET /api/instant/tools`). The schema goes to the model as it is. */
+export interface InstantToolInfo {
+    name: string;
+    toolkit: string;
+    description: string | null;
+    inputSchema: Record<string, unknown>;
+    /** The least one run costs, for the Brick's own judgement. Never a bound, and never said to anyone. */
+    fromMicros: number;
+}
+
+/** What may be offered now. `ready` false (paused, not set up, no credit source) comes with no tools. */
+export interface InstantListing {
+    ready: boolean;
+    reason: string | null;
+    tools: InstantToolInfo[];
+}
+
+/** Who an Instant call is for: a person's own chat message, or the Brick working for its owner on its own. */
+export type InstantWho = { requesterKey: string; forOwner?: undefined } | { forOwner: true; requesterKey?: undefined };
+
+/**
+ * What Orbit said to one Instant run (`POST /api/instant/run`, always HTTP 200 or 202). `refused` and `failed` carry a fixed reason and
+ * Orbit's own plain message, shown as it is. `not_owner` is Orbit's 404 (the asker is not the Brick's owner). `unreachable` means no
+ * answer was read (a network error, a timeout or a server error): the run may or may not have started, so the same call id is asked again.
+ */
+export type InstantRunAnswer =
+    | { status: 'done'; data: unknown; chargedMicros: number }
+    | { status: 'failed'; reason: string; message: string }
+    | {
+          status: 'refused';
+          reason: string;
+          message: string;
+          /** A rule the person said in chat said no: final. Never tried again for this task, and never answered with an offer of more credit. */
+          stop: boolean;
+          renewsAt: string | null | undefined;
+          canAskForMore: boolean | undefined;
+      }
+    | { status: 'checking' }
+    | { status: 'already_done'; chargedMicros: number | null }
+    | { status: 'not_owner' }
+    | { status: 'unreachable'; retry: boolean }
+    /** Orbit refused the request itself (a refused token, a body it does not take, too many asks): it never reached the run, so nothing ran. */
+    | { status: 'rejected' };
+
+/** One task's receipt on the Usage page's Activity (`POST /api/bots/:id/task-receipts`), as the bot server needs it. */
+export interface TaskReceiptOpened {
+    /** "[What it used](#usage=<id>)": the link a reply may carry. */
+    link: string | null;
+    /** The words for who pays ("Paid by you"). */
+    paidBy: string | null;
+}
+export type TaskReceiptState = 'done' | 'refunded' | 'checking';
+
+/** Orbit's own wait for the provider is a minute; the bot server waits a little longer so the answer comes back. */
+const INSTANT_RUN_TIMEOUT_MS = 75_000;
+const INSTANT_LIST_TIMEOUT_MS = 10_000;
+
+const asText = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
+
 /** One App on Orbit's list as a Brick may offer it (game #2001): what a person sees of it, and where they stand with it. */
 export interface OfferableApp {
     key: string;
@@ -1302,6 +1361,130 @@ export class AdminApiService {
             console.warn("[AdminApiService] Could not read a Brick's computer:", error instanceof Error ? error.message : error);
             return false;
         }
+    }
+
+    /** An Instant call to Orbit with the service token. Never throws: 200 and 202 are answers, 404 is "not the owner", the rest are not answers. */
+    private async instantCall(method: 'get' | 'post', path: string, body: unknown, params: Record<string, string> | undefined, timeout: number): Promise<{ status: number; data: Record<string, unknown> } | { status: 'none'; retry: boolean; rejected?: true; http?: number }> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        // Nothing was sent, so nothing ran
+        if (!this.isConfigured() || !botServiceToken) return { status: 'none', retry: false, rejected: true };
+        try {
+            const response = await axios.request<Record<string, unknown>>({
+                method,
+                url: resolveAdminApiEndpoint(this.adminApiUrl, path),
+                ...(body === undefined ? {} : { data: body }),
+                ...(params ? { params } : {}),
+                headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+                timeout,
+                maxRedirects: 0,
+                validateStatus: () => true,
+            });
+            const data = response.data && typeof response.data === 'object' && !Array.isArray(response.data) ? response.data : {};
+            if (response.status === 200 || response.status === 201 || response.status === 202 || response.status === 404) return { status: response.status, data };
+            // A server error may have come after the run started: the same call id is asked again. A refusal of the request itself (a refused token, a body
+            // Orbit does not take, too many asks) came before any run and will not change: it is certain nothing ran. A timeout from something on the way (408) is not.
+            if (response.status >= 400 && response.status < 500 && response.status !== 408) return { status: 'none', retry: false, rejected: true, http: response.status };
+            return { status: 'none', retry: response.status >= 500 || response.status === 408 };
+        } catch (error) {
+            console.warn('[AdminApiService] An Instant call got no answer:', error instanceof Error ? error.message : error);
+            return { status: 'none', retry: true };
+        }
+    }
+
+    /** The Instant tools this Brick may be offered now (Orbit decides: Apps its owner switched on for it, only while Instant can really run). Null when Orbit cannot say. */
+    async instantTools(botId: string): Promise<InstantListing | null> {
+        const answer = await this.instantCall('get', 'api/instant/tools', undefined, { botId }, INSTANT_LIST_TIMEOUT_MS);
+        if (answer.status !== 200) return null;
+        const list = Array.isArray(answer.data.tools) ? answer.data.tools : [];
+        const tools: InstantToolInfo[] = [];
+        for (const one of list) {
+            const tool = one as Record<string, unknown> | null;
+            const name = asText(tool?.name);
+            if (!tool || !name) continue;
+            const schema = tool.inputSchema;
+            tools.push({
+                name,
+                toolkit: asText(tool.toolkit) ?? '',
+                description: asText(tool.description),
+                // Passed to the model as Orbit gave it; only a missing one is made an empty object
+                inputSchema: schema && typeof schema === 'object' && !Array.isArray(schema) ? (schema as Record<string, unknown>) : { type: 'object', properties: {} },
+                fromMicros: typeof tool.fromMicros === 'number' && Number.isFinite(tool.fromMicros) ? tool.fromMicros : 0,
+            });
+        }
+        return { ready: answer.data.ready === true, reason: asText(answer.data.reason), tools };
+    }
+
+    /**
+     * One Instant run for the Brick's owner. `callId` is this attempt's own id: asking again with the same one never runs or pays twice,
+     * and is how an unclear run is looked at again. Never throws.
+     */
+    async instantRun(botId: string, ask: InstantWho & { tool: string; arguments: Record<string, unknown>; callId: string; taskKey?: string }): Promise<InstantRunAnswer> {
+        const answer = await this.instantCall(
+            'post',
+            'api/instant/run',
+            {
+                botId,
+                tool: ask.tool,
+                arguments: ask.arguments,
+                callId: ask.callId,
+                // The task this run is part of: Orbit's rules about one task count all of its runs
+                ...(ask.taskKey ? { taskKey: ask.taskKey } : {}),
+                ...(ask.forOwner ? { forOwner: true } : { requesterKey: ask.requesterKey }),
+            },
+            undefined,
+            INSTANT_RUN_TIMEOUT_MS
+        );
+        if (answer.status === 'none') return answer.rejected ? { status: 'rejected' } : { status: 'unreachable', retry: answer.retry };
+        if (answer.status === 404) return { status: 'not_owner' };
+        const data = answer.data;
+        const message = asText(data.message) ?? '';
+        const reason = asText(data.reason) ?? 'unclear';
+        switch (data.status) {
+            case 'done':
+                return { status: 'done', data: data.data, chargedMicros: typeof data.chargedMicros === 'number' && data.chargedMicros > 0 ? data.chargedMicros : 0 };
+            case 'failed':
+                return { status: 'failed', reason, message };
+            case 'refused':
+                return {
+                    status: 'refused',
+                    reason,
+                    message,
+                    stop: data.stop === true || reason === 'rule',
+                    renewsAt: typeof data.renewsAt === 'string' ? data.renewsAt : data.renewsAt === null ? null : undefined,
+                    canAskForMore: typeof data.canAskForMore === 'boolean' ? data.canAskForMore : undefined,
+                };
+            case 'checking':
+                return { status: 'checking' };
+            case 'already_done':
+                return { status: 'already_done', chargedMicros: typeof data.chargedMicros === 'number' ? data.chargedMicros : null };
+            default:
+                // An answer this server does not know is not a result: nothing is claimed, and the same call id is asked about again
+                return { status: 'unreachable', retry: true };
+        }
+    }
+
+    /**
+     * Opens the receipt of a task for the person who asked, for Activity on the Usage page (Orbit `POST /api/bots/:id/task-receipts`). Once for each
+     * Brick and task: opening it again finds it. Null when Orbit cannot say or says no: a receipt is never in the way of a reply.
+     */
+    async openTaskReceipt(botId: string, userId: string, task: { taskKey: string; title: string; category: 'apps' | 'computer' }): Promise<TaskReceiptOpened | null> {
+        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'open', taskKey: task.taskKey, title: task.title, category: task.category }, undefined, INSTANT_LIST_TIMEOUT_MS);
+        if (answer.status !== 200 && answer.status !== 201) return null;
+        const paid = answer.data.paidBy as { label?: unknown } | undefined;
+        return { link: asText(answer.data.link), paidBy: asText(paid?.label) };
+    }
+
+    /**
+     * Ends a task's receipt: done, refunded (a failure on our side took nothing) or checking (no answer came back). What it used is never sent: Orbit reads
+     * it from its books by the task's key, and settles a receipt left in checking by itself. Safe to say twice. Never throws. True when there is nothing
+     * more to ask: Orbit took it, or said it never will (a receipt that is not this person's or does not exist, a guest without Activity, a request it
+     * refuses: asking again will not change that). False when Orbit gave no answer (down, a server error, a timeout) or said to slow down (429), so it is worth asking again.
+     */
+    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState }): Promise<boolean> {
+        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'close', taskKey: task.taskKey, state: task.state }, undefined, INSTANT_LIST_TIMEOUT_MS);
+        // "Too many asks" (429) passes, so it is asked again; any other refusal of the request itself will not change
+        if (answer.status === 'none') return answer.rejected === true && answer.http !== 429;
+        return answer.status === 200 || answer.status === 404;
     }
 
     /** Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. */
