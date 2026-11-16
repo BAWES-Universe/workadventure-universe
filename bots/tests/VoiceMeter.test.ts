@@ -255,6 +255,31 @@ describe('a live call is booked in Orbit', () => {
         expect(b.requests.flat().map((e) => [e.detail.part, e.quantity, e.userId, e.isGuest])).toEqual([['speaking', 3, 'uuid-room_8', true]]);
     });
 
+    it('books hearing for the person who spoke when their audio is reported after they left (and the call ended), as they were when they were here', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        const here = new Set([7]);
+        b.calls.talkerOf = (playerId) => (here.has(playerId) ? { userId: `uuid-room_${playerId}`, isGuest: false } : null);
+        // They were here when the call opened and when they began to speak
+        b.workerSays({ type: 'user.speech_started' });
+        here.delete(7);
+        b.calls.spaceLeft(SPACE);
+        b.workerSays({ type: 'user.turn', turnId: '1-1', outcome: 'final', text: 'Hello Sam', audioMs: 2300 });
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(b.requests.flat().map((e) => [e.detail.part, e.quantity, e.userId, e.isGuest])).toEqual([['hearing', 3, 'uuid-room_7', false]]);
+    });
+
+    it('keeps the providers of a session a call still uses, however many newer sessions were opened since', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        const remember = (b.calls as unknown as { rememberSession(id: string, providers: unknown): void }).rememberSession.bind(b.calls);
+        const others = { recognition: { providerId: 'x', owner: true }, speech: { providerId: 'y', owner: true } };
+        for (let n = 0; n < 80; n += 1) remember(`other-${n}`, others);
+        b.workerSays({ type: 'user.turn', turnId: '1-1', outcome: 'final', text: 'Hello Sam', audioMs: 1000 });
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(b.requests.flat().map((e) => [e.detail.part, e.payerKind])).toEqual([['hearing', 'universe']]);
+    });
+
     it('books nothing for a reply of which no moment was heard', async () => {
         const b = bot({ recognition: false, speech: false });
         await b.connect();

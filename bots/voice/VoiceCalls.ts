@@ -249,6 +249,8 @@ export class VoiceCalls {
     private readonly opening = new Map<string, ToWorker[]>();
     /** The provider each part of a session runs on, to report how its calls went. */
     private readonly sessions = new Map<string, Record<ProviderPart, PartProvider>>();
+    /** Who each player is for the books, kept from when they were here: a report of what they said or heard can arrive after they left. Oldest first out. */
+    private readonly talkers = new Map<number, VoiceWho>();
     /** Only for a bot whose voice Orbit decides (see VoiceSettings): asked just before a reply is said. */
     readonly beforeSpeaking?: (spaceName: string, turn: SpeechTurn) => Promise<TurnDecision>;
     /** Voice has just been paused for someone in this bubble (the allowance, or a key or provider that isn't working): say so, once. */
@@ -1064,9 +1066,11 @@ export class VoiceCalls {
 
     private rememberSession(sessionId: string, providers: Record<ProviderPart, PartProvider>): void {
         this.sessions.set(sessionId, providers);
+        // Only sessions no bubble uses any more are forgotten: a long call that outlived fifty newer sessions still books what it uses
+        const live = new Set([...this.bubbles.values()].map((bubble) => bubble.sessionId));
         for (const oldest of this.sessions.keys()) {
             if (this.sessions.size <= MAX_SESSIONS) break;
-            this.sessions.delete(oldest);
+            if (!live.has(oldest) && oldest !== sessionId) this.sessions.delete(oldest);
         }
     }
 
@@ -1163,6 +1167,7 @@ export class VoiceCalls {
             } else if (message.type === 'participant.join') {
                 this.stats.connected++;
                 this.joined.set(callKey(call.spaceName, call.participantId), call.epoch);
+                this.noteTalker(call.participantId);
                 this.tell(call.spaceName, call.participantId, 'on');
                 this.onAudience?.(call.spaceName);
             } else if (message.type === 'participant.leave') {
@@ -1269,8 +1274,9 @@ export class VoiceCalls {
      */
     private handleSpeech(message: Extract<FromWorker, { type: 'user.speech_started' | 'user.partial' | 'user.turn' }>): void {
         const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
-        // The hearing provider took this audio whatever came of the words, and whether or not the person is still here: it is booked first
-        if (bubble && message.type === 'user.turn') this.bookHeard(message);
+        // The hearing provider took this audio whatever came of the words, and whether or not the person or the bubble is still here: it is booked first
+        if (message.type === 'user.turn') this.bookHeard(message);
+        else this.noteTalker(message.participantId);
         // The person must still be in the bubble: the words of someone who left are nobody's to see
         if (!bubble || !this.roster.get(bubble.spaceName)?.has(message.participantId)) {
             this.stats.staleFromWorker++;
@@ -1322,6 +1328,23 @@ export class VoiceCalls {
         }
     }
 
+    private noteTalker(participantId: string): void {
+        const player = this.playerIdOf?.(participantId) ?? 0;
+        const who = player ? this.talkerOf?.(player) ?? null : null;
+        if (!player || !who) return;
+        this.talkers.delete(player);
+        this.talkers.set(player, who);
+        for (const oldest of this.talkers.keys()) {
+            if (this.talkers.size <= MAX_SPOKEN) break;
+            this.talkers.delete(oldest);
+        }
+    }
+
+    /** Who a player is for the books: as they are now, or as they were when they were last here. */
+    private talkerFor(player: number): VoiceWho | null {
+        return this.talkerOf?.(player) ?? this.talkers.get(player) ?? null;
+    }
+
     /** The audio the hearing took for one stretch of speech, booked for the person who spoke and whoever paid for the hearing. */
     private bookHeard(message: Extract<FromWorker, { type: 'user.turn' }>): void {
         const owner = this.sessions.get(message.sessionId)?.recognition.owner;
@@ -1331,7 +1354,7 @@ export class VoiceCalls {
             part: 'hearing',
             key: `${message.sessionId}:${message.participantId}:${message.epoch}:${message.turnId}`,
             ms: message.audioMs,
-            who: player ? this.talkerOf?.(player) ?? null : null,
+            who: player ? this.talkerFor(player) : null,
             owner,
         });
     }
@@ -1345,7 +1368,7 @@ export class VoiceCalls {
             part: 'speaking',
             key: `${message.sessionId}:${message.segmentId}`,
             ms: message.playedMs,
-            who: player ? this.talkerOf?.(player) ?? null : null,
+            who: player ? this.talkerFor(player) : null,
             owner,
         });
     }
