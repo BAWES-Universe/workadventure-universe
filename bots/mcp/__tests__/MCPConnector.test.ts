@@ -15,7 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import { lookup } from 'dns/promises';
-import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type McpToolDefinition } from '../MCPConnector';
+import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, unsendableHeader, type McpToolDefinition } from '../MCPConnector';
 import { guardedLookup } from '../outboundGuard';
 
 // ---------------------------------------------------------------------------
@@ -840,6 +840,29 @@ describe('MCPConnector', () => {
                     }),
                 })
             );
+        });
+        it('sends nothing when a key has a character that cannot go in a header, and logs which header', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+            const result = await MCPConnector.executeToolCall(
+                'server-1',
+                'https://weather.example.com/mcp',
+                'get_weather',
+                { location: 'Paris' },
+                'api-key',
+                'my-key \u2014 note'
+            );
+
+            expect(mockedAxios.post).not.toHaveBeenCalled();
+            expect(result).toMatchObject({ outcome: 'not_sent' });
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining('the "X-API-Key" header has text that cannot be sent'));
+            warn.mockRestore();
+        });
+
+        it('does not treat accented Latin-1 text in a header as unsendable', () => {
+            expect(unsendableHeader({ 'X-Name': 'caf\u00e9' })).toBeNull();
+            expect(unsendableHeader({ 'X-Name': 'a\u2014b' })).toBe('X-Name');
+            expect(unsendableHeader({ 'X-Name': 'a\nb' })).toBe('X-Name');
         });
     });
 

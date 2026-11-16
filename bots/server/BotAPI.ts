@@ -4,6 +4,8 @@
 
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
+import type { IncomingMessage } from 'http';
+import type { Duplex } from 'stream';
 import jwt from 'jsonwebtoken';
 import { BotManager } from './BotManager';
 import { AdminApiService, BotConfigRefused } from './AdminApiService';
@@ -11,9 +13,15 @@ import { BotRegistry } from './BotRegistry';
 import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
 import { MCPConnector } from '../mcp/MCPConnector';
-import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
+import { BotBusyError, BotCannotCallError, BotUnavailableError } from '../utils/summonErrors';
 import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
+import { GuestBrickService, GUEST_FILES_MAX, isGuestBrickId, readCarriedLines, readCarriedPart } from './GuestBrickService';
+import { buildCarryCopy, buildGuestBrickMedia, CarryNotNowError, copyCarriedMedia, type CarryCopy } from './GuestBrickMedia';
+import type { CarriedPart, GuestChatNote } from '../matrix/MatrixDmBridge';
+
+/** The id the game makes for a guest at their first visit (a uuid): a member's token names an email or an account instead. */
+const GUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface BotAPIRequest extends Request {
     /** Who the game token says the caller is (its `identifier`): a guest's uuid, a member's email or id. */
@@ -21,6 +29,8 @@ export interface BotAPIRequest extends Request {
     userIdentifier?: string;
     /** The uuid of the person behind the Orbit session (what the game calls the player's uuid). */
     sessionUuid?: string;
+    /** Orbit's own id of that person: the one a Brick's owner is named by. */
+    sessionUserId?: string;
     isLogged?: boolean;
     sessionToken?: string;
     /** Set when the request carried an Orbit session the Admin API did not accept (expired or revoked). */
@@ -65,6 +75,7 @@ async function authenticateToken(
         req.isLogged = true;
         req.sessionToken = bearerToken;
         req.sessionUuid = userInfo.uuid;
+        req.sessionUserId = userInfo.userId;
         next();
     } catch (error) {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -178,6 +189,7 @@ async function identifyPlayer(
                 req.isLogged = true;
                 req.sessionToken = bearerToken;
                 req.sessionUuid = userInfo.uuid;
+                req.sessionUserId = userInfo.userId;
             } else {
                 req.sessionRejected = true;
             }
@@ -224,6 +236,7 @@ async function identifyForAccessMiddleware(
             req.isLogged = true;
             req.sessionToken = bearerToken;
             req.sessionUuid = userInfo.uuid;
+            req.sessionUserId = userInfo.userId;
         } catch {
             res.status(401).json({ error: 'Orbit session validation failed' });
             return;
@@ -242,6 +255,27 @@ export interface BotAPIOptions {
     dmRoom?: (botId: string) => Promise<{ url: string; room: string; world: string; universe: string } | undefined>;
     /** Whether a bot hears voice notes, for the mic in its chat: the same hearing its voice calls use. Left out, no bot is said to hear. */
     noteHearing?: { canHear(botId: string): Promise<boolean> };
+    /**
+     * The one chat of a bot and a person (game #1995): the chat they have, or whether this device is the one to make it;
+     * only when Matrix DMs are on. `chatId` is the person's chat address, already checked to be theirs.
+     */
+    directChat?: (botId: string, chatId: string) => Promise<{ roomId: string } | { create: true } | { wait: true }>;
+    /**
+     * Brings a guest's chat with the Brick for guests into the signed-in person's own Brick (game #1997): `chatId` is the
+     * person's chat address, already checked to be theirs, and `botId` already checked to be their own Brick.
+     */
+    carryGuestChat?: (botId: string, chatId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>;
+    /** Whether a guest's chat may be brought into this bot (the one Brick everyone gets, not deleted): asked before anything is copied. */
+    carryBrick?: (botId: string) => Promise<boolean>;
+    /**
+     * A Brick was deleted or taken back with Undo (game #1996): its settings are read again before its next message.
+     * Only when it is a Brick of `ownerId` (Orbit's id of the person); says whether it was.
+     */
+    brickChanged?: (botId: string, ownerId: string) => boolean;
+    /** How a carried guest chat's media is copied (plan v3). Left out, built from the bot server's own parts. */
+    carryCopy?: (guestId: string, userUuid: string) => CarryCopy | null;
+    /** What answers a guest in their Brick (game #1997). Left out, it is built from the bot server's own parts the first time it is asked for; null: off. */
+    guestBrick?: GuestBrickService | null;
     /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
     voiceHello?: VoiceHello | null;
 }
@@ -280,7 +314,15 @@ export class BotAPI {
     private dmStatus: BotAPIOptions['dmStatus'];
     private noteHearing: BotAPIOptions['noteHearing'];
     private dmRoom: BotAPIOptions['dmRoom'];
+    private directChat: BotAPIOptions['directChat'];
+    private brickChanged: BotAPIOptions['brickChanged'];
+    private carryGuestChat: BotAPIOptions['carryGuestChat'];
+    private carryBrick: BotAPIOptions['carryBrick'];
+    /** Per person, how many Brick changes they told in the current minute. */
+    private brickChangedCounts = new Map<string, { count: number; since: number }>();
     private voiceHelloOption: BotAPIOptions['voiceHello'];
+    private guestBrickOption: BotAPIOptions['guestBrick'];
+    private carryCopyOption: BotAPIOptions['carryCopy'];
 
     constructor(
         botManager: BotManager,
@@ -297,7 +339,13 @@ export class BotAPI {
         this.dmStatus = options.dmStatus;
         this.noteHearing = options.noteHearing;
         this.dmRoom = options.dmRoom;
+        this.directChat = options.directChat;
+        this.brickChanged = options.brickChanged;
+        this.carryGuestChat = options.carryGuestChat;
+        this.carryBrick = options.carryBrick;
         this.voiceHelloOption = options.voiceHello;
+        this.guestBrickOption = options.guestBrick;
+        this.carryCopyOption = options.carryCopy;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
         for (const router of preRouters) {
@@ -307,6 +355,46 @@ export class BotAPI {
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
         this.setupRoutes();
+    }
+
+    /** How a carried chat's media is copied for this person; tests give their own. */
+    private carryCopy(guestId: string, userUuid: string): CarryCopy | null {
+        return (this.carryCopyOption ?? ((g, u) => buildCarryCopy(this.adminApiService, g, u)))(guestId, userUuid);
+    }
+
+    private guestBrick(): GuestBrickService | null {
+        if (this.guestBrickOption === undefined) {
+            this.guestBrickOption = new GuestBrickService(this.adminApiService, undefined, undefined, buildGuestBrickMedia(this.botManager, this.adminApiService));
+        }
+        return this.guestBrickOption;
+    }
+
+    /** At most 30 Brick changes a minute for one person: far more than tapping Delete and Undo, too few to keep Orbit busy. */
+    private brickChangedAllowed(userId: string, now = Date.now()): boolean {
+        const seen = this.brickChangedCounts.get(userId);
+        if (!seen || now - seen.since >= 60_000) {
+            this.brickChangedCounts.delete(userId);
+            this.brickChangedCounts.set(userId, { count: 1, since: now });
+            if (this.brickChangedCounts.size > 10_000) this.brickChangedCounts.delete(this.brickChangedCounts.keys().next().value!);
+            return true;
+        }
+        seen.count += 1;
+        return seen.count <= 30;
+    }
+
+    private visitSyncCounts = new Map<string, { count: number; since: number }>();
+
+    /** At most `limit` Brick placements (or ends) a minute for one person: far more than walking room to room and tapping, too few to keep Orbit busy. */
+    private visitSyncAllowed(userId: string, limit: number, now = Date.now()): boolean {
+        const seen = this.visitSyncCounts.get(userId);
+        if (!seen || now - seen.since >= 60_000) {
+            this.visitSyncCounts.delete(userId);
+            this.visitSyncCounts.set(userId, { count: 1, since: now });
+            if (this.visitSyncCounts.size > 10_000) this.visitSyncCounts.delete(this.visitSyncCounts.keys().next().value!);
+            return true;
+        }
+        seen.count += 1;
+        return seen.count <= limit;
     }
 
     private voiceHello(): VoiceHello | null {
@@ -430,8 +518,8 @@ export class BotAPI {
             try {
                 const { botId } = req.params;
                 const action = req.body?.action;
-                if (action !== 'summon' && action !== 'chat' && action !== 'dm') {
-                    res.status(400).json({ error: 'action must be "summon", "chat" or "dm"' });
+                if (action !== 'summon' && action !== 'chat' && action !== 'dm' && action !== 'call') {
+                    res.status(400).json({ error: 'action must be "summon", "chat", "dm" or "call"' });
                     return;
                 }
 
@@ -456,6 +544,11 @@ export class BotAPI {
                     this.botManager.getBot(botId)?.getName()
                 );
                 if (verdict.kind === 'allowed') {
+                    // Calling is also a voice: the call button is drawn only for a bot that has one (the start still checks)
+                    if (action === 'call' && !(await this.botManager.canTakeCall(botId))) {
+                        res.json({ allowed: false, code: 'no_voice', reason: 'This bot has no voice.' });
+                        return;
+                    }
                     res.json({ allowed: true });
                     return;
                 }
@@ -561,6 +654,79 @@ export class BotAPI {
                 }
                 console.error('[BotAPI] Error summoning bot:', error);
                 res.status(500).json({ error: error.message, code: 'failed' });
+            }
+        });
+
+        // A person calls a bot (game #2004). Who is asking comes from the Orbit session or the game token, as for Summon, and
+        // only they can call for themselves. Orbit's "Call" rule decides (it needs an account, so a guest hears "sign in");
+        // the bot then opens a call-only connection and joins the call's private space, whose name comes back for the
+        // caller to join. The bot does not have to be standing anywhere: it is not in the room for a call.
+        this.app.post('/api/bots/:botId/call', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const { playerUuid } = req.body ?? {};
+                if (!playerUuid || typeof playerUuid !== 'string') {
+                    res.status(400).json({ error: 'Missing required field: playerUuid' });
+                    return;
+                }
+                if (req.sessionUuid !== playerUuid && req.gameIdentifier !== playerUuid) {
+                    if (req.sessionRejected && !req.sessionUuid) {
+                        res.status(401).json({ error: 'Invalid or expired Orbit session', code: 'session_expired' });
+                        return;
+                    }
+                    res.status(403).json({ error: 'You can only call a bot for yourself', code: 'not_you' });
+                    return;
+                }
+
+                // The call is held by the person's account, never by a guest's token: a guest is refused below by Orbit
+                const verdict = await this.botManager.getAccessGate().check(
+                    botId,
+                    'call',
+                    { signedIn: !!req.sessionUuid, identifier: req.sessionUuid },
+                    this.botManager.getBot(botId)?.getName()
+                );
+                if (verdict.kind === 'refused') {
+                    res.status(403).json({ started: false, error: verdict.line, reason: verdict.line, code: verdict.code ?? 'not_allowed' });
+                    return;
+                }
+                if (verdict.kind === 'cannot_check') {
+                    res.status(503).json({ started: false, error: verdict.line, reason: verdict.line, code: 'cannot_check' });
+                    return;
+                }
+
+                const call = await this.botManager.startCall(botId, playerUuid);
+                res.json({ botId, started: true, spaceName: call.spaceName });
+            } catch (error: any) {
+                if (error instanceof BotCannotCallError) {
+                    res.status(409).json({ started: false, error: error.message, code: 'no_voice' });
+                    return;
+                }
+                if (error instanceof BotUnavailableError) {
+                    res.status(404).json({ started: false, error: error.message, code: 'not_here' });
+                    return;
+                }
+                console.error('[BotAPI] Error starting a call:', error);
+                res.status(500).json({ started: false, error: 'The call could not start', code: 'failed' });
+            }
+        });
+
+        // The caller hangs up: the bot leaves the call and closes its connection. Only the person who called can end it.
+        this.app.post('/api/bots/:botId/call/end', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const { playerUuid } = req.body ?? {};
+                if (!playerUuid || typeof playerUuid !== 'string') {
+                    res.status(400).json({ error: 'Missing required field: playerUuid' });
+                    return;
+                }
+                if (req.sessionUuid !== playerUuid && req.gameIdentifier !== playerUuid) {
+                    res.status(403).json({ error: 'You can only end your own call', code: 'not_you' });
+                    return;
+                }
+                res.json({ botId, ended: await this.botManager.endCall(botId, playerUuid) });
+            } catch (error: any) {
+                console.error('[BotAPI] Error ending a call:', error);
+                res.status(500).json({ error: 'The call could not be ended', code: 'failed' });
             }
         });
 
@@ -871,6 +1037,275 @@ export class BotAPI {
             } catch (error) {
                 console.error(`[BotAPI] Error reading the room of bot ${botId}:`, error);
                 res.status(500).json({ error: 'Could not read the room' });
+            }
+        });
+
+        // One chat for a person and a bot, however many of their devices open it at once (game #1995). A device that has
+        // no chat with the bot asks here before it makes one, and is told the chat they already have, to make it (one
+        // device at a time is), or to ask again in a moment. The person is the one the Orbit session names: the chat
+        // address their device sends counts only when Orbit says it is that same person's and that they may message
+        // the bot, so nobody learns of, or holds up, a chat that is not theirs.
+        this.app.post('/api/bots/:botId/direct-chat', requireSession, async (req: BotAPIRequest, res: Response) => {
+            if (!this.directChat) {
+                res.status(404).json({ error: 'Direct messages are off' });
+                return;
+            }
+            const { botId } = req.params;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId)) {
+                res.status(400).json({ error: 'Not a bot id' });
+                return;
+            }
+            const chatId = req.body?.chatId;
+            if (typeof chatId !== 'string' || !/^@[^\s:]{1,255}:[^\s]{1,255}$/.test(chatId) || chatId.length > 255) {
+                res.status(400).json({ error: 'Not a chat address' });
+                return;
+            }
+            try {
+                const access = await this.adminApiService.checkDmAccess(botId, chatId);
+                if (!access.allowed && (access.reason ?? '').startsWith('admin_api_')) {
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
+                if (!access.allowed || !access.user || !req.sessionUuid || access.user.uuid !== req.sessionUuid) {
+                    res.status(403).json({ error: 'You cannot message this bot', code: 'not_allowed' });
+                    return;
+                }
+                res.json(await this.directChat(botId, chatId));
+            } catch (error) {
+                console.error(`[BotAPI] Error finding the direct chat of bot ${botId}:`, error);
+                res.status(500).json({ error: 'Could not find the chat' });
+            }
+        });
+
+        // The Brick for guests answers a guest who writes to it (game #1997). The guest is the one the game token names, never
+        // one the request names, and only a guest's own id counts: a member has their own Brick. The chat lives on the
+        // guest's device, which sends the lines it holds with each message; nothing of it is kept here.
+        this.app.post('/api/guest-brick/reply', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            const brick = this.guestBrick();
+            if (!brick?.available()) {
+                res.status(404).json({ error: 'Not available' });
+                return;
+            }
+            const guestId = req.gameIdentifier;
+            // A request that comes with a signed-in Orbit session is a member's, even when their game identifier looks like a guest's (a member without an email)
+            if (req.isLogged || typeof guestId !== 'string' || !GUEST_ID.test(guestId)) {
+                res.status(403).json({ error: 'Only for guests' });
+                return;
+            }
+            const { turnId, roomUrl, message, history, saidNeedsAccount, files, note } = req.body ?? {};
+            // A picture, a file or a voice note may come with no words; a message with nothing at all is refused
+            const named = Array.isArray(files) ? files : [];
+            const hasMedia = named.length > 0 || (typeof note === 'string' && note.length > 0);
+            if (
+                !isGuestBrickId(turnId) ||
+                typeof roomUrl !== 'string' ||
+                !roomUrl ||
+                roomUrl.length > 2000 ||
+                typeof message !== 'string' ||
+                (!message.trim() && !hasMedia) ||
+                (files !== undefined && !Array.isArray(files)) ||
+                named.length > GUEST_FILES_MAX ||
+                (note !== undefined && typeof note !== 'string')
+            ) {
+                res.status(400).json({ error: 'Not a message' });
+                return;
+            }
+            try {
+                const answer = await brick.reply({
+                    guestId,
+                    turnId,
+                    roomUrl,
+                    message,
+                    history: Array.isArray(history) ? history : [],
+                    saidNeedsAccount: saidNeedsAccount === true,
+                    ...(named.length > 0 ? { files: named } : {}),
+                    ...(typeof note === 'string' && note ? { note } : {}),
+                });
+                if (answer.kind === 'busy') res.status(429).json(answer);
+                else if (answer.kind === 'failed') res.status(502).json(answer);
+                else res.json(answer);
+            } catch (error) {
+                console.error('[BotAPI] Error answering a guest:', error instanceof Error ? error.message : error);
+                res.status(502).json({ kind: 'failed' });
+            }
+        });
+
+        // What the Brick for guests takes from a guest now (plan v3): files with their upload receipts, and voice notes when Orbit
+        // has every part of them. The game shows the paperclip and the mic only for what is here.
+        this.app.get('/api/guest-brick/media', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            const brick = this.guestBrick();
+            // `carryParts`: a guest's chat is brought in parts after sign-in (plan v3 section 7), whatever the guest Brick takes
+            if (!brick?.available()) {
+                res.json({ files: false, notes: false, carryParts: true });
+                return;
+            }
+            res.json({ ...(await brick.canTake()), carryParts: true });
+        });
+
+        // The guest's device has the answer to a voice note: its kept copy at Orbit is deleted. Only the guest it was for can say it.
+        this.app.post('/api/guest-brick/delivered', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            const brick = this.guestBrick();
+            const guestId = req.gameIdentifier;
+            if (!brick?.available() || req.isLogged || typeof guestId !== 'string' || !GUEST_ID.test(guestId)) {
+                res.status(404).json({ error: 'Not available' });
+                return;
+            }
+            try {
+                if (!(await brick.delivered(guestId, req.body?.delivery))) {
+                    res.status(403).json({ error: 'Not yours' });
+                    return;
+                }
+                res.status(204).end();
+            } catch (error) {
+                console.error('[BotAPI] Error closing a guest answer:', error instanceof Error ? error.message : error);
+                res.status(502).json({ error: 'Could not say it now' });
+            }
+        });
+
+        // A guest signed in, and Orbit handed their chat with the Brick for guests to this account (game #1997). The device that held
+        // the chat brings it here and the Brick says it, once, in the person's own chat with their Brick. The person is the one the
+        // Orbit session names; the chat address counts only when Orbit says it is theirs, and the bot must be their own Brick, so
+        // nobody can put words in another chat or in a host bot's.
+        this.app.post('/api/bots/:botId/carried-chat', requireSession, async (req: BotAPIRequest, res: Response) => {
+            if (!this.carryGuestChat) {
+                res.status(404).json({ error: 'Direct messages are off' });
+                return;
+            }
+            const { botId } = req.params;
+            const { chatId, carryId, lines } = req.body ?? {};
+            // A chat carried in parts names each part; one carried as a single message (a game from before) names none
+            const part = readCarriedPart(req.body?.part);
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || typeof chatId !== 'string' || !/^@[^\s:]{1,255}:[^\s]{1,255}$/.test(chatId) || chatId.length > 255) {
+                res.status(400).json({ error: 'Not a chat address' });
+                return;
+            }
+            if (!isGuestBrickId(carryId) || !Array.isArray(lines) || part === 'bad') {
+                res.status(400).json({ error: 'Not a chat to bring' });
+                return;
+            }
+            try {
+                const access = await this.adminApiService.checkDmAccess(botId, chatId);
+                // Orbit could not say: not a refusal, so the device keeps the chat and asks again
+                if (!access.allowed && (access.reason ?? '').startsWith('admin_api_')) {
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
+                if (!access.allowed || !access.user || !req.sessionUuid || access.user.uuid !== req.sessionUuid) {
+                    res.status(403).json({ error: 'Not your chat', code: 'not_allowed' });
+                    return;
+                }
+                const read = readCarriedLines(lines);
+                if (read.length === 0) {
+                    res.status(400).json({ error: 'Nothing to bring' });
+                    return;
+                }
+                // Not their Brick: refused before anything is copied, so no copy is left behind with nothing pointing at it
+                if (this.carryBrick && !(await this.carryBrick(botId))) {
+                    res.status(403).json({ error: 'Not your Brick', code: 'not_allowed' });
+                    return;
+                }
+                // The guest's pictures, files and notes are copied into this person's own storage, only when Orbit handed that
+                // guest's chat (`carryId` is the guest id) to them; without a way to copy, they come as words and "gone" bubbles
+                const copy = this.carryCopy(carryId, req.sessionUuid);
+                const kept = copy
+                    ? await copyCarriedMedia(carryId, read, copy)
+                    : read.map((line) => (line.media ? { ...line, media: line.media.map(({ receipt: _r, ...one }) => ({ ...one, gone: true as const })) } : line));
+                const result = await this.carryGuestChat(botId, chatId, carryId, kept, part);
+                if (result === 'not_brick') {
+                    res.status(403).json({ error: 'Not your Brick', code: 'not_allowed' });
+                    return;
+                }
+                res.json({ result });
+            } catch (error) {
+                // The hand-over or the storage can't be asked now: nothing was said, and the device keeps its chat and asks again
+                if (error instanceof CarryNotNowError) {
+                    console.warn(`[BotAPI] Not bringing a guest's chat into ${botId} just now:`, error.message);
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
+                console.error(`[BotAPI] Error bringing a guest's chat into ${botId}:`, error instanceof Error ? error.message : error);
+                res.status(500).json({ error: 'Could not bring the chat' });
+            }
+        });
+
+        // A Brick was just deleted, or taken back with Undo, on the Bricks page (game #1996). Orbit already decided it; this
+        // only has every bot server read the Brick again now instead of within the minute, so a deleted Brick stops at
+        // once. Only the Brick's owner may say it, and only so often, so nobody can keep the bot server asking Orbit.
+        this.app.post('/api/bots/:botId/brick-changed', requireSession, (req: BotAPIRequest, res: Response) => {
+            const { botId } = req.params;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || !req.sessionUserId) {
+                res.status(400).json({ error: 'Not a bot id' });
+                return;
+            }
+            if (!this.brickChangedAllowed(req.sessionUserId)) {
+                res.status(429).json({ error: 'Too many changes, try again in a minute' });
+                return;
+            }
+            this.brickChanged?.(botId, req.sessionUserId);
+            res.status(204).end();
+        });
+
+        // A person walks into a room, brings their Brick along or ends the visit (game #2005): put the Brick beside them on
+        // this room's map, or take it off. Orbit decides which Brick, if any; the person is the one the Orbit session names, so
+        // nobody can bring anyone else's Brick. Their spot is only where it first appears: it then walks to them.
+        this.app.post('/api/bricks/visit/sync', requireSession, async (req: BotAPIRequest, res: Response) => {
+            const roomId = req.body?.roomId;
+            if (typeof roomId !== 'string' || !roomId.trim() || roomId.length > 2000 || !req.sessionUuid) {
+                res.status(400).json({ error: 'Missing roomId' });
+                return;
+            }
+            const { x, y } = req.body ?? {};
+            const position = typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
+            // Ending a visit is not held up by the room check, and has an allowance of its own that placing never uses up: it only
+            // takes a Brick off the map. Putting a Brick on the map is asked of a room people are really in, as room-enter does.
+            const ending = req.body?.ending === true;
+            if (!req.sessionUserId || !this.visitSyncAllowed(`${ending ? 'end' : 'place'}:${req.sessionUserId}`, ending ? 30 : 60)) {
+                res.status(429).json({ error: 'Too many changes, try again in a minute' });
+                return;
+            }
+            try {
+                if (!ending && !(await this.botManager.hasPlayersIn(roomId, 3, 1000))) {
+                    // Not in the game's list of the room yet (it can lag a person who just came in): a later sync may find them
+                    res.json({ present: false, reason: 'not_seen' });
+                    return;
+                }
+                // One Brick per person, in a room that exists and whose universe takes visits (Orbit says), and it goes by
+                // itself when its person is not seen in the room: so there is no wait here, and ending a visit is at once
+                // When the person's game saw them come into the room: Orbit moves a visit only on a sighting newer than the last move, so a
+                // late sync from a room they left moves nothing. Whatever is not a plain time is left out (Orbit reads that as now)
+                const entered = req.body?.enteredAt;
+                const client = req.body?.clientId;
+                const since =
+                    !ending && typeof entered === 'number' && Number.isSafeInteger(entered) && entered > 0 && typeof client === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(client)
+                        ? { at: entered, clientId: client }
+                        : undefined;
+                const person = { uuid: req.sessionUuid };
+                const answer =
+                    since === undefined
+                        ? await this.botManager.syncVisitingBrick(roomId, person, ending ? undefined : position, !ending)
+                        : await this.botManager.syncVisitingBrick(roomId, person, position, true, since);
+                res.json({ present: answer.botId !== null, ...(answer.reason ? { reason: answer.reason } : {}) });
+            } catch (error) {
+                console.error('[BotAPI] Error syncing a visiting Brick:', error instanceof Error ? error.message : error);
+                res.status(500).json({ error: 'Could not put the Brick on the map' });
+            }
+        });
+
+        // "Not now" on a Brick's suggestion (game #1996). Orbit closed the topic when the card was shown; this keeps what
+        // the person tapped. The person is the one the Orbit session names, and Orbit keeps it only for the Brick's owner.
+        this.app.post('/api/bots/:botId/brick-offer', requireSession, async (req: BotAPIRequest, res: Response) => {
+            const { botId } = req.params;
+            const topic = req.body?.topic;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || typeof topic !== 'string' || !topic.trim() || topic.length > 200 || !req.sessionUuid) {
+                res.status(400).json({ error: 'Not a suggestion' });
+                return;
+            }
+            try {
+                if (await this.adminApiService.answerBrickOffer(botId, req.sessionUuid, topic, 'not_now')) res.status(204).end();
+                else res.status(502).json({ error: 'Could not keep that' });
+            } catch (error) {
+                console.error(`[BotAPI] Error keeping "Not now" for bot ${botId}:`, error);
+                res.status(502).json({ error: 'Could not keep that' });
             }
         });
 
@@ -1939,6 +2374,25 @@ export class BotAPI {
         this.server = this.app.listen(port, () => {
             console.log(`[BotAPI] Server running on port ${port}`);
         });
+        // A socket upgrade goes to the first handler that takes it (the computer screen); one nobody takes is closed
+        this.server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+            // A request nobody can read (a strange address, a handler that throws) closes that one socket and never reaches the process
+            try {
+                for (const handler of this.upgradeHandlers) {
+                    if (handler(request, socket, head)) return;
+                }
+            } catch (error) {
+                console.warn('[BotAPI] An upgrade request could not be handled:', error instanceof Error ? error.message : 'unknown');
+            }
+            socket.destroy();
+        });
+    }
+
+    private upgradeHandlers: Array<(request: IncomingMessage, socket: Duplex, head: Buffer) => boolean> = [];
+
+    /** Adds a handler for socket upgrades. It answers whether it took the request. */
+    addUpgradeHandler(handler: (request: IncomingMessage, socket: Duplex, head: Buffer) => boolean): void {
+        this.upgradeHandlers.push(handler);
     }
     
     /**

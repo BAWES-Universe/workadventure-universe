@@ -207,9 +207,9 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         await run();
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (400): OpenAI API error: 400 max_tokens is too large",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (400)",
         ]);
-        expect(mockCaptureAiTrace.mock.calls[0][0].error).toBe("the provider failed (400): OpenAI API error: 400 max_tokens is too large");
+        expect(mockCaptureAiTrace.mock.calls[0][0].error).toBe("the provider failed (400)");
     });
 
     it("says why when the call after a tool failed", async () => {
@@ -218,13 +218,13 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         await run();
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502)",
         ]);
         expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.stringContaining("502") });
         // The tool call's own call went fine; the call after it carries the error
         const generations = mockCaptureAiGeneration.mock.calls.map((call: any[]) => call[0]);
         expect(generations[0].error).toBeUndefined();
-        expect(generations.at(-1).error).toBe("the provider failed (502): OpenAI API error: 502 bad gateway");
+        expect(generations.at(-1).error).toBe("the provider failed (502)");
     });
 
     it("still says why when only words before the tool came back", async () => {
@@ -232,7 +232,7 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         await run();
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502)",
         ]);
     });
 
@@ -241,7 +241,7 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         await run();
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 stream broke",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502)",
         ]);
     });
 
@@ -260,7 +260,7 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         mockGenerateStream.mockImplementationOnce(brokenToolCallStream).mockImplementationOnce(plainAnswerStream);
         await run();
 
-        expect(mockCaptureAiGeneration.mock.calls[0][0].error).toBe("the provider failed (500): OpenAI API error: 500 stream broke");
+        expect(mockCaptureAiGeneration.mock.calls[0][0].error).toBe("the provider failed (500)");
     });
 
     it("gives the retry's own reason after an empty-name tool call", async () => {
@@ -271,12 +271,12 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         expect(warnings()[0]).toContain("no words and no tool call: it reached the longest reply");
     });
 
-    it("keeps a private bot's provider text out of the line", async () => {
+    it("leaves the provider's words out of the line, private or not", async () => {
         mockGenerateStream.mockImplementationOnce(providerErrorStream);
         await run("build me an artifact with music", true);
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (400): details left out for a private bot",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (400)",
         ]);
         expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.not.stringContaining("max_tokens") });
         expect(mockCaptureAiTrace).not.toHaveBeenCalled();
