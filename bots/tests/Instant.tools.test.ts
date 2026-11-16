@@ -849,6 +849,24 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: newKey, state: 'done' });
     });
 
+    it('a run still in flight when its turn ended closes its own task when it lands', async () => {
+        let land: (answer: InstantRunAnswer) => void = () => undefined;
+        const slow = new Promise<InstantRunAnswer>((resolve) => (land = resolve));
+        const { ai, orbit, memory } = service({ instantRun: vi.fn().mockReturnValue(slow) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const turn = ai.startInstantTurn(BRICK, memory);
+        const running = ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
+        // the reply is cut short and the turn ends, then a newer turn starts
+        await ai.endInstantTurn(BRICK, 'uuid-alice', turn);
+        ai.startInstantTurn(BRICK, memory);
+        expect(orbit.closeTaskReceipt).not.toHaveBeenCalled();
+        land({ status: 'done', data: 1, chargedMicros: 1 });
+        await running;
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1));
+        expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: orbit.instantRun.mock.calls[0][1].taskKey, state: 'done' });
+    });
+
     it('a receipt Orbit could not open is asked for again by the next run and again at the end, and its outcomes are kept until it is closed', async () => {
         const { ai, orbit, memory } = service();
         ai.noteBrick(BRICK, { isDefault: false });

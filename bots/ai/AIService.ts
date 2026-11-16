@@ -3712,6 +3712,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const opened = await openInstantReceipt(admin, botId, userId, task, instantReceiptTitle(tool));
             const ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: task.key, receiptLink: opened?.link });
             task.ended.push(ran.ended);
+            // The turn this run belongs to ended while it was in flight (an update cut the reply short): nothing else will close its receipt
+            if (turn.over) void endInstantTask(admin, botId, userId, task);
             // What Orbit offers may change with a run (credit spent, a pause): read it again next time
             if (ran.ended !== 'failed') this.instantOffers.forget(botId, userId);
             if (ran.stop) task.stopped = ran.result;
@@ -3753,6 +3755,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         try {
             const admin = adminApiService ?? this.adminApiService;
             if (!turn || !admin || !userId) return;
+            turn.over = true;
             for (const task of [...turn.tasks]) await endInstantTask(admin, botId, userId, task);
         } catch {
             // A receipt is never in the way of a reply

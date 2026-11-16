@@ -396,6 +396,8 @@ export const newInstantTask = (): InstantTask => ({ key: `instant-${randomUUID()
  * a newer turn starting while it ends never ends the wrong tasks. */
 export interface InstantTurn {
     tasks: InstantTask[];
+    /** The turn's end came. A run still in flight that lands after it ends its own task itself, since nothing else will. */
+    over?: boolean;
 }
 
 /** The words a receipt carries for what ran: "Exa search". Only the person it belongs to reads them. */
