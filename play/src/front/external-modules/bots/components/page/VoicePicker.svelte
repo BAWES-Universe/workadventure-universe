@@ -21,6 +21,8 @@
     /** Nobody lent a voice key here: the way to more voices is said under the list */
     export let offerKeys = false;
     export let canOpenKeys = false;
+    /** A Brick's page: its voice keys are its owner's own, lent to no universe */
+    export let brick = false;
     export let busy = false;
     export let onBack: () => void;
     export let onUse: (voice: VoiceChoice) => void;
@@ -92,7 +94,11 @@
             <IconKey font-size="18" />
             <div class="vp-mtx">
                 <span class="vp-ut">{voice.moreVoicesTitle()}</span>
-                <span class="vp-cn">{voice.moreVoicesLine({ bot: botName })}</span>
+                <span class="vp-cn"
+                    >{brick
+                        ? voice.brick.moreVoicesLine({ bot: botName })
+                        : voice.moreVoicesLine({ bot: botName })}</span
+                >
             </div>
         </div>
         {#if canOpenKeys}

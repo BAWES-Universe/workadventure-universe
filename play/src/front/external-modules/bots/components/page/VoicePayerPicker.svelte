@@ -25,6 +25,8 @@
     export let botName: string;
     export let viewerIsMaker: boolean;
     export let maker: string;
+    /** A Brick's page: its keys are its owner's own, lent to no universe */
+    export let brick = false;
     export let saving = false;
     /** "door" or "on": keeps the ids of the two pickers apart */
     export let place: string;
@@ -145,7 +147,7 @@
                             {#if choice.kind === "universe-ai"}
                                 {part === "speech" ? v.universeAiPeople() : v.universeAiListens()}
                             {:else if viewerIsMaker}
-                                {v.keyYouPay()}
+                                {brick ? v.brick.keyYouPay() : v.keyYouPay()}
                             {:else}
                                 {v.keyOwnerPays({ owner: maker })}
                             {/if}
