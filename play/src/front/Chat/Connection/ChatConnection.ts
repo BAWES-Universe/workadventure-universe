@@ -2,10 +2,12 @@ import type { Readable, Writable } from "svelte/store";
 import type { AvailabilityStatus } from "@workadventure/messages";
 import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
+import type { AppOffer, BrickOffer, GuestChatLine, MadeBrick } from "../Bricks/Brick";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
 import type { BotSteps } from "../Bots/BotSteps";
+import type { NoteTranscript } from "../Bots/BotTranscript";
 import type { ArtifactCard } from "../../Artifacts/artifactCard";
 import type { BotAsk, BotAskTap } from "../Bots/BotAsk";
 import type { RoomConnection } from "../../Connection/RoomConnection";
@@ -25,6 +27,8 @@ export type ChatUser = {
     chatId: string;
     uuid?: string;
     availabilityStatus: Readable<AvailabilityStatus>;
+    /** On a call with a Brick right now (game #2004): a label next to the status, never a status. */
+    onACall?: Readable<boolean | undefined>;
     username: string | undefined;
     pictureStore: PictureStore | undefined;
     /** Their saved Woka, drawn only when shown: what a person who is away looks like, until they have a live one. */
@@ -48,6 +52,8 @@ export type AdminUser = {
     chatId?: string;
     uuid: string;
     availabilityStatus: Readable<AvailabilityStatus>;
+    /** On a call with a Brick right now (game #2004): a label next to the status, never a status. */
+    onACall?: Readable<boolean | undefined>;
     username: string | undefined;
     pictureStore: PictureStore | undefined;
     /** Their saved Woka, drawn only when shown: what a person who is away looks like, until they have a live one. */
@@ -181,6 +187,12 @@ export interface ChatRoomModeration {
 }
 
 //Readonly attributes
+/**
+ * Why a voice bot's reply for one person alone was not heard to its end (#1993): `unsaid` when it was not said out loud
+ * at all, `stopped` when its voice stopped part-way. Empty when there is nothing to say about it.
+ */
+export type KeptQuiet = "" | "unsaid" | "stopped";
+
 export interface ChatMessage {
     id: string;
     sender: AnyKindOfUser | undefined;
@@ -209,13 +221,42 @@ export interface ChatMessage {
     spoken?: boolean;
     /** Set on a voice bot's reply whose voice stopped part-way because someone spoke over it (#1665): a quiet line under it. */
     stoppedBySpeech?: Readable<boolean>;
+    /**
+     * Set on a voice bot's reply written for this person alone (#1993), when its voice would have reached someone else
+     * too: it was not said out loud, or it stopped part-way. A quiet line under it says which.
+     */
+    keptQuiet?: Readable<KeptQuiet>;
+    /** Set on a voice bot's reply in nearby chat (round 8): which reply it is, so it can show Stop speaking while it is heard. */
+    voiceReply?: { responseId: string; botSpaceUserId: string };
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
+    /** Set on a bot's direct message that is the one copy of an answer it gave this person alone in nearby chat (#1993): a quiet line under it says so. */
+    answeredNearby?: boolean;
+    /** Set on a Brick's fixed "what I can do" answer (#1995): while it is the newest message, its ideas show above the message box. */
+    brickIdeas?: boolean;
+    /** The Bricks a Brick made while writing this answer (#1996): each is one tap from its chat, under the answer. */
+    brickMade?: MadeBrick[];
+    /**
+     * Set on the one message a Brick leaves when someone signs in with a chat they had with the Brick for guests
+     * (#1997): the lines of that chat, which the chat draws as they were said, then the Brick's welcome.
+     */
+    guestChat?: GuestChatLine[];
+    /** Set on a guest Brick's answer that says something needs an account (#1997): while it is the newest message, "Keep Brick?" shows above the message box. */
+    guestKeep?: boolean;
+    /** Set on a message the game drew itself on this device (#1997): nothing was sent, so there is nothing to react to, reply to, edit or delete. */
+    local?: boolean;
+    /** Set on a Brick's suggestion of a Brick for a job that keeps coming back (#1996): while it is the newest message
+     * it is a card above the message box, afterwards its question stays in the chat. */
+    brickOffer?: BrickOffer;
+    /** Set on a Brick's offer to connect an App (#2001): while it is the newest message it is a card above the message box. */
+    appOffer?: AppOffer;
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
      * it waits, then drawn in the chat as it ended. The bot server edits the same notice. */
     ask?: Readable<BotAsk | undefined>;
     /** Set when a bot's notice is the steps line of its reply (#1545): drawn as a quiet line that updates in place. */
     steps?: Readable<BotSteps | undefined>;
+    /** Set when a bot's notice only carries what it heard in a voice note: never drawn, its words show in the note's bubble. */
+    transcriptNotice?: boolean;
     /** Whether reactions on this message reach the other people in the chat. */
     canReact: Readable<boolean>;
     /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */
@@ -269,6 +310,10 @@ export type ChatMessageContent = {
     voiceWaveform?: number[];
     /** The file could not be fetched (gone, or the network failed). It is tried again the next time it is shown. */
     mediaFailed?: boolean;
+    /** The file no longer exists (a guest's file that did not come along after sign-in): its bubble says it is gone. */
+    mediaGone?: boolean;
+    /** What a bot heard in a voice message (shown inside the note's bubble), once it was asked to listen. */
+    transcript?: NoteTranscript;
 };
 export const historyVisibilityOptions = ["joined", "invited", "world_readable"] as const;
 export type historyVisibility = (typeof historyVisibilityOptions)[number];

@@ -1,0 +1,5 @@
+{"pauseMs":0,"subscribedAgain":true,"bobSecondsHeardInNext6":5,"aliceSecondsHeardInNext6":6,"workerAskedToSubscribe":3,"workerUnsubscribed":1}
+{"pauseMs":700,"subscribedAgain":true,"bobSecondsHeardInNext6":5.7,"aliceSecondsHeardInNext6":6,"workerAskedToSubscribe":3,"workerUnsubscribed":1}
+{"pauseMs":1500,"subscribedAgain":false,"bobSecondsHeardInNext6":0,"aliceSecondsHeardInNext6":6,"workerAskedToSubscribe":3,"workerUnsubscribed":1}
+{"pauseMs":2000,"subscribedAgain":false,"bobSecondsHeardInNext6":0,"aliceSecondsHeardInNext6":6,"workerAskedToSubscribe":3,"workerUnsubscribed":1}
+{"pauseMs":5000,"subscribedAgain":false,"bobSecondsHeardInNext6":0,"aliceSecondsHeardInNext6":6,"workerAskedToSubscribe":3,"workerUnsubscribed":1}

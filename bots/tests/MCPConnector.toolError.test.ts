@@ -24,6 +24,31 @@ describe('MCPConnector.executeToolCall', () => {
         expect(result).toEqual({ error: 'Tool error: daily limit reached', outcome: 'failed' });
     });
 
+    it("keeps the server's words out of the logs, while the bot still gets them", async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try {
+            post.mockResolvedValueOnce(answer({})).mockResolvedValueOnce(
+                answer({ isError: true, content: [{ type: 'text', text: 'no mailbox for canary-4821@example.com' }] })
+            );
+            const failed = await MCPConnector.executeToolCall('s3', 'https://mail.test/mcp', 'read_mail', {}, 'none', undefined, undefined, 'p1');
+            expect(failed).toEqual({ error: 'Tool error: no mailbox for canary-4821@example.com', outcome: 'failed' });
+
+            post.mockResolvedValueOnce(answer({})).mockResolvedValueOnce({
+                data: { jsonrpc: '2.0', id: 2, error: { code: -32602, message: 'bad address canary-4821@example.com' } },
+                headers: {},
+                status: 200,
+            });
+            const refused = await MCPConnector.executeToolCall('s4', 'https://mail2.test/mcp', 'read_mail', {}, 'none', undefined, undefined, 'p1');
+            expect(refused).toMatchObject({ error: 'Tool error: bad address canary-4821@example.com', outcome: 'failed' });
+
+            const logged = JSON.stringify(warn.mock.calls);
+            expect(logged).toContain('read_mail');
+            expect(logged).not.toContain('canary-4821');
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     it('returns a run that worked as its content, as before', async () => {
         post.mockResolvedValueOnce(answer({})).mockResolvedValueOnce(answer({ content: [{ type: 'text', text: 'ok' }] }));
         const result = await MCPConnector.executeToolCall('s2', 'https://music2.test/mcp', 'generate_music', {}, 'none', undefined, undefined, 'p1');

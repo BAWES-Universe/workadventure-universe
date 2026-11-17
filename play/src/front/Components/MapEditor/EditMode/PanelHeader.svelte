@@ -13,6 +13,8 @@
     export let backLabel = "Back";
     /** The buttons stay at the top when the lines beside them change height (the name field and its hint). */
     export let alignTop = false;
+    /** False where the header is used outside the editor's panel (the Bricks page in the chat): nothing to tuck away. */
+    export let canHide = true;
 
     function hidePanel() {
         mapEditorVisibilityStore.set(false);
@@ -32,7 +34,7 @@
         {/if}
     </div>
     <slot name="trailing" />
-    {#if $mobileLayoutStore}
+    {#if $mobileLayoutStore && canHide}
         <button
             type="button"
             class="em-back em-hide"

@@ -234,7 +234,8 @@ describe('Create (approve)', () => {
         await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
         await settle();
         expect(s.run).toHaveBeenCalledTimes(1);
-        expect(s.run).toHaveBeenCalledWith('b1', ENTRY, 'create_issue', ARGS, 'uuid-sara');
+        // The call's id is the attempt's and the heading the saved action's: what an App on a connection is checked with (#2001)
+        expect(s.run).toHaveBeenCalledWith('b1', ENTRY, 'create_issue', ARGS, 'uuid-sara', { callId: 'att_act_1', heading: 'changesThings' });
         expect(s.orbit.finished).toEqual([{ id: 'act_1', outcome: 'succeeded' }]);
         const edit = s.sent.at(-1)!.content;
         expect(edit['m.relates_to']).toEqual({ rel_type: 'm.replace', event_id: '$card0' });

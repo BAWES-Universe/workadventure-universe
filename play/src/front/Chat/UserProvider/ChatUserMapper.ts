@@ -9,6 +9,7 @@ export function mapExtendedSpaceUserToChatUser(user: SpaceUserExtended): AdminUs
         chatId: user.chatID,
         pictureStore: user.pictureStore,
         availabilityStatus: user.reactiveUser.availabilityStatus,
+        onACall: user.reactiveUser.onACall,
         roomName: user.roomName,
         playUri: user.playUri,
         username: user.name,

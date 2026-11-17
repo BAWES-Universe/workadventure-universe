@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { tick } from "svelte";
+    import { onDestroy, tick } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import Woka from "../../Woka/Woka.svelte";
     import {
@@ -9,12 +9,13 @@
         voiceChoiceStore,
         type VoiceBotView,
     } from "../../../Chat/Bots/VoiceBots";
-    import { voiceButtonState } from "../../../Chat/Bots/VoiceMode";
+    import { voiceBarMs, voiceButtonState, type VoiceBar } from "../../../Chat/Bots/VoiceMode";
     import VoiceMenu from "./VoiceMenu.svelte";
     import {
         IconAlignLeft,
         IconKeyboard,
         IconMessage,
+        IconMicrophoneOff,
         IconMicrophoneOn,
         IconPauseFilled,
         IconVolumeOff,
@@ -23,9 +24,19 @@
     /**
      * The Voice button (#1666), directly above Raise hand: the bot's own woka with one small mark for how you talk
      * with it. It is there only while a bot with voice on is in your bubble or meeting (the first one, if there are
-     * two: more than one voice bot answering is a later issue, #1670). Tapping it opens the menu, except when the
-     * browser blocked the sound: then the tap is the gesture that lets the sound start.
+     * two: more than one voice bot answering is a later issue, #1670).
+     *
+     * One tap rule (round 8): a tap on the button, or on its bar while the bar shows, opens the voice options. Nothing
+     * else is a tap target, and no tap does anything hidden. In a group, a short bar grows out of the button to say
+     * what just changed (listening paused, turning on, listening, checking), then folds back into the button, whose
+     * ring and mic mark keep saying it. The bar and the button are one target.
      */
+
+    /**
+     * Whether the tap that opens the voice options also lets blocked bot sound start. GPT's round-8 ruling: no, opening
+     * the options is quiet, and Play bot audio inside is its own tap. Kept as one switch in case that ruling changes.
+     */
+    const OPENING_TAP_RESUMES_SOUND = false;
 
     $: view = $currentVoiceSpaceStore;
     $: current = view?.bot;
@@ -53,6 +64,122 @@
             ? $LL.say.voice.label.connecting({ bot: botName })
             : $LL.say.voice.label.tapToHear({ bot: botName });
     $: picture = bot?.picture;
+
+    // ---- listening in a group (round 8) ----
+
+    /** What the bot hears of you in the group, when there is anything to say and its voice is on: "" otherwise, as today. */
+    $: listening = bot && bot.state === "on" ? bot.listening : "";
+    $: listenLimited = bot?.listeningReason === "limit";
+    /** The folded look: the ring while it listens, a waiting ring while a change is not confirmed, mic or mic-off on top. */
+    $: ring =
+        listening === "on" && !listenLimited ? "on" : listening === "pending" || listening === "stopping" ? "wait" : "";
+    $: micMark =
+        listening === "off" || (listening === "on" && listenLimited)
+            ? "off"
+            : listening === "on" || listening === "pending" || listening === "stopping" || listening === "checking"
+            ? "on"
+            : "";
+    $: groupLabel =
+        listening === "on" && !listenLimited
+            ? $LL.say.voice.groupLabel.on({ bot: botName })
+            : listening === "pending"
+            ? $LL.say.voice.groupLabel.pending({ bot: botName })
+            : listening === "stopping" || listening === "checking"
+            ? $LL.say.voice.groupLabel.checking({ bot: botName })
+            : listening
+            ? $LL.say.voice.groupLabel.off({ bot: botName })
+            : "";
+    $: name = groupLabel || label;
+
+    // The bar: shown for a change, then folded after its time (not while a finger or the focus is on it)
+    let barShown: VoiceBar | undefined;
+    let seenSeq = 0;
+    let foldTimer: ReturnType<typeof setTimeout> | undefined;
+    let held = false;
+    let barHeight = 0;
+    let buttonHeight = 0;
+    $: syncBar(bot?.bar, bot?.barSeq ?? 0, listening);
+
+    function syncBar(bar: VoiceBar | undefined, seq: number, now: string) {
+        if (seq !== seenSeq) {
+            seenSeq = seq;
+            // A bar about listening is only for a bot whose voice is on
+            showBar(now ? bar : undefined);
+        } else if (barShown && (bar !== barShown || !now)) {
+            showBar(undefined);
+        }
+    }
+
+    function showBar(bar: VoiceBar | undefined) {
+        clearTimeout(foldTimer);
+        foldTimer = undefined;
+        barShown = bar;
+        if (bar) {
+            announced = barText(bar).join(". ");
+            announcedFor = listening;
+        }
+        armFold();
+    }
+
+    function armFold() {
+        clearTimeout(foldTimer);
+        const ms = barShown ? voiceBarMs(barShown) : undefined;
+        if (ms === undefined) return;
+        foldTimer = setTimeout(fold, ms);
+    }
+
+    /**
+     * A bar is held while the person moved the focus onto the button themselves (with the keyboard), and the browser shows it. The focus a
+     * press leaves there, or that closing the options gives back, does not hold it: a bar that comes later folds as usual.
+     */
+    /** True while closing the options gives the focus back to the button: that focus holds nothing. */
+    let refocusing = false;
+
+    function focusShown(): boolean {
+        try {
+            return button?.matches(":focus-visible") ?? false;
+        } catch {
+            return true;
+        }
+    }
+
+    function fold() {
+        // A focused or pressed bar stays put: it folds a moment after it is let go
+        if (held || open) {
+            foldTimer = setTimeout(fold, 1500);
+            return;
+        }
+        barShown = undefined;
+    }
+
+    onDestroy(() => clearTimeout(foldTimer));
+
+    function barText(bar: VoiceBar): [string, string] {
+        const voice = $LL.say.voice.bar;
+        switch (bar) {
+            case "paused":
+                return [voice.paused({ bot: botName }), voice.tapForOptions()];
+            case "not_listening":
+                return [voice.notListening({ bot: botName }), voice.tapForOptions()];
+            case "failed":
+                return [voice.failed({ bot: botName }), voice.tapForOptions()];
+            case "turning_on":
+                return [voice.turningOn(), voice.oneMoment()];
+            case "listening":
+                return [voice.listening(), voice.hearsAll()];
+            case "checking":
+                return [voice.checking(), voice.mayStillHear({ bot: botName })];
+        }
+    }
+    $: barLines = barShown ? barText(barShown) : undefined;
+    /** Each change is said once, politely, by screen readers; folding says nothing. */
+    let announced = "";
+    /** The listening state a bar's words were about: once listening changes without a new bar, the button's own name is said. */
+    let announcedFor = "";
+    $: if (!listening) announced = "";
+    /** A tall bar (large text, Arabic) moves the column above it up instead of covering it. */
+    $: barExtra = barShown ? Math.max(0, barHeight - buttonHeight) : 0;
+
     $: dim = state === "text_only" || state === "paused";
 
     const marks = {
@@ -64,11 +191,22 @@
         tap_to_hear: IconVolumeOff,
     } as const;
     $: mark = state === "connecting" ? undefined : marks[state];
+    // In a group the mark says what the bot hears of you (sound the browser blocked is said in the options)
+    $: shownMark = micMark === "on" ? IconMicrophoneOn : micMark === "off" ? IconMicrophoneOff : mark;
 
     let open = false;
     $: if (!shown) open = false;
     let button: HTMLButtonElement | undefined;
     let wrap: HTMLDivElement | undefined;
+
+    /** The height the options may take: the room above the button on a phone, beside it up to the top on a computer. */
+    let menuMax: number | undefined;
+    function roomForMenu(): number | undefined {
+        const rect = button?.getBoundingClientRect();
+        if (!rect) return undefined;
+        const phone = window.matchMedia?.("(max-width: 639.98px)").matches ?? window.innerWidth < 640;
+        return Math.max(160, Math.floor((phone ? rect.top - 4 : rect.bottom - 8) - 12));
+    }
 
     // True between a pointer press on the button and its click: the press moves focus out of the menu first
     let pressing = false;
@@ -77,11 +215,13 @@
     function onTap() {
         pressing = false;
         if (!bot) return;
-        if (state === "tap_to_hear") {
-            resumeBotSound(bot.spaceUserId);
-            return;
-        }
+        if (OPENING_TAP_RESUMES_SOUND && state === "tap_to_hear" && !open) resumeBotSound(bot.spaceUserId);
         open = !open;
+        if (open) {
+            // The options say the same as the bar, so the bar folds; and they never run off the screen
+            showBar(undefined);
+            menuMax = roomForMenu();
+        }
     }
 
     async function closeMenu(refocus: boolean, to?: Node) {
@@ -91,7 +231,9 @@
         open = false;
         if (refocus) {
             await tick();
+            refocusing = true;
             button?.focus();
+            refocusing = false;
         }
     }
 
@@ -107,9 +249,14 @@
      fades and the space closes. The state is always said in words too: the label, and a polite announcement when it
      changes (not on every render). -->
 <div class="voice-slot" class:shown aria-hidden={!shown}>
-    <div class="voice-wrap" class:pointer-events-auto={shown} bind:this={wrap}>
+    <div
+        class="voice-wrap"
+        class:pointer-events-auto={shown}
+        bind:this={wrap}
+        style:padding-top={barExtra ? `${barExtra}px` : undefined}
+    >
         {#if open && bot && view}
-            <div class="menu-anchor">
+            <div class="menu-anchor" style:--voice-menu-max={menuMax ? `${menuMax}px` : undefined}>
                 <VoiceMenu
                     {bot}
                     {view}
@@ -121,19 +268,45 @@
         <button
             type="button"
             class="voice-btn"
-            class:dim
-            aria-label={label}
+            class:dim={dim || micMark === "off"}
+            class:barred={!!barShown}
+            class:ring-on={ring === "on"}
+            class:ring-wait={ring === "wait"}
+            aria-label={name}
             aria-haspopup="menu"
             aria-expanded={open}
             tabindex={shown ? 0 : -1}
             disabled={!shown}
             data-testid="voice-button"
             data-state={state}
+            data-listening={listening}
             bind:this={button}
+            bind:clientHeight={buttonHeight}
             on:pointerdown={() => (pressing = true)}
             on:pointercancel={() => (pressing = false)}
+            on:pointerenter={() => (held = true)}
+            on:pointerleave={() => (held = false)}
+            on:focus={() => (held = !pressing && !refocusing && focusShown())}
+            on:blur={() => (held = false)}
             on:click={onTap}
         >
+            {#if barShown && barLines}
+                <span
+                    class="voice-bar"
+                    class:offer={barShown === "paused" || barShown === "not_listening" || barShown === "failed"}
+                    class:on={barShown === "listening"}
+                    aria-hidden="true"
+                    data-testid="voice-bar"
+                    data-bar={barShown}
+                    bind:clientHeight={barHeight}
+                >
+                    <span class="bar-l1"
+                        >{#if barShown === "listening"}<i class="bar-dot" />{/if}<span dir="auto">{barLines[0]}</span
+                        ></span
+                    >
+                    <span class="bar-l2" dir="auto">{barLines[1]}</span>
+                </span>
+            {/if}
             {#if $picture}
                 <span class="woka" aria-hidden="true"
                     ><Woka src={$picture} customWidth="calc(var(--voice-btn) * 0.62)" /></span
@@ -141,17 +314,23 @@
             {/if}
             {#if state === "connecting"}
                 <span class="voice-ring" aria-hidden="true" data-testid="voice-connecting" />
-            {:else if mark}
-                <span class="mark" class:amber={state === "tap_to_hear"} aria-hidden="true">
-                    <svelte:component this={mark} />
+            {:else if shownMark}
+                <span
+                    class="mark"
+                    class:amber={micMark ? listening === "checking" : state === "tap_to_hear"}
+                    aria-hidden="true"
+                    data-testid="voice-mark"
+                    data-mark={micMark || state}
+                >
+                    <svelte:component this={shownMark} />
                 </span>
             {/if}
-            {#if !open}
-                <span class="voice-tip" aria-hidden="true">{label}</span>
+            {#if !open && !barShown}
+                <span class="voice-tip" aria-hidden="true">{name}</span>
             {/if}
         </button>
         <span class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-testid="voice-announce"
-            >{shown ? label : ""}</span
+            >{shown ? (listening ? (announced && announcedFor === listening ? announced : name) : label) : ""}</span
         >
     </div>
 </div>
@@ -236,16 +415,125 @@
         outline-offset: 2px;
     }
     .woka {
+        position: relative;
+        z-index: 2;
         display: grid;
         place-items: center;
     }
-    /* Text only and a paused voice: the woka is quiet. */
+    /* The bar (round 8): grows out of the button to the left, as wide as its words, two lines, the button's height or
+       taller for large text. Same dark glass in every state; only the edge changes: violet when it offers, green while
+       it listens. The button sits on it, so the bar and the woka are one tap target. */
+    .voice-bar {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        z-index: 0;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 1px;
+        min-height: var(--voice-btn);
+        width: max-content;
+        max-width: min(320px, calc(100vw - 24px));
+        padding: 8px calc(var(--voice-btn) + 10px) 8px 20px;
+        border-radius: calc(var(--voice-btn) / 2);
+        color: #fff;
+        text-align: start;
+        background: linear-gradient(180deg, rgb(31 28 47 / 0.97), rgb(20 18 30 / 0.98));
+        backdrop-filter: blur(18px) saturate(140%);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(167, 139, 250, 0.25),
+            0 10px 30px -12px rgba(0, 0, 0, 0.7);
+        transform-origin: right center;
+        animation: bar-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
+    }
+    .voice-bar.offer {
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1.5px rgba(167, 139, 250, 0.85),
+            0 10px 30px -12px rgba(0, 0, 0, 0.7);
+    }
+    .voice-bar.on {
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1.5px rgba(61, 220, 132, 0.8),
+            0 10px 30px -12px rgba(0, 0, 0, 0.7);
+    }
+    .bar-l1 {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-weight: 800;
+        font-size: 0.9375rem;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+    }
+    .bar-l2 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        line-height: 1.35;
+        color: rgba(255, 255, 255, 0.7);
+        overflow-wrap: anywhere;
+    }
+    .bar-dot {
+        flex: none;
+        width: 9px;
+        height: 9px;
+        border-radius: 9999px;
+        background: #3ddc84;
+    }
+    @keyframes bar-in {
+        from {
+            opacity: 0;
+            transform: scaleX(0.6);
+        }
+    }
+    /* With the bar out, the button's own disc steps back so the bar reads as one shape with the woka on it. */
+    .voice-btn.barred {
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+    .voice-btn.barred::before {
+        content: "";
+        position: absolute;
+        inset: 5px;
+        z-index: 1;
+        border-radius: 9999px;
+        background: rgba(12, 10, 22, 0.55);
+    }
+    /* Listening to you: a steady ring around the woka. Waiting for the worker to confirm: a still, partial ring. */
+    .voice-btn.ring-on::after,
+    .voice-btn.ring-wait::after {
+        content: "";
+        position: absolute;
+        inset: 3px;
+        z-index: 1;
+        border-radius: 9999px;
+        pointer-events: none;
+    }
+    .voice-btn.ring-on::after {
+        padding: 3px;
+        background: conic-gradient(from 210deg, #8629fc, #4156f6, #a78bfa, #3ddc84, #8629fc);
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+    }
+    .voice-btn.ring-wait::after {
+        border: 3px solid rgba(167, 139, 250, 0.25);
+        border-top-color: #c4b5fd;
+        transform: rotate(40deg);
+    }
+    /* Text only and a paused voice: the woka is quiet. Not listening in a group: a little quiet. */
     .dim .woka {
         opacity: 0.45;
+    }
+    [data-listening="off"].dim .woka {
+        opacity: 0.6;
     }
     /* The one small mark, bottom right: the same icon as the mode's row in the menu. No ring, no bars, no text. */
     .mark {
         position: absolute;
+        z-index: 3;
         right: 4px;
         bottom: 4px;
         display: grid;
@@ -323,6 +611,10 @@
         }
         /* A still ring says the same thing: it is on its way. */
         .voice-ring {
+            animation: none;
+        }
+        /* The bar appears and goes, without growing */
+        .voice-bar {
             animation: none;
         }
     }

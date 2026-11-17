@@ -148,15 +148,18 @@ export const bedrockSonic: OpenSonic = (settings) => {
         abort.abort();
         client.destroy();
     };
+    /** Closed once AWS has had a moment to take the closing events (what is still on its way back is not wanted) */
+    const closeSoon = () => setTimeout(close, 1_000).unref?.();
     return {
         send: (event) => outbox.push(event),
         end: () => {
             outbox.end();
-            // What is still on its way is not wanted: the stream goes once AWS has had a moment to take the ending
-            setTimeout(close, 1_000).unref?.();
+            closeSoon();
         },
         close,
         events: (async function* () {
+            // Cleared when Nova Sonic ends the stream or it fails; still set when the reader stops early
+            let left = true;
             try {
                 const answer = await response;
                 for await (const part of answer.body ?? []) {
@@ -170,11 +173,16 @@ export const bedrockSonic: OpenSonic = (settings) => {
                     const [name] = Object.entries(part).find(([, member]) => member !== undefined) ?? [''];
                     throw failure(AWS_ADAPTER, `answered with ${name || 'an error'}`, awsStatus({ name: capitalised(name) }));
                 }
+                left = false;
             } catch (error) {
+                left = false;
                 if (closed) return;
                 throw error instanceof ProviderError ? error : failure(AWS_ADAPTER, 'stream failed', awsStatus(error));
             } finally {
-                close();
+                // A reader that stopped early has what it wanted, and its closing events (sent next) must still reach AWS: closing
+                // at once would cut them off, so the stream is closed after the same moment as end() gives
+                if (left) closeSoon();
+                else close();
             }
         })(),
     };

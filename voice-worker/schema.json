@@ -77,12 +77,14 @@
     "mode.set": {
       "title": "bot server -> worker: change what the bot hears from and says to one person, or to everyone",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "mode"],
-        "properties": { "type": { "const": "mode.set" }, "mode": { "$ref": "#/$defs/mode" }, "participantId": { "$ref": "#/$defs/id" } } }]
+        "properties": { "type": { "const": "mode.set" }, "mode": { "$ref": "#/$defs/mode" }, "participantId": { "$ref": "#/$defs/id" },
+          "requestId": { "$ref": "#/$defs/id", "description": "Asks the worker to answer with mode.ack once this person's audio path follows the mode. Only with participantId." } } }]
     },
     "bot.say": {
       "title": "bot server -> worker: speak this. Only committed text may be spoken.",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "segmentId", "text", "committed"],
-        "properties": { "type": { "const": "bot.say" }, "segmentId": { "$ref": "#/$defs/id" }, "text": { "type": "string", "minLength": 1, "maxLength": 4000 }, "committed": { "const": true }, "lang": { "type": "string", "maxLength": 16 }, "maxMs": { "type": "integer", "minimum": 1000, "maximum": 600000 } } }]
+        "properties": { "type": { "const": "bot.say" }, "segmentId": { "$ref": "#/$defs/id" }, "text": { "type": "string", "minLength": 1, "maxLength": 4000 }, "committed": { "const": true }, "lang": { "type": "string", "maxLength": 16 }, "maxMs": { "type": "integer", "minimum": 1000, "maximum": 600000 },
+          "onlyFor": { "$ref": "#/$defs/id", "description": "The one person this reply is for (their participantId). Its audio is sent only on a path that reaches them and nobody else. Only for a worker that named say.onlyFor in session.start: an older one ignores it and speaks to everyone." } } }]
     },
     "bot.retract": {
       "title": "bot server -> worker: this segment was withdrawn. Unplayed audio is dropped; played audio cannot be unplayed.",
@@ -102,7 +104,8 @@
       "title": "worker -> bot server: the session was accepted",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "bubbleId", "mode", "engine"],
         "properties": { "type": { "const": "session.start" }, "bubbleId": { "$ref": "#/$defs/id" }, "mode": { "$ref": "#/$defs/mode" },
-          "engine": { "type": "object", "required": ["id", "kind"], "properties": { "id": { "type": "string" }, "kind": { "const": "ts" } } } } }]
+          "engine": { "type": "object", "required": ["id", "kind"], "properties": { "id": { "type": "string" }, "kind": { "const": "ts" } } },
+          "features": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 64 }, "description": "What this worker can do beyond the first version of the bridge. say.onlyFor: bot.say may name the one person a reply is for." } } }]
     },
     "participant.join": {
       "title": "worker -> bot server: this person's audio is connected both ways",
@@ -120,7 +123,7 @@
         "properties": { "type": { "const": "playback.progress" }, "segmentId": { "$ref": "#/$defs/id" },
           "playedMs": { "type": "number", "minimum": 0 }, "totalMs": { "type": "number", "minimum": 0 },
           "finished": { "type": "boolean" }, "interrupted": { "type": "boolean" },
-          "reason": { "enum": ["completed", "voice_stop", "retract", "mode", "lane_loss", "rejected", "barge_in", "limit", "provider"] } } }]
+          "reason": { "enum": ["completed", "voice_stop", "retract", "mode", "lane_loss", "rejected", "barge_in", "limit", "provider", "private"] } } }]
     },
     "engine.status": {
       "title": "worker -> bot server: periodic and on change",
@@ -186,6 +189,12 @@
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "part", "adapter"],
         "properties": { "type": { "const": "provider.failed" }, "part": { "$ref": "#/$defs/providerPart" }, "adapter": { "$ref": "#/$defs/adapter" },
           "status": { "type": "integer", "minimum": 100, "maximum": 599 }, "rejected": { "const": true } } }]
+    },
+    "mode.ack": {
+      "title": "worker -> bot server: a mode.set with a requestId has been applied. path is what carries the person's audio now and follows the mode (their own connection, the bubble's LiveKit room when they are named in it, or none yet), with its epoch.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "requestId", "mode", "path"],
+        "properties": { "type": { "const": "mode.ack" }, "participantId": { "$ref": "#/$defs/id" }, "requestId": { "$ref": "#/$defs/id" }, "mode": { "$ref": "#/$defs/mode" },
+          "path": { "enum": ["lane", "room", "none"] }, "epoch": { "$ref": "#/$defs/epoch" } } }]
     },
     "error": {
       "title": "worker -> bot server: something the bot server should log or act on",

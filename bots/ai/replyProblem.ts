@@ -7,8 +7,6 @@ export interface ReplyFacts {
     /** A call to the provider failed. */
     error: boolean;
     errorStatus?: number;
-    /** What the provider said, already short and without logins (providerErrorText). */
-    errorText?: string;
     /** Why the provider ended the call, when it said. */
     finishReason?: string;
     /** The reply has words, or the model called a tool. */
@@ -26,11 +24,12 @@ const KNOWN_FINISH_REASONS = new Set([
     'stop_sequence', 'pause_turn', 'refusal', 'safety', 'recitation', 'other', 'error',
 ]);
 
-/** One plain line saying why the reply has nothing in it, or undefined when it has an answer. Never the conversation. */
+/** One plain line saying why the reply has nothing in it, or undefined when it has an answer. Never the conversation, and never the provider's own words. */
 export function replyProblem(facts: ReplyFacts): string | undefined {
     if (facts.error) {
         const status = facts.errorStatus ? ` (${facts.errorStatus})` : '';
-        return `the provider failed${status}: ${facts.errorText ?? 'the answer stopped before it finished'}`;
+        // Only the status: what the provider said can quote the conversation, and this line goes to logs, Sentry and PostHog
+        return `the provider failed${status}`;
     }
     if (facts.answered) return undefined;
     const limit = facts.maxTokens ? ` of ${facts.maxTokens} allowed` : '';

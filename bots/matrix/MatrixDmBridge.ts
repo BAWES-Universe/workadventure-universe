@@ -1,9 +1,11 @@
+import { createHash } from 'crypto';
 import axios from 'axios';
+import { randomUUID } from 'node:crypto';
 import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
 import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
-import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
+import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, botMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
-import type { DmAttachment, DmPerson, DmReply, DmReplyHooks } from '../server/DmReplyService';
+import { STARTER_IDEAS, type DmAttachment, type DmPerson, type DmReply, type DmReplyHooks, type OfferedBrick } from '../server/DmReplyService';
 import { MAX_OUTGOING_MEDIA_BYTES, type PendingMedia } from '../memory/ConversationMemory';
 import {
     availabilityOf,
@@ -14,17 +16,108 @@ import {
     type BotNoteState,
     type NoteLanguage,
 } from './BotStatusNotes';
+import { holdsAKey, keyInChatReply } from './KeyInChat';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
 import { artifactIdOfCard } from '../ai/ArtifactReferences';
 import { audioFileNameFor } from '../utils/audioFileName';
 import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
+import { tidyTranscript } from '../voice/NoteHearing';
+import type { NoteHearingService } from '../voice/NoteHearingWiring';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
+import type { SpokeAnswer } from '../server/BrickRunner';
+
+/** Marks what a Brick says on its own (a reminder, a goal's news), never an answer in a chat. Orbit reads it to show the news as the title on a locked phone; it counts only from our own bot. */
+export const OWN_INITIATIVE_KEY = 'net.bawes.universe.alone';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
+/** The words of a voice note the bot heard, carried by a notice that points at the note: `{ v: 1, for, state, text }`. */
+export const TRANSCRIPT_KEY = 'universe.transcript';
+/** What `hearNote` returns when the words heard look like a key (not a real transcript: it cannot be spoken). */
+const HEARD_A_KEY = '\u0000key';
+/** Marks the one copy, in a direct chat, of an answer its person got in nearby chat with others around (game #1993). */
+export const ANSWERED_NEARBY_KEY = 'universe.answered_nearby';
+/** On a person's message: the starter they tapped under a Brick's hello (game #1995). The message is the starter's own words. */
+export const STARTER_KEY = 'universe.starter';
+/** On a Brick's reply: these are its fixed "what I can do" words, and the game shows its ideas to tap with them (game #1995). */
+export const BRICK_IDEAS_KEY = 'universe.brick_ideas';
+/**
+ * On a Brick's reply: the Bricks it made in that reply (game #1996), `[{ id, name, line, look, made }]`. The game shows a
+ * line for each, one tap from its chat.
+ */
+export const BRICK_MADE_KEY = 'universe.brick_made';
+/**
+ * A Brick's suggestion to make a Brick for a kind of job (game #1996), on its own message after the answer:
+ * `{ topic, ask, name, line, instructions }`. The game shows it as a card with "Make it" and "Not now".
+ */
+export const BRICK_OFFER_KEY = 'universe.brick_offer';
+/**
+ * A guest's chat with the Brick for guests, brought along when they signed in (game #1997): `[{ from, text, at }]`, on one
+ * message of the Brick in their own Brick's chat. The game draws each line as it was said and ends with the Brick's welcome.
+ */
+export const GUEST_CHAT_KEY = 'universe.guest_chat';
+/** On a message that holds one part of a chat carried in parts (plan v3 section 7): `{ v: 1, from, to, last }`. */
+export const GUEST_CHAT_PART_KEY = 'universe.guest_chat_part';
+/** One part of a chat carried in parts: its lines' place in the chat, and whether it is the last. */
+export interface CarriedPart {
+    from: number;
+    to: number;
+    last: boolean;
+}
+/** On a person's message: they tapped "Make it" on that card, and this is the Brick it described (game #1996). */
+export const BRICK_MAKE_KEY = 'universe.brick_make';
+
+/**
+ * A Brick's offer to connect an App (game #2001), on its own message after the answer: `{ topic, app, name, state,
+ * connectionId, ask, asked, other }`. The game shows it as a card ("Connect your calendar?"); the sign-in happens in the game.
+ */
+export const APP_OFFER_KEY = 'universe.app_offer';
+/**
+ * The event the game sends once the person connected an App from that card and the Brick may use it: `{ app, name }`. The
+ * Brick carries on with what they asked, and then says what it may do with it. No message of the person's goes with it.
+ */
+export const APP_CONNECTED_EVENT = 'universe.app_connected';
+/** On the synthesized message that carries a Brick on after an App was connected: `{ app, name }` (never sent by a person). */
+export const APP_CONNECTED_KEY = 'universe.app_connected';
+
+/** What a Brick says once an App is connected: what it may do with it, and where the rest is chosen. Fixed words, no model. */
+export function appConnectedLine(name: string): string {
+    return `I can look things up in ${name} right away. Changing or sending anything in it asks you first. For now only I can use it: choose which of your Bricks can in [Apps](#apps).`;
+}
+
+/** The App a "connected" event names, when it is whole. */
+export function connectedAppOf(value: unknown): { app: string; name: string } | null {
+    if (!value || typeof value !== 'object') return null;
+    const { app, name } = value as Record<string, unknown>;
+    if (typeof app !== 'string' || !app.trim() || typeof name !== 'string' || !name.trim()) return null;
+    return { app: app.trim().slice(0, 80), name: name.replace(/\s+/g, ' ').trim().slice(0, 60) };
+}
+
+/** The Brick a tapped suggestion described, when the message carries one that is whole. */
+function offeredBrickOf(value: unknown): OfferedBrick | null {
+    if (!value || typeof value !== 'object') return null;
+    const { topic, name, line, instructions } = value as Record<string, unknown>;
+    if (typeof topic !== 'string' || typeof name !== 'string' || !topic.trim() || !name.trim()) return null;
+    return {
+        topic: topic.trim().slice(0, 60),
+        name: name.replace(/\s+/g, ' ').trim().slice(0, 40),
+        line: typeof line === 'string' ? line.replace(/\s+/g, ' ').trim().slice(0, 120) : '',
+        instructions: typeof instructions === 'string' ? instructions.trim().slice(0, 4000) : '',
+    };
+}
+
+/** The device told to make a chat has this long to make it before another device may (game #1995). */
+const DIRECT_CHAT_CLAIM_MS = 20_000;
+
+/**
+ * What a device with no chat of its own is told when it asks for the one chat of a bot and a person (game #1995): the
+ * chat they already have, to make it, or to ask again in a moment (another device is making it, or the chat could not be
+ * looked at just now). "Make it" names the bot's chat address, so the device invites the right account.
+ */
+export type DirectChatAnswer = { roomId: string } | { create: true; botChatId: string } | { wait: true };
 
 export interface DmAccessResult {
     allowed: boolean;
@@ -67,13 +160,32 @@ export interface MatrixDmBridgeDeps {
         rememberDmRoom(roomId: string, botId: string): Promise<void>;
         getDmRoomBot(roomId: string): Promise<string | null>;
         forgetDmRoom(roomId: string): Promise<void>;
+        /** The same store, read the other way: the direct chat of a bot and a person (#1993). */
+        rememberDmRoomOf?(botId: string, matrixUserId: string, roomId: string): Promise<void>;
+        getDmRoomOf?(botId: string, matrixUserId: string): Promise<string | null>;
+        forgetDmRoomOf?(botId: string, matrixUserId: string): Promise<void>;
+        /**
+         * One device at a time makes the chat of a bot and a person (#1995): true for the first to ask while the claim
+         * lasts, false for the others. Null when there is no shared store, and the bridge keeps its own claim. Held
+         * under the claim's own token, so letting go of it never lets go of a newer claim.
+         */
+        claimDirectChat?(botId: string, matrixUserId: string, forMs: number, token?: string): Promise<boolean | null>;
+        /**
+         * Holds that claim for a while longer while the bot takes a chat the person just made, under the invite's own
+         * token: the first hold takes it over, a renewal keeps it only while it is still the invite's (or nobody's).
+         */
+        holdDirectChat?(botId: string, matrixUserId: string, forMs: number, token?: string, takeOver?: boolean): Promise<void>;
+        /** Lets the claim go, only while it is still the invite's. */
+        releaseDirectChat?(botId: string, matrixUserId: string, token?: string): Promise<void>;
     };
     /** The cards of tools that ask first (#1657). Without it taps are ignored and nothing waits. */
     approvals?: MatrixDmApprovals;
     /** Upload a file someone sent so the bot can read it like a bubble upload. Returns a URL, or null to skip it. */
     uploadAttachment?(data: Buffer, mimeType: string, filename: string): Promise<string | null>;
+    /** Hearing for voice notes (#1979 follow-up): without it a note reaches the bot as the audio file it always was. */
+    noteHearing?: Pick<NoteHearingService, 'hear' | 'canHear' | 'limits'>;
     /** One short in-character "not now" from a resting bot, or '' to leave only the plain note. */
-    restingLine?(config: BotConfiguration, text: string): Promise<string>;
+    restingLine?(config: BotConfiguration, text: string, asker?: string): Promise<string>;
     /** The bot's Woka as a PNG for its chat picture, or null when it has none. Without it bots keep no picture. */
     wokaPicture?(config: BotConfiguration): Promise<Buffer | null>;
     /**
@@ -123,6 +235,56 @@ const TYPING_DELAY_MS = 800;
 /** Matrix drops "typing" after its timeout (30 s), so a long answer renews it. */
 const TYPING_REFRESH_MS = 20 * 1000;
 const ONLY_DIRECT = 'I only take direct messages.';
+/** One line of a guest's chat that is brought along when they sign in. */
+export interface GuestChatNote {
+    /** Its stable name in a chat carried in parts: the game draws a line sent twice once. */
+    id?: string;
+    from: 'guest' | 'brick';
+    text: string;
+    /** When it was said (ms), on the guest's device. */
+    at: number;
+    /** The pictures, files and voice note the guest sent with this line, copied into the person's own chat (plan v3). */
+    media?: CarriedMedia[];
+    /** The line's text only stands in for its media. */
+    label?: true;
+}
+
+/**
+ * A guest's picture, file or note as a carried chat holds it: copied into the person's own storage (`url`), or `gone` when the
+ * guest's file no longer exists, which keeps its line and words with a "file is gone" bubble. While it is on its way in, it is
+ * named by the guest's receipt only, which never reaches the chat.
+ */
+export interface CarriedMedia {
+    kind: 'file' | 'note';
+    name: string;
+    type: string;
+    url?: string;
+    gone?: true;
+    size?: number;
+    duration?: number;
+    /** What the Brick heard in a note. */
+    heard?: string;
+    receipt?: string;
+}
+/** A carried line as words, for the message's text: what was written, a note's words, and a mark for each file. */
+export function carriedWords(line: GuestChatNote): string {
+    const parts: string[] = [];
+    if (!line.label && line.text.trim()) parts.push(line.text.trim());
+    for (const one of line.media ?? []) {
+        if (one.kind === 'note') parts.push(one.heard ? `(voice note) ${one.heard}` : '(voice note)');
+        else parts.push(one.type.startsWith('image/') ? `(sent a picture: ${one.name})` : `(sent a file: ${one.name})`);
+    }
+    return parts.join(' ');
+}
+
+/** How many hand-overs of a guest's chat are remembered as brought, so one is never brought twice. */
+const CARRIED_CHATS_MAX = 5000;
+/** An answer made in nearby chat waits this long for its person's direct chat to be known, and no more than these at once (#1993). */
+const NEARBY_ANSWER_WAIT_MS = 2 * 60 * 60 * 1000;
+const NEARBY_ANSWERS_PER_CHAT = 10;
+const NEARBY_ANSWERS_MAX = 2000;
+/** How many direct chats are kept by who they are with. */
+const DIRECT_ROOMS_MAX = 5000;
 
 /**
  * Turns Matrix events for bot accounts into replies. A bot joins a direct chat when someone allowed to reach its room
@@ -160,6 +322,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private handledEvents = new Set<string>();
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
     private roomMembers = new Map<string, Set<string>>();
+    /** By bot and person: the room of their direct chat, so a line for it needs no message from them first (#1993). */
+    private directRooms = new Map<string, string>();
+    /** By bot and person: answers they got in nearby chat that are not in their direct chat yet (#1993). */
+    private nearbyAnswers = new Map<string, { text: string; at: number }[]>();
+    /** Waits before looking again at a chat a person just made from an answer, which the bot may still be joining. */
+    private openedRetryDelaysMs = [3000, 10_000];
+    /** By bot and person: such a chat is being looked at again. */
+    private lookingAgain = new Set<string>();
+    /** By bot and person, when there is no shared store: until when one device is making their chat (#1995). */
+    private directChatClaims = new Map<string, number>();
+    /** The hand-overs of a guest's chat already brought into a chat (#1997), so one is never brought twice. */
+    private carriedChats = new Set<string>();
+    /** The hand-overs being brought right now, so an ask that comes meanwhile waits for how that ends. */
+    private carrying = new Map<string, Promise<'sent' | 'wait'>>();
     /** Bots Orbit last said don't exist: how many times in a row, and when that was last counted. */
     private botNotFound = new Map<string, { inARow: number; at: number }>();
     /** When each chat last got a live answer: a message left there while the bot rested, older than that, is passed. */
@@ -232,6 +408,35 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         if (event.type === ANSWER_EVENT) {
             await this.onTap(event);
+            return;
+        }
+        if (event.type === APP_CONNECTED_EVENT) {
+            await this.onAppConnected(event);
+        }
+    }
+
+    /**
+     * The person connected an App from a Brick's card (game #2001): the Brick carries on with what they asked, exactly as it
+     * would with a message from them (access, steps and all), told in a line that is from the system and not their words. Only
+     * from a person in their own two-person chat with the bot; whether they may chat with it is checked as for any message.
+     * Never throws; a lost answer costs nothing, since the card already said what happened.
+     */
+    private async onAppConnected(event: MatrixEvent): Promise<void> {
+        if (botIdFromMatrixId(this.config.domain, event.sender)) return;
+        const connected = connectedAppOf(event.content);
+        if (!connected || !this.firstSighting(event.event_id)) return;
+        const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Start your answer with the one word “Connected.” in their language, then carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
+        try {
+            await this.onMessage({
+                type: 'm.room.message',
+                room_id: event.room_id,
+                sender: event.sender,
+                event_id: `$app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+                origin_server_ts: Date.now(),
+                content: { msgtype: 'm.text', body: note, [APP_CONNECTED_KEY]: connected },
+            });
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not carry on after an App was connected in ${event.room_id}:`, error?.message ?? error);
         }
     }
 
@@ -310,6 +515,363 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    private static pair(botId: string, matrixUserId: string): string {
+        return `${botId}|${matrixUserId}`;
+    }
+
+    /**
+     * An answer its person got in nearby chat, for them alone (game #1993), is kept once in their direct chat with the
+     * bot, so they find it there and carry on. It is the same words, sent on: no model is asked, nothing is spoken, and
+     * as a notice it rings nobody's phone a second time. While that chat is not known (they never wrote to the bot, or
+     * this server restarted) it waits, and goes when the bot joins the chat, when they write there, or when they open it
+     * from the answer. Never throws.
+     */
+    async keepNearbyAnswer(botId: string, matrixUserId: string, text: string): Promise<void> {
+        try {
+            if (!text.trim() || botIdFromMatrixId(this.config.domain, matrixUserId)) return;
+            const key = MatrixDmBridge.pair(botId, matrixUserId);
+            const now = Date.now();
+            const waiting = (this.nearbyAnswers.get(key) ?? []).filter((answer) => now - answer.at <= NEARBY_ANSWER_WAIT_MS);
+            this.nearbyAnswers.delete(key);
+            this.nearbyAnswers.set(key, [...waiting, { text, at: now }].slice(-NEARBY_ANSWERS_PER_CHAT));
+            if (this.nearbyAnswers.size > NEARBY_ANSWERS_MAX) this.nearbyAnswers.delete(this.nearbyAnswers.keys().next().value!);
+            const roomId = await this.directRoomOf(botId, matrixUserId);
+            if (roomId) await this.sendNearbyAnswers(botId, matrixUserId, roomId);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not keep an answer of bot ${botId} in a direct chat:`, error?.message ?? error);
+        }
+    }
+
+    /**
+     * The person opened their direct chat with the bot from such an answer, and their device says which room it is.
+     * A device's word is not taken for it: the room counts only when it is this bot's and the two of them are alone in
+     * it. A chat they made a moment ago, which the bot is still joining, is looked at again shortly. Never throws.
+     */
+    async openedFromNearby(botId: string, matrixUserId: string, roomId: string, attempt = 0): Promise<void> {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        let again = false;
+        try {
+            if (botIdFromMatrixId(this.config.domain, matrixUserId)) return;
+            // Known already and nothing waits: a second tap asks the homeserver nothing
+            if (!this.nearbyAnswers.has(key) && this.directRooms.get(key) === roomId) return;
+            if (await this.isTheirDirectChat(botId, matrixUserId, roomId)) {
+                await this.noteDirectRoom(botId, matrixUserId, roomId);
+                await this.sendNearbyAnswers(botId, matrixUserId, roomId);
+                return;
+            }
+            // One look at a time for each person, however often they tap, and only while something waits for the chat
+            const delay = this.openedRetryDelaysMs[attempt];
+            if (delay === undefined || this.stopping || !this.nearbyAnswers.has(key) || (attempt === 0 && this.lookingAgain.has(key))) return;
+            again = true;
+            this.lookingAgain.add(key);
+            const timer = setTimeout(() => void this.openedFromNearby(botId, matrixUserId, roomId, attempt + 1), delay);
+            timer.unref?.();
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not open a direct chat of bot ${botId} from an answer:`, error?.message ?? error);
+        } finally {
+            if (attempt > 0 && !again) this.lookingAgain.delete(key);
+        }
+    }
+
+    /** Whether this room is the bot's and only the bot and this person are in it. Null when that could not be read. */
+    private async isTheirDirectChat(botId: string, matrixUserId: string, roomId: string): Promise<boolean | null> {
+        let bot: string | null;
+        try {
+            bot = await this.botForRoom(roomId, true);
+        } catch {
+            return null;
+        }
+        if (bot !== botId) return false;
+        const botUserId = this.botUserId(botId);
+        // Asked afresh: who is in the room decides that nobody else reads what goes there
+        const joined = await this.client.getJoinedMembers(botUserId, roomId).catch(() => null);
+        if (!joined) return null;
+        this.roomMembers.set(roomId, new Set(joined));
+        return joined.length === 2 && joined.includes(botUserId) && joined.includes(matrixUserId);
+    }
+
+    private async noteDirectRoom(botId: string, matrixUserId: string, roomId: string): Promise<void> {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        // Known here and kept in the shared store: nothing to do. A chat the store could not take is written again the next time it is seen,
+        // so a restart does not lose it (and a reminder is not told "no chat" for a chat that is there)
+        if (this.directRooms.get(key) === roomId && !this.unkeptRooms.has(key) && !this.unkeptRoomBots.has(roomId)) return;
+        this.directRooms.delete(key);
+        this.directRooms.set(key, roomId);
+        if (this.directRooms.size > DIRECT_ROOMS_MAX) this.directRooms.delete(this.directRooms.keys().next().value!);
+        try {
+            // Both records or neither: the chat of this person, and which bot the room belongs to (a restart reads the second to trust the first)
+            if (this.unkeptRoomBots.has(roomId)) await this.deps.rooms?.rememberDmRoom(roomId, this.unkeptRoomBots.get(roomId)!);
+            this.unkeptRoomBots.delete(roomId);
+            await this.deps.rooms?.rememberDmRoomOf?.(botId, matrixUserId, roomId);
+            this.unkeptRooms.delete(key);
+        } catch {
+            this.unkeptRooms.add(key);
+            if (this.unkeptRooms.size > DIRECT_ROOMS_MAX) this.unkeptRooms.delete(this.unkeptRooms.keys().next().value!);
+        }
+    }
+
+    /** Direct chats the shared store could not take when they were noted: written again the next time they are seen. */
+    private unkeptRooms = new Set<string>();
+    /** Rooms whose bot the shared store could not take when it was noted: written again with the chat they belong to. */
+    private unkeptRoomBots = new Map<string, string>();
+
+    /** The direct chat of this bot and this person, when one is known and still theirs alone. */
+    private async directRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
+        return (await this.lookUpDirectRoom(botId, matrixUserId)).roomId;
+    }
+
+    /** The same, and whether a chat that is known could not be looked at just now (so "none" is not certain). */
+    private async lookUpDirectRoom(botId: string, matrixUserId: string): Promise<{ roomId: string | null; unsure: boolean }> {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        let roomId = this.directRooms.get(key) ?? null;
+        if (!roomId) {
+            // A store that could not be read says nothing about whether there is a chat, so "none" is not certain then
+            let storeFailed = false;
+            roomId = (await this.deps.rooms?.getDmRoomOf?.(botId, matrixUserId).catch(() => ((storeFailed = true), null))) ?? null;
+            if (!roomId) return { roomId: null, unsure: storeFailed };
+        }
+        const theirs = await this.isTheirDirectChat(botId, matrixUserId, roomId);
+        if (theirs) {
+            await this.noteDirectRoom(botId, matrixUserId, roomId);
+            return { roomId, unsure: false };
+        }
+        // Not theirs any more (the bot left, or someone joined): forgotten. Unreadable just now: asked again next time
+        if (theirs === false) {
+            if (this.directRooms.get(key) === roomId) this.directRooms.delete(key);
+            await this.deps.rooms?.forgetDmRoomOf?.(botId, matrixUserId).catch(() => undefined);
+        }
+        return { roomId: null, unsure: theirs === null };
+    }
+
+    /**
+     * One chat for a bot and a person, however many of their devices open it at once (game #1995). A device that has no
+     * chat with the bot asks here before it makes one. It gets the chat the bot already shares with this person, or is
+     * told to make it, which only one device at a time is; the others are told to ask again in a moment, and by then the
+     * bot has joined the chat the first one made. The caller has checked that this person may message the bot and is who
+     * they say. A device told to make the chat that never does holds the others back only for a few seconds.
+     */
+    async directChatFor(botId: string, matrixUserId: string): Promise<DirectChatAnswer> {
+        if (botIdFromMatrixId(this.config.domain, matrixUserId)) return { wait: true };
+        const known = await this.lookUpDirectRoom(botId, matrixUserId);
+        if (known.roomId) return { roomId: known.roomId };
+        // A chat that is there but could not be looked at is never made a second time
+        if (known.unsure) return { wait: true };
+        const botChatId = botMatrixId(this.config.domain, botId);
+        // A bot whose id cannot be a chat address has no chat to make
+        if (!botChatId) return { wait: true };
+        const claim = randomUUID();
+        if (!(await this.claimDirectChat(botId, matrixUserId, claim))) return { wait: true };
+        // Looked at again now the claim is this device's: another device's chat may have been noted, and its claim let
+        // go, between the first look and the claim. Then that chat is the one, and nothing is made a second time.
+        const again = await this.lookUpDirectRoom(botId, matrixUserId);
+        if (again.roomId || again.unsure) {
+            this.letGoOfClaim(botId, matrixUserId, claim);
+            return again.roomId ? { roomId: again.roomId } : { wait: true };
+        }
+        return { create: true, botChatId };
+    }
+
+    /**
+     * Brings a guest's chat with the Brick for guests into the Brick they now have (game #1997): one message of the Brick, in the
+     * person's own direct chat with it, that the game draws as the lines it holds. The caller has checked that the chat is this
+     * person's and that the bot is their own Brick. `carryId` is the guest id Orbit handed over, so one hand-over is brought once
+     * however many times a device asks. `wait` when the chat is not there yet: the device asks again in a moment.
+     */
+    async carryGuestChat(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null): Promise<'sent' | 'already' | 'wait'> {
+        if (botIdFromMatrixId(this.config.domain, matrixUserId)) return 'wait';
+        // A chat carried in parts (plan v3 section 7): each part is its own message, said once however often it is asked
+        const key = `${MatrixDmBridge.pair(botId, matrixUserId)}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`;
+        if (this.carriedChats.has(key)) return 'already';
+        // Taken before anything is looked at or sent, so two asks at once bring it once; the second waits for how the first ends
+        // and says "already" only if it was sent (a device is told to drop its copy on "already", so it must be there)
+        const inFlight = this.carrying.get(key);
+        if (inFlight) return (await inFlight) === 'sent' ? 'already' : 'wait';
+        const sending = this.sendCarried(botId, matrixUserId, carryId, lines, part ?? null);
+        this.carrying.set(key, sending);
+        try {
+            const result = await sending;
+            if (result === 'sent') {
+                this.carriedChats.add(key);
+                if (this.carriedChats.size > CARRIED_CHATS_MAX) this.carriedChats.delete(this.carriedChats.values().next().value!);
+            }
+            return result;
+        } finally {
+            this.carrying.delete(key);
+        }
+    }
+
+    private async sendCarried(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[], part: CarriedPart | null): Promise<'sent' | 'wait'> {
+        const known = await this.lookUpDirectRoom(botId, matrixUserId);
+        if (!known.roomId) return 'wait';
+        const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${carriedWords(line)}`).join('\n');
+        // The same transaction id for every try of this hand-over (of this part): a try that failed after the homeserver had taken
+        // the message is not sent twice. Past the homeserver's memory of it, the game still draws a named line once
+        const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`).digest('hex');
+        const content = { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines, ...(part ? { [GUEST_CHAT_PART_KEY]: { v: 1, from: part.from, to: part.to, last: part.last } } : {}) };
+        await this.client.sendMessage(this.botUserId(botId), known.roomId, content, txnId);
+        return 'sent';
+    }
+
+    /**
+     * Lets go of a claim this device was given but will not use, here and on every bot server. Only while it is still
+     * this claim: a look that took longer than the claim lasts never lets go of another device's claim made since.
+     */
+    private letGoOfClaim(botId: string, matrixUserId: string, claim: string): void {
+        this.directChatClaims.delete(MatrixDmBridge.pair(botId, matrixUserId));
+        this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId, claim).catch((error: any) => {
+            console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
+        });
+    }
+
+    private async claimDirectChat(botId: string, matrixUserId: string, claim: string): Promise<boolean> {
+        let shared: boolean | null | undefined;
+        try {
+            shared = await this.deps.rooms?.claimDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS, claim);
+        } catch (error: any) {
+            // The shared claim could not be asked: another bot server may hold it, so nobody makes the chat just now
+            console.warn(`[MatrixDmBridge] Could not claim the direct chat of bot ${botId}:`, error?.message ?? error);
+            return false;
+        }
+        // Null only without a shared store: one bot server, which keeps its own claim
+        if (shared !== null && shared !== undefined) return shared;
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        const now = Date.now();
+        if ((this.directChatClaims.get(key) ?? 0) > now) return false;
+        for (const [other, until] of this.directChatClaims) {
+            if (until <= now) this.directChatClaims.delete(other);
+        }
+        this.directChatClaims.set(key, now + DIRECT_CHAT_CLAIM_MS);
+        return true;
+    }
+
+    /**
+     * While the bot takes a direct chat a person just made (the invite), no other device of theirs is told to make one:
+     * the claim is held, here and on every bot server, until the bot has joined and noted the chat, or turned it down.
+     * The stop lets the claim go: the chat is known from then on, and one that was turned down may be made again.
+     */
+    private holdDirectChat(botId: string, matrixUserId: string): () => void {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        // This invite's own token: its renewals and its release never touch a claim another device took since
+        const token = randomUUID();
+        let first = true;
+        const hold = () => {
+            this.directChatClaims.set(key, Date.now() + DIRECT_CHAT_CLAIM_MS);
+            const takeOver = first;
+            first = false;
+            this.deps.rooms?.holdDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS, token, takeOver).catch((error: any) => {
+                console.warn(`[MatrixDmBridge] Could not hold the direct chat of bot ${botId}:`, error?.message ?? error);
+            });
+        };
+        hold();
+        // Renewed four times a claim: one renewal that fails still leaves two more before the claim runs out
+        const timer = setInterval(hold, DIRECT_CHAT_CLAIM_MS / 4);
+        timer.unref?.();
+        return () => {
+            clearInterval(timer);
+            this.directChatClaims.delete(key);
+            this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId, token).catch((error: any) => {
+                console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
+            });
+        };
+    }
+
+    /**
+     * Says something on its own in a person's direct chat with a Brick (game #2002: a reminder, a goal's news), as the Brick. Only in
+     * the chat the two share alone, and only for someone Orbit says may message the bot. `transactionId` is the run's own id, so a
+     * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
+     */
+    async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer> {
+        const room = await this.roomToSpeakIn(botId, matrixUserId);
+        if ('reason' in room) return { ok: false, reason: room.reason };
+        try {
+            const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text, [OWN_INITIATIVE_KEY]: true }, transactionId);
+            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+    }
+
+    /**
+     * The direct chat a Brick may speak in to this person right now, for what is said on a run (a message, or the card a goal puts up): the
+     * chat the two share alone, and only for someone Orbit says may message the bot. It never makes a chat. "No chat" and "not allowed" are
+     * said only when the answer was certain; a look that failed is "could not tell".
+     */
+    async roomToSpeakIn(botId: string, matrixUserId: string): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' }> {
+        let looked: { roomId: string | null; unsure: boolean };
+        try {
+            looked = await this.lookUpDirectRoom(botId, matrixUserId);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not look for the direct chat of bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+        if (!looked.roomId) return { ok: false, reason: looked.unsure ? 'unsure' : 'no_chat' };
+        let access: DmAccessResult;
+        try {
+            access = await this.access(botId, matrixUserId, true);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not ask Orbit whether a person may message bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+        // Orbit could not answer: that says nothing about the person
+        if (accessCheckFailed(access)) return { ok: false, reason: 'unsure' };
+        if (!mayChat(access)) return { ok: false, reason: 'not_allowed' };
+        // Asked while this waited: someone else may have joined the room meanwhile, and then nothing goes there (the next try looks again and finds it is not theirs)
+        if (!this.stillTheirs(looked.roomId, this.botUserId(botId), matrixUserId)) return { ok: false, reason: 'unsure' };
+        return { ok: true, roomId: looked.roomId };
+    }
+
+    /**
+     * Sends what waits for this person into this room, which the caller knows to be their direct chat with the bot. Only
+     * someone Orbit says may message the bot gets anything there; when Orbit cannot say, it keeps waiting.
+     */
+    private async sendNearbyAnswers(botId: string, matrixUserId: string, roomId: string): Promise<void> {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        if (!this.nearbyAnswers.has(key)) return;
+        const access = await this.access(botId, matrixUserId);
+        if (accessCheckFailed(access)) return;
+        const botUserId = this.botUserId(botId);
+        // Asked while this waited: someone else may have joined the room meanwhile, and then nothing goes there
+        if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return;
+        const now = Date.now();
+        const due = (this.nearbyAnswers.get(key) ?? []).filter((answer) => now - answer.at <= NEARBY_ANSWER_WAIT_MS);
+        // Taken before anything is sent, so two that come at once never send the same answer twice
+        this.nearbyAnswers.delete(key);
+        if (!mayChat(access)) return;
+        const keepWaiting = (from: number): void => {
+            // The ones that did not go wait on, ahead of any that came meanwhile
+            const later = this.nearbyAnswers.get(key) ?? [];
+            this.nearbyAnswers.delete(key);
+            this.nearbyAnswers.set(key, [...due.slice(from), ...later].slice(-NEARBY_ANSWERS_PER_CHAT));
+        };
+        for (let index = 0; index < due.length; index++) {
+            // Each send waits, so who is in the room is looked at again before every one of them
+            if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return keepWaiting(index);
+            try {
+                await this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true });
+            } catch (error: any) {
+                keepWaiting(index);
+                console.warn(`[MatrixDmBridge] Could not keep an answer of bot ${botId} in ${roomId}:`, error?.message ?? error);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Whether, by what the bot was last told, only the bot and this person are in the room. A room it was told nothing
+     * about counts as theirs: the caller has just read its members, and a membership event is what would say otherwise.
+     */
+    private stillTheirs(roomId: string, botUserId: string, matrixUserId: string): boolean {
+        const members = this.roomMembers.get(roomId);
+        if (!members) return true;
+        return members.size === 2 && members.has(botUserId) && members.has(matrixUserId);
+    }
+
+    /** Whether this room is still only the bot's and this person's, by what the bot was last told (asked right before a card goes into it). */
+    roomStillTheirs(botId: string, roomId: string, matrixUserId: string): boolean {
+        return this.stillTheirs(roomId, this.botUserId(botId), matrixUserId);
+    }
+
     private botUserId(botId: string): string {
         return `@${BOT_LOCALPART_PREFIX}${botId}:${this.config.domain}`;
     }
@@ -368,12 +930,25 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     private async rememberRoom(roomId: string, botId: string): Promise<void> {
         this.roomBots.set(roomId, botId);
-        await this.deps.rooms?.rememberDmRoom(roomId, botId).catch(() => undefined);
+        try {
+            await this.deps.rooms?.rememberDmRoom(roomId, botId);
+            this.unkeptRoomBots.delete(roomId);
+        } catch {
+            this.unkeptRoomBots.set(roomId, botId);
+            if (this.unkeptRoomBots.size > DIRECT_ROOMS_MAX) this.unkeptRoomBots.delete(this.unkeptRoomBots.keys().next().value!);
+        }
     }
 
     private async forgetRoom(roomId: string): Promise<void> {
         this.roomBots.delete(roomId);
+        this.unkeptRoomBots.delete(roomId);
         this.roomMembers.delete(roomId);
+        for (const [key, room] of [...this.directRooms]) {
+            if (room !== roomId) continue;
+            this.directRooms.delete(key);
+            const cut = key.indexOf('|');
+            await this.deps.rooms?.forgetDmRoomOf?.(key.slice(0, cut), key.slice(cut + 1)).catch(() => undefined);
+        }
         this.lastRestingLine.delete(roomId);
         for (const state of ['resting', 'unready', 'no_access', 'limited']) this.lastNote.delete(`${roomId}|${state}`);
         await this.deps.rooms?.forgetDmRoom(roomId).catch(() => undefined);
@@ -473,6 +1048,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
             await this.client.leaveRoom(botUserId, event.room_id, ONLY_DIRECT).catch(() => undefined);
             return;
         }
+        // Until the bot has joined and noted this chat, no other device of the person's makes a second one
+        const stopHolding = this.holdDirectChat(botId, event.sender);
+        try {
+            await this.takeInvite(event, botId, botUserId);
+        } finally {
+            stopHolding();
+        }
+    }
+
+    private async takeInvite(event: MatrixEvent, botId: string, botUserId: string): Promise<void> {
         let config: BotConfiguration | null;
         try {
             config = await this.deps.getBotConfig(botId);
@@ -485,7 +1070,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         // A bot that is off or deleted takes no new chats. The game shows its state without needing a room.
-        if (!config || config.enabled === false) {
+        // A Brick that is off still takes its owner's chat (#1995): its chat is always in their list, and what they write
+        // there waits for it like in any chat with a resting bot.
+        if (!config || (config.enabled === false && !config.brick)) {
             await this.client.leaveRoom(botUserId, event.room_id).catch(() => undefined);
             return;
         }
@@ -514,6 +1101,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
             inviteTs === undefined ? fromThem.slice(-1) : fromThem.filter((message) => (message.origin_server_ts ?? 0) >= inviteTs);
 
         await this.rememberRoom(event.room_id, botId);
+        // Known from now on by who it is with (checked again whenever it is used), and an answer this person got in
+        // nearby chat that was waiting for this chat comes before anything new (#1993)
+        await this.noteDirectRoom(botId, event.sender, event.room_id);
+        if (this.nearbyAnswers.has(MatrixDmBridge.pair(botId, event.sender))) await this.openedFromNearby(botId, event.sender, event.room_id);
         // Messages typed before the join arrive together, so a failure among them gets one "couldn't answer" note.
         const batch = { troubleSent: false };
         for (const message of earlier) {
@@ -639,6 +1230,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         this.botNotFound.delete(botId);
+        // A Brick its owner deleted, while Undo can still give it back (#1996): it answers nothing and says nothing, nothing
+        // written to it is kept, and it stays in its chat, so Undo finds the chat as it was.
+        if (config.brick?.deleted) return;
 
         // A message that waited is checked afresh: the person may have lost access while the bot rested.
         const access = await this.access(botId, event.sender, catchUp);
@@ -654,6 +1248,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         const user = access.user!;
+        // The two of them alone, and Orbit says they may: this is their direct chat, and what waited for it goes first (#1993)
+        try {
+            await this.noteDirectRoom(botId, event.sender, event.room_id);
+            await this.sendNearbyAnswers(botId, event.sender, event.room_id);
+        } catch {
+            // Never in the way of the reply
+        }
         // Something typed instead of tapping closes the person's waiting cards (a typed "yes" never approves) and keeps
         // their remembered approvals alive (#1657)
         const asker = { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest };
@@ -671,10 +1272,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         // Chats started before bots had pictures get theirs with the next message; after that this costs nothing.
         void this.avatars?.update(this.botUserId(botId), config);
+        // A key typed into the chat (game #2044): never answered, never remembered (not even for a resting Brick), never given to the
+        // model. The Brick says where keys go.
+        const refuseKey = async () => {
+            if (catchUp) return;
+            // Every paste gets the answer: the person is waiting on this message, like any other, and a dropped one would leave them guessing
+            await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).catch(() => undefined);
+        };
+        if (holdsAKey(String(content.body ?? ''))) {
+            await refuseKey();
+            return;
+        }
         if (config.enabled === false) {
             // Resting again is not a failed answer, so a message already tried keeps its count.
             await this.rememberWaiting(botId, event, attemptsOf(event));
-            if (!catchUp) await this.sayResting(botId, event, config, language);
+            if (!catchUp) await this.sayResting(botId, event, config, language, user.uuid);
             return;
         }
         if (!config.aiProviderRef) {
@@ -682,7 +1294,24 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
 
-        const { text, attachments, failed } = await this.readMessage(botUserId, content);
+        const read = await this.readMessage(botUserId, content);
+        const { attachments, failed } = read;
+        let text = read.text;
+        if (holdsAKey(text) || holdsAKey(String(content.body ?? ''))) {
+            await refuseKey();
+            return;
+        }
+        if (read.note && this.deps.noteHearing) {
+            // A voice note is heard once, here: the bot answers the words, and the note shows what was heard (or that it could not be)
+            const heard = await this.hearNote(botUserId, botId, event, read.note, { userId: user.uuid, isGuest: user.isGuest });
+            if (heard === 'unheard') return;
+            // Words heard in a note are screened like typed ones: never shown, remembered or given to the model
+            if (heard === HEARD_A_KEY) {
+                await refuseKey();
+                return;
+            }
+            if (heard) text = text ? `${text}\n[Voice note] ${heard}` : `[Voice note] ${heard}`;
+        }
         if (!text && attachments.length === 0) {
             // A file with no caption that couldn't be fetched is a failed answer, not an empty message.
             if (failed) await couldNotAnswer(config);
@@ -717,6 +1346,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
                 pointedArtifactIds,
+                // A starter tapped under a Brick's hello (#1995); a message that waited for a resting Brick is answered as typed
+                ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),
+                // "Make it" tapped on the Brick's suggestion (#1996)
+                ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
+                // An App was connected from a card (game #2001): a line from the system, nothing is learned about the person from it
+                ...(event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true, connectedApp: connectedAppOf(content[APP_CONNECTED_KEY])! } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -777,10 +1412,51 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     body: reply.text,
                     [ROOM_LINK_KEY]: reply.roomLink,
                 });
+            } else if (reply.text && reply.ideas) {
+                // A Brick's fixed "what I can do": the game shows its ideas to tap with it (#1995)
+                await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true });
+            } else if (reply.text && reply.bricks?.some((note) => note.kind === 'made')) {
+                // The Bricks this reply made: the game shows a line for each, one tap from its chat (#1996)
+                const made = reply.bricks.filter((note) => note.kind === 'made').map(({ id, name, line, look, made: isNew }) => ({ id, name, line, look, made: isNew }));
+                await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made });
             } else if (reply.text) {
                 await this.client.sendText(botUserId, event.room_id, reply.text);
             }
             reply.keep?.();
+            // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
+            // the card goes out: once per person and topic on every device, so a second device racing it sends none.
+            const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;
+            const topic = offer && offer.kind === 'offer' && reply.claimOffer ? await reply.claimOffer() : null;
+            if (offer && offer.kind === 'offer' && topic) {
+                const { ask, name, line, instructions } = offer;
+                const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } };
+                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again before it is lost.
+                // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.
+                const txnId = randomUUID();
+                await this.client
+                    .sendMessage(botUserId, event.room_id, content, txnId)
+                    .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
+            }
+            // The offer to connect an App (game #2001), after the answer like the one above. Asked once, right before it is sent.
+            const appOffer = reply.text ? reply.bricks?.find((note) => note.kind === 'app') : undefined;
+            const appTopic = appOffer && appOffer.kind === 'app' && reply.claimApp ? await reply.claimApp() : null;
+            if (appOffer && appOffer.kind === 'app' && appTopic) {
+                const { app, name, state, connectionId, ask, asked, other } = appOffer;
+                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, state, connectionId, ask, asked, other } };
+                const txnId = randomUUID();
+                await this.client
+                    .sendMessage(botUserId, event.room_id, content, txnId)
+                    .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
+            }
+            // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
+            const justConnected = reply.text ? connectedAppOf(content[APP_CONNECTED_KEY]) : null;
+            if (justConnected) {
+                await this.client
+                    .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not say what bot ${botId} may do with an App:`, error?.message ?? error));
+            }
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
                 const { body, field } = artifactDirectMessage(card);
@@ -859,10 +1535,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** A resting bot says "not now" in its own voice now and then, and the plain note says why. */
-    private async sayResting(botId: string, event: MatrixEvent, config: BotConfiguration, language: NoteLanguage): Promise<void> {
+    private async sayResting(botId: string, event: MatrixEvent, config: BotConfiguration, language: NoteLanguage, asker?: string): Promise<void> {
         const roomId = event.room_id;
         if (this.deps.restingLine && !this.recentlySent(this.lastRestingLine, roomId, RESTING_LINE_REPEAT_MS)) {
-            const line = await this.deps.restingLine(config, String(event.content?.body ?? '')).catch(() => '');
+            const line = await this.deps.restingLine(config, String(event.content?.body ?? ''), asker).catch(() => '');
             const sent = line
                 ? await this.client.sendText(this.botUserId(botId), roomId, line).then(
                       () => true,
@@ -884,7 +1560,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const kept: Record<string, unknown> = { msgtype: content.msgtype, body: String(content.body ?? '').slice(0, WAITING_BODY_MAX) };
         if (typeof content.url === 'string') kept.url = content.url;
         if (typeof content.filename === 'string') kept.filename = content.filename;
-        if (typeof content.info?.mimetype === 'string') kept.info = { mimetype: content.info.mimetype };
+        const info: Record<string, unknown> = {};
+        if (typeof content.info?.mimetype === 'string') info.mimetype = content.info.mimetype;
+        // What a voice note needs when it is answered later: that it is a note, and how long it is
+        if (typeof content.info?.duration === 'number') info.duration = content.info.duration;
+        if (Object.keys(info).length > 0) kept.info = info;
+        for (const key of ['org.matrix.msc3245.voice', 'm.voice'] as const) if (content[key] !== undefined) kept[key] = {};
+        // A line from the system after an App was connected (game #2001) must still be told apart from the person's own words
+        const connected = connectedAppOf(content[APP_CONNECTED_KEY]);
+        if (connected) kept[APP_CONNECTED_KEY] = connected;
         const message = JSON.stringify({
             event_id: event.event_id,
             room_id: event.room_id,
@@ -1038,12 +1722,82 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    /**
+     * Hears a voice note and shows it under the note: "Listening…", then the words or one line that it could not. Returns the words for
+     * the bot, '' when the bot has no hearing to use (the note reaches it as the file, as before), or 'unheard' when it was meant to
+     * be heard and could not be (the person is told under the note; the bot is not made to answer a file it cannot read).
+     */
+    private async hearNote(
+        botUserId: string,
+        botId: string,
+        event: MatrixEvent,
+        note: { data: Buffer; filename: string; seconds?: number },
+        sender: { userId?: string; isGuest?: boolean }
+    ): Promise<string> {
+        const hearing = this.deps.noteHearing;
+        // A bot with no hearing to use is not promised anything: no row, and the note reaches it as the file, as before
+        if (!hearing || !(await hearing.canHear(botId))) return '';
+        const roomId = event.room_id;
+        let shownId: string | undefined;
+        const show = async (state: 'listening' | 'heard' | 'failed', words?: string): Promise<void> => {
+            const field = { v: 1, for: event.event_id, state, ...(words ? { text: words } : {}) };
+            const content = { msgtype: 'm.notice', body: words || (state === 'failed' ? 'Could not listen to this voice note.' : 'Listening…'), [TRANSCRIPT_KEY]: field };
+            try {
+                if (!shownId) {
+                    shownId = await this.client.sendMessage(botUserId, roomId, content);
+                    return;
+                }
+                await this.client.sendMessage(botUserId, roomId, {
+                    msgtype: 'm.notice',
+                    body: `* ${content.body}`,
+                    'm.new_content': content,
+                    'm.relates_to': { rel_type: 'm.replace', event_id: shownId },
+                });
+            } catch (error: any) {
+                // A lost transcript row must never cost the person the answer
+                console.warn(`[MatrixDmBridge] Could not show a transcript in ${roomId}:`, error?.message ?? error);
+            }
+        };
+        // "Listening…" goes out the moment the note is on its way to be heard, so the person never wonders; a note refused before
+        // that (a used-up allowance) never shows it
+        let listening: Promise<void> | undefined;
+        const heard = await hearing.hear(
+            botId,
+            event.event_id,
+            { bytes: note.data, filename: note.filename, ...(note.seconds !== undefined ? { seconds: note.seconds } : {}) },
+            sender,
+            () => {
+                listening ??= show('listening');
+            }
+        );
+        await listening;
+        // The person's replies are used up: nothing was heard, and the reply path shows the usual limit card for the note
+        if ('reason' in heard && heard.reason === 'reply-limit') return '';
+        if (heard.ok) {
+            const words = tidyTranscript(heard.text, hearing.limits.maxChars);
+            if (!words) {
+                await show('failed');
+                return 'unheard';
+            }
+            // A key read out loud is held back like a typed one: the transcript row is not shown with it, and the bot never gets it.
+            // The whole transcript is read, before it is cut to fit: a key past the cut (or across it) must not slip by.
+            if (holdsAKey(heard.text)) {
+                await show('failed');
+                return HEARD_A_KEY;
+            }
+            await show('heard', words);
+            return words;
+        }
+        await show('failed');
+        return 'unheard';
+    }
+
     /** The message text, plus any file in it re-hosted where the bot can read it. */
     /** `failed` means a file was there but could not be fetched or re-hosted this time. */
     private async readMessage(
         botUserId: string,
         content: Record<string, any>
-    ): Promise<{ text: string; attachments: DmAttachment[]; failed?: boolean }> {
+    ): Promise<{ text: string; attachments: DmAttachment[]; failed?: boolean; note?: { data: Buffer; filename: string; seconds?: number } }> {
         const msgtype = content.msgtype;
         if (msgtype === 'm.text' || msgtype === 'm.emote') {
             return { text: String(content.body ?? '').trim(), attachments: [] };
@@ -1066,7 +1820,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (!url) return { text: caption, attachments: [], failed: true };
             const size = Number(content.info?.size);
             const duration = Number(content.info?.duration);
+            // A recorded voice message is flagged by Element (MSC3245) or, once stable, `m.voice`
+            const isNote = mediaType === 'audio' && (content['org.matrix.msc3245.voice'] !== undefined || content['m.voice'] !== undefined);
             return {
+                ...(isNote
+                    ? { note: { data: file.data, filename, ...(Number.isFinite(duration) && duration > 0 ? { seconds: duration / 1000 } : {}) } }
+                    : {}),
                 text: caption,
                 attachments: [
                     {

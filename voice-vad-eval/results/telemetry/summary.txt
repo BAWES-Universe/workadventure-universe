@@ -1,0 +1,5 @@
+native-default: network connects=4; microsoft names seen in traffic: mobile\6events\4data\tmicrosoft\3com\0\0\1\0\1 ; exit log: native: done
+native-disabled: network connects=0; microsoft names seen in traffic: none; exit log: native: done
+wasm: network connects=0; microsoft names seen in traffic: none; exit log: wasm: done
+worker-observer-off: network calls=294, of them to anywhere but this machine=2; names looked up: 2 stun.l.google.com; microsoft names seen in traffic: none; observer: none; frames heard: 909
+worker-observer-on: network calls=300, of them to anywhere but this machine=2; names looked up: 2 stun.l.google.com; microsoft names seen in traffic: none; observer: on, 570 windows, 0 errors; frames heard: 915

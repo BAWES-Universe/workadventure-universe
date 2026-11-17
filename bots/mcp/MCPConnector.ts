@@ -9,9 +9,11 @@
  * - Auth: Bearer token or X-API-Key header
  */
 
+import { keyAppTools, loadKeyApps, type KeyApp } from './KeyApps';
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
+import { sanitizedError } from '../utils/sanitizedError';
 import { linkExternalAbort } from '../ai/providers/abortUtils';
 import { checkOutboundUrl, guardedLookup } from './outboundGuard';
 import {
@@ -42,6 +44,12 @@ export interface McpServerConfig {
     /** An old server whose tools were never checked: it keeps working in text as it did (#738). */
     notCheckedYet?: boolean;
     policyRevision?: number;
+    /** Set when the App is a connection's (a person's own, lent to a universe, or a universe's own): every use asks Orbit first (#2001). */
+    connectionId?: string | null;
+    /** Orbit says so for a ready-made App: its stored link has no key here (it answers 401), so every message goes through Orbit (#2001). */
+    readyMade?: boolean;
+    /** Where Orbit is, set when `readyMade`. Never sent anywhere else. */
+    orbitUrl?: string;
 }
 
 export interface McpToolDefinition {
@@ -78,6 +86,13 @@ export interface ToolServerEntry {
     fingerprint?: string;
     /** The tool's inputs as the server described them, for showing the details of a call on a card in their order (#1657). */
     inputSchema?: unknown;
+    /** Set when the App sits on a connection: every use asks Orbit first, with the call's id and the tool's heading (#2001). */
+    connectionId?: string;
+    /** A ready-made App: its messages go through Orbit's link route, never to the stored link (#2001). */
+    readyMade?: boolean;
+    orbitUrl?: string;
+    /** An App with a key (#2044): the operation and the version of its definition. Every call goes through Orbit, which holds the key; there is no address here. */
+    keyApp?: { definitionHash: string; operation: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +132,8 @@ const SESSION_INIT_TTL = 60 * 60 * 1000; // 1 hour
 interface SessionEntry {
     sessionId?: string;
     initializedAt: number;
+    /** When the link last answered on this session (a ready-made App's link may drop an idle one). */
+    usedAt?: number;
 }
 const mcpSessionInitCache = new Map<string, SessionEntry>();
 
@@ -127,6 +144,14 @@ function sessionCacheKey(serverUrl: string, authType: string, authConfig?: strin
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The name of the first header whose value cannot be sent (a character above 255, or a line break), or null when all can. */
+export function unsendableHeader(headers: Record<string, string>): string | null {
+    for (const [name, value] of Object.entries(headers)) {
+        if (typeof value === 'string' && /[^\t\x20-\x7e\x80-\xff]/.test(value)) return name;
+    }
+    return null;
+}
 
 /**
  * Build proper auth headers based on server config.
@@ -280,6 +305,128 @@ async function jsonRpcRequest(...args: Parameters<typeof sendJsonRpc>): Promise<
     return (await sendJsonRpc(...args)).data;
 }
 
+
+/** What Orbit needs to send one message to a ready-made App's link for this bot, and for whom. */
+export interface OrbitLink {
+    orbitUrl: string;
+    botId: string;
+    serverId: string;
+    /** Who is asking (their uuid). */
+    requesterKey?: string;
+    /** Listing the tools is not a person's request: the Brick's owner stands in for it. */
+    forOwner?: boolean;
+    /** This call's id; needed for tools/call, counted once for each id. */
+    callId?: string;
+}
+
+/** Orbit's own wait is a little longer than the link's, so the answer comes back. */
+const LINK_TIMEOUT_MS = 60_000;
+
+/**
+ * A kept session this idle is checked before a call goes out on it. A link drops an idle session, and a call that finds it
+ * gone cannot be sent again (Orbit counts each call id once), so the check happens first, on a listing, which is never counted.
+ */
+const LINK_SESSION_IDLE_CHECK_MS = 15_000;
+
+/**
+ * One JSON-RPC message to a ready-made App, sent by Orbit (POST /api/ready-made/link). The stored link answers 401 without
+ * the provider's key, and that key never leaves Orbit, so the bot server never calls the link itself. Opening a session
+ * (initialize, then notifications/initialized) is done here as for any server and its session id is kept; Orbit's answer
+ * carries what the link sent (`status`, `contentType`, `sessionId`, `body`), read as any server's answer is.
+ */
+async function sendViaOrbit(link: OrbitLink, method: string, params: Record<string, any> | undefined, signal?: AbortSignal, timeoutMs?: number): Promise<JsonRpcOutcome> {
+    const serviceToken = process.env.BOT_SERVICE_TOKEN;
+    if (!serviceToken) return NOT_SENT;
+    const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
+    const remaining = () => (deadline !== undefined ? Math.max(0, deadline - Date.now()) : LINK_TIMEOUT_MS);
+    const key = `orbit-link|${link.botId}|${link.serverId}|${link.requesterKey || (link.forOwner ? 'owner' : '')}`;
+    const who = { ...(link.requesterKey ? { requesterKey: link.requesterKey } : {}), ...(link.forOwner ? { forOwner: true } : {}) };
+    const send = async (message: Record<string, unknown>, sessionId: string | undefined, callId?: string) => {
+        const response = await axios.post(
+            `${link.orbitUrl}/api/ready-made/link`,
+            { botId: link.botId, serverId: link.serverId, ...who, message, ...(sessionId ? { sessionId } : {}), ...(callId ? { callId } : {}) },
+            {
+                headers: { Authorization: `Bearer ${serviceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+                signal,
+                timeout: Math.min(LINK_TIMEOUT_MS, Math.max(1, remaining())),
+                maxRedirects: 0,
+            }
+        );
+        return response.data as { status?: number; contentType?: string | null; sessionId?: string | null; body?: string };
+    };
+    // Set once the call itself is on its way: a cancellation after that may have come too late, so it is not "never sent"
+    let callSubmitted = false;
+    try {
+        let sessionId: string | undefined;
+        let cached = mcpSessionInitCache.get(key);
+        if (cached && Date.now() >= cached.initializedAt + SESSION_INIT_TTL) cached = undefined;
+        if (cached?.sessionId && method === 'tools/call' && Date.now() - (cached.usedAt ?? cached.initializedAt) > LINK_SESSION_IDLE_CHECK_MS) {
+            // Before the call, not after it: a listing on the kept session says whether the link still knows it. Nothing is
+            // counted or run by it, so a gone session is dropped here and the call below goes out on a fresh one, once.
+            const check = await send({ jsonrpc: '2.0', id: 'check', method: 'tools/list' }, cached.sessionId);
+            if (typeof check.status === 'number' && check.status >= 400) {
+                mcpSessionInitCache.delete(key);
+                // Only "the link does not know this session" is answered by opening another; any other refusal (its key, an
+                // outage) means the call cannot go out now, and nothing was asked of the App
+                if (![400, 404, 410].includes(check.status)) return NOT_SENT;
+                cached = undefined;
+            }
+        }
+        if (cached) {
+            sessionId = cached.sessionId;
+        } else {
+            const opened = await send(
+                { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'workadventure-mcp-bot', version: '1.0.0', player_id: link.requesterKey || null } } },
+                undefined
+            );
+            // The link refused to open a session (its key expired, say): nothing was asked of the App, so nothing is kept or sent
+            if (typeof opened.status === 'number' && opened.status >= 400) return NOT_SENT;
+            sessionId = opened.sessionId || undefined;
+            const told = await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId);
+            if (typeof told.status === 'number' && told.status >= 400) return NOT_SENT;
+            mcpSessionInitCache.set(key, { sessionId, initializedAt: Date.now(), usedAt: Date.now() });
+        }
+        const requestId = method === 'tools/list' ? '1' : '2';
+        if (method === 'tools/call') callSubmitted = true;
+        const answer = await send({ jsonrpc: '2.0', id: requestId, method, ...(params !== undefined ? { params } : {}) }, sessionId, method === 'tools/call' ? link.callId : undefined);
+        if (typeof answer.status === 'number' && answer.status >= 400) {
+            // The link refused or lost the session: it did not run, and the next call opens a fresh session
+            mcpSessionInitCache.delete(key);
+            // Not tried again: Orbit already counted this call id, and a second send would be refused as already made.
+            // A session that went idle is caught before the call (see LINK_SESSION_IDLE_CHECK_MS), so this is only a race.
+            return { data: null, neverRan: answer.status === 404 && sessionId !== undefined, retryable: false };
+        }
+        const kept = mcpSessionInitCache.get(key);
+        if (kept) kept.usedAt = Date.now();
+        // The link's answer comes as text: a stream is read as a stream, anything else as JSON (what a direct call would have parsed)
+        const text = answer.body ?? '';
+        const isStream = (answer.contentType || '').includes('text/event-stream') || /^\s*(event|data):/.test(text);
+        let data: unknown = text;
+        if (!isStream) {
+            try {
+                data = JSON.parse(text);
+            } catch {
+                return NOT_ANSWERED;
+            }
+        }
+        const parsed = parseMcpResponse({ headers: { 'content-type': answer.contentType || '' }, data, status: answer.status }, requestId);
+        return { data: parsed.data, neverRan: false, retryable: false, ...(parsed.listChanged ? { listChanged: true } : {}) };
+    } catch (error: any) {
+        mcpSessionInitCache.delete(key);
+        if (axios.isCancel(error)) return signal?.aborted && !callSubmitted ? NOT_SENT : NOT_ANSWERED;
+        // Failing before the call is on its way (opening or checking a session) means it never went out
+        if (!callSubmitted) {
+            console.warn(`[MCPConnector] Orbit could not reach a ready-made App before sending ${method}`);
+            return NOT_SENT;
+        }
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        console.warn(`[MCPConnector] Orbit could not send ${method} to a ready-made App${status ? ` (HTTP ${status})` : ''}`);
+        // Orbit said no (not allowed, not found, a message it does not pass): nothing reached the link. Anything else, and a
+        // call Orbit already counted (409), may have run.
+        return status !== undefined && [400, 403, 404].includes(status) ? NOT_SENT : NOT_ANSWERED;
+    }
+}
+
 /** jsonRpcRequest, also telling whether a failed request never ran */
 async function sendJsonRpc(
     serverUrl: string,
@@ -290,8 +437,11 @@ async function sendJsonRpc(
     extraHeaders?: Record<string, string>,
     playerUuid?: string,
     signal?: AbortSignal,
-    timeoutMs?: number
+    timeoutMs?: number,
+    /** A ready-made App: the message goes through Orbit, not to `serverUrl` (#2001). */
+    link?: OrbitLink
 ): Promise<JsonRpcOutcome> {
+    if (link) return sendViaOrbit(link, method, params, signal, timeoutMs);
     const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
     const remaining = () => (deadline !== undefined ? Math.max(0, deadline - Date.now()) : REQUEST_TIMEOUT);
     // Checked before every request, DNS included: the name may point somewhere else than when it was saved
@@ -303,6 +453,14 @@ async function sendJsonRpc(
     }
 
     const baseHeaders = buildAuthHeaders(authType, authConfig, extraHeaders);
+
+    // A header with a character above 255 (an em dash pasted into a key) cannot be sent: the request would fail inside the HTTP
+    // client with an error that names nothing. Nothing is sent, and the log says which header it is.
+    const unsendable = unsendableHeader(baseHeaders);
+    if (unsendable) {
+        console.warn(`[MCPConnector] Not sent: the "${unsendable}" header has text that cannot be sent (${method} to ${serverUrl})`);
+        return NOT_SENT;
+    }
 
     // Auto-initialize MCP session (required by MCP Streamable HTTP spec).
     // Some servers (like Linear) tolerate tools/list without initialize,
@@ -472,11 +630,6 @@ async function sendJsonRpc(
             }
         } else if (axios.isAxiosError(error)) {
             const status = error.response?.status;
-            const detail = error.response?.data
-                ? typeof error.response.data === 'string'
-                    ? error.response.data.slice(0, 200)
-                    : JSON.stringify(error.response.data).slice(0, 200)
-                : error.message;
             const sanitizedUrl = (() => {
                 try {
                     const u = new URL(serverUrl);
@@ -486,9 +639,10 @@ async function sendJsonRpc(
                 }
             })();
             console.warn(
-                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}: ${detail}`
+                // No words from the answer or the error: they can quote what was asked of the tool (an email, a file)
+                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}`
             );
-            Sentry.captureException(new Error(`MCPConnector HTTP ${status || 'error'} on ${method}`));
+            Sentry.captureException(sanitizedError(error, `MCPConnector HTTP ${status || 'error'} on ${method}`));
             // Invalidate session cache on HTTP errors for non-initialize methods.
             // Handles server restarts, session expiry, and stale session reuse
             // after bot respawn — without this, a dead session is retried for up
@@ -499,8 +653,10 @@ async function sendJsonRpc(
             const neverRan = requestNeverRan(error, sessionId !== undefined);
             return { data: null, neverRan, retryable: neverRan };
         } else {
-            console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
-            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            // The error's words can quote what was asked of the tool: only the method and the kind of error are kept
+            const kind = error instanceof Error ? error.name : 'Error';
+            console.warn(`[MCPConnector] Error on ${method}: ${kind}`);
+            Sentry.captureException(sanitizedError(error, `MCPConnector error on ${method} (${kind})`));
         }
         return NOT_ANSWERED;
     } finally {
@@ -559,6 +715,8 @@ export class MCPConnector {
             clearTimeout(timeoutId);
         }
 
+        // A ready-made App is reached only through Orbit, which holds the key its link needs
+        for (const server of servers) if (server.readyMade === true) server.orbitUrl = adminApiUrl;
         // Decrypt authConfig for each server (admin API stores it encrypted)
         for (const server of servers) {
             if (server.authConfig) {
@@ -595,7 +753,11 @@ export class MCPConnector {
                 cursor ? { cursor } : undefined,
                 server.authType,
                 server.authConfig,
-                server.headers
+                server.headers,
+                undefined,
+                undefined,
+                undefined,
+                server.readyMade === true && server.orbitUrl ? { orbitUrl: server.orbitUrl, botId: server.botId, serverId: server.id, forOwner: true } : undefined
             );
             if (!response || !response.result || !Array.isArray(response.result.tools)) {
                 return null;
@@ -652,13 +814,14 @@ export class MCPConnector {
         tools: McpToolDefinition[];
         toolServerMap: Map<string, ToolServerEntry>;
     }> {
-        void botServiceToken;
         const toolServerMap = new Map<string, ToolServerEntry>();
-
         // Fetch MCP server configs from admin API
         let servers: McpServerConfig[] = [];
+        const loading = this.loadServers(botId, adminApiUrl, adminApiToken);
+        // Asked at the same time as the servers (after their request is sent), so Apps with a key add no waiting of their own
+        const keyApps = loadKeyApps(botId, adminApiUrl, botServiceToken);
         try {
-            servers = await this.loadServers(botId, adminApiUrl, adminApiToken);
+            servers = await loading;
         } catch (error: any) {
             if (axios.isAxiosError(error) && error.response?.status === 404) {
                 // No MCP servers configured — not an error
@@ -672,7 +835,8 @@ export class MCPConnector {
                     error instanceof Error ? error : new Error(String(error))
                 );
             }
-            return { tools: [], toolServerMap };
+            // Apps with a key come from another list: this one failing does not take them away
+            return this.withKeyApps(keyApps, { tools: [], toolServerMap });
         }
 
         // Query each enabled server and collect tools
@@ -694,6 +858,8 @@ export class MCPConnector {
                     authConfig: server.authConfig,
                     headers: server.headers,
                     serverName: server.name,
+                    ...(server.connectionId ? { connectionId: server.connectionId } : {}),
+                    ...(server.readyMade === true && server.orbitUrl ? { readyMade: true, orbitUrl: server.orbitUrl } : {}),
                     ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
                     ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
                     ...(title ? { title } : {}),
@@ -759,7 +925,23 @@ export class MCPConnector {
             }
         }
 
-        return { tools: allTools, toolServerMap };
+        return this.withKeyApps(keyApps, { tools: allTools, toolServerMap });
+    }
+
+    /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner. */
+    private static async withKeyApps(
+        keyApps: Promise<KeyApp[]>,
+        found: { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }
+    ): Promise<{ tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }> {
+        const keyed = keyAppTools(await keyApps);
+        for (const tool of keyed.tools) {
+            const name = tool.function.name;
+            const entry = keyed.entries.get(name);
+            if (!entry || found.toolServerMap.has(name)) continue;
+            found.tools.push(tool);
+            found.toolServerMap.set(name, entry);
+        }
+        return found;
     }
 
     /** Saves one server's list to Orbit in the background. A failure is logged; Orbit keeps what it had. */
@@ -820,7 +1002,9 @@ export class MCPConnector {
         extraHeaders?: Record<string, string>,
         playerUuid?: string,
         signal?: AbortSignal,
-        timeoutMs?: number
+        timeoutMs?: number,
+        /** A ready-made App: who is asking and which call this is, for Orbit's link route (#2001). */
+        link?: OrbitLink
     ): Promise<any> {
         // Patience covers the whole call, the retry below included
         const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
@@ -833,7 +1017,8 @@ export class MCPConnector {
             extraHeaders,
             playerUuid,
             signal,
-            timeoutMs
+            timeoutMs,
+            link
         );
         let response = attempt.data;
         if (attempt.listChanged) MCPConnector.forgetServerList(serverId);
@@ -857,7 +1042,8 @@ export class MCPConnector {
                 extraHeaders,
                 playerUuid,
                 signal,
-                retryTimeoutMs
+                retryTimeoutMs,
+                link
                 );
                 response = attempt.data;
             }
@@ -879,7 +1065,8 @@ export class MCPConnector {
 
         if (response.error) {
             const errMsg = response.error.message || JSON.stringify(response.error);
-            console.warn(`[MCPConnector] Tool ${toolName} returned error: ${errMsg}`);
+            // The server's words can quote what the tool was given (an email, a file): the log keeps the outcome only
+            console.warn(`[MCPConnector] Tool ${toolName} returned an error`);
             return { error: `Tool error: ${errMsg}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 
@@ -891,7 +1078,7 @@ export class MCPConnector {
                 .map((item) => item.text)
                 .join(' ')
                 .trim();
-            console.warn(`[MCPConnector] Tool ${toolName} failed: ${why || 'no reason given'}`);
+            console.warn(`[MCPConnector] Tool ${toolName} failed`);
             return { error: `Tool error: ${why || `${toolName} failed`}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 

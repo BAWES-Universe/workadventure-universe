@@ -11,12 +11,41 @@ import { Latency } from './latency.ts';
 import { DEEPGRAM_ADAPTER, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, DeepgramRecognition } from './deepgram.ts';
 import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
-import type { BotToWorker } from './protocol.ts';
+import { FEATURES, type BotToWorker } from './protocol.ts';
 import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
+import { SpeechObserver, type SpeechObserverSettings } from './speechObserver.ts';
+import type { YieldPolicy } from './yieldControl.ts';
 import type { InputSink } from './transport.ts';
 import { ASSEMBLYAI_ADAPTER, AssemblyAiRecognition } from './assemblyai.ts';
+import { ASYNC_ADAPTER, AsyncSpeech } from './async.ts';
+import { BLAND_ADAPTER, BlandSpeech } from './bland.ts';
+import { CAMB_ADAPTER, CambSpeech } from './camb.ts';
+import { FAL_ADAPTER, FalRecognition } from './fal.ts';
+import { GLADIA_ADAPTER, GladiaRecognition } from './gladia.ts';
+import { GRADIUM_ADAPTER, GradiumRecognition, GradiumSpeech } from './gradium.ts';
+import { GROQ_ADAPTER, GroqRecognition, GroqSpeech } from './groq.ts';
+import { HUME_ADAPTER, HumeSpeech } from './hume.ts';
+import { META_ADAPTER, MetaRecognition } from './meta.ts';
+import { MISTRAL_ADAPTER, MistralRecognition, MistralSpeech } from './mistral.ts';
+import { NEUPHONIC_ADAPTER, NeuphonicSpeech } from './neuphonic.ts';
+import { RESEMBLE_ADAPTER, ResembleSpeech } from './resemble.ts';
+import { RIME_ADAPTER, RimeSpeech } from './rime.ts';
+import { SARVAM_ADAPTER, SarvamRecognition, SarvamSpeech } from './sarvam.ts';
+import { SMALLEST_ADAPTER, SmallestRecognition, SmallestSpeech } from './smallest.ts';
+import { SPEECHIFY_ADAPTER, SpeechifySpeech } from './speechify.ts';
+import { SPEECHMATICS_ADAPTER, SpeechmaticsRecognition, SpeechmaticsSpeech } from './speechmatics.ts';
+import { TOGETHER_ADAPTER, TogetherRecognition, TogetherSpeech } from './together.ts';
+import { OPENAI_HEARING_MODELS, OpenAIRecognition } from './openaiHearing.ts';
+import { NVIDIA_ADAPTER, NvidiaRecognition, NvidiaSpeech } from './nvidia.ts';
+import { MINIMAX_ADAPTER, MiniMaxSpeech } from './minimax.ts';
+import { XAI_HEARING_MODELS, XAI_SPEECH_MODELS, XAI_VOICE_ADAPTER, XaiTranscription, XaiTts } from './xaiVoice.ts';
+import { recognitionByModel, speechByModel } from './kit/byModel.ts';
+import { GEMINI_SPEECH_ADAPTER, GEMINI_SPEECH_MODELS, GeminiSpeech } from './geminiSpeech.ts';
+import { ZOOM_SCRIBE_ADAPTER, ZOOM_SCRIBE_MODELS, ZoomScribeRecognition } from './zoomScribe.ts';
+import { AWS_HEARING_MODELS, AWS_SPEECH_MODELS, AWS_VOICE_ADAPTER, AwsPolly, AwsTranscribe } from './awsVoice.ts';
+import { AZURE_SPEECH_ADAPTER, AzureSpeechRecognition, AzureTts } from './azureSpeech.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { AWS_ADAPTER, AwsRecognition, AwsSpeech } from './aws.ts';
@@ -69,6 +98,14 @@ export interface WorkerOptions {
     maxPreviewSeconds?: number;
     /** How many of those lines are made at once; more are told to come back. Default 8. */
     maxPreviews?: number;
+    /** Internal, off when absent: a second listener that only counts what a speech detector says (speechObserver.ts). It changes nothing anyone hears. */
+    speechObserver?: SpeechObserverSettings;
+    /**
+     * Internal (yieldControl.ts): the bots whose voice pauses on a loud sound and stops only once it is speech, and how.
+     * Only with the speech observer on. No `botIds`: every bot (what the image does by default). With `botIds`, only those
+     * (tests compare a bot with and without it); any other bot keeps today's rule. Not a user setting.
+     */
+    yieldBots?: { botIds?: ReadonlySet<string>; policy: YieldPolicy };
     engineId?: string;
 }
 
@@ -116,38 +153,17 @@ export class VoiceWorker {
     readonly engineId: string;
     private pingTimer?: NodeJS.Timeout;
     private readonly previewer: Previewer;
+    /** Only when the worker was started with it. */
+    private readonly observer?: SpeechObserver;
 
     constructor(readonly options: WorkerOptions) {
         this.engineId = options.engineId ?? `voice-worker-${process.pid}`;
+        if (options.speechObserver) this.observer = new SpeechObserver({ ...options.speechObserver, counters: this.counters });
         // Each real provider is one file registered by name; a registry passed in (tests) keeps what it already has
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
-        if (!this.connectors.recognition(ASSEMBLYAI_ADAPTER)) {
-            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
-            this.connectors.registerRecognition(ASSEMBLYAI_ADAPTER, new AssemblyAiRecognition({ finalTimeoutMs }));
-        }
-        if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
-        if (!this.connectors.recognition(CARTESIA_ADAPTER)) {
-            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
-            this.connectors.registerRecognition(CARTESIA_ADAPTER, new CartesiaRecognition({ version: options.cartesiaVersion, finalTimeoutMs }));
-        }
-        if (!this.connectors.speech(FISH_ADAPTER)) this.connectors.registerSpeech(FISH_ADAPTER, new FishSpeech());
-        if (!this.connectors.recognition(SONIOX_ADAPTER)) {
-            const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
-            this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
-        }
-        if (!this.connectors.speech(SONIOX_ADAPTER)) this.connectors.registerSpeech(SONIOX_ADAPTER, new SonioxSpeech());
-        if (!this.connectors.speech(ELEVENLABS_ADAPTER)) this.connectors.registerSpeech(ELEVENLABS_ADAPTER, new ElevenLabsSpeech());
-        if (!this.connectors.recognition(ELEVENLABS_ADAPTER)) {
-            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
-            this.connectors.registerRecognition(ELEVENLABS_ADAPTER, new ElevenLabsRecognition({ finalTimeoutMs }));
-        }
-        if (!this.connectors.recognition(DEEPGRAM_ADAPTER)) {
-            const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS / 1000) * 1000;
-            this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
-        }
-        if (!this.connectors.speech(DEEPGRAM_ADAPTER)) this.connectors.registerSpeech(DEEPGRAM_ADAPTER, new DeepgramSpeech());
-        // A talking model (game #1910) is named for both hearing and speaking, under one adapter
+        // A talking model (game #1910) is named for both hearing and speaking, under one adapter. Registered first: a company that
+        // also hears or speaks with models of its own (OpenAI) takes only those, and leaves the talking models to these
         if (!this.connectors.recognition(AWS_ADAPTER)) this.connectors.registerRecognition(AWS_ADAPTER, new AwsRecognition());
         if (!this.connectors.speech(AWS_ADAPTER)) this.connectors.registerSpeech(AWS_ADAPTER, new AwsSpeech());
         if (!this.connectors.recognition(AZURE_ADAPTER)) this.connectors.registerRecognition(AZURE_ADAPTER, new AzureRecognition());
@@ -164,6 +180,118 @@ export class VoiceWorker {
         if (!this.connectors.speech(OPENAI_ADAPTER)) this.connectors.registerSpeech(OPENAI_ADAPTER, new OpenAiSpeech());
         if (!this.connectors.recognition(XAI_ADAPTER)) this.connectors.registerRecognition(XAI_ADAPTER, new XaiRecognition());
         if (!this.connectors.speech(XAI_ADAPTER)) this.connectors.registerSpeech(XAI_ADAPTER, new XaiSpeech());
+        if (!this.connectors.recognition(ASSEMBLYAI_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(ASSEMBLYAI_ADAPTER, new AssemblyAiRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(ASYNC_ADAPTER)) this.connectors.registerSpeech(ASYNC_ADAPTER, new AsyncSpeech());
+        if (!this.connectors.speech(BLAND_ADAPTER)) this.connectors.registerSpeech(BLAND_ADAPTER, new BlandSpeech());
+        if (!this.connectors.speech(CAMB_ADAPTER)) this.connectors.registerSpeech(CAMB_ADAPTER, new CambSpeech());
+        if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
+        if (!this.connectors.recognition(CARTESIA_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(CARTESIA_ADAPTER, new CartesiaRecognition({ version: options.cartesiaVersion, finalTimeoutMs }));
+        }
+        if (!this.connectors.recognition(FAL_ADAPTER)) this.connectors.registerRecognition(FAL_ADAPTER, new FalRecognition());
+        if (!this.connectors.speech(FISH_ADAPTER)) this.connectors.registerSpeech(FISH_ADAPTER, new FishSpeech());
+        if (!this.connectors.recognition(GLADIA_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(GLADIA_ADAPTER, new GladiaRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.recognition(GRADIUM_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(GRADIUM_ADAPTER, new GradiumRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(GRADIUM_ADAPTER)) this.connectors.registerSpeech(GRADIUM_ADAPTER, new GradiumSpeech());
+        if (!this.connectors.recognition(GROQ_ADAPTER)) this.connectors.registerRecognition(GROQ_ADAPTER, new GroqRecognition());
+        if (!this.connectors.speech(GROQ_ADAPTER)) this.connectors.registerSpeech(GROQ_ADAPTER, new GroqSpeech());
+        if (!this.connectors.speech(HUME_ADAPTER)) this.connectors.registerSpeech(HUME_ADAPTER, new HumeSpeech());
+        if (!this.connectors.recognition(META_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(META_ADAPTER, new MetaRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.recognition(MISTRAL_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(MISTRAL_ADAPTER, new MistralRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(MISTRAL_ADAPTER)) this.connectors.registerSpeech(MISTRAL_ADAPTER, new MistralSpeech());
+        if (!this.connectors.speech(NEUPHONIC_ADAPTER)) this.connectors.registerSpeech(NEUPHONIC_ADAPTER, new NeuphonicSpeech());
+        if (!this.connectors.speech(RESEMBLE_ADAPTER)) this.connectors.registerSpeech(RESEMBLE_ADAPTER, new ResembleSpeech());
+        if (!this.connectors.speech(RIME_ADAPTER)) this.connectors.registerSpeech(RIME_ADAPTER, new RimeSpeech());
+        if (!this.connectors.recognition(SARVAM_ADAPTER)) this.connectors.registerRecognition(SARVAM_ADAPTER, new SarvamRecognition());
+        if (!this.connectors.speech(SARVAM_ADAPTER)) this.connectors.registerSpeech(SARVAM_ADAPTER, new SarvamSpeech());
+        if (!this.connectors.recognition(SMALLEST_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(SMALLEST_ADAPTER, new SmallestRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(SMALLEST_ADAPTER)) this.connectors.registerSpeech(SMALLEST_ADAPTER, new SmallestSpeech());
+        if (!this.connectors.speech(SPEECHIFY_ADAPTER)) this.connectors.registerSpeech(SPEECHIFY_ADAPTER, new SpeechifySpeech());
+        if (!this.connectors.recognition(SPEECHMATICS_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(SPEECHMATICS_ADAPTER, new SpeechmaticsRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(SPEECHMATICS_ADAPTER)) this.connectors.registerSpeech(SPEECHMATICS_ADAPTER, new SpeechmaticsSpeech());
+        if (!this.connectors.recognition(TOGETHER_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(TOGETHER_ADAPTER, new TogetherRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(TOGETHER_ADAPTER)) this.connectors.registerSpeech(TOGETHER_ADAPTER, new TogetherSpeech());
+        // OpenAI also talks live under the same name (#1910): its own hearing takes only its models, any other goes to what is already
+        // registered
+        {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            const hearing = new OpenAIRecognition({ finalTimeoutMs });
+            this.connectors.registerRecognition(OPENAI_ADAPTER, recognitionByModel(OPENAI_HEARING_MODELS, hearing, this.connectors.recognition(OPENAI_ADAPTER)));
+        }
+        if (!this.connectors.recognition(NVIDIA_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(NVIDIA_ADAPTER, new NvidiaRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(NVIDIA_ADAPTER)) this.connectors.registerSpeech(NVIDIA_ADAPTER, new NvidiaSpeech());
+        if (!this.connectors.speech(MINIMAX_ADAPTER)) this.connectors.registerSpeech(MINIMAX_ADAPTER, new MiniMaxSpeech());
+        // xAI also talks live under the same name (#1910): its own hearing and speaking take only their models, any other goes to what is
+        // already registered
+        {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            const hearing = new XaiTranscription({ finalTimeoutMs });
+            this.connectors.registerRecognition(XAI_VOICE_ADAPTER, recognitionByModel(XAI_HEARING_MODELS, hearing, this.connectors.recognition(XAI_VOICE_ADAPTER)));
+            this.connectors.registerSpeech(XAI_VOICE_ADAPTER, speechByModel(XAI_SPEECH_MODELS, new XaiTts(), this.connectors.speech(XAI_VOICE_ADAPTER)));
+        }
+        // Google also talks live under the same name (#1910): Gemini text to speech takes only its models
+        this.connectors.registerSpeech(GEMINI_SPEECH_ADAPTER, speechByModel(GEMINI_SPEECH_MODELS, new GeminiSpeech(), this.connectors.speech(GEMINI_SPEECH_ADAPTER)));
+        // Zoom also talks live under the same name (#1910): Scribe takes only its models
+        {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            const hearing = new ZoomScribeRecognition({ finalTimeoutMs });
+            this.connectors.registerRecognition(ZOOM_SCRIBE_ADAPTER, recognitionByModel(ZOOM_SCRIBE_MODELS, hearing, this.connectors.recognition(ZOOM_SCRIBE_ADAPTER)));
+        }
+        // AWS also talks live under the same name (#1910): Transcribe and Polly take only their models
+        {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            const hearing = new AwsTranscribe({ finalTimeoutMs });
+            this.connectors.registerRecognition(AWS_VOICE_ADAPTER, recognitionByModel(AWS_HEARING_MODELS, hearing, this.connectors.recognition(AWS_VOICE_ADAPTER)));
+            this.connectors.registerSpeech(AWS_VOICE_ADAPTER, speechByModel(AWS_SPEECH_MODELS, new AwsPolly(), this.connectors.speech(AWS_VOICE_ADAPTER)));
+        }
+        if (!this.connectors.recognition(AZURE_SPEECH_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(AZURE_SPEECH_ADAPTER, new AzureSpeechRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(AZURE_SPEECH_ADAPTER)) this.connectors.registerSpeech(AZURE_SPEECH_ADAPTER, new AzureTts());
+        if (!this.connectors.recognition(SONIOX_ADAPTER)) {
+            const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
+            this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(SONIOX_ADAPTER)) this.connectors.registerSpeech(SONIOX_ADAPTER, new SonioxSpeech());
+        if (!this.connectors.speech(ELEVENLABS_ADAPTER)) this.connectors.registerSpeech(ELEVENLABS_ADAPTER, new ElevenLabsSpeech());
+        if (!this.connectors.recognition(ELEVENLABS_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(ELEVENLABS_ADAPTER, new ElevenLabsRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.recognition(DEEPGRAM_ADAPTER)) {
+            const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS / 1000) * 1000;
+            this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(DEEPGRAM_ADAPTER)) this.connectors.registerSpeech(DEEPGRAM_ADAPTER, new DeepgramSpeech());
         // A person's own speech server (#1874): hears and speaks, at the https address they typed, through the address guard
         if (!this.connectors.speech(OPENAI_COMPATIBLE_ADAPTER)) this.connectors.registerSpeech(OPENAI_COMPATIBLE_ADAPTER, new OpenAiCompatibleSpeech({ sampleRate: options.ownSpeechSampleRate }));
         if (!this.connectors.recognition(OPENAI_COMPATIBLE_ADAPTER)) this.connectors.registerRecognition(OPENAI_COMPATIBLE_ADAPTER, new OpenAiCompatibleRecognition());
@@ -196,6 +324,7 @@ export class VoiceWorker {
         this.wss.close();
         this.server.closeAllConnections();
         await Promise.allSettled([...this.connections].map((c) => c.shutdown()));
+        await this.observer?.dispose();
         await new Promise((resolve) => this.server.close(resolve));
     }
 
@@ -208,6 +337,11 @@ export class VoiceWorker {
     /** What every bot's LiveKit participant is subscribed to right now (for tests: it must only ever be permitted microphones). */
     roomSubscriptions(): ReturnType<RoomTransport['subscriptions']> {
         return [...this.connections].flatMap((c) => c.roomSubscriptions());
+    }
+
+    /** Who the media server has told the worker is connected to its rooms, besides the bot. */
+    roomParticipants(): string[] {
+        return [...this.connections].flatMap((c) => c.roomParticipants());
     }
 
     sessionCount(): number {
@@ -235,6 +369,7 @@ export class VoiceWorker {
             uptimeSeconds: Math.round(process.uptime()),
             counters: this.counters.snapshot(),
             latency: this.latency.snapshot(),
+            ...(this.observer ? { speechObserver: this.observer.stats() } : {}),
         };
     }
 
@@ -258,8 +393,10 @@ export class VoiceWorker {
         return Math.round(value * 10) / 10;
     }
 
-    sessionHost(send: (message: OutgoingMessage) => void) {
+    sessionHost(send: (message: OutgoingMessage) => void, sessionId?: string) {
         return {
+            ...(this.observer && sessionId !== undefined ? { observerFor: this.observer.session.bind(this.observer, sessionId) } : {}),
+            ...(this.observer && this.options.yieldBots ? { yieldPolicyFor: (botId: string) => (!this.options.yieldBots!.botIds || this.options.yieldBots!.botIds.has(botId) ? this.options.yieldBots!.policy : undefined) } : {}),
             engineId: this.engineId,
             counters: this.counters,
             latency: this.latency,
@@ -426,6 +563,10 @@ class BridgeConnection {
         return [...this.sessions.values()].flatMap((s) => s.room?.subscriptions() ?? []);
     }
 
+    roomParticipants(): string[] {
+        return [...this.sessions.values()].flatMap((s) => s.room?.participants() ?? []);
+    }
+
     ping(): void {
         if (!this.alive) {
             this.worker.counters.inc('bridge_ping_timeouts');
@@ -495,7 +636,7 @@ class BridgeConnection {
                     return;
                 }
                 // The providers are read once, when the session starts; a repeated session.open does not change them
-                session = new Session(msg.sessionId, msg.bubbleId, msg.botId, this.worker.sessionHost((m) => this.send(msg.sessionId, m)), undefined, {
+                session = new Session(msg.sessionId, msg.bubbleId, msg.botId, this.worker.sessionHost((m) => this.send(msg.sessionId, m), msg.sessionId), undefined, {
                     recognition: msg.recognition,
                     speech: msg.speech,
                     expression: msg.expression,
@@ -504,7 +645,7 @@ class BridgeConnection {
                 this.sessions.set(msg.sessionId, session);
                 this.worker.counters.inc('sessions_opened');
             }
-            this.send(msg.sessionId, { type: 'session.start', bubbleId: session.bubbleId, mode: session.defaultMode, engine: { id: this.worker.engineId, kind: 'ts' } });
+            this.send(msg.sessionId, { type: 'session.start', bubbleId: session.bubbleId, mode: session.defaultMode, engine: { id: this.worker.engineId, kind: 'ts' }, features: [...FEATURES] });
             return;
         }
         const session = this.sessions.get(msg.sessionId);
@@ -532,10 +673,10 @@ class BridgeConnection {
                 session.setRoomPeople(msg.epoch, msg.people);
                 break;
             case 'mode.set':
-                session.setMode(msg.mode, msg.participantId);
+                session.setMode(msg.mode, msg.participantId, msg.requestId);
                 break;
             case 'bot.say':
-                session.say(msg.segmentId, msg.text, msg.maxMs, msg.lang);
+                session.say(msg.segmentId, msg.text, msg.maxMs, msg.lang, msg.onlyFor);
                 break;
             case 'bot.retract':
                 session.retract(msg.segmentId);

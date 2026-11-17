@@ -155,6 +155,55 @@ describe("a bot state lookup that does not answer", () => {
     });
 });
 
+describe("asking whether a bot hears voice notes, when nothing answers", () => {
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("does not know after ten seconds when the Orbit sign-in stalls, so the chat never waits on it", async () => {
+        const api = service();
+        vi.spyOn(
+            api as unknown as { getAdminApiSessionToken: () => Promise<string> },
+            "getAdminApiSessionToken"
+        ).mockImplementation(
+            () =>
+                new Promise<string>(() => {
+                    // never answers, and does not listen for an abort
+                })
+        );
+        const asked = api.getBotHears("b1");
+        await vi.advanceTimersByTimeAsync(10000);
+        await expect(asked).resolves.toBeNull();
+    });
+
+    it("gives up and cancels the request when the bot server stalls", async () => {
+        let signal: AbortSignal | undefined;
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+            signal = init?.signal ?? undefined;
+            return new Promise<Response>(() => {
+                // never answers
+            });
+        });
+        const asked = service().getBotHears("b1");
+        await vi.advanceTimersByTimeAsync(10000);
+        await expect(asked).resolves.toBeNull();
+        expect(signal?.aborted).toBe(true);
+    });
+
+    it("answers yes or no when the bot server answers in time", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ hears: true }));
+        await expect(service().getBotHears("b1")).resolves.toBe(true);
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ hears: false }));
+        await expect(service().getBotHears("b1")).resolves.toBe(false);
+    });
+});
+
 describe("an Orbit that does not answer about who may use a bot", () => {
     beforeEach(() => {
         sessionStorage.clear();
@@ -245,6 +294,111 @@ describe("an Orbit that does not answer about who may use a bot", () => {
 
     it.each(requests)("fails %s after a while instead of holding the page", async (_name, call) => {
         vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
+        const failed = expect(call(service())).rejects.toThrow("Orbit did not answer in time");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+    });
+
+    const brickWrites: Array<[string, (api: BotApiService) => Promise<unknown>]> = [
+        ["switching a Brick", (api) => api.setBrickEnabled("b1", false)],
+        ["saving a Brick", (api) => api.changeMyBrick("b1", { name: "Recipes" })],
+        ["making a Brick", (api) => api.makeMyBrick({ name: "Recipes" })],
+        ["deleting a Brick", (api) => api.deleteMyBrick("b1")],
+        ["bringing a Brick back", (api) => api.undoMyBrick("b1")],
+        ["reading a Brick's computer", (api) => api.getBrickComputer("b1")],
+        ["a tap on a Brick's computer", (api) => api.brickComputerAction("b1", "stop")],
+        [
+            "a tap that fills in details",
+            (api) => api.brickComputerAction("b1", "fill-details", { what: "x", where: "y" }),
+        ],
+        ["dismissing a computer notice", (api) => api.dismissBrickComputerNotice("b1", "j1")],
+        ["reading the Bricks of a room", (api) => api.getRoomBricks("/@/team/universe/room")],
+        ["giving a Brick a home", (api) => api.placeBrickHome("b1", "/@/team/universe/room", {})],
+        ["reading where a Brick lives", (api) => api.getBrickHome("b1")],
+        ["taking a Brick out of its room", (api) => api.takeBrickOut("b1")],
+    ];
+
+    it.each(brickWrites)("fails %s in time when Orbit never answers", async (_name, call) => {
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
+        const failed = expect(call(service())).rejects.toThrow("Orbit did not answer in time");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+    });
+
+    it("says a screen request whose answer never ends failed, as it does when there is no answer", async () => {
+        const stalled = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ "Content-Type": "application/json" }),
+            json: () =>
+                new Promise(() => {
+                    // the body never ends
+                }),
+            text: () =>
+                new Promise(() => {
+                    // the body never ends
+                }),
+        } as unknown as Response;
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(stalled);
+        const failed = expect(service().screenTicketForBrick("b1", "input")).resolves.toBe("failed");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+    });
+
+    it("says a screen request that never gets an answer failed, and a computer with no screen has none", async () => {
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
+        const failed = expect(service().screenTicketForBrick("b1", "watch")).resolves.toBe("failed");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+        vi.restoreAllMocks();
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ error: "resting" }), {
+                status: 409,
+                headers: { "Content-Type": "application/json" },
+            })
+        );
+        await expect(service().screenTicketForBrick("b1", "watch")).resolves.toBeUndefined();
+        vi.restoreAllMocks();
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ error: "down" }), {
+                status: 502,
+                headers: { "Content-Type": "application/json" },
+            })
+        );
+        await expect(service().screenTicketForBrick("b1", "watch")).resolves.toBe("failed");
+    });
+
+    it("gives the screen ticket Orbit made, and asks for the mode the person is in", async () => {
+        const fetched = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ ticket: "sct1.abc.def", mode: "input" }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            })
+        );
+        await expect(service().screenTicketForBrick("b1", "input")).resolves.toEqual({ ticket: "sct1.abc.def" });
+        const asked = fetched.mock.calls.find(([url]) =>
+            (typeof url === "string" ? url : url instanceof URL ? url.href : url.url).includes(
+                "/api/bricks/b1/computer/screen"
+            )
+        );
+        expect(JSON.parse(asked?.[1]?.body as string)).toEqual({ mode: "input" });
+    });
+
+    it.each(brickWrites)("fails %s in time when Orbit answers but its body never ends", async (_name, call) => {
+        const stalled = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ "Content-Type": "application/json" }),
+            json: () =>
+                new Promise(() => {
+                    // the body never ends
+                }),
+            text: () =>
+                new Promise(() => {
+                    // the body never ends
+                }),
+        } as unknown as Response;
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(stalled);
         const failed = expect(call(service())).rejects.toThrow("Orbit did not answer in time");
         await vi.advanceTimersByTimeAsync(20000);
         await failed;

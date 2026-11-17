@@ -1,13 +1,16 @@
 // Test harness: a fake person's browser (a werift peer connection that signals the way the game's simple-peer does)
 // and a fake game side for the bot server's relay. No browser, no network beyond loopback, no speech provider.
 import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS, useVP8 } from 'werift';
+import { appendFileSync } from 'node:fs';
 import { Decoder, Encoder } from '@evan/opus';
 import { VoiceCalls, type GameSide } from '../../bots/voice/VoiceCalls.ts';
 import { WorkerLink } from '../../bots/voice/VoiceLink.ts';
-import type { FromWorker, ToWorker, VoiceDraft, VoiceStatus } from '../../bots/voice/protocol.ts';
+import type { FromWorker, ListenInfo, ToWorker, VoiceDraft, VoiceStatus } from '../../bots/voice/protocol.ts';
 import { checkMessage } from '../src/validate.ts';
-import { VoiceWorker } from '../src/server.ts';
+import { VoiceWorker, type WorkerOptions } from '../src/server.ts';
 import type { RecognizerFactory } from '../src/recognizer.ts';
+import type { SpeechObserverSettings } from '../src/speechObserver.ts';
+import { sileroLoader } from '../src/speechObserverRuntime.ts';
 import type { InputSink } from '../src/transport.ts';
 
 export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -33,6 +36,8 @@ export class FakeHuman {
     /** RTP packets of audio that arrived from the other side, and how many decoded to something loud. */
     audioPackets = 0;
     loudFrames = 0;
+    /** Called for every audio packet from the other side as it arrives, with whether it decoded to something loud. */
+    onAudio?: (loud: boolean) => void;
     videoPackets = 0;
     /** Messages the bot sent on the data channel. */
     dataMessages: unknown[] = [];
@@ -72,7 +77,9 @@ export class FakeHuman {
                 this.audioPackets++;
                 try {
                     const pcm = new Int16Array(this.decoder.decode(rtp.payload).slice().buffer);
-                    if (rms(pcm) > 300) this.loudFrames++;
+                    const loud = rms(pcm) > 300;
+                    if (loud) this.loudFrames++;
+                    this.onAudio?.(loud);
                 } catch {
                     /* undecodable */
                 }
@@ -158,7 +165,8 @@ export interface Rig {
 export class FakeGame implements GameSide {
     humans = new Map<string, FakeHuman>();
     disconnects: string[] = [];
-    readonly spaceName = 'proximity-1';
+    /** Also the LiveKit room's name: a test file whose rooms may run beside another file's gives its own (startRig). */
+    spaceName = 'proximity-1';
     readonly botId = 'room_bot';
 
     botSpaceUserId(spaceName: string): string | undefined {
@@ -188,8 +196,12 @@ export class FakeGame implements GameSide {
     /** Where the bot said its voice stood to each person, in order. */
     statuses: [string, VoiceStatus][] = [];
 
-    sendStatus(_space: string, receiverUserId: string, status: VoiceStatus): void {
+    /** Whether the bot said it takes each person's microphone in a group (round 8), in order, when it said anything about it. */
+    listens: [string, ListenInfo][] = [];
+
+    sendStatus(_space: string, receiverUserId: string, status: VoiceStatus, _left?: unknown, listen?: ListenInfo): void {
         this.statuses.push([receiverUserId, status]);
+        if (listen) this.listens.push([receiverUserId, listen]);
     }
 }
 
@@ -203,8 +215,23 @@ export function privateEvent(game: FakeGame, senderId: string, event: { $case: s
     } as never;
 }
 
-export async function startRig(options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number } = {}): Promise<Rig> {
+/**
+ * The whole suite can be run a second time with the speech observer switched on, to show that nothing it tests changes:
+ *   ORT_DISABLE_TELEMETRY=1 VOICE_TEST_SPEECH_OBSERVER_MODEL=<silero_vad.onnx> VOICE_TEST_SPEECH_OBSERVER_RUNTIME=<onnxruntime-node folder> npm test
+ * VOICE_TEST_SPEECH_OBSERVER_REPORT=<file> gets one line per worker with what the observer counted, so the run can show it was really on.
+ */
+function observerFromEnv(): SpeechObserverSettings | undefined {
+    const modelPath = process.env.VOICE_TEST_SPEECH_OBSERVER_MODEL;
+    return modelPath ? { load: sileroLoader({ modelPath, runtime: process.env.VOICE_TEST_SPEECH_OBSERVER_RUNTIME }) } : undefined;
+}
+
+export async function startRig(
+    options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number; speechObserver?: SpeechObserverSettings | false; yieldBots?: WorkerOptions['yieldBots']; spaceName?: string } = {}
+): Promise<Rig> {
+    // false: without it even in a run of the whole suite with it on (the test that compares with and without)
+    const speechObserver = options.speechObserver === false ? undefined : (options.speechObserver ?? observerFromEnv());
     const worker = new VoiceWorker({
+        speechObserver,
         port: 0,
         host: '127.0.0.1',
         secret: options.secret,
@@ -215,9 +242,42 @@ export async function startRig(options: { secret?: string; maxLanes?: number; in
         recognizer: options.recognizer,
         maxUtteranceSeconds: options.maxUtteranceSeconds,
         maxReplySeconds: options.maxReplySeconds,
+        yieldBots: options.yieldBots,
     });
     const workerPort = await worker.listen();
+    const report = process.env.VOICE_TEST_SPEECH_OBSERVER_REPORT;
+    if (report && speechObserver) {
+        const close = worker.close.bind(worker);
+        worker.close = async () => {
+            const c = worker.counters;
+            appendFileSync(
+                report,
+                `${JSON.stringify({
+                    loaded: c.get('observer_loaded'),
+                    unavailable: c.get('observer_unavailable'),
+                    completed: c.get('observer_windows_completed'),
+                    accepted: c.get('observer_windows_accepted'),
+                    revoked: c.get('observer_windows_revoked'),
+                    stale: c.get('observer_windows_stale'),
+                    expired: c.get('observer_windows_expired'),
+                    failed: c.get('observer_windows_failed'),
+                    streams: c.get('observer_streams'),
+                    ended: c.get('observer_streams_ended'),
+                    errors: c.get('observer_errors'),
+                    timedOut: c.get('observer_timed_out'),
+                    overflowMs: Math.round(c.get('observer_overflow_ms')),
+                    expiredMs: Math.round(c.get('observer_expired_ms')),
+                    refusedAfterClose: c.get('observer_refused_closed'),
+                    baseline: c.get('observer_baseline'),
+                    firings: c.get('observer_firings'),
+                    agree: c.get('observer_agree'),
+                })}\n`
+            );
+            await close();
+        };
+    }
     const game = new FakeGame();
+    if (options.spaceName) game.spaceName = options.spaceName;
     const violations: string[] = [];
     const fromWorker: FromWorker[] = [];
     const toWorker: ToWorker[] = [];

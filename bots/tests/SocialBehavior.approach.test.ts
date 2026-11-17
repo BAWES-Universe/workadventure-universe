@@ -232,7 +232,7 @@ describe('SocialBehavior approach', () => {
 describe('SocialBehavior greetings', () => {
     function createAi() {
         return {
-            generateBotResponseStream: vi.fn(async function* (..._args: unknown[]) {
+            generateGreetingStream: vi.fn(async function* (..._args: unknown[]) {
                 yield { content: 'Hi!', done: true };
             }),
         };
@@ -250,9 +250,9 @@ describe('SocialBehavior greetings', () => {
         await behavior.onSpaceUserJoined(SPACE, { id: 1, name: 'Player 1', spaceUserId: 'room_1' } as any);
         // onMemoryReady only runs for users with a uuid, so trigger the deferred greeting directly
         (behavior as any).onMemoryReady(SPACE, { id: 1 });
-        await vi.waitFor(() => expect(ai.generateBotResponseStream).toHaveBeenCalled());
+        await vi.waitFor(() => expect(ai.generateGreetingStream).toHaveBeenCalled());
 
-        const prompt = ai.generateBotResponseStream.mock.calls[0][2] as string;
+        const prompt = ai.generateGreetingStream.mock.calls[0][2] as string;
         expect(prompt).toContain('walked over to start a conversation');
         expect(prompt).toContain('fits your character');
         expect(prompt).not.toContain('just approached you');
@@ -269,9 +269,9 @@ describe('SocialBehavior greetings', () => {
         behavior.onSpaceJoined(SPACE);
         // No uuid, so BaseBehavior never calls onMemoryReady
         await behavior.onSpaceUserJoined(SPACE, { id: 1, name: 'Player 1', spaceUserId: 'room_1' } as any);
-        await vi.waitFor(() => expect(ai.generateBotResponseStream).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(ai.generateGreetingStream).toHaveBeenCalledTimes(1));
 
-        expect(ai.generateBotResponseStream.mock.calls[0][2]).toContain('walked over to start a conversation');
+        expect(ai.generateGreetingStream.mock.calls[0][2]).toContain('walked over to start a conversation');
     });
 
     it('greets a player it walked up to only once when they have a uuid', async () => {
@@ -284,9 +284,9 @@ describe('SocialBehavior greetings', () => {
 
         behavior.onSpaceJoined(SPACE);
         await behavior.onSpaceUserJoined(SPACE, { id: 1, name: 'Player 1', spaceUserId: 'room_1', uuid: 'u-1' } as any);
-        await vi.waitFor(() => expect(ai.generateBotResponseStream).toHaveBeenCalled());
+        await vi.waitFor(() => expect(ai.generateGreetingStream).toHaveBeenCalled());
 
-        expect(ai.generateBotResponseStream).toHaveBeenCalledTimes(1);
+        expect(ai.generateGreetingStream).toHaveBeenCalledTimes(1);
     });
 
     it('does not mark a greeting as bot-initiated when already talking to the target', () => {
@@ -311,9 +311,9 @@ describe('SocialBehavior greetings', () => {
 
         behavior.onSpaceJoined(SPACE);
         await behavior.onSpaceUserJoined(SPACE, { id: 1, name: 'Player 1', spaceUserId: 'room_1' } as any);
-        await vi.waitFor(() => expect(ai.generateBotResponseStream).toHaveBeenCalled());
+        await vi.waitFor(() => expect(ai.generateGreetingStream).toHaveBeenCalled());
 
-        expect(ai.generateBotResponseStream.mock.calls[0][2]).toContain('just approached you');
+        expect(ai.generateGreetingStream.mock.calls[0][2]).toContain('just approached you');
     });
 
     it('does not greet a player the owner refused, and does not ask the AI', async () => {
@@ -328,7 +328,7 @@ describe('SocialBehavior greetings', () => {
         await vi.waitFor(() => expect(bot.mayGreet).toHaveBeenCalledWith(SPACE, 1));
         await new Promise((resolve) => setTimeout(resolve, 20));
 
-        expect(ai.generateBotResponseStream).not.toHaveBeenCalled();
+        expect(ai.generateGreetingStream).not.toHaveBeenCalled();
         expect(bot.sendStreamMessage).not.toHaveBeenCalled();
     });
 
@@ -341,7 +341,7 @@ describe('SocialBehavior greetings', () => {
 
         behavior.onSpaceJoined(SPACE);
 
-        expect(ai.generateBotResponseStream).not.toHaveBeenCalled();
+        expect(ai.generateGreetingStream).not.toHaveBeenCalled();
         expect((behavior as any).activeConversations.size).toBe(0);
     });
 
@@ -369,6 +369,6 @@ describe('SocialBehavior greetings', () => {
         await behavior.onChatMessage(SPACE, 'still there?', 1);
 
         expect((behavior as any).activeConversations.has(1)).toBe(true);
-        expect(ai.generateBotResponseStream).not.toHaveBeenCalled();
+        expect(ai.generateGreetingStream).not.toHaveBeenCalled();
     });
 });

@@ -30,6 +30,8 @@ const { resumeAll, microphone } = vi.hoisted(() => {
         },
     };
 });
+const { cues } = vi.hoisted(() => ({ cues: [] as string[] }));
+vi.mock("../../../Chat/Bots/VoiceCues", () => ({ playVoiceCue: (cue: string) => cues.push(cue) }));
 vi.mock("../../../WebRtc/AudioContextManager", () => ({ audioContextManager: { resumeAll: () => resumeAll() } }));
 vi.mock("../../../Stores/MediaStore", () => ({
     requestedMicrophoneState: { subscribe: (run: (value: boolean) => void) => microphone.subscribe(run) },
@@ -72,12 +74,14 @@ const nora = user("b1", { uuid: "bot-1", tags: ["bot", "voice-bot"], name: "Nora
 function fakeSpace() {
     const users = writable(new Map<string, SpaceUserExtended>([["me", user("me")]]));
     const statuses = new Subject<unknown>();
+    const streams = new Subject<unknown>();
     const space = {
         getName: () => "bubble-1",
         mySpaceUserId: "me",
         destroyed: false,
         usersStore: users,
         observePrivateEvent: () => statuses,
+        observePublicEvent: () => streams,
         emitPrivateMessage: vi.fn(),
     } as unknown as SpaceInterface;
     return {
@@ -89,6 +93,12 @@ function fakeSpace() {
                 $case: "botVoiceStatus",
                 sender: nora,
                 botVoiceStatus: { botId: "1", botName: "Nora", state, followUpSeconds, ...extra },
+            }),
+        speak: (responseId: string, speaking: boolean) =>
+            streams.next({
+                $case: "spaceStreamMessage",
+                sender: "b1",
+                spaceStreamMessage: { responseId, token: "", isFinal: true, isError: false, reset: false, speaking },
             }),
     };
 }
@@ -171,7 +181,7 @@ describe("the Voice button", () => {
         expect(button().classList.contains("dim")).toBe(true);
     });
 
-    it("asks for a tap when the sound is blocked, and the tap starts the sound instead of opening the menu", async () => {
+    it("says the sound is blocked, opens the options quietly on a tap, and plays the sound only from Play bot audio (round 8)", async () => {
         t.join(nora);
         t.say("on");
         const element = {
@@ -181,16 +191,32 @@ describe("the Voice button", () => {
             removeEventListener: vi.fn(),
         };
         const unwatch = watchBotAudio("b1", element as unknown as HTMLMediaElement);
-        await settle();
-        expect(label()).toBe("Voice with Nora: tap to hear");
-        element.play.mockResolvedValue(undefined);
-        button().click();
-        expect(element.play).toHaveBeenCalledTimes(2);
-        expect(resumeAll).toHaveBeenCalled();
-        await settle();
-        expect(target.querySelector("[data-testid=voice-menu]")).toBeNull();
-        expect(label()).toBe("Voice with Nora: talk and listen");
-        unwatch();
+        try {
+            await settle();
+            expect(label()).toBe("Voice with Nora: tap to hear");
+            element.play.mockClear();
+            // Opening the options is quiet: no sound starts
+            button().click();
+            await settle();
+            expect(element.play).not.toHaveBeenCalled();
+            expect(target.querySelector("[data-testid=voice-menu]")).not.toBeNull();
+            const play = target.querySelector<HTMLButtonElement>("[data-testid=voice-play-audio]")!;
+            expect(play.textContent?.trim()).toBe("Play bot audio");
+            expect(document.activeElement).toBe(play);
+            // Its own tap starts it; it stays offered until the sound really plays
+            play.click();
+            expect(element.play).toHaveBeenCalledTimes(1);
+            expect(resumeAll).toHaveBeenCalled();
+            await settle();
+            expect(target.querySelector("[data-testid=voice-play-audio]")).not.toBeNull();
+            element.play.mockResolvedValue(undefined);
+            target.querySelector<HTMLButtonElement>("[data-testid=voice-play-audio]")!.click();
+            await settle();
+            expect(target.querySelector("[data-testid=voice-play-audio]")).toBeNull();
+            expect(label()).toBe("Voice with Nora: talk and listen");
+        } finally {
+            unwatch();
+        }
     });
 
     describe("its menu", () => {
@@ -385,6 +411,220 @@ describe("the Voice button", () => {
             await settle();
             expect(menu()).toBeNull();
             expect(button().disabled).toBe(true);
+        });
+    });
+
+    describe("listening in a group (round 8)", () => {
+        const bar = () => target.querySelector<HTMLElement>("[data-testid=voice-bar]");
+        const barText = () => bar()?.textContent?.replace(/\s+/g, " ").trim();
+        const mark = () => target.querySelector<HTMLElement>("[data-testid=voice-mark]")?.dataset.mark;
+        const sent = () =>
+            (t.space.emitPrivateMessage as ReturnType<typeof vi.fn>).mock.calls.map(
+                ([message]) => (message as { voiceModeChoice: { listen: string } }).voiceModeChoice.listen
+            );
+        const mishari = user("p2", { name: "Mishari" });
+
+        beforeEach(async () => {
+            cues.length = 0;
+            t.join(nora, mishari);
+            t.say("on", 30, { listening: "", listeningReason: "" });
+            await settle();
+        });
+
+        it("says listening paused when a friend joins, with a soft sound, then folds into the button with a mic-off mark", async () => {
+            vi.useFakeTimers();
+            try {
+                t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+                await vi.advanceTimersByTimeAsync(0);
+                expect(barText()).toBe("Nora's listening paused Tap for voice options");
+                expect(cues).toEqual(["paused"]);
+                expect(mark()).toBe("off");
+                expect(label()).toBe("Nora, not listening to you. Opens voice options.");
+                expect(target.querySelector("[data-testid=voice-announce]")?.textContent).toBe(
+                    "Nora's listening paused. Tap for voice options"
+                );
+                // The same news again shows nothing new
+                t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+                await vi.advanceTimersByTimeAsync(7900);
+                expect(bar()).not.toBeNull();
+                await vi.advanceTimersByTimeAsync(200);
+                expect(bar()).toBeNull();
+                expect(mark()).toBe("off");
+                expect(cues).toEqual(["paused"]);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("opens the options on a tap, with the warning and Keep talking first, which asks only that bot", async () => {
+            t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+            await settle();
+            button().click();
+            await settle();
+            expect(target.querySelector("[data-testid=voice-menu-listening]")?.textContent?.trim()).toBe(
+                "Listening paused · others joined"
+            );
+            const keep = target.querySelector<HTMLButtonElement>("[data-testid=voice-keep-talking]")!;
+            expect(keep.textContent?.trim()).toBe("Keep talking to \u2068Nora\u2069");
+            expect(document.activeElement).toBe(keep);
+            expect(target.querySelector("[data-testid=voice-menu-now] .note")?.textContent).toBe(
+                "While your mic is on, \u2068Nora\u2069 can hear you talking to friends until you stop or leave this room."
+            );
+            // Opening asked nothing
+            expect(sent()).not.toContain("keep");
+            keep.click();
+            await settle();
+            expect(sent().pop()).toBe("keep");
+            expect(target.querySelector("[data-testid=voice-menu]")).toBeNull();
+        });
+
+        it("turns on, then says it listens with the ready sound and keeps the ring; Stop listening comes first in the options", async () => {
+            t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+            await settle();
+            t.say("on", 30, { listening: "pending", listeningReason: "" });
+            await settle();
+            expect(barText()).toBe("Turning on… One moment");
+            expect(button().classList.contains("ring-wait")).toBe(true);
+            t.say("on", 30, { listening: "on", listeningReason: "" });
+            await settle();
+            expect(barText()).toBe("Listening to you Hears all you say");
+            expect(cues).toEqual(["paused", "ready"]);
+            expect(button().classList.contains("ring-on")).toBe(true);
+            expect(mark()).toBe("on");
+            expect(label()).toBe("Nora, listening to you. Opens voice options.");
+            button().click();
+            await settle();
+            const actions = [...target.querySelectorAll<HTMLButtonElement>("[data-testid=voice-menu-now] button")];
+            expect(actions.map((a) => a.textContent?.trim())).toEqual(["Stop listening"]);
+            expect(document.activeElement).toBe(actions[0]);
+            actions[0].click();
+            await settle();
+            expect(sent().pop()).toBe("stop");
+        });
+
+        it("offers Stop speaking right under Stop listening while a reply is heard, which stops only the reply", async () => {
+            t.say("on", 30, { listening: "on", listeningReason: "" });
+            t.speak("r1", true);
+            await settle();
+            button().click();
+            await settle();
+            const actions = [...target.querySelectorAll<HTMLButtonElement>("[data-testid=voice-menu-now] button")];
+            expect(actions.map((a) => a.textContent?.trim())).toEqual(["Stop listening", "Stop speaking"]);
+            expect(target.querySelector("[data-testid=voice-menu-listening]")?.textContent?.trim()).toBe(
+                "Listening to you · speaking"
+            );
+            actions[1].click();
+            await settle();
+            const last = (t.space.emitPrivateMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+                voiceModeChoice: { listen: string; stopSpeaking: string };
+            };
+            expect(last.voiceModeChoice).toMatchObject({ listen: "", stopSpeaking: "r1" });
+            expect(target.querySelector("[data-testid=voice-menu]")).toBeNull();
+        });
+
+        it("offers Cancel while turning on", async () => {
+            t.say("on", 30, { listening: "pending", listeningReason: "" });
+            await settle();
+            button().click();
+            await settle();
+            target.querySelector<HTMLButtonElement>("[data-testid=voice-cancel-listening]")!.click();
+            await settle();
+            expect(sent().pop()).toBe("stop");
+        });
+
+        it("says it may still hear you while a stop is not confirmed, with the mic mark still on", async () => {
+            t.say("on", 30, { listening: "on", listeningReason: "" });
+            await settle();
+            t.say("on", 30, { listening: "checking", listeningReason: "" });
+            await settle();
+            expect(barText()).toBe("Checking connection Nora may still hear you");
+            expect(mark()).toBe("on");
+            expect(target.querySelector("[data-testid=voice-mark]")?.classList.contains("amber")).toBe(true);
+            t.say("on", 30, { listening: "off", listeningReason: "" });
+            await settle();
+            expect(bar()).toBeNull();
+            expect(mark()).toBe("off");
+        });
+
+        it("tells screen readers a change in listening that comes without a bar, not the bar before it", async () => {
+            const announce = () => target.querySelector("[data-testid=voice-announce]")?.textContent;
+            t.say("on", 30, { listening: "pending", listeningReason: "" });
+            await settle();
+            t.say("on", 30, { listening: "on", listeningReason: "" });
+            await settle();
+            const heard = announce();
+            expect(heard).toBe("Listening to you. Hears all you say");
+            t.say("on", 30, { listening: "stopping", listeningReason: "" });
+            await settle();
+            expect(announce()).not.toBe(heard);
+            expect(announce()).toBe("Nora, checking connection, it may still hear you. Opens voice options.");
+        });
+
+        it("tells someone who comes into a group that the bot isn't listening, once a visit", async () => {
+            t.say("on", 30, { listening: "off", listeningReason: "" });
+            await settle();
+            expect(barText()).toBe("Nora isn't listening Tap for voice options");
+            expect(cues).toEqual([]);
+            t.say("on", 30, { listening: "", listeningReason: "" });
+            await settle();
+            t.say("on", 30, { listening: "off", listeningReason: "" });
+            await settle();
+            expect(bar()).toBeNull();
+        });
+
+        it("tells it once the bot's voice is on, when the first word came while it was connecting", async () => {
+            t.say("connecting", 30, { listening: "off", listeningReason: "" });
+            await settle();
+            expect(bar()).toBeNull();
+            t.say("on", 30, { listening: "off", listeningReason: "" });
+            await settle();
+            expect(barText()).toBe("Nora isn't listening Tap for voice options");
+        });
+
+        it("brings back no paused bar and no sound when the bot reconnects with the same news", async () => {
+            t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+            await settle();
+            expect(cues).toEqual(["paused"]);
+            t.say("connecting", 30, { listening: "off", listeningReason: "others_joined" });
+            await settle();
+            expect(bar()).toBeNull();
+            t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+            await settle();
+            expect(bar()).toBeNull();
+            expect(mark()).toBe("off");
+            expect(cues).toEqual(["paused"]);
+        });
+
+        it("folds a bar that came after the options closed from a tap, though the focus went back to the button", async () => {
+            vi.useFakeTimers();
+            try {
+                t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+                await vi.advanceTimersByTimeAsync(10);
+                button().click();
+                await vi.advanceTimersByTimeAsync(10);
+                target.querySelector<HTMLButtonElement>("[data-testid=voice-keep-talking]")!.click();
+                await vi.advanceTimersByTimeAsync(10);
+                expect(document.activeElement).toBe(button());
+                t.say("on", 30, { listening: "pending", listeningReason: "" });
+                t.say("on", 30, { listening: "on", listeningReason: "" });
+                await vi.advanceTimersByTimeAsync(10);
+                expect(barText()).toBe("Listening to you Hears all you say");
+                await vi.advanceTimersByTimeAsync(4000);
+                expect(bar()).toBeNull();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("keeps today's options for a mode without the microphone: no bar, no listening top", async () => {
+            voiceChoiceStore.choose("type_and_listen");
+            t.say("on", 30, { listening: "", listeningReason: "" });
+            await settle();
+            expect(bar()).toBeNull();
+            button().click();
+            await settle();
+            expect(target.querySelector("[data-testid=voice-menu-now]")).toBeNull();
+            expect(target.querySelector("[data-testid=voice-menu-status]")).not.toBeNull();
         });
     });
 });

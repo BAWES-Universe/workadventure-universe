@@ -1,15 +1,29 @@
 import type { IContent, MatrixEvent, Room } from "matrix-js-sdk";
 import { Direction, EventStatus, EventType, MatrixEventEvent, MsgType, RelationType } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
+import { readAnsweredNearby } from "../../Bots/PrivateAnswer";
+import {
+    readAppOffer,
+    readBrickIdeas,
+    readBrickMade,
+    readBrickOffer,
+    readGuestChat,
+    type AppOffer,
+    type BrickOffer,
+    type GuestChatLine,
+    type MadeBrick,
+} from "../../Bricks/Brick";
+import { LL } from "../../../../i18n/i18n-svelte";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
+import { readNoteTranscript, type NoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
 import { fromMatrixWaveform, secondsFromMatrixDuration } from "../../VoiceNote/VoiceNote";
@@ -63,10 +77,24 @@ export class MatrixChatMessage implements ChatMessage {
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
     readonly artifact: ArtifactCard | undefined;
+    readonly answeredNearby: boolean;
+    /** A Brick's fixed "what I can do" answer (#1995): shown in the person's language, with its ideas under it. */
+    readonly brickIdeas: boolean;
+    /** The Bricks a Brick made while writing this answer (#1996). */
+    readonly brickMade: MadeBrick[];
+    /** A Brick's suggestion of a Brick for a job that keeps coming back (#1996). */
+    readonly brickOffer: BrickOffer | undefined;
+    /** A Brick's offer to connect an App (#2001): "Connect your calendar?". */
+    readonly appOffer: AppOffer | undefined;
+    /** The chat someone had with the Brick for guests, brought along when they signed in (#1997). */
+    readonly guestChat: GuestChatLine[];
     /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
     readonly ask: Writable<BotAsk | undefined>;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
     readonly steps: Writable<BotSteps | undefined>;
+    /** What a bot heard in a voice note, when this message is the notice that carries it (never drawn). */
+    readonly transcriptOf: NoteTranscriptNotice | undefined;
+    readonly transcriptNotice: boolean;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
     private isShown = false;
@@ -87,7 +115,15 @@ export class MatrixChatMessage implements ChatMessage {
             room.getMember(event.getSender() ?? "")?.name ?? ""
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
+        this.answeredNearby = readAnsweredNearby(event.getSender(), event.getOriginalContent());
+        this.brickIdeas = readBrickIdeas(event.getSender(), event.getOriginalContent());
+        this.brickMade = readBrickMade(event.getSender(), event.getOriginalContent());
+        this.brickOffer = readBrickOffer(event.getSender(), event.getOriginalContent());
+        this.appOffer = readAppOffer(event.getSender(), event.getOriginalContent());
+        this.guestChat = readGuestChat(event.getSender(), event.getOriginalContent());
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
+        this.transcriptOf = readNoteTranscript(event.getSender(), this.stepsContent());
+        this.transcriptNotice = this.transcriptOf !== undefined;
         this.ask = writable(readBotAsk(event.getSender(), this.stepsContent(), this.latestContentReceivedAt()));
         this.date = event.getDate();
         this.sender = this.getSender();
@@ -271,7 +307,15 @@ export class MatrixChatMessage implements ChatMessage {
             };
         }
 
-        return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
+        return {
+            // The fixed answer is the same sentence for everyone: shown in this person's language, like the ideas under
+            // it. The words it was sent with stand in while no language is loaded.
+            body: (this.brickIdeas && get(LL).chat.brick.ideasLine()) || content.body,
+            url: undefined,
+            urls: undefined,
+            filename: undefined,
+            fileNames: undefined,
+        };
     }
 
     /** Whether the message is a voice message, and the length and shape its sender wrote with it (MSC1767). */
@@ -453,6 +497,12 @@ export class MatrixChatMessage implements ChatMessage {
         if (typeof editedAt !== "number") return sent;
         // The gap between the two clocks is the same for both events: this event's time here against its time there
         return editedAt + (sent - this.event.getTs());
+    }
+
+    /** What a bot heard in this voice note (from the notice that points at it), shown inside its bubble. */
+    public setTranscript(transcript: NoteTranscript | undefined) {
+        if (this.type !== "audio") return;
+        this.content.update((content) => ({ ...content, transcript }));
     }
 
     /** An update of a bot's steps line: only its own sender can change it. */

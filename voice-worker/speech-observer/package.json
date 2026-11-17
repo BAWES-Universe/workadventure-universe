@@ -1,0 +1,10 @@
+{
+  "name": "@workadventure/voice-worker-speech-observer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The runtime for the voice worker's speech observer, kept apart from the worker's own dependencies. Installed only into the worker's image; off unless the worker is started with VOICE_SPEECH_OBSERVER=1.",
+  "license": "MIT",
+  "dependencies": {
+    "onnxruntime-node": "1.31.1"
+  }
+}
