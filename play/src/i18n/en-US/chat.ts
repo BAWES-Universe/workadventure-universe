@@ -1424,6 +1424,10 @@ const chat: BaseTranslation = {
             resultWaiting: "Being sent to your chat",
             resultNotDelivered: "Not in your chat. It's saved here.",
             resultFailed: "Couldn't open that file. Try again.",
+            resultSent: "Sent to your chat",
+            // Results whose Brick was deleted: they are still yours
+            deletedBrickFiles: "Files from deleted Bricks",
+            deletedBrickFilesNote: "These are yours. They stay for a while, or until you delete them.",
             sent: "You sent it",
             download: "Download",
             delete: "Delete",

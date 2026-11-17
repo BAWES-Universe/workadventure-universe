@@ -6,18 +6,23 @@ const orbit = vi.hoisted(() => ({
     deleteBrickFile: vi.fn<(brickId: string, fileId: string) => Promise<unknown>>(),
     getBrickResult: vi.fn<(brickId: string, fileId: string) => Promise<Blob>>(),
     deleteBrickResult: vi.fn<(brickId: string, fileId: string) => Promise<unknown>>(),
+    getDeletedBrickResults: vi.fn<() => Promise<unknown>>(),
+    getOwnBrickResult: vi.fn<(fileId: string) => Promise<Blob>>(),
+    deleteOwnBrickResult: vi.fn<(fileId: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: orbit }));
 vi.mock("../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "http://uploader.test/" }));
 
 import {
     brickFilesList,
+    deletedBrickFilesList,
     downloadEverything,
     downloadFile,
     fileIconKind,
     fileLink,
     fileSize,
     parseBrickFiles,
+    parseDeletedBrickResults,
     zipNames,
 } from "../BrickFiles";
 
@@ -338,6 +343,58 @@ describe("a Brick's files (#2003)", () => {
                 click.mockRestore();
                 URL.createObjectURL = originalCreate;
             }
+        });
+    });
+
+    describe("what a deleted Brick's computer made (A43)", () => {
+        const gone = (over: Record<string, unknown> = {}) => result({ brick: "A deleted Brick", ...over });
+
+        it("reads them with the Brick's label, and leaves out what is not whole", () => {
+            const read = parseDeletedBrickResults({ results: [gone({ id: "g1" }), gone({ id: "", name: "x" }), null] });
+            expect(read.map((one) => [one.id, one.brick])).toEqual([["g1", "A deleted Brick"]]);
+            expect(parseDeletedBrickResults(null)).toEqual([]);
+            expect(parseDeletedBrickResults({ results: "nope" })).toEqual([]);
+        });
+
+        it("lists them, opens one with the person's own sign-in, and says false when it cannot be read", async () => {
+            orbit.getDeletedBrickResults.mockResolvedValue({ results: [gone({ id: "g1" })] });
+            const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+            const originalCreate = URL.createObjectURL;
+            URL.createObjectURL = vi.fn(() => "blob:file");
+            try {
+                const list = deletedBrickFilesList();
+                await list.load();
+                expect(get(list.results).map((one) => one.id)).toEqual(["g1"]);
+                orbit.getOwnBrickResult.mockResolvedValueOnce(new Blob(["%PDF"]));
+                expect(await list.downloadResult({ id: "g1", name: "visa-receipt.pdf" })).toBe(true);
+                expect(orbit.getOwnBrickResult).toHaveBeenCalledWith("g1");
+                orbit.getOwnBrickResult.mockRejectedValueOnce(new Error("offline"));
+                expect(await list.downloadResult({ id: "g1", name: "visa-receipt.pdf" })).toBe(false);
+            } finally {
+                click.mockRestore();
+                URL.createObjectURL = originalCreate;
+            }
+        });
+
+        it("deletes one at once, and brings it back when Orbit refuses", async () => {
+            orbit.getDeletedBrickResults.mockResolvedValue({ results: [gone({ id: "g1" }), gone({ id: "g2" })] });
+            const list = deletedBrickFilesList();
+            await list.load();
+            orbit.deleteOwnBrickResult.mockResolvedValueOnce({ deleted: true });
+            const done = list.deleteResult("g1");
+            expect(get(list.results).map((one) => one.id)).toEqual(["g2"]);
+            expect(await done).toBe(true);
+            expect(orbit.deleteOwnBrickResult).toHaveBeenCalledWith("g1");
+            orbit.deleteOwnBrickResult.mockRejectedValueOnce(new Error("offline"));
+            expect(await list.deleteResult("g2")).toBe(false);
+            expect(get(list.results).map((one) => one.id)).toEqual(["g2"]);
+        });
+
+        it("shows nothing it did not read when Orbit cannot be asked", async () => {
+            orbit.getDeletedBrickResults.mockRejectedValue(new Error("offline"));
+            const list = deletedBrickFilesList();
+            await list.load();
+            expect(get(list.results)).toEqual([]);
         });
     });
 });

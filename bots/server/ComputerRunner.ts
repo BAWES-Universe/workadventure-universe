@@ -120,8 +120,14 @@ export function whyOf(words: string): string | null {
     return last ? last.slice(-300) : null;
 }
 
+/**
+ * The folder, from the home folder, where a job saves what it makes for the person. It is the job's own (its id is in the name): Orbit hands over what is in it and
+ * nothing else, so which job made a file never depends on when the file was touched. Orbit uses the same name (`outputFolder` in lib/computer-file-cards).
+ */
+export const outputFolderOf = (jobId: string): string => `Outputs/${jobId}`;
+
 /** The first turn of a job: the job in the person's words, and how to say how it ended. */
-export function jobPrompt(job: { title: string; brief: string | null; writes: boolean }): string {
+export function jobPrompt(job: { jobId: string; title: string; brief: string | null; writes: boolean }): string {
     return [
         'You are working on a computer that belongs to a person. Do this job for them, in the browser and on this computer:',
         '',
@@ -132,6 +138,9 @@ export function jobPrompt(job: { title: string; brief: string | null; writes: bo
         'Rules:',
         '- Paying, submitting a form for good, and the person\'s own details (names, numbers, documents, passwords, card numbers) are never yours alone. Stop and ask for them.',
         '- When you need the person (their details, to sign in, to upload a file, to pay, to submit, or an answer), stop and end your reply with one line: [[handover KIND | what | where]]. KIND is one of details, signin, upload, pay, submit, answer. For details, say exactly what you are ready to put in and the site it goes on; for the rest `what` and `where` can be left out.',
+        ...(job.writes
+            ? [`- If the job makes a file for the person (a receipt, a report, a picture, a document), save it in the folder ${outputFolderOf(job.jobId)} in your home folder, and make that folder if it is not there. Only what is in that folder is given to the person, so put nothing else in it.`]
+            : []),
         '- When the job is finished, end your reply with [[done]].',
         '- If you cannot go on, say why in one plain sentence and end your reply with [[failed]].',
         '- Keep your replies short. Do not repeat what you did. Never write a password, key or number the person gave you in your reply.',

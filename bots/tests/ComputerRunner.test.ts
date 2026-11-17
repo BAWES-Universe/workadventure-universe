@@ -8,6 +8,7 @@ import {
     endingOf,
     whyOf,
     jobPrompt,
+    outputFolderOf,
     relayUrlFromEnv,
     runnerOrbitFor,
     type RunnableJob,
@@ -104,6 +105,16 @@ describe('how the agent says its turn ended', () => {
         expect(prompt).toContain('[[done]]');
         expect(prompt).not.toContain('only to look');
         expect(jobPrompt({ ...JOB, writes: false, brief: null })).toContain('only to look');
+    });
+
+    it('tells a job that writes the folder of its own to save what it makes in, and a look-only job none: the folder is what Orbit hands over', () => {
+        expect(outputFolderOf('job-1')).toBe('Outputs/job-1');
+        expect(jobPrompt(JOB)).toContain('save it in the folder Outputs/job-1 in your home folder');
+        expect(jobPrompt(JOB)).toContain('Only what is in that folder is given to the person');
+        // Another job has another folder
+        expect(jobPrompt({ ...JOB, jobId: 'job-2' })).toContain('Outputs/job-2');
+        expect(jobPrompt({ ...JOB, jobId: 'job-2' })).not.toContain('Outputs/job-1');
+        expect(jobPrompt({ ...JOB, writes: false })).not.toContain('Outputs/');
     });
 });
 

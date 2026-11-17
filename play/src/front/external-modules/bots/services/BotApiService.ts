@@ -1773,6 +1773,22 @@ export class BotApiService {
         );
     }
 
+    /** What a person's Bricks' computers made, whose Brick is gone: theirs, with "A deleted Brick" on them. */
+    async getDeletedBrickResults(): Promise<unknown> {
+        return await this.brickWrite("/api/bricks/results", {});
+    }
+
+    /** One of the person's own results, whichever Brick made it (it may be gone), as bytes. Throws when Orbit refuses or has no such file. */
+    async getOwnBrickResult(fileId: string): Promise<Blob> {
+        const response = await this.fetch(`/api/bricks/results/${encodeURIComponent(fileId)}`);
+        return await response.blob();
+    }
+
+    /** Deletes one of the person's own results: the kept copy goes. */
+    async deleteOwnBrickResult(fileId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/results/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+    }
+
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
     async undoMyBrick(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });

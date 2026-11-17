@@ -46,6 +46,8 @@ export interface BrickResult {
     /** When it was made, in milliseconds. */
     at: number;
     delivery: ResultDelivery;
+    /** Which Brick made it, when the list is not one Brick's own Files: "A deleted Brick" for one that is gone. */
+    brick?: string;
 }
 
 export interface BrickFiles {
@@ -109,6 +111,7 @@ function parseResult(value: unknown): BrickResult | null {
         name: one.name,
         sizeBytes: num(one.sizeBytes),
         job: typeof one.job === "string" ? one.job : "",
+        ...(typeof one.brick === "string" && one.brick ? { brick: one.brick } : {}),
         at,
         // A state it does not know is shown as not in the chat: never as delivered
         delivery: one.delivery === "delivered" ? "delivered" : one.delivery === "waiting" ? "waiting" : "not_delivered",
@@ -117,6 +120,11 @@ function parseResult(value: unknown): BrickResult | null {
 
 const parseResults = (value: unknown): BrickResult[] =>
     Array.isArray(value) ? value.flatMap((one) => parseResult(one) ?? []) : [];
+
+/** Orbit's answer for the results whose Brick is gone: the person's own files, with "A deleted Brick" on them. Anything not whole is left out. */
+export function parseDeletedBrickResults(value: unknown): BrickResult[] {
+    return parseResults((value as { results?: unknown } | null)?.results);
+}
 
 /** Orbit's answer for a Brick's files. Anything that is not whole is left out. */
 export function parseBrickFiles(value: unknown): BrickFiles {
@@ -377,6 +385,61 @@ export function brickFilesList(brickId: string): BrickFilesList {
                 return true;
             } catch (error) {
                 console.warn("Could not delete a file", error);
+                return false;
+            } finally {
+                pending.delete(fileId);
+                show();
+            }
+        },
+    };
+}
+
+export interface DeletedBrickFilesList {
+    results: Readable<BrickResult[]>;
+    load(): Promise<void>;
+    /** Downloads one, read with the person's own sign-in. False when it could not be read. */
+    downloadResult(result: Pick<BrickResult, "id" | "name">): Promise<boolean>;
+    /** Deletes one: it goes at once and comes back if Orbit refuses. True when it is gone. */
+    deleteResult(fileId: string): Promise<boolean>;
+}
+
+/**
+ * What a person's Bricks' computers made, that no Brick of theirs is left to show (its Brick was deleted). The files are theirs and stay for the days in Limits or
+ * until they delete them. A read that fails shows nothing it did not read.
+ */
+export function deletedBrickFilesList(): DeletedBrickFilesList {
+    const results = writable<BrickResult[]>([]);
+    let known: BrickResult[] = [];
+    const pending = new Set<string>();
+    const show = () => results.set(known.filter((result) => !pending.has(result.id)));
+    return {
+        results: { subscribe: results.subscribe },
+        async load() {
+            try {
+                known = parseDeletedBrickResults(await botApiService.getDeletedBrickResults());
+                show();
+            } catch (error) {
+                console.warn("Could not read the files of deleted Bricks", error);
+            }
+        },
+        async downloadResult(result) {
+            try {
+                saveBlob(result.name, await botApiService.getOwnBrickResult(result.id));
+                return true;
+            } catch (error) {
+                console.warn("Could not download a result", error);
+                return false;
+            }
+        },
+        async deleteResult(fileId) {
+            pending.add(fileId);
+            show();
+            try {
+                await botApiService.deleteOwnBrickResult(fileId);
+                known = known.filter((result) => result.id !== fileId);
+                return true;
+            } catch (error) {
+                console.warn("Could not delete a result", error);
                 return false;
             } finally {
                 pending.delete(fileId);
