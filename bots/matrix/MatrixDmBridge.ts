@@ -303,6 +303,20 @@ async function withinMs(work: Promise<unknown>, ms: number): Promise<void> {
     }
 }
 
+/** One purge reads a room's history this many events at a time, and at most this many pages (a very long room fails, to be tried again). */
+const PURGE_PAGE_SIZE = 100;
+const PURGE_PAGES_MAX = 5000;
+
+/**
+ * Whether an event the Brick sent is one a purge redacts: every message-like event it sent (messages, reactions, stickers, anything it
+ * sent that is not state), and its own join events that still carry a name or a picture. Never a redaction (nothing to take out of one).
+ */
+function ownEventToRedact(event: MatrixEvent, userId: string): boolean {
+    if (event.type === 'm.room.redaction') return false;
+    if (event.state_key === undefined) return true;
+    return event.type === 'm.room.member' && event.state_key === userId && Boolean(event.content?.displayname || event.content?.avatar_url);
+}
+
 export class MatrixDmBridge implements MatrixEventHandler {
     private roomBots = new Map<string, string>();
     private botNames = new Map<string, string>();
@@ -313,6 +327,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /** Messages waiting for a resting bot when there is no shared store: bot, then room, then the message. */
     private localWaiting = new Map<string, Map<string, { message: string; at: number }>>();
     private draining = new Set<string>();
+    /** Bricks whose chats are being purged right now. */
+    private purging = new Set<string>();
     /** Messages a drain has taken but not started on yet, per bot: on shutdown they go back in line. */
     private drainQueues = new Map<string, MatrixEvent[]>();
     /** Drains running now, per bot: on shutdown the message each is answering gets time to land. */
@@ -874,6 +890,94 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     private botUserId(botId: string): string {
         return `@${BOT_LOCALPART_PREFIX}${botId}:${this.config.domain}`;
+    }
+
+    /**
+     * A deleted Brick whose days are over keeps nothing in chat (Khalid, 17 Nov; register R29). In every room it is in: its name and picture
+     * come off its profile, everything it said is redacted (its messages, reactions, stickers and the older name and picture in its own
+     * join events), then it leaves and forgets the room. What people said stays with them: only the Brick's own events are touched.
+     * Messages left with it while it rested, and what it kept for people in nearby chat, are dropped too.
+     *
+     * Safe to run again: it only ever redacts what is not redacted yet, a room it already left is not in its joined list, and a
+     * redaction retried keeps its own transaction id. True when nothing is left (also when the Brick never had a chat account), false
+     * when anything failed, so the caller asks again. Never throws.
+     */
+    async purgeChats(botId: string): Promise<boolean> {
+        const userId = botMatrixId(this.config.domain, botId);
+        // An id that cannot be a Matrix localpart never had an account
+        if (!userId) return true;
+        if (this.purging.has(botId)) return false;
+        this.purging.add(botId);
+        try {
+            const rooms = await this.client.getJoinedRooms(userId);
+            // Dropped first: nothing kept in memory or in the shared store may answer for this Brick again
+            this.dropKeptFor(botId);
+            await this.deps.waiting?.takeWaitingDms(botId);
+            if (rooms === null) return true;
+            await this.client.clearProfile(userId);
+            if (!(await this.profileIsBlank(userId))) throw new Error('The profile still shows a name or a picture');
+            let allDone = true;
+            for (const roomId of rooms) {
+                try {
+                    await this.purgeRoom(botId, userId, roomId);
+                } catch (error: any) {
+                    allDone = false;
+                    console.warn(`[MatrixDmBridge] Could not purge a deleted Brick's chat ${roomId}:`, error?.message ?? error);
+                }
+            }
+            return allDone;
+        } catch (error: any) {
+            console.warn('[MatrixDmBridge] Could not purge a deleted Brick\'s chats:', error?.message ?? error);
+            return false;
+        } finally {
+            this.purging.delete(botId);
+        }
+    }
+
+    /** Redacts what the Brick said in one room, then leaves and forgets it. Nothing is left before the redactions are all in. */
+    private async purgeRoom(botId: string, userId: string, roomId: string): Promise<void> {
+        const members = await this.client.getJoinedMembers(userId, roomId).catch(() => [] as string[]);
+        let from: string | undefined;
+        for (let page = 0; page < PURGE_PAGES_MAX; page++) {
+            const { events, end } = await this.client.getMessagesPage(userId, roomId, from, PURGE_PAGE_SIZE);
+            for (const event of events) {
+                if (event.sender !== userId || !event.event_id || event.unsigned?.redacted_because) continue;
+                if (!ownEventToRedact(event, userId)) continue;
+                await this.client.redactEvent(userId, roomId, event.event_id, `purge-${event.event_id}`, 'Brick deleted');
+            }
+            if (!end || events.length === 0 || end === from) {
+                from = undefined;
+                break;
+            }
+            from = end;
+        }
+        if (from !== undefined) throw new Error('The room history is longer than one purge reads');
+        await this.client.leaveRoom(userId, roomId, 'Brick deleted');
+        await this.client.forgetRoom(userId, roomId);
+        await this.forgetRoom(roomId);
+        for (const member of members) await this.deps.rooms?.forgetDmRoomOf?.(botId, member).catch(() => undefined);
+    }
+
+    /** True when the homeserver shows the Brick with no name of its own and no picture. */
+    private async profileIsBlank(userId: string): Promise<boolean> {
+        const name = await this.client.getDisplayName(userId);
+        // Matrix may answer with the account's own ID once the name is removed; that holds nothing of the Brick
+        if (name && name !== userId && name !== userId.slice(1, userId.indexOf(':'))) return false;
+        return (await this.client.getAvatarUrl(userId)) === null;
+    }
+
+    /** What this process keeps about a Brick, dropped: its name, answers kept for people, waiting messages, the access it cached. */
+    private dropKeptFor(botId: string): void {
+        const mine = `${botId}|`;
+        this.botNames.delete(botId);
+        this.localWaiting.delete(botId);
+        this.botNotFound.delete(botId);
+        this.drainQueues.delete(botId);
+        for (const map of [this.accessCache, this.nearbyAnswers, this.directRooms, this.directChatClaims] as unknown as Map<string, unknown>[]) {
+            for (const key of [...map.keys()]) if (key.startsWith(mine)) map.delete(key);
+        }
+        for (const [room, bot] of [...this.roomBots]) if (bot === botId) this.roomBots.delete(room);
+        for (const [room, bot] of [...this.unkeptRoomBots]) if (bot === botId) this.unkeptRoomBots.delete(room);
     }
 
     private async ensureBotAccount(botId: string, config: BotConfiguration): Promise<void> {

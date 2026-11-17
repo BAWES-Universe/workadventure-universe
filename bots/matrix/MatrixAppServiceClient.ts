@@ -100,6 +100,63 @@ export class MatrixAppServiceClient {
         );
     }
 
+    /** Forget a room that was left, so the homeserver drops its history for this user. A room it no longer knows counts as forgotten. */
+    async forgetRoom(userId: string, roomId: string): Promise<void> {
+        const response = await this.http.post(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/forget`, {}, { params: { user_id: userId }, validateStatus: () => true });
+        if (response.status !== 200 && response.status !== 404 && response.data?.errcode !== 'M_NOT_FOUND') {
+            throw new Error(`Matrix forget ${roomId} failed: ${response.status} ${response.data?.errcode ?? ''}`);
+        }
+    }
+
+    /**
+     * The rooms this user has joined, or null when the user has no account on the homeserver (it was never made, so there is nothing to
+     * purge). Synapse answers 403 M_EXCLUSIVE for an application service acting as a user it has not registered. Throws on anything else.
+     */
+    async getJoinedRooms(userId: string): Promise<string[] | null> {
+        const response = await this.http.get('/_matrix/client/v3/joined_rooms', { params: { user_id: userId }, validateStatus: () => true });
+        if (response.status === 200) return Array.isArray(response.data?.joined_rooms) ? response.data.joined_rooms.filter((id: unknown) => typeof id === 'string') : [];
+        if (response.status === 403 && response.data?.errcode === 'M_EXCLUSIVE') return null;
+        throw new Error(`Matrix joined rooms of ${userId}: ${response.status} ${response.data?.errcode ?? ''}`);
+    }
+
+    /**
+     * One page of a room's history, newest first, read as a user that is in it. `from` is the previous page's `end`; a page with no `end`
+     * (or no events) is the last one.
+     */
+    async getMessagesPage(userId: string, roomId: string, from?: string, limit = 100): Promise<{ events: MatrixEvent[]; end?: string }> {
+        const response = await this.http.get(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages`, {
+            params: { user_id: userId, dir: 'b', limit, ...(from ? { from } : {}) },
+        });
+        return { events: (response.data?.chunk ?? []) as MatrixEvent[], end: typeof response.data?.end === 'string' ? response.data.end : undefined };
+    }
+
+    /**
+     * Redacts an event this user sent (Matrix keeps the event's place and drops what it said). The same `txnId` for the same event, so a
+     * retry never makes a second redaction. Waits out the homeserver's own "slow down" a few times.
+     */
+    async redactEvent(userId: string, roomId: string, eventId: string, txnId: string, reason?: string): Promise<void> {
+        for (let attempt = 0; ; attempt++) {
+            const response = await this.http.put(
+                `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/redact/${encodeURIComponent(eventId)}/${encodeURIComponent(txnId)}`,
+                reason ? { reason } : {},
+                { params: { user_id: userId }, validateStatus: () => true }
+            );
+            if (response.status === 200) return;
+            if (response.status === 429 && attempt < 5) {
+                const wait = Number(response.data?.retry_after_ms);
+                await new Promise((resolve) => setTimeout(resolve, Math.min(Number.isFinite(wait) && wait > 0 ? wait : 1000, 30_000)));
+                continue;
+            }
+            throw new Error(`Matrix redact in ${roomId} failed: ${response.status} ${response.data?.errcode ?? ''}`);
+        }
+    }
+
+    /** Takes the name and the picture off a user's profile (an empty value removes it). Throws when the homeserver refuses. */
+    async clearProfile(userId: string): Promise<void> {
+        await this.http.put(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, { displayname: '' }, { params: { user_id: userId } });
+        await this.http.put(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/avatar_url`, { avatar_url: '' }, { params: { user_id: userId } });
+    }
+
     /** Sends a message as this user. A retry passes the first try's `txnId`, so Matrix keeps one message, not two. */
     async sendMessage(userId: string, roomId: string, content: Record<string, unknown>, txnId: string = randomUUID()): Promise<string> {
         const response = await this.http.put(

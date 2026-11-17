@@ -36,6 +36,7 @@ import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
 import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
+import { ChatPurgeSweeper } from '../services/ChatPurges';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
@@ -168,6 +169,8 @@ const COMPUTER_RUNNER_EVERY_MS = 10 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
 let computerSweepInterval: NodeJS.Timeout | undefined;
 let computerRunner: ComputerRunner | undefined;
+/** Clears the chat rooms of Bricks Orbit purged for good (register R29). */
+let chatPurges: ChatPurgeSweeper | undefined;
 /** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
 let stopBrickListening: (() => void) | undefined;
 /** How often Orbit is asked for the goals and tasks that fell due (#2002). Nothing depends on exactly when: Orbit is the scheduler. */
@@ -372,6 +375,13 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
+        // A Brick purged for good keeps nothing in chat: its rooms are cleared from Orbit's list. With no chat server set up there is none to clear.
+        chatPurges = new ChatPurgeSweeper({
+            adminApiUrl: ADMIN_API_URL,
+            botServiceToken: process.env.BOT_SERVICE_TOKEN,
+            purge: async (botId) => (matrixBridge ? matrixBridge.purgeChats(botId) : !readMatrixConfig()),
+        });
+        chatPurges.start();
         botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, carryGuestChat, carryBrick, noteHearing: noteHearing ?? undefined });
 
         // Initialize bot manager
@@ -519,6 +529,7 @@ function stopGameLoop(): void {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
         if (computerSweepInterval) clearInterval(computerSweepInterval);
+        chatPurges?.stop();
         computerRunner?.stop();
         screenGateway?.close();
         gameLoopInterval = null;
