@@ -10,11 +10,18 @@ const game = vi.hoisted(() => ({
     getMyMemory: vi.fn<(botId: string) => Promise<unknown>>(),
     forgetMyMemory: vi.fn<(botId: string, what: unknown) => Promise<unknown>>(),
     getBrickFiles: vi.fn<(brickId: string) => Promise<unknown>>(),
+    getBrickFilesPage:
+        vi.fn<
+            (
+                brickId: string,
+                page: { section: "made" | "sent"; cursor?: string | null; search?: string }
+            ) => Promise<unknown>
+        >(),
     deleteBrickFile: vi.fn<(brickId: string, fileId: string) => Promise<unknown>>(),
     closeModal: vi.fn<() => void>(),
     warn: vi.fn<(message: string) => void>(),
     openYourArtifacts: vi.fn<() => void>(),
-    zip: vi.fn<() => Promise<{ added: number; missed: number } | undefined>>(),
+    zip: vi.fn<(source: unknown) => Promise<{ added: number; missed: number; complete: boolean } | undefined>>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the groups read on mount.
 // eslint-disable-next-line svelte/no-svelte-internal
@@ -25,6 +32,7 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         getMyMemory: game.getMyMemory,
         forgetMyMemory: game.forgetMyMemory,
         getBrickFiles: game.getBrickFiles,
+        getBrickFilesPage: game.getBrickFilesPage,
         deleteBrickFile: game.deleteBrickFile,
     },
 }));
@@ -266,12 +274,15 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
                 files: [file(), file({ id: "f3", name: "bakery-spending-2026.xlsx", sizeBytes: 48 * 1024 })],
                 total: 6,
                 artifacts: 4,
+                fileTotal: 2,
+                nextCursor: null,
             },
             sent: {
                 files: [
                     file({ id: "f2", name: "passport-and-ticket.pdf", sizeBytes: 1.4 * 1024 * 1024, audience: "you" }),
                 ],
                 total: 1,
+                nextCursor: null,
             },
             computer: null,
             count: 3,
@@ -298,7 +309,7 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
             expect(rowsText("filesSentRow")).toEqual([
                 "passport-and-ticket.pdf 10 Nov · 1.4 MB · only Brick and you Download Delete",
             ]);
-            expect(byId("filesAllMade")?.textContent).toContain("All 6 things it made");
+            expect(byId("filesAllMade")?.textContent).toContain("4 artifacts it made");
             expect(byId("filesAllMade")?.textContent).toContain("Opens Your artifacts");
             expect(byId("filesDownloadAll")).not.toBeNull();
             byId("filesAllMade")?.click();
@@ -314,17 +325,24 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
         it("says so when the zip is missing some of the files, and when it is whole stays quiet", async () => {
             game.getBrickFiles.mockResolvedValue(answer());
             await openGroup();
-            game.zip.mockResolvedValueOnce({ added: 2, missed: 1 });
+            game.zip.mockResolvedValueOnce({ added: 2, missed: 1, complete: true });
             byId("filesDownloadAll")?.click();
             await settle();
             expect(game.warn).toHaveBeenCalledWith(
                 "Some files couldn't be added to the download. Try again to get them."
             );
             game.warn.mockClear();
-            game.zip.mockResolvedValueOnce({ added: 3, missed: 0 });
+            game.zip.mockResolvedValueOnce({ added: 3, missed: 0, complete: true });
             byId("filesDownloadAll")?.click();
             await settle();
             expect(game.warn).not.toHaveBeenCalled();
+            // The list stopped coming part of the way: the zip is not the whole of it, and that is said apart
+            game.zip.mockResolvedValueOnce({ added: 3, missed: 0, complete: false });
+            byId("filesDownloadAll")?.click();
+            await settle();
+            expect(game.warn).toHaveBeenCalledWith(
+                "Couldn't read the whole list of files, so the download is missing some. Try again to get all of them."
+            );
         });
 
         it("says a file sent in a nearby chat was sent in a nearby chat", async () => {
@@ -360,8 +378,8 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
 
         it("is plain when nothing is there yet, and offers no download of nothing", async () => {
             game.getBrickFiles.mockResolvedValue({
-                made: { files: [], total: 0, artifacts: 0 },
-                sent: { files: [], total: 0 },
+                made: { files: [], total: 0, artifacts: 0, fileTotal: 0, nextCursor: null },
+                sent: { files: [], total: 0, nextCursor: null },
                 computer: null,
                 count: 0,
                 bytes: 0,
@@ -404,6 +422,224 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
             await openGroup({ onBrowse });
             byId("filesBrowse")?.click();
             expect(onBrowse).toHaveBeenCalledTimes(1);
+        });
+
+        describe("more than the first look", () => {
+            const sentFile = (n: number) => file({ id: `s${n}`, name: `sent-${n}.pdf`, sizeBytes: 10 });
+            const sentPage = (from: number, to: number) =>
+                Array.from({ length: to - from + 1 }, (_, index) => sentFile(from + index));
+            const longAnswer = () =>
+                answer({
+                    made: {
+                        files: [file({ id: "m1", name: "made-1.pdf" }), file({ id: "m2", name: "made-2.pdf" })],
+                        total: 8,
+                        artifacts: 1,
+                        fileTotal: 7,
+                        nextCursor: "made-next",
+                    },
+                    sent: { files: sentPage(1, 50), total: 130, nextCursor: "sent-next" },
+                    count: 137,
+                    bytes: 1370,
+                });
+            const typeInSearch = async (words: string) => {
+                const input = byId<HTMLInputElement>("filesSearchInput");
+                if (!input) throw new Error("no search");
+                input.value = words;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                // The search goes out when typing pauses
+                await new Promise<void>((resolve) => {
+                    setTimeout(resolve, 400);
+                });
+                await settle();
+            };
+
+            it("offers the rest of a long list on a button, with how many more there are, and adds the next page below", async () => {
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                await openGroup();
+                expect(all("filesSentRow")).toHaveLength(50);
+                expect(byId("filesMoreSent")?.textContent).toContain("Show older files");
+                expect(byId("filesMoreSent")?.textContent).toContain("80 more");
+                expect(byId("filesMoreMade")?.textContent).toContain("5 more");
+                game.getBrickFilesPage.mockResolvedValueOnce({
+                    section: "sent",
+                    files: sentPage(51, 100),
+                    total: 130,
+                    nextCursor: "sent-last",
+                });
+                byId("filesMoreSentButton")?.click();
+                await settle();
+                expect(game.getBrickFilesPage).toHaveBeenCalledWith(BOT, {
+                    section: "sent",
+                    cursor: "sent-next",
+                    search: undefined,
+                });
+                expect(all("filesSentRow")).toHaveLength(100);
+                expect(byId("filesMoreSent")?.textContent).toContain("30 more");
+                game.getBrickFilesPage.mockResolvedValueOnce({
+                    section: "sent",
+                    files: sentPage(101, 130),
+                    total: 130,
+                    nextCursor: null,
+                });
+                byId("filesMoreSentButton")?.click();
+                await settle();
+                expect(all("filesSentRow")).toHaveLength(130);
+                expect(byId("filesMoreSent")).toBeNull();
+                expect(rowsText("filesSentRow")[129]).toContain("sent-130.pdf");
+            });
+
+            it("shows more of what it made without leaving the list, and keeps the artifacts one tap away apart", async () => {
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                await openGroup();
+                game.getBrickFilesPage.mockResolvedValueOnce({
+                    section: "made",
+                    files: [file({ id: "m3", name: "made-3.pdf" })],
+                    total: 7,
+                    nextCursor: "made-last",
+                });
+                byId("filesMoreMadeButton")?.click();
+                await settle();
+                expect(rowsText("filesMadeRow")).toHaveLength(3);
+                expect(byId("filesMoreMade")?.textContent).toContain("4 more");
+                expect(byId("filesAllMade")?.textContent).toContain("1 artifact it made");
+                byId("filesAllMade")?.click();
+                expect(game.openYourArtifacts).toHaveBeenCalledTimes(1);
+            });
+
+            it("says so, and keeps the button, when more could not be read", async () => {
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                game.getBrickFilesPage.mockRejectedValueOnce(new Error("offline"));
+                await openGroup();
+                byId("filesMoreSentButton")?.click();
+                await settle();
+                expect(game.warn).toHaveBeenCalledWith("Couldn't read more files. Try again.");
+                expect(all("filesSentRow")).toHaveLength(50);
+                expect(byId("filesMoreSentButton")).not.toBeNull();
+            });
+
+            it("offers a search only once a list is longer than what it shows", async () => {
+                game.getBrickFiles.mockResolvedValue(answer());
+                await openGroup();
+                expect(byId("filesSearch")).toBeNull();
+                part?.$destroy();
+                target.innerHTML = "";
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                await openGroup();
+                expect(byId("filesSearch")).not.toBeNull();
+            });
+
+            it("searches every file by name, not only the ones shown, and says how many it found", async () => {
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                game.getBrickFilesPage.mockImplementation((_id, asked) =>
+                    Promise.resolve(
+                        asked.section === "made"
+                            ? { section: "made", files: [], total: 0, nextCursor: null }
+                            : { section: "sent", files: [sentFile(120)], total: 1, nextCursor: null }
+                    )
+                );
+                await openGroup();
+                await typeInSearch("sent-120");
+                expect(game.getBrickFilesPage).toHaveBeenCalledWith(BOT, { section: "sent", search: "sent-120" });
+                expect(rowsText("filesSentRow")).toEqual([expect.stringContaining("sent-120.pdf")]);
+                expect(byId("filesFound")?.textContent).toContain("1 file named like “sent-120”");
+                // What it made has nothing under these words, so that list is not shown empty
+                expect(all("filesMadeRow")).toHaveLength(0);
+                expect(byId("filesNoneMade")).toBeNull();
+                expect(byId("filesAllMade")).toBeNull();
+                // Nothing here is the computer's or the whole of the Brick's: the download is of what was found
+                expect(byId("filesDownloadAll")?.textContent).toContain("Download the 1 found");
+                expect(text()).toContain("One zip with only the files found by this search.");
+                // Clearing it brings back the newest
+                await typeInSearch("");
+                expect(all("filesSentRow")).toHaveLength(50);
+                expect(byId("filesDownloadAll")?.textContent).toContain("Download all 137 files");
+            });
+
+            it("says so when nothing is named like the words, and when the search could not be made", async () => {
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                game.getBrickFilesPage.mockImplementation((_id, asked) =>
+                    Promise.resolve({ section: asked.section, files: [], total: 0, nextCursor: null })
+                );
+                await openGroup();
+                await typeInSearch("zzz");
+                expect(byId("filesFound")?.textContent).toContain("No file is named like “zzz”.");
+                expect(byId("filesDownloadAll")).toBeNull();
+                game.getBrickFilesPage.mockRejectedValue(new Error("offline"));
+                await typeInSearch("yyy");
+                expect(text()).toContain("Couldn't search. Try again.");
+                expect(all("filesSentRow")).toHaveLength(0);
+                game.getBrickFilesPage.mockImplementation((_id, asked) =>
+                    Promise.resolve({ section: asked.section, files: [], total: 0, nextCursor: null })
+                );
+                byId("filesSearchRetry")?.click();
+                await settle();
+                expect(byId("filesFound")?.textContent).toContain("No file is named like “yyy”.");
+            });
+
+            it("downloads every file of both lists, a page at a time, and not only the ones shown", async () => {
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                game.getBrickFilesPage.mockImplementation((_id, asked) => {
+                    if (asked.section === "made")
+                        return Promise.resolve({
+                            section: "made",
+                            files: [file({ id: "m1" })],
+                            total: 1,
+                            nextCursor: null,
+                        });
+                    return Promise.resolve(
+                        asked.cursor
+                            ? { section: "sent", files: sentPage(51, 130), total: 130, nextCursor: null }
+                            : { section: "sent", files: sentPage(1, 50), total: 130, nextCursor: "p2" }
+                    );
+                });
+                const read: string[] = [];
+                game.zip.mockImplementation(async (source) => {
+                    for await (const files of source as AsyncIterable<{ id: string }[]>)
+                        read.push(...files.map((one) => one.id));
+                    return { added: read.length, missed: 0, complete: true };
+                });
+                await openGroup();
+                expect(byId("filesDownloadAll")?.textContent).toContain("Download all 137 files");
+                expect(text()).toContain("not only the ones shown");
+                byId("filesDownloadAll")?.click();
+                await settle();
+                expect(read).toHaveLength(1 + 130);
+                expect(read[0]).toBe("m1");
+                expect(read[130]).toBe("s130");
+                expect(game.warn).not.toHaveBeenCalled();
+            });
+
+            it("says the download is missing files when the list stopped coming", async () => {
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                game.getBrickFilesPage.mockRejectedValue(new Error("offline"));
+                game.zip.mockImplementation(async (source) => {
+                    try {
+                        for await (const files of source as AsyncIterable<unknown[]>) void files;
+                    } catch {
+                        return { added: 4, missed: 0, complete: false };
+                    }
+                    return { added: 4, missed: 0, complete: true };
+                });
+                await openGroup();
+                byId("filesDownloadAll")?.click();
+                await settle();
+                expect(game.warn).toHaveBeenCalledWith(
+                    "Couldn't read the whole list of files, so the download is missing some. Try again to get all of them."
+                );
+            });
+
+            it("says the artifacts and a computer's files are not in the download", async () => {
+                game.getBrickFiles.mockResolvedValue(answer());
+                await openGroup();
+                expect(text()).toContain("Your artifacts are separate.");
+                part?.$destroy();
+                target.innerHTML = "";
+                game.getBrickFiles.mockResolvedValue(
+                    answer({ computer: { state: "off", files: 9, bytes: 1024, savedAt: null } })
+                );
+                await openGroup();
+                expect(text()).toContain("Your artifacts and the files on its computer are separate.");
+            });
         });
 
         it("says when it could not read the files, and reads again on Try again", async () => {
