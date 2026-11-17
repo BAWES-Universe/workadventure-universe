@@ -285,6 +285,64 @@ describe('the screen gateway', () => {
         expect(await closed(await viewer())).toBe(1008);
     });
 
+    it('closes an input socket by its own deadline when Orbit’s check hangs, and does not wait for Orbit', async () => {
+        await gateway.close();
+        gateway = createScreenGateway({
+            orbit,
+            connect: () => new WebSocket(machineUrl, 'binary'),
+            inputYesMs: 400,
+            log: { warn: () => undefined, error: () => undefined },
+        });
+        // Orbit answers the open, then the first check never comes back (a hung Orbit)
+        orbit.open.mockResolvedValue(opened('input', { checkEveryMs: 1000 }));
+        orbit.check.mockImplementation(() => new Promise(() => undefined));
+        const socket = await viewer();
+        const startedAt = Date.now();
+        const code = await Promise.race([closed(socket), new Promise<string>((resolve) => setTimeout(() => resolve('still open'), 3000))]);
+        expect(code).toBe(1011);
+        // Closed on its own deadline, before the first check was even asked (1 s)
+        expect(Date.now() - startedAt).toBeLessThan(900);
+        expect(orbit.check).not.toHaveBeenCalled();
+    });
+
+    it('keeps an input socket open while Orbit keeps saying yes, and counts the deadline from when each yes was asked for', async () => {
+        await gateway.close();
+        gateway = createScreenGateway({
+            orbit,
+            connect: () => new WebSocket(machineUrl, 'binary'),
+            inputYesMs: 1500,
+            log: { warn: () => undefined, error: () => undefined },
+        });
+        orbit.open.mockResolvedValue(opened('input', { checkEveryMs: 1000 }));
+        orbit.check.mockResolvedValue({ ok: true, mode: 'input' });
+        const socket = await viewer();
+        let gone = false;
+        void closed(socket).then(() => (gone = true));
+        // Past the deadline of a socket that heard nothing: it is still open because every check was a yes
+        await new Promise((resolve) => setTimeout(resolve, 3200));
+        expect(gone).toBe(false);
+        expect(orbit.check.mock.calls.length).toBeGreaterThanOrEqual(2);
+        // Orbit stops answering: the deadline, counted from the last yes asked for, closes it
+        orbit.check.mockImplementation(() => new Promise(() => undefined));
+        expect(await Promise.race([closed(socket), new Promise<string>((resolve) => setTimeout(() => resolve('still open'), 3500))])).toBe(1011);
+    });
+
+    it('does not put the input deadline on a watching socket: it only looks', async () => {
+        await gateway.close();
+        gateway = createScreenGateway({
+            orbit,
+            connect: () => new WebSocket(machineUrl, 'binary'),
+            inputYesMs: 300,
+            log: { warn: () => undefined, error: () => undefined },
+        });
+        orbit.open.mockResolvedValue(opened('watch', { checkEveryMs: 60_000 }));
+        const socket = await viewer();
+        let gone = false;
+        void closed(socket).then(() => (gone = true));
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        expect(gone).toBe(false);
+    });
+
     it('closes the viewer when the machine closes its screen, and is never kept past the longest time Orbit allows', async () => {
         orbit.open.mockResolvedValue(opened('watch'));
         const socket = await viewer();
