@@ -893,6 +893,35 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         clearTimeout(second.unreportedRetryTimer);
     });
 
+    it('does not bring back a forget Orbit took while the shared store was being read (Sentry)', async () => {
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(memory.unreportedRetryTimer);
+        expect(store.contents().pending).toHaveLength(1);
+        // A read of the store starts and will answer with what is there now
+        const before = await store.load();
+        let answer: () => void = () => undefined;
+        vi.spyOn(store, 'load').mockImplementationOnce(() => new Promise((resolve) => (answer = () => resolve(before))));
+        memory.queueRefreshedAt = 0;
+        vi.spyOn(memory.memoryStorage, 'loadMemories').mockResolvedValue([]);
+        const loading = memory.loadMemories(BOT);
+        await new Promise((resolve) => setImmediate(resolve));
+        // Meanwhile Orbit takes it
+        up();
+        await memory.reportUnreportedForgets();
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(store.contents().pending).toEqual([]);
+        // The read answers with the older list: it must not put the thing back
+        answer();
+        await loading;
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        await memory.reportUnreportedForgets();
+        expect(told()).toHaveLength(1);
+        expect(store.contents().pending).toEqual([]);
+    });
+
     it('never overwrites what another bot server wrote: each thing is its own entry in the store', async () => {
         const one = await start();
         one.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');

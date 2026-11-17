@@ -67,6 +67,8 @@ export class PersistentMemory extends ConversationMemory {
     private queueRestored = false;
     private queueRestoreTimer: NodeJS.Timeout | null = null;
     private queueRefreshedAt = 0;
+    /** Entries let go in this process while the shared store was being read: what was read may still hold them, and must not bring them back. */
+    private letGoWhileReading: Set<Set<string>> = new Set();
     /**
      * Everything a person forgot, kept after Orbit took it, by "botId|uuid|key": what Orbit hands back later (a restored
      * archive, a copy older than the forget) is taken out again by it, and Orbit is told again. Only keys, never words.
@@ -120,9 +122,9 @@ export class PersistentMemory extends ConversationMemory {
         const store = this.forgetQueue;
         if (!store) return;
         try {
-            const kept = await store.load();
+            const { kept, gone } = await this.loadQueue(store);
             if (store !== this.forgetQueue) return;
-            this.mergeStored(kept);
+            this.mergeStored(kept, gone);
             this.queueRestored = true;
             this.queueRefreshedAt = Date.now();
             if (!first) this.dropRecordedForgetsFromHeld();
@@ -141,16 +143,19 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /** What the store holds is taken in: an entry this process holds already is kept if it is the later ask, and the store is known to hold what it answered. */
-    private mergeStored(kept: ForgetFileContents): void {
+    private mergeStored(kept: ForgetFileContents, gone: ReadonlySet<string> = new Set()): void {
         for (const entry of kept.pending) {
             const key = forgetKeyOf(entry);
             this.queueSynced.pending.set(key, JSON.stringify(entry));
+            // Let go here while the store was being read (Orbit took it): the read is older than that, and it goes from the store on the next write
+            if (gone.has(`pending|${key}`)) continue;
             const mine = this.unreportedItemForgets.get(key);
             if (!mine || mine.since < entry.since) this.unreportedItemForgets.set(key, mine ? { ...entry, first: Math.min(entry.first, mine.first) } : entry);
         }
         for (const entry of kept.ledger) {
             const key = forgetKeyOf(entry);
             this.queueSynced.ledger.set(key, JSON.stringify(entry));
+            if (gone.has(`ledger|${key}`)) continue;
             const mine = this.forgottenLedger.get(key);
             if (!mine || (mine.since !== 0 && (entry.since === 0 || mine.since < entry.since))) this.forgottenLedger.set(key, entry);
         }
@@ -173,11 +178,28 @@ export class PersistentMemory extends ConversationMemory {
         try {
             // Our own writes first, or an entry removed here and not yet removed there would come back
             await this.queueWriting;
-            const kept = await store.load();
-            this.mergeStored(kept);
+            const { kept, gone } = await this.loadQueue(store);
+            this.mergeStored(kept, gone);
             if (this.unreportedItemForgets.size > 0) this.armUnreportedRetry();
         } catch (error) {
             console.warn(`[PersistentMemory] Could not read the forgets kept in the shared store: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    /** Lets go of one entry of the waiting list or the ledger, and notes it for any read of the shared store that is out right now. */
+    private letGo(map: Map<string, unknown>, key: string): void {
+        map.delete(key);
+        for (const gone of this.letGoWhileReading) gone.add(`${map === this.forgottenLedger ? 'ledger' : 'pending'}|${key}`);
+    }
+
+    /** Reads the shared store, and what this process let go of meanwhile is not brought back by it. */
+    private async loadQueue(store: ForgetQueueStore): Promise<{ kept: ForgetFileContents; gone: Set<string> }> {
+        const gone = new Set<string>();
+        this.letGoWhileReading.add(gone);
+        try {
+            return { kept: await store.load(), gone };
+        } finally {
+            this.letGoWhileReading.delete(gone);
         }
     }
 
@@ -271,7 +293,7 @@ export class PersistentMemory extends ConversationMemory {
         this.forgottenLedger.set(mapKey, { botId: item.botId, userUuid: item.userUuid, itemKey: item.itemKey, ...(kind ? { kind } : {}), since });
         // A safety limit nobody sees: past it the oldest are no longer remembered, so the file cannot grow without end
         while (this.forgottenLedger.size > MAX_FORGOTTEN_ITEMS) {
-            this.forgottenLedger.delete(this.forgottenLedger.keys().next().value as string);
+            this.letGo(this.forgottenLedger, this.forgottenLedger.keys().next().value as string);
             console.warn('[PersistentMemory] Too many forgotten things kept; letting the oldest go');
         }
     }
@@ -285,7 +307,7 @@ export class PersistentMemory extends ConversationMemory {
         for (const map of [this.unreportedItemForgets, this.forgottenLedger] as Array<Map<string, { botId: string }>>) {
             for (const [key, entry] of map) {
                 if (entry.botId === botId) {
-                    map.delete(key);
+                    this.letGo(map, key);
                     changed = true;
                 }
             }
@@ -428,7 +450,7 @@ export class PersistentMemory extends ConversationMemory {
                 // Orbit took it: it is no longer owed (unless it was asked again meanwhile, which carries a later time)
                 const mapKey = `${botId}|${userUuid}|${itemKey}`;
                 if (this.unreportedItemForgets.get(mapKey)?.since === askedAt) {
-                    this.unreportedItemForgets.delete(mapKey);
+                    this.letGo(this.unreportedItemForgets, mapKey);
                     changed = true;
                 }
             });
@@ -460,7 +482,7 @@ export class PersistentMemory extends ConversationMemory {
         // A safety limit nobody sees: past it the oldest wait no longer, so the queue cannot grow without end
         while (this.unreportedItemForgets.size > MAX_PENDING_FORGETS) {
             const oldest = this.unreportedItemForgets.keys().next().value as string;
-            this.unreportedItemForgets.delete(oldest);
+            this.letGo(this.unreportedItemForgets, oldest);
             console.warn('[PersistentMemory] Too many forgets waiting for Orbit; letting the oldest go');
         }
     }
@@ -493,7 +515,7 @@ export class PersistentMemory extends ConversationMemory {
                     !taken && own && status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429 && Date.now() - entry.first > PersistentMemory.CLIENT_ERROR_GIVE_UP_MS;
                 if (refusedForLong) console.warn(`[PersistentMemory] Orbit has refused a forget for bot ${entry.botId} (HTTP ${status}) for over a week; letting it go`);
                 if ((taken || refusedForLong) && own) {
-                    this.unreportedItemForgets.delete(mapKey);
+                    this.letGo(this.unreportedItemForgets, mapKey);
                     changed = true;
                 }
             })
