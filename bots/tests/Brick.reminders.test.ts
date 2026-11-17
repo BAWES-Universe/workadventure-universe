@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
-import { MatrixDmBridge, computerFileMsgtype } from '../matrix/MatrixDmBridge';
+import { MatrixDmBridge, chatRefusedForGood, computerFileMsgtype } from '../matrix/MatrixDmBridge';
 import type { AttachedFile } from '../server/ComputerReports';
 import { AdminApiService } from '../server/AdminApiService';
 import { BrickRunner, RUNNABLE_KINDS, dueRunOf, reminderText, transactionIdOfRun, type BrickRunnerApi, type BrickSpeaker, type DueRun, type RunReport } from '../server/BrickRunner';
@@ -321,6 +321,14 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
                 },
             });
             expect(sendMessage).toHaveBeenCalledTimes(3);
+        });
+
+        it('tries again after a refusal that will pass: too many requests, a timeout, a server error, even though axios calls every 4xx a bad request', () => {
+            const refused = (status: number) => Object.assign(new Error('refused'), { code: status < 500 ? 'ERR_BAD_REQUEST' : 'ERR_BAD_RESPONSE', response: { status } });
+            expect([400, 403, 413].map((status) => chatRefusedForGood(refused(status)))).toEqual([true, true, true]);
+            expect([408, 429, 500, 502, 503].map((status) => chatRefusedForGood(refused(status)))).toEqual([false, false, false, false, false]);
+            expect(chatRefusedForGood(Object.assign(new Error('too big'), { code: 'ERR_FR_MAX_BODY_LENGTH_EXCEEDED' }))).toBe(true);
+            expect(chatRefusedForGood(new Error('socket hang up'))).toBe(false);
         });
 
         it('says a chat that did not answer may be tried again, and never says a file’s name in the log', async () => {

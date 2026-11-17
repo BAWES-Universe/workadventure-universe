@@ -45,7 +45,8 @@ export function computerFileMsgtype(mime: string): 'm.image' | 'm.audio' | 'm.vi
 export function chatRefusedForGood(error: unknown): boolean {
     const failure = error as { response?: { status?: number }; code?: string } | null;
     const status = failure?.response?.status;
-    return status === 400 || status === 403 || status === 413 || failure?.code === 'ERR_FR_MAX_BODY_LENGTH_EXCEEDED' || failure?.code === 'ERR_BAD_REQUEST';
+    // By the status the server gave, never by axios's own code (it calls every 4xx a bad request, a 429 or 408 that will work later included)
+    return status === 400 || status === 403 || status === 413 || failure?.code === 'ERR_FR_MAX_BODY_LENGTH_EXCEEDED';
 }
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
