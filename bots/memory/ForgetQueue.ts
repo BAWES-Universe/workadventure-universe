@@ -50,10 +50,19 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 /** The name of one entry in the store (and in the process): the Brick, the person and the thing. */
 export const forgetKeyOf = (entry: { botId: string; userUuid: string; itemKey: string }): string => `${entry.botId}|${entry.userUuid}|${entry.itemKey}`;
 
-/** What changed since the store was last written: entries to put, and the names of entries to remove. */
+/** An entry to remove: its name, and the time of the ask this process held (a later ask stored by another bot server is not removed). */
+export interface ForgetQueueRemoval {
+    key: string;
+    since: number;
+}
+
+/**
+ * What changed since the store was last written: entries to put, and entries to remove. Another bot server may have asked for the same
+ * thing again meanwhile, so a put does not replace a later ask and a removal does not remove one (0 is "whenever it was said": the latest of all).
+ */
 export interface ForgetQueueChanges {
-    pending: { put: PendingItemForget[]; del: string[] };
-    ledger: { put: ForgottenItem[]; del: string[] };
+    pending: { put: PendingItemForget[]; del: ForgetQueueRemoval[] };
+    ledger: { put: ForgottenItem[]; del: ForgetQueueRemoval[] };
 }
 
 /** Where the waiting list and the ledger are kept. */
@@ -75,9 +84,42 @@ export interface ForgetQueueRedis {
     multi(): {
         hSet(key: string, field: string, value: string): unknown;
         hDel(key: string, field: string): unknown;
+        eval(script: string, options: { keys: string[]; arguments: string[] }): unknown;
         exec(): Promise<unknown>;
     };
 }
+
+/** Puts an entry unless the one stored is a later ask (0, "whenever it was said", is later than any time). Run in Redis, so two bot servers cannot cross. */
+export const PUT_SCRIPT = `
+local cur = redis.call('HGET', KEYS[1], ARGV[1])
+if cur then
+  local ok, entry = pcall(cjson.decode, cur)
+  if ok and type(entry) == 'table' and type(entry.since) == 'number' then
+    local stored = entry.since
+    local mine = tonumber(ARGV[3])
+    if stored == 0 then stored = math.huge end
+    if mine == 0 then mine = math.huge end
+    if stored > mine then return 0 end
+  end
+end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+return 1
+`;
+
+/** Removes an entry unless the one stored is a later ask than the one this process held. */
+export const REMOVE_SCRIPT = `
+local cur = redis.call('HGET', KEYS[1], ARGV[1])
+if not cur then return 0 end
+local ok, entry = pcall(cjson.decode, cur)
+if ok and type(entry) == 'table' and type(entry.since) == 'number' then
+  local stored = entry.since
+  local mine = tonumber(ARGV[2])
+  if stored == 0 then stored = math.huge end
+  if mine == 0 then mine = math.huge end
+  if stored > mine then return 0 end
+end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+`;
 
 const PENDING_KEY = 'bots:forgets:pending';
 const LEDGER_KEY = 'bots:forgets:ledger';
@@ -159,10 +201,13 @@ export class RedisForgetQueue implements ForgetQueueStore {
     async write(changes: ForgetQueueChanges): Promise<void> {
         const client = this.client();
         const batch = client.multi();
-        for (const entry of changes.pending.put) batch.hSet(PENDING_KEY, forgetKeyOf(entry), JSON.stringify(entry));
-        for (const key of changes.pending.del) batch.hDel(PENDING_KEY, key);
-        for (const entry of changes.ledger.put) batch.hSet(LEDGER_KEY, forgetKeyOf(entry), JSON.stringify(entry));
-        for (const key of changes.ledger.del) batch.hDel(LEDGER_KEY, key);
+        const put = (hash: string, entry: PendingItemForget | ForgottenItem) =>
+            batch.eval(PUT_SCRIPT, { keys: [hash], arguments: [forgetKeyOf(entry), JSON.stringify(entry), String(entry.since)] });
+        const remove = (hash: string, one: ForgetQueueRemoval) => batch.eval(REMOVE_SCRIPT, { keys: [hash], arguments: [one.key, String(one.since)] });
+        for (const entry of changes.pending.put) put(PENDING_KEY, entry);
+        for (const one of changes.pending.del) remove(PENDING_KEY, one);
+        for (const entry of changes.ledger.put) put(LEDGER_KEY, entry);
+        for (const one of changes.ledger.del) remove(LEDGER_KEY, one);
         // One transaction: a forget is never in the ledger without its waiting entry, or the other way round
         await this.within(batch.exec());
     }

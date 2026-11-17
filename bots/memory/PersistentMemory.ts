@@ -13,7 +13,7 @@ import { copyHeard, type Heard } from './Heard';
 import { MemoryStorage } from './MemoryStorage';
 import type { ItemForgetNotice, MemoryForgetNotice } from './ForgetNotice';
 import { dropItems, memoryItemsOf } from './MemoryItems';
-import { forgetKeyOf, MAX_FORGOTTEN_ITEMS, MAX_PENDING_FORGETS, type ForgetFileContents, type ForgetQueueChanges, type ForgetQueueStore, type ForgottenItem, type PendingItemForget } from './ForgetQueue';
+import { forgetKeyOf, MAX_FORGOTTEN_ITEMS, MAX_PENDING_FORGETS, type ForgetFileContents, type ForgetQueueChanges, type ForgetQueueRemoval, type ForgetQueueStore, type ForgottenItem, type PendingItemForget } from './ForgetQueue';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -59,7 +59,7 @@ export class PersistentMemory extends ConversationMemory {
     private wipes: Map<string, number> = new Map();
     private forgetQueue: ForgetQueueStore | null = null;
     /** What the shared store is known to hold, by entry name (as the JSON written), so each write sends only what changed. */
-    private queueSynced = { pending: new Map<string, string>(), ledger: new Map<string, string>() };
+    private queueSynced = { pending: new Map<string, { json: string; since: number }>(), ledger: new Map<string, { json: string; since: number }>() };
     /** Writes to the store one after another, so a later write never lands before an earlier one. */
     private queueWriting: Promise<unknown> = Promise.resolve();
     /** Settles once the store has been read for the first time (whether or not it could be). */
@@ -155,7 +155,7 @@ export class PersistentMemory extends ConversationMemory {
     private mergeStored(kept: ForgetFileContents, gone: ReadonlySet<string> = new Set()): void {
         for (const entry of kept.pending) {
             const key = forgetKeyOf(entry);
-            this.queueSynced.pending.set(key, JSON.stringify(entry));
+            this.queueSynced.pending.set(key, { json: JSON.stringify(entry), since: entry.since });
             // Let go here while the store was being read (Orbit took it): the read is older than that, and it goes from the store on the next write
             if (gone.has(`pending|${key}`)) continue;
             const mine = this.unreportedItemForgets.get(key);
@@ -163,7 +163,7 @@ export class PersistentMemory extends ConversationMemory {
         }
         for (const entry of kept.ledger) {
             const key = forgetKeyOf(entry);
-            this.queueSynced.ledger.set(key, JSON.stringify(entry));
+            this.queueSynced.ledger.set(key, { json: JSON.stringify(entry), since: entry.since });
             if (gone.has(`ledger|${key}`)) continue;
             const mine = this.forgottenLedger.get(key);
             if (!mine || (mine.since !== 0 && (entry.since === 0 || mine.since < entry.since))) this.forgottenLedger.set(key, entry);
@@ -267,16 +267,21 @@ export class PersistentMemory extends ConversationMemory {
         // No shared store at all: nothing can be written, so these are kept in this process only, and it is said so (not "kept for good")
         if (store.inUse && !store.inUse()) return false;
         const changes: ForgetQueueChanges = { pending: { put: [], del: [] }, ledger: { put: [], del: [] } };
-        const sent = { pending: new Map<string, string>(), ledger: new Map<string, string>() };
-        const diff = <T extends { botId: string; userUuid: string; itemKey: string }>(now: ReadonlyMap<string, T>, synced: ReadonlyMap<string, string>, into: { put: T[]; del: string[] }, record: Map<string, string>) => {
+        const sent = { pending: new Map<string, { json: string; since: number }>(), ledger: new Map<string, { json: string; since: number }>() };
+        const diff = <T extends { botId: string; userUuid: string; itemKey: string; since: number }>(
+            now: ReadonlyMap<string, T>,
+            synced: ReadonlyMap<string, { json: string; since: number }>,
+            into: { put: T[]; del: ForgetQueueRemoval[] },
+            record: Map<string, { json: string; since: number }>
+        ) => {
             for (const [key, entry] of now) {
                 const json = JSON.stringify(entry);
-                if (synced.get(key) !== json) {
+                if (synced.get(key)?.json !== json) {
                     into.put.push(entry);
-                    record.set(key, json);
+                    record.set(key, { json, since: entry.since });
                 }
             }
-            for (const key of synced.keys()) if (!now.has(key)) into.del.push(key);
+            for (const [key, was] of synced) if (!now.has(key)) into.del.push({ key, since: was.since });
         };
         diff<PendingItemForget>(this.unreportedItemForgets, this.queueSynced.pending, changes.pending, sent.pending);
         diff<ForgottenItem>(this.forgottenLedger, this.queueSynced.ledger, changes.ledger, sent.ledger);
@@ -287,10 +292,10 @@ export class PersistentMemory extends ConversationMemory {
             console.warn(`[PersistentMemory] Could not write the waiting forgets to the shared store: ${error instanceof Error ? error.message : String(error)}`);
             return false;
         }
-        for (const [key, json] of sent.pending) this.queueSynced.pending.set(key, json);
-        for (const [key, json] of sent.ledger) this.queueSynced.ledger.set(key, json);
-        for (const key of changes.pending.del) this.queueSynced.pending.delete(key);
-        for (const key of changes.ledger.del) this.queueSynced.ledger.delete(key);
+        for (const [key, one] of sent.pending) this.queueSynced.pending.set(key, one);
+        for (const [key, one] of sent.ledger) this.queueSynced.ledger.set(key, one);
+        for (const one of changes.pending.del) this.queueSynced.pending.delete(one.key);
+        for (const one of changes.ledger.del) this.queueSynced.ledger.delete(one.key);
         return true;
     }
 

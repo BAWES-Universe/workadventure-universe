@@ -641,10 +641,21 @@ class FakeForgetStore implements ForgetQueueStore {
     async write(changes: ForgetQueueChanges): Promise<void> {
         if (this.unreachable) throw new Error('Shared store is not connected');
         this.writes++;
-        for (const entry of changes.pending.put) this.pending.set(forgetKeyOf(entry), { ...entry });
-        for (const key of changes.pending.del) this.pending.delete(key);
-        for (const entry of changes.ledger.put) this.ledger.set(forgetKeyOf(entry), { ...entry });
-        for (const key of changes.ledger.del) this.ledger.delete(key);
+        // As in Redis: a put does not replace a later ask, and a removal does not remove one (0 is the latest of all)
+        const rank = (since: unknown) => (since === 0 ? Infinity : (since as number));
+        const apply = (map: Map<string, Record<string, unknown>>, put: Array<{ since: number }>, del: Array<{ key: string; since: number }>) => {
+            for (const entry of put) {
+                const key = forgetKeyOf(entry as never);
+                const stored = map.get(key);
+                if (!stored || rank(stored.since) <= rank(entry.since)) map.set(key, { ...entry });
+            }
+            for (const one of del) {
+                const stored = map.get(one.key);
+                if (stored && rank(stored.since) <= rank(one.since)) map.delete(one.key);
+            }
+        };
+        apply(this.pending, changes.pending.put, changes.pending.del);
+        apply(this.ledger, changes.ledger.put, changes.ledger.del);
     }
     contents() {
         return { pending: [...this.pending.values()], ledger: [...this.ledger.values()] };
@@ -948,6 +959,23 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         clearTimeout(memory.unreportedRetryTimer);
         clearTimeout(memory.queueRestoreTimer);
         warn.mockRestore();
+    });
+
+    it('does not remove a later ask that another bot server stored when this one is told Orbit took its own (Sentry)', async () => {
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(memory.unreportedRetryTimer);
+        const key = forgetKeyOf({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi });
+        const mine = store.pending.get(key)!;
+        // Another bot server was asked again, later, and wrote that
+        store.pending.set(key, { ...mine, since: (mine.since as number) + 1000 });
+        up();
+        await memory.reportUnreportedForgets();
+        // This server's own report was taken and let go here, but the later ask stays owed in the shared store
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(store.contents().pending).toEqual([expect.objectContaining({ itemKey: lofi, since: (mine.since as number) + 1000 })]);
     });
 
     it('never overwrites what another bot server wrote: each thing is its own entry in the store', async () => {
