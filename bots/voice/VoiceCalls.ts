@@ -1068,7 +1068,7 @@ export class VoiceCalls {
             this.evictBubble(bubble.sessionId, 'worker not available');
             return;
         }
-        for (const message of held) this.link.send(message);
+        for (const message of held) if (this.link.send(message)) this.noteSent(message);
     }
 
     private rememberSession(sessionId: string, providers: Record<ProviderPart, PartProvider>): void {

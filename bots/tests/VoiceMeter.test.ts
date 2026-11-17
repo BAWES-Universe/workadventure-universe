@@ -175,8 +175,9 @@ describe('the meter: sending', () => {
 });
 
 /** One voice bot on a call, whose hearing and voice are paid by Universe AI or by its maker's own keys. */
-function bot(owners: { recognition: boolean; speech: boolean }, options: { withMeter?: boolean } = {}) {
+function bot(owners: { recognition: boolean; speech: boolean }, options: { withMeter?: boolean; slowOpen?: boolean } = {}) {
     const sent: ToWorker[] = [];
+    let openSession: (() => void) | undefined;
     let handlers!: LinkHandlers;
     const link: VoiceLink = { isUp: () => true, send: (m) => (sent.push(m), true), close: vi.fn() };
     const game: GameSide = {
@@ -195,7 +196,7 @@ function bot(owners: { recognition: boolean; speech: boolean }, options: { withM
     };
     const settings: VoiceSettings = {
         active: async () => active,
-        sessionSettings: async () => ({ recognition: { adapter: 'soniox', model: 'stt', key: 'k1' }, speech: { adapter: 'elevenlabs', model: 'tts', voiceId: 'v', key: 'k2' }, expression: 'natural' }),
+        sessionSettings: async () => (options.slowOpen ? await new Promise<void>((resolve) => (openSession = resolve)) : undefined, { recognition: { adapter: 'soniox', model: 'stt', key: 'k1' }, speech: { adapter: 'elevenlabs', model: 'tts', voiceId: 'v', key: 'k2' }, expression: 'natural' }),
         report: () => undefined,
     };
     const calls = new VoiceCalls('sam', game, (h) => ((handlers = h), link), () => undefined, settings);
@@ -214,7 +215,8 @@ function bot(owners: { recognition: boolean; speech: boolean }, options: { withM
     const present = new Set<string>();
     return {
         calls, speech, requests: o.requests, sent, link,
-        async connect(who = 'room_7') {
+        /** The call starts; with `slowOpen` its session then waits for Orbit until `opened()`. */
+        start(who = 'room_7') {
             present.add(who);
             calls.spaceUsers(SPACE, [...present].map((id) => ({ spaceUserId: id, uuid: `uuid-${id}`, tags: [], name: id }) as never));
             calls.handlePrivateEvent({
@@ -223,6 +225,13 @@ function bot(owners: { recognition: boolean; speech: boolean }, options: { withM
                 sender: { spaceUserId: who, uuid: `uuid-${who}`, tags: [], name: who },
                 spaceEvent: { event: { $case: 'webRtcStartMessage', webRtcStartMessage: { userId: who, initiator: false } } },
             } as never);
+        },
+        async opened() {
+            openSession?.();
+            await flush();
+        },
+        async connect(who = 'room_7') {
+            this.start(who);
             await flush();
             const lane = [...sent].reverse().find((m) => m.type === 'lane.open' && m.participantId === who) as Extract<ToWorker, { type: 'lane.open' }>;
             handlers.onMessage({ type: 'participant.join', sessionId: lane.sessionId, participantId: who, epoch: lane.epoch } as FromWorker);
@@ -368,6 +377,23 @@ describe('a live call is booked in Orbit', () => {
         await b.say(reply(1), 'Never reported.');
         const done = b.calls.shutdown();
         await vi.advanceTimersByTimeAsync(60_000);
+        await done;
+        expect(b.link.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('shutting down also waits for the last report of a reply that was held while the session waited for Orbit and sent once it opened', async () => {
+        const b = bot({ recognition: false, speech: false }, { slowOpen: true });
+        b.start();
+        await flush();
+        // The session is not open yet, so the reply is held
+        expect(b.calls.say(SPACE, 's1', 'Said while opening.')).toBe(true);
+        expect(b.sent.some((m) => m.type === 'bot.say')).toBe(false);
+        await b.opened();
+        expect(b.sent.some((m) => m.type === 'bot.say')).toBe(true);
+        const done = b.calls.shutdown();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(b.link.close).not.toHaveBeenCalled();
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 1000, totalMs: 2000, finished: true, interrupted: true, reason: 'session_end' });
         await done;
         expect(b.link.close).toHaveBeenCalledTimes(1);
     });
