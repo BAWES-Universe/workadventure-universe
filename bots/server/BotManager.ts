@@ -1902,12 +1902,14 @@ export class BotManager {
 
         for (const starting of this.startingCalls.values()) starting.cancelled = true;
         this.startingCalls.clear();
+        // What each call used is sent to Orbit before the server goes: the disconnects are waited for
+        const shutdownPromises: Promise<unknown>[] = [];
         for (const call of this.calls.values()) {
             clearJoinTimer(call);
-            call.client.disconnect();
+            shutdownPromises.push(Promise.resolve(call.client.disconnect()));
         }
         this.calls.clear();
-        const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
+        for (const botId of this.bots.keys()) shutdownPromises.push(this.despawnBot(botId));
         await Promise.all(shutdownPromises);
 
         // Clear room tracking

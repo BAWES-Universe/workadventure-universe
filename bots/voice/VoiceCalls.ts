@@ -1741,8 +1741,11 @@ export class VoiceCalls {
         return !!bubble && this.post({ type: 'mode.set', sessionId: bubble.sessionId, mode, participantId: personId });
     }
 
-    /** The bot leaves or is switched off: every connection ends. */
-    shutdown(): void {
+    /**
+     * The bot leaves or is switched off: every connection ends. Answers when what the call used has been sent to Orbit (or Orbit would not
+     * take it), so whoever switches the server off can wait for it.
+     */
+    shutdown(): Promise<void> {
         for (const call of [...this.calls.values()]) this.game.sendDisconnect(call.spaceName, call.participantId);
         for (const bubble of this.bubbles.values()) {
             this.endSession(bubble.sessionId);
@@ -1766,7 +1769,7 @@ export class VoiceCalls {
         this.modes.clear();
         this.sentModes.clear();
         this.listening?.shutdown();
-        void this.meter?.shutdown();
+        const drained = this.meter?.shutdown() ?? Promise.resolve();
         this.told.clear();
         this.left.clear();
         this.toldLeft.clear();
@@ -1783,6 +1786,7 @@ export class VoiceCalls {
         this.otherVoiceBots.clear();
         this.voiceBotNames.clear();
         this.link.close();
+        return drained;
     }
 
     hasCall(spaceName: string, personId: string): boolean {

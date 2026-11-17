@@ -375,7 +375,7 @@ export class BotClient {
                     this.onDisconnect?.();
                 }
                 this.connected = false;
-                this.stopVoice();
+                void this.stopVoice();
                 this.resetJoin();
             });
 
@@ -395,8 +395,8 @@ export class BotClient {
     /**
      * Disconnect from server
      */
-    disconnect(): void {
-        this.stopVoice();
+    disconnect(): Promise<void> {
+        const drained = this.stopVoice();
         // Gone from every space: who is in them is no longer known
         this.audience.reset();
         this.readers.reset();
@@ -420,6 +420,7 @@ export class BotClient {
             }
         }
         this.connected = false;
+        return drained;
     }
     
     /**
@@ -3113,13 +3114,15 @@ export class BotClient {
         this.meeting.setAreas(this.meetingAreas.areas, this.meetingAreas.roomUrl);
     }
 
-    private stopVoice(): void {
+    /** Ends the voice. Answers when what the calls used has been sent to Orbit, so a server being switched off can wait for it. */
+    private stopVoice(): Promise<void> {
         this.speech?.shutdown();
-        this.voice?.shutdown();
+        const drained = this.voice?.shutdown() ?? Promise.resolve();
         this.voice = null;
         this.speech = null;
         this.meeting?.reset();
         this.meeting = null;
+        return drained;
     }
 
     /** The meeting rooms of the map (areas with a LiveKit room setting). Only a voice bot ever uses them. */

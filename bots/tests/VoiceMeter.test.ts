@@ -324,6 +324,23 @@ describe('a live call is booked in Orbit', () => {
         expect(b.requests.flat().map((e) => [e.detail.part, e.payerKind])).toEqual([['hearing', 'universe']]);
     });
 
+    it('shutting the calls down answers only when what they used was sent to Orbit, so a server being switched off can wait for it', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        let answer!: (ok: boolean) => void;
+        const sent: string[] = [];
+        b.calls.meter = new VoiceMeter('sam', { recordMeterEvents: async (events) => (sent.push(...events.map((e) => e.eventId)), new Promise<boolean>((resolve) => (answer = resolve))) }, undefined, 'r1');
+        b.workerSays({ type: 'user.turn', turnId: '1-1', outcome: 'final', text: 'Hello Sam', audioMs: 1000 });
+        let over = false;
+        const done = b.calls.shutdown().then(() => (over = true));
+        await flush();
+        expect(sent).toHaveLength(1);
+        expect(over).toBe(false);
+        answer(true);
+        await done;
+        expect(over).toBe(true);
+    });
+
     it('books nothing for a reply of which no moment was heard', async () => {
         const b = bot({ recognition: false, speech: false });
         await b.connect();
