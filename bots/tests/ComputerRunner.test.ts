@@ -671,6 +671,11 @@ describe('whyOf: the one sentence the agent gave for why it could not go on', ()
         expect(whyOf('Tried twice. [[done]] Then the site is down. [[failed]]')).toBe('Then the site is down.');
     });
 
+    it('does not cut a sentence at a stop inside a file name or a number', () => {
+        expect(whyOf('Tried the upload. The site rejected passport.pdf at version 3.5 and kept showing an error. [[failed]]')).toBe('The site rejected passport.pdf at version 3.5 and kept showing an error.');
+        expect(whyOf('The form wants e.g. a scan of the passport and I have none [[failed]]')).toBe('The form wants e.g. a scan of the passport and I have none');
+    });
+
     it('is empty when nothing came before the marker, or there is no failed marker', () => {
         expect(whyOf('[[failed]]')).toBeNull();
         expect(whyOf('All good [[done]]')).toBeNull();

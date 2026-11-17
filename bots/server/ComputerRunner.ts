@@ -114,7 +114,8 @@ export function whyOf(words: string): string | null {
     if (at < 0) return null;
     // A line of its own ends a sentence too, so it is split before the spaces are made one
     const before = words.slice(0, at).replace(/\[\[[^\]]*\]\]/g, ' ');
-    const sentences = before.match(/[^.!?\n]+[.!?]?/g)?.map((one) => one.replace(/\s+/g, ' ').trim()).filter(Boolean) ?? [];
+    // A stop inside a name or number ("passport.pdf", "3.5", "e.g. the form") is no end of a sentence: only a stop followed by a space and a capital, a digit or an opening quote is
+    const sentences = before.split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9“"'(])/).map((one) => one.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const last = sentences[sentences.length - 1] ?? '';
     return last ? last.slice(-300) : null;
 }
