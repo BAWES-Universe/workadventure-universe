@@ -1754,6 +1754,25 @@ export class BotApiService {
         });
     }
 
+    /**
+     * One file a Brick's computer made for its owner, as bytes. Opened with the owner's own sign-in (the file is theirs alone), so it is read here and
+     * saved from the page rather than followed as a link. Throws when Orbit refuses or has no such file.
+     */
+    async getBrickResult(brickId: string, fileId: string): Promise<Blob> {
+        const response = await this.fetch(
+            `/api/bricks/${encodeURIComponent(brickId)}/files/results/${encodeURIComponent(fileId)}`
+        );
+        return await response.blob();
+    }
+
+    /** Deletes a file a Brick's computer made for its owner: the kept copy goes. */
+    async deleteBrickResult(brickId: string, fileId: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/files/results/${encodeURIComponent(fileId)}`,
+            { method: "DELETE" }
+        );
+    }
+
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
     async undoMyBrick(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });

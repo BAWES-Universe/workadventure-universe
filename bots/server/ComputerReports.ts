@@ -3,20 +3,21 @@
  * chat with it, in its own voice: the same way a goal tells the person its news, so a locked phone shows the first sentence as the title.
  *
  * Orbit is the one that knows how a job went, and Orbit never speaks in a chat. So the bot server asks Orbit now and then for what is to be told, says
- * each item once, and tells Orbit it was said:
+ * each item once, and tells Orbit what became of it:
  *  - the message goes with the item's own key as its Matrix transaction id, so a retry of the same item is the same message to Matrix;
- *  - Orbit is told only after it went out; one that did not is offered again, one that can never go (no chat, the chat refuses) is let go with a line in the log;
+ *  - "told" is only ever what reached the chat. One that did not go yet is offered again; one that can never go (no chat, not allowed, the conversation it began in is
+ *    gone, the chat refuses it) is told to Orbit as undeliverable with the reason, never as told: what the job made stays with the person in Files;
+ *  - it goes back to the conversation the job began in (`origin`) and nowhere else: never a chat made or picked for it;
  *  - what is said is only what Orbit's record proves: what reached a site and what is not known, the files that appeared while it ran, whether this try was
  *    given back. The computer's own sentence is only ever why it could not go on, and Orbit has cleaned it of links and markup.
  * The person's own Stop, a computer turned off and a Brick deleted are never offered: they just did it.
  *
- * The file card: the files a finished job made come as `handed` (Orbit moved them off the computer and keeps them until this has put them in the chat).
- * Each is fetched from Orbit one at a time, uploaded to the chat and sent as a file message under its own transaction id, after the message. Orbit deletes
- * its copy when it is told the report was said. A file that cannot go (gone from Orbit, too big for the chat, the chat kept refusing) is said so in a short
- * message and stays on the computer.
+ * The file card: the files a finished job made come as `handed`: they are the person's own, kept by Orbit (and shown in their Files) whether or not the chat took them.
+ * Each is fetched from Orbit one at a time, uploaded to the chat and sent as a file message under its own transaction id, after the message, and Orbit is told
+ * as soon as each one is in, so a restart never sends one twice. A file that cannot go (too big for the chat, the chat kept refusing) is said so in a short
+ * message and stays in Files.
  */
 
-import type { SpokeAnswer } from './BrickRunner';
 import type { StepsField } from '../ai/ToolSteps';
 
 export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule';
@@ -42,6 +43,8 @@ export interface ComputerReport {
     jobId: string;
     botId: string;
     matrixUserId: string | null;
+    /** The conversation the job began in (a direct chat): what it made goes back there. Null for a job that began before this was kept. */
+    origin: { kind: 'dm'; ref: string } | null;
     kind: ReportKind;
     title: string;
     writes: boolean;
@@ -91,6 +94,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
             if (typeof effect?.kind === 'string' && (effect.state === 'done' || effect.state === 'unknown')) effects.push({ kind: effect.kind, state: effect.state, where: typeof effect.where === 'string' && effect.where ? effect.where : null });
         }
     }
+    const origin = report.origin as { kind?: unknown; ref?: unknown } | null | undefined;
     const kind = report.kind as ReportKind;
     const seq = typeof report.seq === 'number' ? report.seq : null;
     // A wait is told by its number: without one it could not be marked as told for that wait only
@@ -100,6 +104,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         jobId: report.jobId,
         botId: report.botId,
         matrixUserId: typeof report.matrixUserId === 'string' && report.matrixUserId ? report.matrixUserId : null,
+        origin: origin && origin.kind === 'dm' && typeof origin.ref === 'string' && origin.ref ? { kind: 'dm', ref: origin.ref } : null,
         kind,
         title: report.title,
         writes: report.writes !== false,
@@ -181,8 +186,8 @@ export function reportText(report: ComputerReport): string {
     const name = nameOf(report.title);
     switch (report.kind) {
         case 'done': {
-            // What came as a card is said to be below; what did not is only named, and is on the computer
-            const attached = report.handed.length > 0 ? ` I attached ${list(report.handed.map((file) => file.name))} below.` : '';
+            // What it made is said to be on its way, never that it is attached: the file card is the proof, and what could not go is said after, in its own message
+            const attached = report.handed.length > 0 ? ` It made ${list(report.handed.map((file) => file.name))}, and I'm sending ${report.handed.length === 1 ? 'it' : 'them'} below.` : '';
             const saved = report.files.length > 0 ? ` ${report.handed.length > 0 ? 'It also saved' : 'It saved'} ${list(report.files.slice(0, 3))}${report.files.length > 3 ? ` and ${report.files.length - 3} more` : ''} on its computer.` : '';
             return `${name} is done. ${receiptOf(report)}${attached}${saved}`;
         }
@@ -235,8 +240,12 @@ export function workedLine(report: Pick<ComputerReport, 'title' | 'seconds'>, no
 export interface ComputerReportsApi {
     /** What is to be told now; throws when Orbit cannot be asked (nothing is lost: it is offered again). */
     reports(): Promise<ComputerReport[]>;
-    /** Orbit is told it was said (or can never be). False when Orbit did not take it: it is offered again and said again as the same message. */
+    /** Orbit is told it reached the chat. False when Orbit did not take it: it is offered again and said again as the same message. */
     keepTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>): Promise<boolean>;
+    /** Orbit is told it can never reach the chat, and why: it is not offered again and is not "told"; what the job made stays in Files. False when Orbit did not take it. */
+    keepUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>, why: UndeliverableWhy): Promise<boolean>;
+    /** Orbit is told this file is in the chat, so a restart never sends it again and Files shows it as delivered. False when Orbit did not take it. */
+    keepFileDelivered(jobId: string, fileId: string): Promise<boolean>;
     /** The bytes of one handed-over file, or null when Orbit no longer has it. Throws when Orbit cannot be asked (it is asked again). */
     file(jobId: string, fileId: string): Promise<Buffer | null>;
 }
@@ -248,13 +257,21 @@ export interface AttachedFile {
     mime: string;
     bytes: number;
     load(): Promise<Buffer | null>;
+    /** Said the moment the file is in the chat. */
+    delivered(): Promise<void>;
 }
 
-/** What happened to the files of one message: the ones in the chat, and the ones that did not go (`again`: it may go on a later try). */
+/** What happened to the files of one message: the ones in the chat, and the ones that did not go (`again`: it may go on a later try; `gone`: Orbit no longer keeps it). */
 export interface FilesAnswer {
     attached: string[];
-    missed: { id: string; name: string; again: boolean }[];
+    missed: { id: string; name: string; again: boolean; gone?: boolean }[];
 }
+
+/** Why a report can never reach the chat (the words Orbit keeps). `refused`: the chat server turned the message down for good. */
+export type UndeliverableWhy = 'no_chat' | 'not_allowed' | 'origin_gone' | 'refused';
+
+/** What saying something came to: in the chat, not yet (try again), or never (and why). */
+export type ComputerSpoke = { ok: true; eventId: string; files?: FilesAnswer } | { ok: false; reason: UndeliverableWhy | 'unsure' };
 
 /** Says something in a person's own chat with a Brick; `steps` puts a "Worked on its computer" line above it, `files` follow it as file cards. */
 export interface ComputerSpeaker {
@@ -263,14 +280,22 @@ export interface ComputerSpeaker {
         matrixUserId: string,
         text: string,
         transactionId: string,
-        extra?: { steps?: { field: StepsField; text: string }; files?: AttachedFile[] }
-    ): Promise<SpokeAnswer & { files?: FilesAnswer }>;
+        extra?: { steps?: { field: StepsField; text: string }; files?: AttachedFile[]; room?: string }
+    ): Promise<ComputerSpoke>;
 }
 
 /** How many times a file that keeps failing to reach the chat is tried before it is given up on (the message says it did not go). Each try is a round, 10 seconds apart. */
 export const FILE_TRIES = 6;
 
-const missedText = (names: string[]): string => `I couldn't attach ${list(names)} here. ${names.length === 1 ? 'It is' : 'They are'} still on my computer.`;
+/** Said once for the files that did not go: where each one is (in Files, unless Orbit no longer has it). */
+export function missedText(files: { name: string; gone?: boolean }[]): string {
+    const kept = files.filter((file) => !file.gone).map((file) => file.name);
+    const lost = files.filter((file) => file.gone).map((file) => file.name);
+    const parts: string[] = [];
+    if (kept.length > 0) parts.push(`I couldn't attach ${list(kept)} here. ${kept.length === 1 ? "It's" : "They're"} saved in your Files.`);
+    if (lost.length > 0) parts.push(`I can't attach ${list(lost)}: ${lost.length === 1 ? 'it is' : 'they are'} no longer kept.`);
+    return parts.join(' ');
+}
 
 export class ComputerReports {
     private running = false;
@@ -333,16 +358,21 @@ export class ComputerReports {
         }
     }
 
-    /** True when it went out. A report that can never go is let go (told to Orbit as told) with a line in the log; one that could not go just now is left. */
+    /** True when it went out. One that can never go is told to Orbit as undeliverable, with why (never as told); one that could not go just now is left for the next round. */
     private async sayOne(report: ComputerReport): Promise<boolean> {
-        if (!report.matrixUserId) {
-            this.log.warn(`[ComputerReports] Job ${report.jobId} (${report.kind}) has no chat to be told in; kept as told`);
-            await this.api.keepTold(report);
-            return false;
-        }
+        if (!report.matrixUserId) return this.letGo(report, 'no_chat');
         const sent = this.attached.get(report.key) ?? new Set<string>();
-        const files: AttachedFile[] = report.kind === 'done' ? report.handed.filter((file) => !sent.has(file.id)).map((file) => ({ ...file, load: () => this.api.file(report.jobId, file.id) })) : [];
-        const spoke = await this.speaker.say(report.botId, report.matrixUserId, reportText(report), report.key, report.kind === 'done' ? { steps: workedLine(report), ...(files.length > 0 ? { files } : {}) } : undefined);
+        const files: AttachedFile[] =
+            report.kind === 'done'
+                ? report.handed
+                      .filter((file) => !sent.has(file.id))
+                      .map((file) => ({ ...file, load: () => this.api.file(report.jobId, file.id), delivered: async () => void (await this.api.keepFileDelivered(report.jobId, file.id)) }))
+                : [];
+        const spoke = await this.speaker.say(report.botId, report.matrixUserId, reportText(report), report.key, {
+            // Back to the conversation the job began in: never a chat made or picked for it
+            ...(report.origin ? { room: report.origin.ref } : {}),
+            ...(report.kind === 'done' ? { steps: workedLine(report), ...(files.length > 0 ? { files } : {}) } : {}),
+        });
         if ('eventId' in spoke) {
             for (const id of spoke.files?.attached ?? []) sent.add(id);
             this.attached.set(report.key, sent);
@@ -354,18 +384,27 @@ export class ComputerReports {
                 return false;
             }
             if (missed.length > 0) {
-                // Said once, as its own message, so nobody waits for a card that will not come: the file is still on the computer
-                const noted = await this.speaker.say(report.botId, report.matrixUserId, missedText(missed.map((file) => file.name)), `${report.key}:missed`);
+                // Said once, as its own message, so nobody waits for a card that will not come: the file is in Files
+                const noted = await this.speaker.say(report.botId, report.matrixUserId, missedText(missed), `${report.key}:missed`, report.origin ? { room: report.origin.ref } : undefined);
                 if (!('eventId' in noted) && noted.reason === 'unsure') return false;
             }
+            // Orbit may have missed a file's own mark (it is said again, and is safe to say twice): Files must not show a file in the chat as not delivered
+            for (const id of sent) await this.api.keepFileDelivered(report.jobId, id);
             this.attached.delete(report.key);
             this.failedRounds.delete(report.key);
             if (!(await this.api.keepTold(report))) this.log.warn(`[ComputerReports] Orbit did not keep that job ${report.jobId} (${report.kind}) was told; it goes out again as the same message`);
             return true;
         }
         if (spoke.reason === 'unsure') return false;
-        this.log.warn(`[ComputerReports] Job ${report.jobId} (${report.kind}) cannot be told in chat (${spoke.reason}); kept as told`);
-        await this.api.keepTold(report);
+        return this.letGo(report, spoke.reason);
+    }
+
+    /** It can never reach the chat: Orbit is told so, and why. It is not "told", and the result stays with the person in Files. Always false (nothing was said). */
+    private async letGo(report: ComputerReport, why: UndeliverableWhy): Promise<false> {
+        this.log.warn(`[ComputerReports] Job ${report.jobId} (${report.kind}) cannot be told in chat (${why}); kept as undelivered, its result stays in Files`);
+        await this.api.keepUndeliverable(report, why);
+        this.attached.delete(report.key);
+        this.failedRounds.delete(report.key);
         return false;
     }
 }

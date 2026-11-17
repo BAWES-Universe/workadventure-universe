@@ -60,6 +60,8 @@ export interface ComputerToolContext {
     apps?: string[];
     botId: string;
     userId: string;
+    /** The direct chat this reply is in: the job is started from it, and its result goes back to it and nowhere else. */
+    origin?: { kind: 'dm'; ref: string };
     /** Called once a job is running, so a development server can pretend to do it. */
     onStarted?: (jobId: string) => void;
 }
@@ -98,7 +100,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     }
     let started;
     try {
-        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined });
+        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(context.origin ? { origin: context.origin } : {}) });
     } catch (error) {
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };

@@ -1418,6 +1418,12 @@ const chat: BaseTranslation = {
             briefSize: "{count:number} {{file|files}} · {size}",
             briefNone: "Nothing yet",
             made: "Made for you",
+            // What its computer made: theirs here whether or not the chat took it
+            fromComputer: "Made on its computer",
+            resultDelivered: "In your chat with {name}",
+            resultWaiting: "Being sent to your chat",
+            resultNotDelivered: "Not in your chat. It's saved here.",
+            resultFailed: "Couldn't open that file. Try again.",
             sent: "You sent it",
             download: "Download",
             delete: "Delete",

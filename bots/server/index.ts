@@ -267,7 +267,13 @@ async function setupMatrix(): Promise<void> {
             keepAsked: (runId) => adminApiService.keepItemAsked(runId),
             keepHeldTold: (itemId, waitId) => adminApiService.keepItemHeldTold(itemId, waitId),
         },
-        { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) },
+        {
+            // A goal or reminder has no conversation it began in and no result to keep: a chat that turned it down is tried again, as it always was
+            say: async (brickId, matrixUserId, text, transactionId) => {
+                const spoke = await bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId);
+                return 'eventId' in spoke ? spoke : { ok: false, reason: spoke.reason === 'origin_gone' || spoke.reason === 'refused' ? 'unsure' : spoke.reason };
+            },
+        },
         console,
         // Watches, briefings and goals run on the Brick's own model, as system jobs
         new ModelTaskRunner({
@@ -294,7 +300,7 @@ async function setupMatrix(): Promise<void> {
     brickRunner.start(BRICK_DUE_EVERY_MS);
     // A computer job that ended or waits for its person: Brick says so in the same chat, as it says a goal's news. Nothing to switch on.
     computerReports = new ComputerReports(
-        { reports: () => adminApiService.computerReports(), keepTold: (report) => adminApiService.keepComputerReportTold(report), file: (jobId, fileId) => adminApiService.computerReportFile(jobId, fileId) },
+        { reports: () => adminApiService.computerReports(), keepTold: (report) => adminApiService.keepComputerReportTold(report), keepUndeliverable: (report, why) => adminApiService.keepComputerReportUndeliverable(report, why), keepFileDelivered: (jobId, fileId) => adminApiService.keepComputerFileDelivered(jobId, fileId), file: (jobId, fileId) => adminApiService.computerReportFile(jobId, fileId) },
         { say: (brickId, matrixUserId, text, transactionId, extra) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId, extra) },
         console
     );

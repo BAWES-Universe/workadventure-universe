@@ -13,6 +13,7 @@
         fileIconKind,
         fileSize,
         type BrickFile,
+        type BrickResult,
     } from "./BrickFiles";
     import { shortDay } from "./Brick";
     import { IconChevronRight, IconFile, IconFileText, IconFolder, IconPhoto } from "@wa-icons";
@@ -44,7 +45,11 @@
             ? $LL.chat.brick.files.briefSize({ count: $files.count, size: size($files.bytes) })
             : $LL.chat.brick.files.brief({ count: $files.count });
     $: moreMade = $files.made.total > $files.made.files.length;
-    $: everything = [...$files.made.files, ...$files.sent.files];
+    $: everything = [
+        ...$files.made.files,
+        ...$files.results.map((result) => ({ name: result.name, load: () => list.openResult(result.id) })),
+        ...$files.sent.files,
+    ];
     $: computer = $files.computer;
 
     onMount(() => {
@@ -68,6 +73,32 @@
     function icon(file: BrickFile) {
         const kind = fileIconKind(file);
         return kind === "image" ? IconPhoto : kind === "sheet" ? IconFileText : IconFile;
+    }
+
+    function resultNote(result: BrickResult): string {
+        const where =
+            result.delivery === "delivered"
+                ? $LL.chat.brick.files.resultDelivered({ name })
+                : result.delivery === "waiting"
+                ? $LL.chat.brick.files.resultWaiting()
+                : $LL.chat.brick.files.resultNotDelivered();
+        return [day(result.at), size(result.sizeBytes), where].join(" · ");
+    }
+
+    function downloadResult(result: BrickResult) {
+        list.downloadResult(result)
+            .then((done) => {
+                if (!done) warningMessageStore.addWarningMessage($LL.chat.brick.files.resultFailed());
+            })
+            .catch((error) => console.error(error));
+    }
+
+    function removeResult(result: BrickResult) {
+        list.deleteResult(result.id)
+            .then((gone) => {
+                if (!gone) warningMessageStore.addWarningMessage($LL.chat.brick.files.deleteFailed());
+            })
+            .catch((error) => console.error(error));
     }
 
     function download(file: BrickFile) {
@@ -137,6 +168,27 @@
                 <p class="bkg-note" data-testid="filesNoneMade">
                     <span>{$LL.chat.brick.files.noneMade({ name })}</span>
                 </p>
+            {/if}
+
+            {#if $files.results.length > 0}
+                <div class="bkg-cap gap">{$LL.chat.brick.files.fromComputer()}</div>
+                {#each $files.results as result (result.id)}
+                    <div class="bkg-tap" data-testid="filesResultRow" data-delivery={result.delivery}>
+                        <span class="bkg-ico"><IconFile font-size="20" /></span>
+                        <span class="bkg-mtx">
+                            <span class="bkg-t">{result.name}</span>
+                            <span class="bkg-cn">{resultNote(result)}</span>
+                            <span class="bkg-acts">
+                                <PageButton testId="filesResultDownload" on:click={() => downloadResult(result)}
+                                    >{$LL.chat.brick.files.download()}</PageButton
+                                >
+                                <PageButton testId="filesResultDelete" on:click={() => removeResult(result)}
+                                    >{$LL.chat.brick.files.delete()}</PageButton
+                                >
+                            </span>
+                        </span>
+                    </div>
+                {/each}
             {/if}
 
             <div class="bkg-cap gap">{$LL.chat.brick.files.sent()}</div>

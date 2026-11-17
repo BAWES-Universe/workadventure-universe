@@ -11,7 +11,7 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
-import { computerReportOf, type ComputerReport } from './ComputerReports';
+import { computerReportOf, type ComputerReport, type UndeliverableWhy } from './ComputerReports';
 import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
@@ -1379,6 +1379,34 @@ export class AdminApiService {
     }
 
     /**
+     * That a report can never reach the chat, and why: Orbit does not offer it again, does NOT record it as told, and what the job made stays with the person in
+     * Files. False when Orbit did not take it (it is offered again). Never throws.
+     */
+    async keepComputerReportUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>, why: UndeliverableWhy): Promise<boolean> {
+        try {
+            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }), outcome: 'undeliverable', why });
+            return true;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return true;
+            console.warn('[AdminApiService] Could not keep that a computer report is undeliverable:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /** That one file of a finished job is in the person's chat: it is not handed over again after a restart, and Files shows it as delivered. Safe to say twice. Never throws. */
+    async keepComputerFileDelivered(jobId: string, fileId: string): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/computer/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(fileId)}`, {});
+            return true;
+        } catch (error) {
+            // A file that is not kept any more has nothing left to be marked
+            if (axios.isAxiosError(error) && error.response?.status === 404) return true;
+            console.warn('[AdminApiService] Could not keep that a computer file was delivered:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /**
      * One file a finished computer job made, to put in the person's chat as a card (the file card). Null when Orbit no longer has it (it reached the chat,
      * the Brick is gone, or its days passed): that is an answer. Throws when Orbit cannot be asked, so the caller tries again.
      */
@@ -1540,12 +1568,12 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; brief?: string; writes?: boolean }
+        ask: { title: string; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string } }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string }> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
-            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
+            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }), ...(ask.origin ? { origin: ask.origin } : {}) }
         );
         const data = response.data;
         const job = data?.job;

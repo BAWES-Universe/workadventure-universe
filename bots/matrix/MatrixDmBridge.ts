@@ -27,8 +27,7 @@ import { tidyTranscript } from '../voice/NoteHearing';
 import type { NoteHearingService } from '../voice/NoteHearingWiring';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
-import type { SpokeAnswer } from '../server/BrickRunner';
-import type { AttachedFile, FilesAnswer } from '../server/ComputerReports';
+import type { AttachedFile, ComputerSpoke, FilesAnswer } from '../server/ComputerReports';
 
 /** Marks what a Brick says on its own (a reminder, a goal's news), never an answer in a chat. Orbit reads it to show the news as the title on a locked phone; it counts only from our own bot. */
 export const OWN_INITIATIVE_KEY = 'net.bawes.universe.alone';
@@ -802,9 +801,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         matrixUserId: string,
         text: string,
         transactionId: string,
-        extra?: { steps?: { field: StepsField; text: string }; files?: AttachedFile[] }
-    ): Promise<SpokeAnswer & { files?: FilesAnswer }> {
-        const room = await this.roomToSpeakIn(botId, matrixUserId);
+        extra?: { steps?: { field: StepsField; text: string }; files?: AttachedFile[]; room?: string }
+    ): Promise<ComputerSpoke> {
+        // `room` is the conversation a computer job began in: what it made goes back there and nowhere else (never a chat made or picked for it)
+        const room = await this.roomFor(botId, matrixUserId, extra?.room);
         if ('reason' in room) return { ok: false, reason: room.reason };
         try {
             // A "Worked on its computer" line above what is said (a computer job that finished): a notice, so it never notifies on its own, under its own
@@ -823,7 +823,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return { ok: true, eventId, ...(files ? { files } : {}) };
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
-            return { ok: false, reason: 'unsure' };
+            // The chat turned the message down for good (the bot may no longer speak there): trying it again will not change that. A server that did not answer is not this.
+            return { ok: false, reason: chatRefusedForGood(error) ? 'refused' : 'unsure' };
         }
     }
 
@@ -847,7 +848,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 continue;
             }
             if (!data) {
-                missed.push({ id: file.id, name: file.name, again: false });
+                // Orbit no longer keeps it (the person deleted it, or its days passed): nothing more to try
+                missed.push({ id: file.id, name: file.name, again: false, gone: true });
                 continue;
             }
             try {
@@ -861,6 +863,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 );
                 if (!sent) throw new Error('The chat server did not say the file was sent');
                 attached.push(file.id);
+                // Said at once, file by file: a restart between two files never uploads the first one again. A mark that is lost is made again when the report is done.
+                await file.delivered().catch((error: any) => console.warn(`[MatrixDmBridge] Could not keep that a computer file reached the chat of bot ${botId}:`, error?.message ?? error));
             } catch (error: any) {
                 console.warn(`[MatrixDmBridge] Could not put a computer file in the direct chat of bot ${botId}:`, error?.message ?? error);
                 missed.push({ id: file.id, name: file.name, again: !chatRefusedForGood(error) });
@@ -875,6 +879,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * said only when the answer was certain; a look that failed is "could not tell".
      */
     async roomToSpeakIn(botId: string, matrixUserId: string): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' }> {
+        const room = await this.roomFor(botId, matrixUserId);
+        // Without a conversation to hold to there is no "origin gone"
+        return 'reason' in room && room.reason === 'origin_gone' ? { ok: false, reason: 'unsure' } : (room as { ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' });
+    }
+
+    /**
+     * Like `roomToSpeakIn`, for something that belongs to the conversation it began in (a computer job's result): when `expectedRoomId` is given, only that
+     * chat will do. If the person's chat with the Brick is not that one any more (it was left and made again, or another one is the one they share now), the
+     * answer is `origin_gone`: nothing is said in a chat the work did not begin in.
+     */
+    private async roomFor(
+        botId: string,
+        matrixUserId: string,
+        expectedRoomId?: string
+    ): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' | 'origin_gone' }> {
         let looked: { roomId: string | null; unsure: boolean };
         try {
             looked = await this.lookUpDirectRoom(botId, matrixUserId);
@@ -883,6 +902,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return { ok: false, reason: 'unsure' };
         }
         if (!looked.roomId) return { ok: false, reason: looked.unsure ? 'unsure' : 'no_chat' };
+        if (expectedRoomId && looked.roomId !== expectedRoomId) return { ok: false, reason: 'origin_gone' };
         let access: DmAccessResult;
         try {
             access = await this.access(botId, matrixUserId, true);

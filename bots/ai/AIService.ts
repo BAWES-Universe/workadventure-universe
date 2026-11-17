@@ -3787,13 +3787,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
     private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; apps?: string[] }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
-        const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        const userId = memory?.userUuid;
         if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
         const botId = where.botId;
         const result = await runComputerTool(args, {
             admin,
             botId,
             userId,
+            // The direct chat this was asked in: the result goes back to it, never to another chat
+            ...(memory?.dmRoomId ? { origin: { kind: 'dm' as const, ref: memory.dmRoomId } } : {}),
             apps: where.apps,
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });

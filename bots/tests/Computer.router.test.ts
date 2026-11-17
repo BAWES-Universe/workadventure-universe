@@ -9,6 +9,17 @@ const BRICK = '0b7c1d2e-1111-4222-8333-944455556666';
 const job = (over: Record<string, unknown> = {}) => ({ id: 'j1', status: 'running', queuedFor: null, ...over });
 const asking = (answer: unknown) => ({ startComputerJob: vi.fn().mockResolvedValue(answer) });
 
+describe('the job keeps the chat it began in', () => {
+    it('starts the job with the direct chat it was asked in, so the result goes back there and nowhere else', async () => {
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        await runComputerTool({ job: 'Visa form' }, { admin, botId: BRICK, userId: 'u', origin: { kind: 'dm', ref: '!dm:chat.test' } });
+        expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'u', expect.objectContaining({ origin: { kind: 'dm', ref: '!dm:chat.test' } }));
+        const none = asking({ ok: true, job: job(), restoredFrom: null });
+        await runComputerTool({ job: 'Visa form' }, { admin: none, botId: BRICK, userId: 'u' });
+        expect(none.startComputerJob.mock.calls[0][2]).not.toHaveProperty('origin');
+    });
+});
+
 describe('the fixed order: answer, then an app, then the computer', () => {
     const apps = ['GitHub', 'Google Sheets'];
 
