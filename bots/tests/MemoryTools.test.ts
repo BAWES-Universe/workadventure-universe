@@ -480,6 +480,16 @@ describe('CodeRabbit on #2020: a thing with "and" in it, and a keep that says it
         expect(done.saving).toBeUndefined();
     });
 
+    it('says a waiting forget is kept until it is cleared, even after a restart, unless the file could not be written', async () => {
+        const memory = sara();
+        const note = async (durable: boolean | undefined) =>
+            String(((await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'that I like coffee' }, { memory, forget: vi.fn(async () => ({ went: 1, waiting: 1, ...(durable === undefined ? {} : { durable }) })) })) as { note: string }).note);
+        expect(await note(true)).toContain('do not need to ask again');
+        expect(await note(true)).not.toContain('may need to ask again');
+        expect(await note(false)).toContain('may need to ask again later');
+        expect(await note(undefined)).toContain('do not need to ask again');
+    });
+
     it('shows a forget that removed nothing as a step that did not run', () => {
         expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false, done: 'Forgot nothing yet' });
         expect(resultOf('a', { forgotten: ['They like coffee'], count: 1 })).toEqual({ id: 'a', ok: true });

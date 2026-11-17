@@ -115,7 +115,7 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
             const left = CARRIED_COPY_BYTES_MAX - bytes;
             let made = await copyOnce(key, receipt, left, now, copy);
             // A copy that a carry with less budget started and refused for its size is not a "no" for this one: it asks for its own
-            if (!made.ok && made.over !== undefined && made.over <= left) made = await copyOnce(key, receipt, left, now, copy);
+            if (!made.ok && 'over' in made && made.over !== undefined && made.over <= left) made = await copyOnce(key, receipt, left, now, copy);
             if (!made.ok || made.size > left) {
                 media.push(gone());
                 continue;
