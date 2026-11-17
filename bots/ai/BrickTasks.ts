@@ -144,14 +144,14 @@ export function taskToolDefinitions(): ToolDefinition[] {
             function: {
                 name: CHANGE_TASK_TOOL,
                 description:
-                    'Change one the person asked you to keep, when they ask: snooze (a reminder comes back after a while, also right after it went off), pause, resume, cancel (stop it for good), or change (its words, its time or how often it checks, a watch\'s condition, a goal\'s outcome). ' +
+                    'Change one the person asked you to keep, when they ask: snooze (a reminder comes back after a while, also right after it went off), run_now (run it once now, an extra run: its schedule is not moved and a pause they chose stays), pause, resume, cancel (stop it for good), or change (its words, its time or how often it checks, a watch\'s condition, a goal\'s outcome). ' +
                     'For a goal that asked them a question (my_tasks shows asking): close (they say it is done, so it stops and is marked done) or keep_going (they say carry on: it goes on as it was and does not ask that again). ' +
                     'Get its id from my_tasks. Tell them plainly what you did, and when it comes next.',
                 parameters: {
                     type: 'object',
                     properties: {
                         id: { type: 'string', description: 'Its id from my_tasks.' },
-                        action: { type: 'string', enum: ['snooze', 'pause', 'resume', 'cancel', 'change', 'close', 'keep_going'] },
+                        action: { type: 'string', enum: ['snooze', 'run_now', 'pause', 'resume', 'cancel', 'change', 'close', 'keep_going'] },
                         text: { type: 'string', description: 'change: the new words.' },
                         when: { type: 'string', description: 'change: the new date and time on THEIR clock, like "2026-11-15 16:00".' },
                         in_minutes: { type: 'integer', description: 'change: the new time as minutes from now.' },
@@ -353,6 +353,16 @@ function refusal(answer: ItemRefused): Record<string, unknown> {
             return { error: 'That time has already passed. Ask what time they mean.' };
         case 'off':
             return { error: 'This Brick is switched off, so nothing can be set.' };
+        case 'busy':
+            return { error: 'It is running right now. Say so, and that they can ask again when it is done.' };
+        case 'no_room':
+            return { error: 'Their usage for goals and tasks is used up for now, so it cannot run until it is back. Say so plainly.' };
+        case 'runs_a_day':
+            return { error: `That is the most runs for today (${answer.limit ?? 'the limit'}). Say so plainly.` };
+        case 'needs_setup':
+            return { error: 'It came with a template and is not turned on yet, so it cannot run. Say so, and offer to turn it on.' };
+        case 'needs_goal':
+            return { error: 'It is a check for a goal that is paused, so it only runs with its goal. Say so plainly.' };
         case 'wrong_state':
             return { error: `That cannot be done to it now (${answer.error}). Say so plainly.` };
         default:
@@ -380,6 +390,8 @@ function view(item: BrickItemView, now: number, workdays: number[] | null, zone:
         ...(item.outcome ? { done_when: item.outcome } : {}),
         state: item.state,
         ...(item.nextDueAt ? { next: sayMoment(item.nextDueAt, zone, now) } : {}),
+        // A snoozed run moves that one run only: the schedule goes on at its own time after it
+        ...(item.snoozedUntil && item.nextRegularAt && item.nextRegularAt !== item.nextDueAt ? { snoozed: true, then_regular: sayMoment(item.nextRegularAt, zone, now) } : {}),
         ...(repeats ? { repeats } : {}),
         ...(item.lastRunAt ? { went_off: sayMoment(item.lastRunAt, zone, now) } : {}),
         ...(item.asking ? { asking: item.asking === 'date_passed' ? 'it asked them what to do now that its date passed' : 'it asked them whether it is done, because it could not tell' } : {}),
@@ -582,6 +594,10 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
         case 'resume':
             body = { ...base, action };
             break;
+        case 'run_now':
+            // An extra run, asked for by the owner: Orbit holds one at a time and refuses a second while it runs or waits
+            body = { ...base, action: 'run' };
+            break;
         case 'cancel':
             body = { ...base, action: 'delete' };
             break;
@@ -617,7 +633,7 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
             break;
         }
         default:
-            return { error: 'The action is snooze, pause, resume, cancel, change, close or keep_going.' };
+            return { error: 'The action is snooze, run_now, pause, resume, cancel, change, close or keep_going.' };
     }
     const answer = await context.admin.changeBrickItem(context.botId, id, body);
     if (refused(answer)) return refusal(answer);
@@ -625,6 +641,9 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
     // Whatever was just set under this id is no longer what a repeat of the same ask would find
     for (const [key, kept] of justSet) if (kept.result.id === item.id) justSet.delete(key);
     const done =
-        action === 'cancel' ? 'cancelled' : action === 'snooze' ? 'snoozed' : action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'close' ? 'closed' : action === 'keep_going' ? 'kept_going' : 'changed';
+        action === 'cancel' ? 'cancelled' : action === 'snooze' ? 'snoozed' : action === 'run_now' ? 'started' : action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'close' ? 'closed' : action === 'keep_going' ? 'kept_going' : 'changed';
+    if (action === 'run_now') {
+        return { [done]: true, ...view(item, now, settings.workdays, readOn), note: 'Tell them it is running now and the result comes here in this chat. Its own schedule is as it was.' };
+    }
     return { [done]: true, ...view(item, now, settings.workdays, readOn), note: item.nextDueAt ? 'Tell them plainly what you did, and when it comes next.' : 'Tell them plainly what you did.' };
 }

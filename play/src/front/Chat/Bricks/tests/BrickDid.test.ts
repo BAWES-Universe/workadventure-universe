@@ -42,6 +42,13 @@ describe("Everything Brick did (#2002)", () => {
     });
 
     describe("reading a page", () => {
+        it("says a run the person asked for, and reads one from an Orbit that does not say as one the clock set off", () => {
+            const page = parseDidPage({ runs: [run({ manual: true }), run({ runId: "r2" })] });
+            expect(page.runs.map((one) => one.manual)).toEqual([true, false]);
+            expect(plain(sayRun(page.runs[0], NOW, get(LL), "en-US"))).toBe("Today, 7:31 AM · You asked for it · Told you");
+            expect(plain(sayRun(page.runs[1], NOW, get(LL), "en-US"))).toBe("Today, 7:31 AM · Told you");
+        });
+
         it("reads the runs and the cursor, and drops what it cannot read", () => {
             const page = parseDidPage({
                 runs: [

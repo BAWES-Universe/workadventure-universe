@@ -34,8 +34,12 @@ export interface GoalItem {
     condition: string | null;
     outcome: string | null;
     cadence: ItemCadence;
-    /** The next time it comes, in milliseconds; null when nothing is due. */
+    /** The next time it comes, in milliseconds; null when nothing is due. While one is snoozed, that is the snoozed run. */
     nextDueAt: number | null;
+    /** Where the recurrence itself comes next, in milliseconds: a snooze moves one run and never this. */
+    nextRegularAt: number | null;
+    /** The snoozed run that is still to come (it is `nextDueAt`), or null when nothing is snoozed. */
+    snoozedUntil: number | null;
     waitingFor: string | null;
     /** The one line a goal keeps up to date for its person. */
     statusLine: string | null;
@@ -139,6 +143,8 @@ function readItem(one: unknown, goalId: string | null, of: BrickOf): GoalItem | 
         outcome: line(row.outcome),
         cadence: parseCadence(row.cadence),
         nextDueAt: time(row.nextDueAt),
+        nextRegularAt: time(row.nextRegularAt) ?? time(row.nextDueAt),
+        snoozedUntil: time(row.snoozedUntil),
         waitingFor: line(row.waitingFor),
         statusLine: line(row.statusLine),
         steps,
@@ -269,6 +275,19 @@ export function sayWhen(
     return when ? when[0].toUpperCase() + when.slice(1) : "";
 }
 
+/**
+ * A snoozed run, said under the row: when the snoozed run comes and, for a repeating one, where its own schedule goes on after it
+ * ("Snoozed until today, 8:10 AM · Next regular run today, 9:00 AM"). Empty when nothing is snoozed.
+ */
+export function saySnoozed(item: GoalItem, now: number, ll: TranslationFunctions, locale?: string): string {
+    if (item.snoozedUntil === null || item.state !== "on") return "";
+    const g = ll.chat.brick.goals;
+    const until = g.snoozedUntil({ when: sayNext(item.snoozedUntil, now, ll, locale) });
+    // A one-off has no schedule of its own after it: its row already says the new time
+    if (item.cadence.type === "once" || item.nextRegularAt === null || item.nextRegularAt <= item.snoozedUntil) return until;
+    return `${until} · ${g.nextRegular({ when: sayNext(item.nextRegularAt, now, ll, locale) })}`;
+}
+
 function whenWords(
     item: GoalItem,
     now: number,
@@ -351,10 +370,41 @@ export function sayBrief(items: readonly GoalItem[], now: number, ll: Translatio
 export type GoalsState = "loading" | "ready" | "failed";
 
 /** What a tap does, by the name the screens' route takes. */
-export type GoalTap = "pause" | "resume" | "done" | "reopen" | "snooze" | "keep";
+export type GoalTap = "pause" | "resume" | "done" | "reopen" | "snooze" | "keep" | "run";
 
-/** How a tap ended: Orbit took it and the list is fresh, Orbit refused it, or Orbit took it but the list could not be read again. */
-export type GoalTapResult = "taken" | "refused" | "stale";
+/**
+ * How a tap ended: Orbit took it and the list is fresh, Orbit refused it, or Orbit took it but the list could not be read again.
+ * Run now says more: it `started` (the row itself does not change, so the person is told), or why Orbit would not start it: one is
+ * already running (`busy`), the usage for goals and tasks is used up (`no_room`), or the runs for today are (`runs_a_day`).
+ */
+export type GoalTapResult = "taken" | "refused" | "stale" | "started" | "busy" | "no_room" | "runs_a_day";
+
+/** What to tell the person about a tap that did not go through (null when nothing needs saying). */
+export function sayTapProblem(result: GoalTapResult, ll: TranslationFunctions): string | null {
+    const g = ll.chat.brick.goals;
+    switch (result) {
+        case "refused":
+            return g.tapFailed();
+        case "stale":
+            return g.tapStale();
+        case "busy":
+            return g.runBusy();
+        case "no_room":
+            return g.runNoRoom();
+        case "runs_a_day":
+            return g.runsADay();
+        default:
+            return null;
+    }
+}
+
+/** Run now's own key: the same tap sent twice is one run on Orbit's side. */
+const newTapKey = (): string =>
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+
+const RUN_REFUSALS: Record<string, GoalTapResult> = { busy: "busy", no_room: "no_room", runs_a_day: "runs_a_day" };
 
 export interface BrickGoalsList {
     items: Readable<GoalItem[]>;
@@ -370,7 +420,10 @@ export interface BrickGoalsList {
 export function brickGoalsList(brickId: string): BrickGoalsList {
     const own = goalsList(
         async () => parseGoalItems(await botApiService.getBrickItems(brickId), brickId),
-        (item, action) => botApiService.tapBrickItem(brickId, item.id, action)
+        (item, action, key) =>
+            key === undefined
+                ? botApiService.tapBrickItem(brickId, item.id, action)
+                : botApiService.tapBrickItem(brickId, item.id, action, key)
     );
     return {
         ...own,
@@ -390,7 +443,10 @@ export function brickGoalsList(brickId: string): BrickGoalsList {
 export function allGoalsList(): BrickGoalsList {
     const list = goalsList(
         async () => parseGoalItems(await botApiService.getAllBrickItems()),
-        (item, action) => botApiService.tapBrickItem(item.brickId, item.id, action)
+        (item, action, key) =>
+            key === undefined
+                ? botApiService.tapBrickItem(item.brickId, item.id, action)
+                : botApiService.tapBrickItem(item.brickId, item.id, action, key)
     );
     let watching = false;
     return {
@@ -414,7 +470,7 @@ export const myGoalsList: BrickGoalsList = allGoalsList();
 
 function goalsList(
     readList: () => Promise<GoalItem[]>,
-    send: (item: GoalItem, action: GoalTap) => Promise<unknown>
+    send: (item: GoalItem, action: GoalTap, key?: string) => Promise<unknown>
 ): BrickGoalsList {
     const items = writable<GoalItem[]>([]);
     const state = writable<GoalsState>("loading");
@@ -452,19 +508,24 @@ function goalsList(
         async tap(itemId, action) {
             const item = get(items).find((one) => one.id === itemId);
             let taken = item !== undefined;
+            let refusal: GoalTapResult = "refused";
             if (item) {
                 try {
-                    await send(item, action);
+                    // Run now carries its own key (this tap), so a retry of it can never start a second run
+                    await send(item, action, action === "run" ? newTapKey() : undefined);
                 } catch (error) {
                     console.warn("Could not change a goal or task", error);
                     taken = false;
+                    const code = (error as { code?: unknown } | null)?.code;
+                    if (action === "run" && typeof code === "string") refusal = RUN_REFUSALS[code] ?? "refused";
                 }
             }
             // Read again either way: if it was refused, the list shows how it really stands.
             const fresh = await read(true);
-            if (!taken) return "refused";
+            if (!taken) return refusal;
             // Orbit took it but the list on screen is the old one: the row would look as if nothing happened
-            return fresh ? "taken" : "stale";
+            if (!fresh) return "stale";
+            return action === "run" ? "started" : "taken";
         },
     };
 }

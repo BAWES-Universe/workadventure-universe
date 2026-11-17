@@ -1734,11 +1734,14 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/did${query}`, {});
     }
 
-    /** The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze or Keep going. Answers `{ item }`. */
-    async tapBrickItem(brickId: string, itemId: string, action: string): Promise<unknown> {
+    /**
+     * The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze, Keep going or Run now. Answers `{ item }`
+     * (and `{ run }` for Run now). `key` is Run now's own idempotency key: the same tap sent twice is one run.
+     */
+    async tapBrickItem(brickId: string, itemId: string, action: string, key?: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items/${encodeURIComponent(itemId)}`, {
             method: "PATCH",
-            body: JSON.stringify({ action }),
+            body: JSON.stringify(key === undefined ? { action } : { action, key }),
         });
     }
 

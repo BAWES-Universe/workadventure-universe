@@ -603,6 +603,30 @@ describe('seeing and changing what is kept', () => {
         expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'delete' });
     });
 
+    it('runs one now when they ask: an extra run, nothing else about it is said to move, and the reasons it would not run are said plainly', async () => {
+        const { admin, context } = setUp();
+        const answer = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'run' });
+        expect(answer).toMatchObject({ started: true, id: 'item-1' });
+        expect(String(answer.note)).toContain('Its own schedule is as it was');
+        for (const [code, words] of [
+            ['busy', 'running right now'],
+            ['no_room', 'usage for goals and tasks is used up'],
+            ['runs_a_day', 'most runs for today'],
+            ['needs_setup', 'not turned on yet'],
+            ['needs_goal', 'goal that is paused'],
+        ] as const) {
+            admin.changeBrickItem.mockResolvedValueOnce({ ok: false, status: 409, code, error: 'no' } as never);
+            expect(String((await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context)).error)).toContain(words);
+        }
+        // A snoozed run is said as that run only: the schedule carries on at its own time after it
+        admin.changeBrickItem.mockResolvedValueOnce({
+            ok: true,
+            item: { ...item(), cadence: { type: 'every', minutes: 60 }, nextDueAt: '2026-11-15T13:10:00.000Z', snoozedUntil: '2026-11-15T13:10:00.000Z', nextRegularAt: '2026-11-15T14:00:00.000Z' },
+        } as never);
+        expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'snooze' }, context)).toMatchObject({ snoozed: true, then_regular: expect.any(String) });
+    });
+
     it('answers the question a goal asked: close it is done, keep going is keep, and my_tasks shows which goal asked', async () => {
         const goal = item({ kind: 'goal', words: 'Get my visa', state: 'on', nextDueAt: '2026-11-15T13:00:00.000Z', asking: 'unsure' });
         const { admin, context } = setUp({ items: [goal, item({ id: 'item-2', kind: 'goal', asking: 'date_passed' }), item({ id: 'item-3', kind: 'goal' })] });
@@ -792,6 +816,7 @@ describe('what the chat shows for them', () => {
         expect(describeStep({ id: '1', name: SET_REMINDER_TOOL, arguments: { text: 'Pick up the car' } })).toMatchObject({ done: 'Set a reminder', detail: 'Pick up the car' });
         expect(describeStep({ id: '2', name: CHANGE_TASK_TOOL, arguments: { action: 'snooze' } })).toMatchObject({ done: 'Snoozed a reminder' });
         expect(describeStep({ id: '3', name: CHANGE_TASK_TOOL, arguments: { action: 'cancel' } })).toMatchObject({ done: 'Stopped it' });
+        expect(describeStep({ id: '3b', name: CHANGE_TASK_TOOL, arguments: { action: 'run_now' } })).toMatchObject({ done: 'Ran it now' });
         expect(describeStep({ id: '4', name: SET_BRIEFING_TOOL, arguments: { text: 'my day' } })).toMatchObject({ done: 'Set a briefing', detail: 'my day' });
         expect(describeStep({ id: '5', name: SET_WATCH_TOOL, arguments: { text: 'the flight' } })).toMatchObject({ done: 'Set a watch', detail: 'the flight' });
         expect(describeStep({ id: '6', name: SET_GOAL_TOOL, arguments: { text: 'my visa' } })).toMatchObject({ done: 'Set a goal', detail: 'my visa' });
