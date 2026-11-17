@@ -70,4 +70,30 @@ describe('copies of the same file made at the same moment', () => {
         const again = await copyCarriedMedia('guest-retry', lines, steps);
         expect(again[0].media?.[0]).toMatchObject({ url: 'https://cdn.test/ok.png' });
     });
+    it("is not a refusal for a carry with more budget left: a copy refused for the first carry's budget is asked again for the second", async () => {
+        const MB = 1024 * 1024;
+        let release: () => void = () => undefined;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        const sizes: Record<string, number> = { 'r-big': 59 * MB, 'r-shared': 2 * MB };
+        const steps: CarryCopy = {
+            handed: vi.fn(async () => true),
+            read: vi.fn(async (receipt: string) => {
+                if (receipt === 'r-shared') await held;
+                return { ok: true, bytes: { byteLength: sizes[receipt] } as never, url: 'g', type: 'image/png', name: `${receipt}.png`, sha256: 's' } as never;
+            }),
+            store: vi.fn(async (_bytes, _type, name) => `https://cdn.test/${name}`),
+        };
+        const file = (receipt: string) => ({ kind: 'file', name: `${receipt}.png`, type: 'image/png', receipt });
+        // The first carry has 1 MB left by the time it reaches the shared file, the second has all of its budget
+        const first = copyCarriedMedia('guest-budget', [{ from: 'guest', text: 'a', at: 1, media: [file('r-big'), file('r-shared')] }] as never, steps);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const second = copyCarriedMedia('guest-budget', [{ from: 'guest', text: 'b', at: 2, media: [file('r-shared')] }] as never, steps);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        release();
+        const [one, two] = await Promise.all([first, second]);
+        expect(one[0].media?.[0]).toMatchObject({ url: 'https://cdn.test/r-big.png' });
+        expect(one[0].media?.[1]).toMatchObject({ gone: true });
+        expect(two[0].media?.[0]).toMatchObject({ url: 'https://cdn.test/r-shared.png' });
+        expect(two[0].media?.[0]).not.toHaveProperty('gone');
+    });
 });

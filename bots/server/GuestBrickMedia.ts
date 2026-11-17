@@ -56,7 +56,8 @@ const COPIES_KEPT_MS = 60 * 60 * 1000;
 const COPIES_MAX = 2000;
 /** Copies made for a hand-over, by guest and file, so a carry asked again (its chat was not there yet) never copies twice. */
 const copies = new Map<string, { at: number; url: string }>();
-type Copied = { ok: true; url: string; type: string; size: number } | { ok: false };
+/** `over`: the file was not copied because it was bigger than the budget left for the carry that started the copy (its size). */
+type Copied = { ok: true; url: string; type: string; size: number } | { ok: false; over?: number };
 /** Copies being made right now, by the same key: a carry asked again while the first is still copying waits for it instead of copying a second time. */
 const copying = new Map<string, Promise<Copied>>();
 
@@ -112,24 +113,9 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
                 continue;
             }
             const left = CARRIED_COPY_BYTES_MAX - bytes;
-            let work = copying.get(key);
-            if (!work) {
-                work = (async (): Promise<Copied> => {
-                    const upload = await copy.read(receipt);
-                    // The uploader couldn't be asked just now: nothing of this part is said, and the device asks again later
-                    if ('why' in upload && upload.why === 'not-now') throw new CarryNotNowError('Could not read a file just now');
-                    if (!upload.ok || upload.bytes.byteLength > left) return { ok: false };
-                    // Storage that fails now fails the part, which the device asks again; a copy made is remembered, so it is made once
-                    const url = await copy.store(upload.bytes, upload.type, upload.name).catch((error: unknown) => {
-                        throw new CarryNotNowError(`Could not copy a file: ${error instanceof Error ? error.message : String(error)}`);
-                    });
-                    if (!url) return { ok: false };
-                    copies.set(key, { at: now, url });
-                    return { ok: true, url, type: upload.type, size: upload.bytes.byteLength };
-                })().finally(() => copying.delete(key));
-                copying.set(key, work);
-            }
-            const made = await work;
+            let made = await copyOnce(key, receipt, left, now, copy);
+            // A copy that a carry with less budget started and refused for its size is not a "no" for this one: it asks for its own
+            if (!made.ok && made.over !== undefined && made.over <= left) made = await copyOnce(key, receipt, left, now, copy);
             if (!made.ok || made.size > left) {
                 media.push(gone());
                 continue;
@@ -140,6 +126,28 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
         out.push({ ...line, media });
     }
     return out;
+}
+
+/** One copy of a file by its key, shared by every carry that asks while it is being made. The budget is the asker's who started it. */
+function copyOnce(key: string, receipt: string, left: number, now: number, copy: CarryCopy): Promise<Copied> {
+    const running = copying.get(key);
+    if (running) return running;
+    const work = (async (): Promise<Copied> => {
+        const upload = await copy.read(receipt);
+        // The uploader couldn't be asked just now: nothing of this part is said, and the device asks again later
+        if ('why' in upload && upload.why === 'not-now') throw new CarryNotNowError('Could not read a file just now');
+        if (!upload.ok) return { ok: false };
+        if (upload.bytes.byteLength > left) return { ok: false, over: upload.bytes.byteLength };
+        // Storage that fails now fails the part, which the device asks again; a copy made is remembered, so it is made once
+        const url = await copy.store(upload.bytes, upload.type, upload.name).catch((error: unknown) => {
+            throw new CarryNotNowError(`Could not copy a file: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        if (!url) return { ok: false };
+        copies.set(key, { at: now, url });
+        return { ok: true, url, type: upload.type, size: upload.bytes.byteLength };
+    })().finally(() => copying.delete(key));
+    copying.set(key, work);
+    return work;
 }
 
 /** The copy steps of this server: Orbit's hand-over, the guest's receipt, the uploader as the bot server. Null when guests can't send files. */
