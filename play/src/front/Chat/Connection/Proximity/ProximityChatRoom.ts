@@ -2034,6 +2034,9 @@ export class ProximityChatRoom implements ChatRoom {
                 // The pen beside the bot's Woka while its reply words come in, with or without a tool call. Its last
                 // chunk, or an error, ends it.
                 this.noteBotStreaming(event.sender, !stream.isFinal && !stream.isError);
+                // The reply is over, so the bot is no longer typing it: without this its typing record would keep the pen on
+                // until the typing expiry, long after the last chunk
+                if (stream.isFinal || stream.isError) this.removeTypingUserbyID(event.sender);
                 const existing = this.streamMessages.get(stream.responseId);
 
                 if (stream.reset && existing) {

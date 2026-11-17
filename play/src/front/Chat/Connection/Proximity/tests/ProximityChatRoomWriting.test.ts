@@ -190,6 +190,23 @@ describe("ProximityChatRoom pen beside a bot's Woka while it writes", () => {
         expect(work("room_9")).toBeUndefined();
     });
 
+    it("ends the pen with the last chunk or an error even while the typing record is still there", () => {
+        typing("room_9", true);
+        words("room_9");
+        expect(work("room_9")).toBe("write");
+        // The last chunk comes straight after, long before the typing entry would run out
+        words("room_9", true);
+        expect(work("room_9")).toBeUndefined();
+
+        typing("room_9", true);
+        words("room_9");
+        fake.emit("spaceStreamMessage", {
+            sender: "room_9",
+            spaceStreamMessage: { responseId: "r2", token: "", isFinal: false, isError: true, reset: false },
+        } as unknown as PublicEvent);
+        expect(work("room_9")).toBeUndefined();
+    });
+
     it("lets the pen go when the words stop without a last one, so it can't stay for good", () => {
         words("room_9");
         expect(work("room_9")).toBe("write");
