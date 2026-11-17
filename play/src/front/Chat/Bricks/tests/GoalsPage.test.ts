@@ -220,7 +220,10 @@ describe("Goals and tasks across all Bricks (#2002, mock t-7-all)", () => {
     });
 
     it("runs one now on the row's own Brick, with a key of its own, says it started, and does not open the row", async () => {
-        await show([row(), row({ id: "w", brickId: RECIPE, kind: "watch", words: "Flight under KWD 90", cadence: daily })]);
+        await show([
+            row(),
+            row({ id: "w", brickId: RECIPE, kind: "watch", words: "Flight under KWD 90", cadence: daily }),
+        ]);
         expect(all("goalsPageRun")).toHaveLength(2);
         expect(text(all("goalsPageRun")[0])).toBe("Run now");
         all("goalsPageRun")[1].click();

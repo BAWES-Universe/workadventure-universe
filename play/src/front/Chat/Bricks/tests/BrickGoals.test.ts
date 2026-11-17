@@ -412,6 +412,16 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             expect(get(list.state)).toBe("ready");
             expect(get(list.items)).toHaveLength(1);
         });
+
+        it("says Run now started when Orbit took it, even if the read after it fails: the row does not change, so nothing is stale", async () => {
+            orbit.getBrickItems.mockResolvedValueOnce({ items: [row()] });
+            const list = brickGoalsList(BRICK);
+            await list.load();
+            orbit.tapBrickItem.mockResolvedValueOnce({});
+            orbit.getBrickItems.mockRejectedValueOnce(new Error("offline"));
+            expect(await list.tap("i1", "run")).toBe("started");
+            expect(get(list.items)).toHaveLength(1);
+        });
     });
 
     describe("the list across all Bricks", () => {

@@ -284,7 +284,8 @@ export function saySnoozed(item: GoalItem, now: number, ll: TranslationFunctions
     const g = ll.chat.brick.goals;
     const until = g.snoozedUntil({ when: sayNext(item.snoozedUntil, now, ll, locale) });
     // A one-off has no schedule of its own after it: its row already says the new time
-    if (item.cadence.type === "once" || item.nextRegularAt === null || item.nextRegularAt <= item.snoozedUntil) return until;
+    if (item.cadence.type === "once" || item.nextRegularAt === null || item.nextRegularAt <= item.snoozedUntil)
+        return until;
     return `${until} · ${g.nextRegular({ when: sayNext(item.nextRegularAt, now, ll, locale) })}`;
 }
 
@@ -523,9 +524,11 @@ function goalsList(
             // Read again either way: if it was refused, the list shows how it really stands.
             const fresh = await read(true);
             if (!taken) return refusal;
+            // Run now changes nothing on the row: Orbit took it, so it started, whatever the list refresh did (that failing is a separate, quiet problem)
+            if (action === "run") return "started";
             // Orbit took it but the list on screen is the old one: the row would look as if nothing happened
             if (!fresh) return "stale";
-            return action === "run" ? "started" : "taken";
+            return "taken";
         },
     };
 }
