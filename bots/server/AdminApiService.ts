@@ -503,6 +503,8 @@ export type GuestBrickAllowance =
     | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
 
 const BRICK_CALL_TIMEOUT_MS = 8_000;
+/** A file a computer job made can be as big as Limits allow, so its fetch gets longer than a call for a list. */
+const COMPUTER_FILE_TIMEOUT_MS = 120_000;
 /** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
 const RUNNING_PAGES_MAX = 100;
 
@@ -1373,6 +1375,29 @@ export class AdminApiService {
             if (axios.isAxiosError(error) && error.response?.status === 404) return true;
             console.warn('[AdminApiService] Could not keep that a computer job was told:', error instanceof Error ? error.message : error);
             return false;
+        }
+    }
+
+    /**
+     * One file a finished computer job made, to put in the person's chat as a card (the file card). Null when Orbit no longer has it (it reached the chat,
+     * the Brick is gone, or its days passed): that is an answer. Throws when Orbit cannot be asked, so the caller tries again.
+     */
+    async computerReportFile(jobId: string, fileId: string): Promise<Buffer | null> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
+        try {
+            const response = await axios.get<ArrayBuffer>(resolveAdminApiEndpoint(this.adminApiUrl, `api/computer/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(fileId)}`), {
+                responseType: 'arraybuffer',
+                headers: { Authorization: `Bearer ${botServiceToken}`, 'Cache-Control': 'no-store' },
+                timeout: COMPUTER_FILE_TIMEOUT_MS,
+                // The size is Orbit's to limit (Limits); what the chat can carry is the chat's to refuse
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
+            });
+            return Buffer.from(response.data);
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
         }
     }
 

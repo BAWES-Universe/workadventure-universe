@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
-import { ComputerReports, computerReportOf, reportText, receiptOf, workedLine, type ComputerReport, type ComputerReportsApi, type ComputerSpeaker } from '../server/ComputerReports';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ComputerReports, FILE_TRIES, computerReportOf, reportText, receiptOf, workedLine, type AttachedFile, type ComputerReport, type ComputerReportsApi, type ComputerSpeaker, type FilesAnswer } from '../server/ComputerReports';
+import axios from 'axios';
 import { AdminApiService } from '../server/AdminApiService';
 
 const base: ComputerReport = {
@@ -18,6 +19,7 @@ const base: ComputerReport = {
     why: null,
     effects: [],
     files: [],
+    handed: [],
     givenBack: false,
 };
 const report = (over: Partial<ComputerReport>): ComputerReport => ({ ...base, ...over });
@@ -168,6 +170,7 @@ function round(reports: ComputerReport[], answers: Array<{ ok: true; eventId: st
             told.push({ jobId: one.jobId, kind: one.kind, seq: one.seq });
             return true;
         }),
+        file: vi.fn(async () => Buffer.from('bytes')),
     };
     const speaker: ComputerSpeaker = {
         say: vi.fn(async (brickId, to, text, transactionId, extra) => {
@@ -254,5 +257,174 @@ describe('saying it, once', () => {
         await vi.advanceTimersByTimeAsync(5000);
         expect(api.reports).toHaveBeenCalledTimes(2);
         vi.useRealTimers();
+    });
+});
+
+
+const handed = (...names: string[]) => names.map((name, index) => ({ id: `file-${index + 1}`, name, bytes: 100, mime: 'application/pdf' }));
+
+describe('the file card: files a finished job made, in the chat after the message', () => {
+    it('reads the handed files of Orbit’s answer, keeping only whole ones', () => {
+        const raw = {
+            ...base,
+            handed: [
+                { id: 'f1', name: 'visa-receipt.pdf', bytes: 5000, mime: 'application/pdf' },
+                { id: '', name: 'no-id.pdf', bytes: 1, mime: 'application/pdf' },
+                { id: 'f3', name: 'no-bytes.pdf', mime: 'application/pdf' },
+                { id: 'f4', name: 'no-type.pdf', bytes: 1 },
+                null,
+                'junk',
+            ],
+        };
+        expect(computerReportOf(raw)?.handed).toEqual([{ id: 'f1', name: 'visa-receipt.pdf', bytes: 5000, mime: 'application/pdf' }]);
+        expect(computerReportOf({ ...base, handed: 'nope' })?.handed).toEqual([]);
+        expect(computerReportOf({ ...base, handed: undefined })?.handed).toEqual([]);
+    });
+
+    it('says what is attached below, and names what was not handed over', () => {
+        expect(reportText(report({ handed: handed('visa-receipt.pdf') }))).toBe('Visa form is done. My record shows nothing was sent or paid. I attached visa-receipt.pdf below.');
+        expect(reportText(report({ handed: handed('a.pdf', 'b.pdf', 'c.pdf'), files: ['x.zip', 'y.zip'] }))).toBe(
+            'Visa form is done. My record shows nothing was sent or paid. I attached a.pdf, b.pdf and c.pdf below. It also saved x.zip and y.zip on its computer.'
+        );
+        // With no card the message is as before
+        expect(reportText(report({ files: ['notes.txt'] }))).toBe('Visa form is done. My record shows nothing was sent or paid. It saved notes.txt on its computer.');
+    });
+
+    it('still claims only the receipt: a file never turns into "it went through"', () => {
+        const text = reportText(report({ handed: handed('visa-receipt.pdf'), effects: [{ kind: 'submit', state: 'unknown', where: 'visa-portal.example' }] }));
+        expect(text).toContain("I'm not sure the submission at visa-portal.example went through");
+        expect(text).toContain('I attached visa-receipt.pdf below.');
+    });
+
+    function withFiles(reports: ComputerReport[], answer: (files: AttachedFile[]) => FilesAnswer | undefined) {
+        const base_ = round(reports);
+        const loaded: string[] = [];
+        base_.api.file = vi.fn(async (_job: string, id: string) => {
+            loaded.push(id);
+            return Buffer.from(`bytes of ${id}`);
+        });
+        const seen: Array<{ transactionId: string; ids: string[] }> = [];
+        const speaker: ComputerSpeaker = {
+            say: vi.fn(async (brickId, to, text, transactionId, extra) => {
+                base_.said.push({ brickId, to, text, transactionId, steps: !!extra?.steps });
+                const files = extra?.files ?? [];
+                seen.push({ transactionId, ids: files.map((file) => file.id) });
+                const result = answer(files);
+                return { ok: true as const, eventId: '$e', ...(result ? { files: result } : {}) };
+            }),
+        };
+        const runner = new ComputerReports(base_.api, speaker, { warn: base_.warn });
+        return { ...base_, speaker, runner, seen, loaded };
+    }
+    const allIn = (files: AttachedFile[]): FilesAnswer => ({ attached: files.map((file) => file.id), missed: [] });
+
+    it('hands the files to the chat after the message, fetching a file only when it is its turn, and tells Orbit once they are in', async () => {
+        const { runner, seen, told, loaded, api } = withFiles([report({ handed: handed('a.pdf', 'b.pdf') })], (files) => allIn(files));
+        expect(await runner.tick()).toBe(1);
+        expect(seen).toEqual([{ transactionId: 'computer-told:job-1:done', ids: ['file-1', 'file-2'] }]);
+        // Nothing was fetched by this part: the chat side fetches each file as it sends it
+        expect(loaded).toEqual([]);
+        expect(told).toEqual([{ jobId: 'job-1', kind: 'done', seq: null }]);
+        expect(api.keepTold).toHaveBeenCalledTimes(1);
+    });
+
+    it('a file’s bytes come from Orbit under the job and the file’s own id, and a file Orbit no longer has is null', async () => {
+        const { runner, api, loaded } = withFiles([report({ handed: handed('a.pdf') })], (files) => {
+            void files[0].load();
+            return allIn(files);
+        });
+        await runner.tick();
+        expect(api.file).toHaveBeenCalledWith('job-1', 'file-1');
+        expect(loaded).toEqual(['file-1']);
+    });
+
+    it('does not tell Orbit while a file may still go: the next round says the same message and sends only what is missing, then tells', async () => {
+        let round_ = 0;
+        const { runner, seen, told, said } = withFiles([report({ handed: handed('a.pdf', 'b.pdf') })], (files) => {
+            round_++;
+            return round_ === 1 ? { attached: ['file-1'], missed: [{ id: 'file-2', name: 'b.pdf', again: true }] } : allIn(files);
+        });
+        expect(await runner.tick()).toBe(0);
+        expect(told).toEqual([]);
+        expect(await runner.tick()).toBe(1);
+        expect(seen.map((one) => one.ids)).toEqual([['file-1', 'file-2'], ['file-2']]);
+        expect(said.map((one) => one.transactionId)).toEqual(['computer-told:job-1:done', 'computer-told:job-1:done']);
+        expect(told).toHaveLength(1);
+    });
+
+    it('says once that a file that can never go did not, and tells Orbit', async () => {
+        const { runner, said, told } = withFiles([report({ handed: handed('a.pdf', 'b.pdf') })], () => ({ attached: ['file-1'], missed: [{ id: 'file-2', name: 'b.pdf', again: false }] }));
+        expect(await runner.tick()).toBe(1);
+        expect(said.map((one) => [one.transactionId, one.text])).toEqual([
+            ['computer-told:job-1:done', expect.stringContaining('I attached a.pdf and b.pdf below.')],
+            ['computer-told:job-1:done:missed', "I couldn't attach b.pdf here. It is still on my computer."],
+        ]);
+        expect(told).toHaveLength(1);
+    });
+
+    it('gives up on a file the chat keeps failing, after a few rounds, and says so', async () => {
+        const { runner, said, told } = withFiles([report({ handed: handed('a.pdf', 'b.pdf') })], () => ({ attached: [], missed: [{ id: 'file-1', name: 'a.pdf', again: true }, { id: 'file-2', name: 'b.pdf', again: true }] }));
+        for (let i = 0; i < FILE_TRIES - 1; i++) expect(await runner.tick()).toBe(0);
+        expect(told).toEqual([]);
+        expect(await runner.tick()).toBe(1);
+        expect(said.at(-1)).toMatchObject({ transactionId: 'computer-told:job-1:done:missed', text: "I couldn't attach a.pdf and b.pdf here. They are still on my computer." });
+        expect(told).toHaveLength(1);
+    });
+
+    it('keeps the report for the next round when the note about a missing file could not be said', async () => {
+        const { runner, speaker, told } = withFiles([report({ handed: handed('a.pdf') })], () => ({ attached: [], missed: [{ id: 'file-1', name: 'a.pdf', again: false }] }));
+        const say = speaker.say as ReturnType<typeof vi.fn>;
+        const first = say.getMockImplementation()!;
+        say.mockImplementationOnce(first).mockImplementationOnce(async () => ({ ok: false as const, reason: 'unsure' as const }));
+        expect(await runner.tick()).toBe(0);
+        expect(told).toEqual([]);
+        expect(await runner.tick()).toBe(1);
+        expect(told).toHaveLength(1);
+    });
+
+    it('hands over files for a finished job only', async () => {
+        const { runner, seen } = withFiles([report({ kind: 'failed', handed: handed('a.pdf') })], allIn);
+        await runner.tick();
+        expect(seen[0].ids).toEqual([]);
+    });
+});
+
+describe('fetching a file from Orbit', () => {
+    function adminWith(respond: () => Promise<unknown>) {
+        const admin = new AdminApiService() as any;
+        admin.isConfigured = () => true;
+        admin.adminApiUrl = 'http://orbit.test';
+        const get = vi.spyOn(axios, 'get').mockImplementation(respond as never);
+        return { admin: admin as AdminApiService, get };
+    }
+    const token = process.env.BOT_SERVICE_TOKEN;
+    beforeAll(() => {
+        process.env.BOT_SERVICE_TOKEN = 'service-token';
+    });
+    afterAll(() => {
+        if (token === undefined) delete process.env.BOT_SERVICE_TOKEN;
+        else process.env.BOT_SERVICE_TOKEN = token;
+        vi.restoreAllMocks();
+    });
+
+    it('asks Orbit for the job’s own file with the service token and gives the bytes', async () => {
+        const bytes = new Uint8Array([1, 2, 3]).buffer;
+        const { admin, get } = adminWith(async () => ({ data: bytes }));
+        expect((await admin.computerReportFile('job 1', 'file/1'))?.equals(Buffer.from([1, 2, 3]))).toBe(true);
+        const [url, options] = get.mock.calls[0] as [string, { headers: Record<string, string>; responseType: string }];
+        expect(url).toBe('http://orbit.test/api/computer/jobs/job%201/files/file%2F1');
+        expect(options.headers.Authorization).toBe('Bearer service-token');
+        expect(options.responseType).toBe('arraybuffer');
+    });
+
+    it('says null when Orbit no longer has the file, and throws when it cannot be asked, so the try is made again', async () => {
+        const gone = adminWith(async () => {
+            throw Object.assign(new Error('not found'), { isAxiosError: true, response: { status: 404 } });
+        });
+        expect(await gone.admin.computerReportFile('j', 'f')).toBeNull();
+        const down = adminWith(async () => {
+            throw new Error('Orbit down');
+        });
+        await expect(down.admin.computerReportFile('j', 'f')).rejects.toThrow('Orbit down');
     });
 });

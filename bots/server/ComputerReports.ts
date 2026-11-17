@@ -9,6 +9,11 @@
  *  - what is said is only what Orbit's record proves: what reached a site and what is not known, the files that appeared while it ran, whether this try was
  *    given back. The computer's own sentence is only ever why it could not go on, and Orbit has cleaned it of links and markup.
  * The person's own Stop, a computer turned off and a Brick deleted are never offered: they just did it.
+ *
+ * The file card: the files a finished job made come as `handed` (Orbit moved them off the computer and keeps them until this has put them in the chat).
+ * Each is fetched from Orbit one at a time, uploaded to the chat and sent as a file message under its own transaction id, after the message. Orbit deletes
+ * its copy when it is told the report was said. A file that cannot go (gone from Orbit, too big for the chat, the chat kept refusing) is said so in a short
+ * message and stays on the computer.
  */
 
 import type { SpokeAnswer } from './BrickRunner';
@@ -16,6 +21,14 @@ import type { StepsField } from '../ai/ToolSteps';
 
 export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule';
 export type Waiting = 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer';
+
+/** A file a finished job made, handed over to be put in the chat as a card. */
+export interface HandedFile {
+    id: string;
+    name: string;
+    bytes: number;
+    mime: string;
+}
 
 export interface ReportEffect {
     kind: string;
@@ -39,12 +52,28 @@ export interface ComputerReport {
     waitedFor: Waiting | null;
     why: string | null;
     effects: ReportEffect[];
+    /** Files that appeared while the job ran and were not handed over: only named. */
     files: string[];
+    /** Files handed over to be put in the chat as cards. */
+    handed: HandedFile[];
     givenBack: boolean;
 }
 
 const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule'];
 const WAITINGS: readonly Waiting[] = ['details', 'signin', 'upload', 'pay', 'submit', 'answer'];
+
+/** The files handed over, each kept only when it has what a card needs. */
+function handedOf(raw: unknown): HandedFile[] {
+    if (!Array.isArray(raw)) return [];
+    const out: HandedFile[] = [];
+    for (const one of raw) {
+        const file = one as { id?: unknown; name?: unknown; bytes?: unknown; mime?: unknown } | null;
+        if (typeof file?.id === 'string' && file.id && typeof file.name === 'string' && file.name && typeof file.bytes === 'number' && file.bytes >= 0 && typeof file.mime === 'string' && file.mime) {
+            out.push({ id: file.id, name: file.name, bytes: file.bytes, mime: file.mime });
+        }
+    }
+    return out;
+}
 
 /** One report of Orbit's answer, kept only when it has what a message needs. */
 export function computerReportOf(raw: unknown): ComputerReport | null {
@@ -82,6 +111,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         why: typeof report.why === 'string' && report.why ? report.why : null,
         effects,
         files: Array.isArray(report.files) ? report.files.filter((name): name is string => typeof name === 'string' && name.length > 0) : [],
+        handed: handedOf(report.handed),
         givenBack: report.givenBack === true,
     };
 }
@@ -149,8 +179,10 @@ export function reportText(report: ComputerReport): string {
     const name = nameOf(report.title);
     switch (report.kind) {
         case 'done': {
-            const made = report.files.length > 0 ? ` It saved ${list(report.files.slice(0, 3))}${report.files.length > 3 ? ` and ${report.files.length - 3} more` : ''} on its computer.` : '';
-            return `${name} is done. ${receiptOf(report)}${made}`;
+            // What came as a card is said to be below; what did not is only named, and is on the computer
+            const attached = report.handed.length > 0 ? ` I attached ${list(report.handed.map((file) => file.name))} below.` : '';
+            const saved = report.files.length > 0 ? ` ${report.handed.length > 0 ? 'It also saved' : 'It saved'} ${list(report.files.slice(0, 3))}${report.files.length > 3 ? ` and ${report.files.length - 3} more` : ''} on its computer.` : '';
+            return `${name} is done. ${receiptOf(report)}${attached}${saved}`;
         }
         case 'needs': {
             const next = NEEDS_NEXT[report.waitingFor ?? 'answer'];
@@ -203,17 +235,48 @@ export interface ComputerReportsApi {
     reports(): Promise<ComputerReport[]>;
     /** Orbit is told it was said (or can never be). False when Orbit did not take it: it is offered again and said again as the same message. */
     keepTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>): Promise<boolean>;
+    /** The bytes of one handed-over file, or null when Orbit no longer has it. Throws when Orbit cannot be asked (it is asked again). */
+    file(jobId: string, fileId: string): Promise<Buffer | null>;
 }
 
-/** Says something in a person's own chat with a Brick; `steps` puts a "Worked on its computer" line above it. */
-export interface ComputerSpeaker {
-    say(brickId: string, matrixUserId: string, text: string, transactionId: string, extra?: { steps?: { field: StepsField; text: string } }): Promise<SpokeAnswer>;
+/** A file to put in the chat as a card. Its bytes are fetched only when it is its turn, so a report with several never holds them all at once. */
+export interface AttachedFile {
+    id: string;
+    name: string;
+    mime: string;
+    bytes: number;
+    load(): Promise<Buffer | null>;
 }
+
+/** What happened to the files of one message: the ones in the chat, and the ones that did not go (`again`: it may go on a later try). */
+export interface FilesAnswer {
+    attached: string[];
+    missed: { id: string; name: string; again: boolean }[];
+}
+
+/** Says something in a person's own chat with a Brick; `steps` puts a "Worked on its computer" line above it, `files` follow it as file cards. */
+export interface ComputerSpeaker {
+    say(
+        brickId: string,
+        matrixUserId: string,
+        text: string,
+        transactionId: string,
+        extra?: { steps?: { field: StepsField; text: string }; files?: AttachedFile[] }
+    ): Promise<SpokeAnswer & { files?: FilesAnswer }>;
+}
+
+/** How many times a file that keeps failing to reach the chat is tried before it is given up on (the message says it did not go). Each try is a round, 10 seconds apart. */
+export const FILE_TRIES = 6;
+
+const missedText = (names: string[]): string => `I couldn't attach ${list(names)} here. ${names.length === 1 ? 'It is' : 'They are'} still on my computer.`;
 
 export class ComputerReports {
     private running = false;
     private timer: NodeJS.Timeout | undefined;
     private stopped = false;
+    /** Files of a report already in the chat, and how many rounds a report's files have failed: only so a retry does the rest and gives up in the end. */
+    private readonly attached = new Map<string, Set<string>>();
+    private readonly failedRounds = new Map<string, number>();
 
     constructor(
         private readonly api: ComputerReportsApi,
@@ -275,8 +338,26 @@ export class ComputerReports {
             await this.api.keepTold(report);
             return false;
         }
-        const spoke = await this.speaker.say(report.botId, report.matrixUserId, reportText(report), report.key, report.kind === 'done' ? { steps: workedLine(report) } : undefined);
+        const sent = this.attached.get(report.key) ?? new Set<string>();
+        const files: AttachedFile[] = report.kind === 'done' ? report.handed.filter((file) => !sent.has(file.id)).map((file) => ({ ...file, load: () => this.api.file(report.jobId, file.id) })) : [];
+        const spoke = await this.speaker.say(report.botId, report.matrixUserId, reportText(report), report.key, report.kind === 'done' ? { steps: workedLine(report), ...(files.length > 0 ? { files } : {}) } : undefined);
         if ('eventId' in spoke) {
+            for (const id of spoke.files?.attached ?? []) sent.add(id);
+            this.attached.set(report.key, sent);
+            const missed = spoke.files?.missed ?? [];
+            // A file that could not go just now (the chat or Orbit did not answer) is tried again on the next round, a few times; the message and the files already in the chat are the same events
+            const rounds = (this.failedRounds.get(report.key) ?? 0) + (missed.some((file) => file.again) ? 1 : 0);
+            if (missed.some((file) => file.again) && rounds < FILE_TRIES) {
+                this.failedRounds.set(report.key, rounds);
+                return false;
+            }
+            if (missed.length > 0) {
+                // Said once, as its own message, so nobody waits for a card that will not come: the file is still on the computer
+                const noted = await this.speaker.say(report.botId, report.matrixUserId, missedText(missed.map((file) => file.name)), `${report.key}:missed`);
+                if (!('eventId' in noted) && noted.reason === 'unsure') return false;
+            }
+            this.attached.delete(report.key);
+            this.failedRounds.delete(report.key);
             if (!(await this.api.keepTold(report))) this.log.warn(`[ComputerReports] Orbit did not keep that job ${report.jobId} (${report.kind}) was told; it goes out again as the same message`);
             return true;
         }

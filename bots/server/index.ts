@@ -294,7 +294,7 @@ async function setupMatrix(): Promise<void> {
     brickRunner.start(BRICK_DUE_EVERY_MS);
     // A computer job that ended or waits for its person: Brick says so in the same chat, as it says a goal's news. Nothing to switch on.
     computerReports = new ComputerReports(
-        { reports: () => adminApiService.computerReports(), keepTold: (report) => adminApiService.keepComputerReportTold(report) },
+        { reports: () => adminApiService.computerReports(), keepTold: (report) => adminApiService.keepComputerReportTold(report), file: (jobId, fileId) => adminApiService.computerReportFile(jobId, fileId) },
         { say: (brickId, matrixUserId, text, transactionId, extra) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId, extra) },
         console
     );

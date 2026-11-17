@@ -28,9 +28,25 @@ import type { NoteHearingService } from '../voice/NoteHearingWiring';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
 import type { SpokeAnswer } from '../server/BrickRunner';
+import type { AttachedFile, FilesAnswer } from '../server/ComputerReports';
 
 /** Marks what a Brick says on its own (a reminder, a goal's news), never an answer in a chat. Orbit reads it to show the news as the title on a locked phone; it counts only from our own bot. */
 export const OWN_INITIATIVE_KEY = 'net.bawes.universe.alone';
+
+/** How the chat shows a file a computer made: a picture, a sound or a video where the game has a player for it; anything else (a page, a script, an unknown type) is a file to download. */
+export function computerFileMsgtype(mime: string): 'm.image' | 'm.audio' | 'm.video' | 'm.file' {
+    if (/^image\/(png|jpeg|gif|webp)$/.test(mime)) return 'm.image';
+    if (mime.startsWith('audio/')) return 'm.audio';
+    if (mime.startsWith('video/')) return 'm.video';
+    return 'm.file';
+}
+
+/** The chat server (or the upload) turned a file down for what it is, so trying it again will not help: too big, not allowed, a bad request. A server that did not answer is not this. */
+export function chatRefusedForGood(error: unknown): boolean {
+    const failure = error as { response?: { status?: number }; code?: string } | null;
+    const status = failure?.response?.status;
+    return status === 400 || status === 403 || status === 413 || failure?.code === 'ERR_FR_MAX_BODY_LENGTH_EXCEEDED' || failure?.code === 'ERR_BAD_REQUEST';
+}
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
@@ -780,7 +796,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * the chat the two share alone, and only for someone Orbit says may message the bot. `transactionId` is the run's own id, so a
      * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
      */
-    async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string, extra?: { steps?: { field: StepsField; text: string } }): Promise<SpokeAnswer> {
+    async speakInDirectChat(
+        botId: string,
+        matrixUserId: string,
+        text: string,
+        transactionId: string,
+        extra?: { steps?: { field: StepsField; text: string }; files?: AttachedFile[] }
+    ): Promise<SpokeAnswer & { files?: FilesAnswer }> {
         const room = await this.roomToSpeakIn(botId, matrixUserId);
         if ('reason' in room) return { ok: false, reason: room.reason };
         try {
@@ -794,11 +816,56 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 }
             }
             const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text, [OWN_INITIATIVE_KEY]: true }, transactionId);
-            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
+            if (!eventId) return { ok: false, reason: 'unsure' };
+            // The files follow the message as file cards (the file card of a finished computer job). The message is out either way: what did not go is said back
+            const files = extra?.files && extra.files.length > 0 ? await this.sendComputerFiles(botId, room.roomId, transactionId, extra.files) : undefined;
+            return { ok: true, eventId, ...(files ? { files } : {}) };
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
             return { ok: false, reason: 'unsure' };
         }
+    }
+
+    /**
+     * Puts files a computer job made in the chat, one at a time (each fetched only when its turn comes), as file messages under their own transaction ids so a
+     * second try of the same one is the same message to Matrix. A file that could not go is told back with whether another try may work: the file being
+     * gone from Orbit, or the chat refusing it for what it is (too big, not allowed), will not; a chat or Orbit that did not answer may. Nothing here
+     * says a file's name in a log.
+     */
+    private async sendComputerFiles(botId: string, roomId: string, transactionId: string, files: AttachedFile[]): Promise<FilesAnswer> {
+        const botUserId = this.botUserId(botId);
+        const attached: string[] = [];
+        const missed: FilesAnswer['missed'] = [];
+        for (const file of files) {
+            let data: Buffer | null;
+            try {
+                data = await file.load();
+            } catch (error: any) {
+                console.warn(`[MatrixDmBridge] Could not fetch a computer file for the direct chat of bot ${botId}:`, error?.message ?? error);
+                missed.push({ id: file.id, name: file.name, again: true });
+                continue;
+            }
+            if (!data) {
+                missed.push({ id: file.id, name: file.name, again: false });
+                continue;
+            }
+            try {
+                const mxc = await this.client.uploadMedia(botUserId, data, file.mime, file.name);
+                if (!mxc) throw new Error('The chat server gave no address for the file');
+                const sent = await this.client.sendMessage(
+                    botUserId,
+                    roomId,
+                    { msgtype: computerFileMsgtype(file.mime), body: file.name, filename: file.name, url: mxc, info: { mimetype: file.mime, size: data.length } },
+                    `${transactionId}:file:${file.id}`
+                );
+                if (!sent) throw new Error('The chat server did not say the file was sent');
+                attached.push(file.id);
+            } catch (error: any) {
+                console.warn(`[MatrixDmBridge] Could not put a computer file in the direct chat of bot ${botId}:`, error?.message ?? error);
+                missed.push({ id: file.id, name: file.name, again: !chatRefusedForGood(error) });
+            }
+        }
+        return { attached, missed };
     }
 
     /**
