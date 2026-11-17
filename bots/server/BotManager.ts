@@ -342,7 +342,10 @@ export class BotManager {
         // Initialize bot registry
         await this.botRegistry.connect();
         // Forgets Orbit has not taken yet are kept in the shared store, for every bot server and across a restart or a redeploy (#2031)
-        if (this.conversationMemory instanceof PersistentMemory) this.conversationMemory.setForgetQueue(new RedisForgetQueue(() => this.botRegistry.forgetQueueClient()));
+        if (this.conversationMemory instanceof PersistentMemory) this.conversationMemory.setForgetQueue(new RedisForgetQueue(
+                    () => this.botRegistry.forgetQueueClient(),
+                    () => this.botRegistry.forgetQueueInUse()
+                ));
         
         // Register this server with capacity
         const capacity = parseInt(process.env.BOT_SERVER_CAPACITY || '100', 10);

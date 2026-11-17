@@ -121,6 +121,11 @@ export class PersistentMemory extends ConversationMemory {
     private async restoreForgetQueue(first: boolean): Promise<void> {
         const store = this.forgetQueue;
         if (!store) return;
+        // No shared store at all (not reached yet, or never there): nothing to read, quietly; it is looked for again, and read once it is there
+        if (store.inUse && !store.inUse()) {
+            this.scheduleRestoreRetry(store);
+            return;
+        }
         try {
             const { kept, gone } = await this.loadQueue(store);
             if (store !== this.forgetQueue) return;
@@ -133,13 +138,17 @@ export class PersistentMemory extends ConversationMemory {
             void this.persistUnreported();
         } catch (error) {
             console.warn(`[PersistentMemory] Could not read the forgets kept in the shared store; trying again soon: ${error instanceof Error ? error.message : String(error)}`);
-            if (this.queueRestoreTimer || store !== this.forgetQueue) return;
-            this.queueRestoreTimer = setTimeout(() => {
-                this.queueRestoreTimer = null;
-                void this.restoreForgetQueue(false);
-            }, PersistentMemory.UNREPORTED_RETRY_MS);
-            this.queueRestoreTimer.unref?.();
+            this.scheduleRestoreRetry(store);
         }
+    }
+
+    private scheduleRestoreRetry(store: ForgetQueueStore): void {
+        if (this.queueRestoreTimer || store !== this.forgetQueue) return;
+        this.queueRestoreTimer = setTimeout(() => {
+            this.queueRestoreTimer = null;
+            void this.restoreForgetQueue(false);
+        }, PersistentMemory.UNREPORTED_RETRY_MS);
+        this.queueRestoreTimer.unref?.();
     }
 
     /** What the store holds is taken in: an entry this process holds already is kept if it is the later ask, and the store is known to hold what it answered. */
@@ -171,7 +180,7 @@ export class PersistentMemory extends ConversationMemory {
     private async refreshForgetQueue(): Promise<void> {
         await this.forgetQueueReady;
         const store = this.forgetQueue;
-        if (!store) return;
+        if (!store || (store.inUse && !store.inUse())) return;
         if (!this.queueRestored) return;
         if (Date.now() - this.queueRefreshedAt < PersistentMemory.UNREPORTED_RETRY_MS) return;
         this.queueRefreshedAt = Date.now();
@@ -255,6 +264,8 @@ export class PersistentMemory extends ConversationMemory {
         const store = this.forgetQueue;
         if (!store) return true;
         await this.forgetQueueReady;
+        // No shared store at all: nothing can be written, so these are kept in this process only, and it is said so (not "kept for good")
+        if (store.inUse && !store.inUse()) return false;
         const changes: ForgetQueueChanges = { pending: { put: [], del: [] }, ledger: { put: [], del: [] } };
         const sent = { pending: new Map<string, string>(), ledger: new Map<string, string>() };
         const diff = <T extends { botId: string; userUuid: string; itemKey: string }>(now: ReadonlyMap<string, T>, synced: ReadonlyMap<string, string>, into: { put: T[]; del: string[] }, record: Map<string, string>) => {

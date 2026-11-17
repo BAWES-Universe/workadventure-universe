@@ -58,6 +58,11 @@ export interface ForgetQueueChanges {
 
 /** Where the waiting list and the ledger are kept. */
 export interface ForgetQueueStore {
+    /**
+     * False while there is no shared store at all (it has never been reached, as on one machine without Redis): nothing is read or
+     * written then, quietly, and the forgets are kept in this process only. A store that is there but down is not "not in use": it fails (throws).
+     */
+    inUse?(): boolean;
     /** Everything kept. Throws when the store cannot be reached (an empty store is an empty answer, not an error). */
     load(): Promise<ForgetFileContents>;
     /** Applies these changes together. Throws when it could not, so nothing is taken as kept. */
@@ -98,8 +103,32 @@ const validForgotten = (entry: Partial<ForgottenItem> | null): entry is Forgotte
 
 /** The queue in Redis: one hash for the waiting list and one for the ledger, an entry per field. Fails (throws) while Redis cannot be reached. */
 export class RedisForgetQueue implements ForgetQueueStore {
-    /** `redis` answers the client while it is connected and null while it is not. */
-    constructor(private readonly redis: () => ForgetQueueRedis | null) {}
+    /**
+     * `redis` answers the client while it is connected and null while it is not. `seen` says whether Redis has ever been reached.
+     * A call that is not answered within `deadlineMs` fails, so a connection that has gone silent never holds a memory load or save.
+     */
+    constructor(
+        private readonly redis: () => ForgetQueueRedis | null,
+        private readonly seen: () => boolean = () => true,
+        private readonly deadlineMs = 5000
+    ) {}
+
+    inUse(): boolean {
+        return this.seen();
+    }
+
+    private async within<T>(work: Promise<T>): Promise<T> {
+        let timer: NodeJS.Timeout | undefined;
+        const late = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Shared store did not answer in time')), this.deadlineMs);
+            timer.unref?.();
+        });
+        try {
+            return await Promise.race([work, late]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
 
     private client(): ForgetQueueRedis {
         const client = this.redis();
@@ -109,7 +138,7 @@ export class RedisForgetQueue implements ForgetQueueStore {
 
     async load(): Promise<ForgetFileContents> {
         const client = this.client();
-        const [pending, ledger] = await Promise.all([client.hGetAll(PENDING_KEY), client.hGetAll(LEDGER_KEY)]);
+        const [pending, ledger] = await this.within(Promise.all([client.hGetAll(PENDING_KEY), client.hGetAll(LEDGER_KEY)]));
         const waiting = readEntries(pending, validPending);
         const forgotten = readEntries(ledger, validForgotten);
         // A safety limit nobody sees: the oldest beyond it are let go, so what is kept cannot grow without end
@@ -123,7 +152,7 @@ export class RedisForgetQueue implements ForgetQueueStore {
             trimmed = true;
             cut.hDel(LEDGER_KEY, field);
         }
-        if (trimmed) await cut.exec().catch(() => undefined);
+        if (trimmed) await this.within(cut.exec()).catch(() => undefined);
         return { pending: waiting.slice(-MAX_PENDING_FORGETS).map((one) => one.entry), ledger: forgotten.slice(-MAX_FORGOTTEN_ITEMS).map((one) => one.entry) };
     }
 
@@ -135,6 +164,6 @@ export class RedisForgetQueue implements ForgetQueueStore {
         for (const entry of changes.ledger.put) batch.hSet(LEDGER_KEY, forgetKeyOf(entry), JSON.stringify(entry));
         for (const key of changes.ledger.del) batch.hDel(LEDGER_KEY, key);
         // One transaction: a forget is never in the ledger without its waiting entry, or the other way round
-        await batch.exec();
+        await this.within(batch.exec());
     }
 }

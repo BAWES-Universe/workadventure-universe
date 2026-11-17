@@ -327,6 +327,11 @@ export class BotRegistry {
         await this.redis.del(`bots:task-card-unshown:${actionId}`);
     }
 
+    /** Whether the shared store has ever been reached: on one machine without Redis it never is, and nothing is kept in it. */
+    forgetQueueInUse(): boolean {
+        return this.sharedStoreSeen || !!isUp(this.redis);
+    }
+
     /** The shared store's client while it is connected (and ready), null while it is not: where the forgets Orbit has not taken yet are kept for every bot server. */
     forgetQueueClient(): ForgetQueueRedis | null {
         return isUp(this.redis) ? (this.redis as unknown as ForgetQueueRedis) : null;

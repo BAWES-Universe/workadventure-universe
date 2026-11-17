@@ -628,6 +628,11 @@ class FakeForgetStore implements ForgetQueueStore {
     ledger = new Map<string, Record<string, unknown>>();
     /** Reads and writes fail while the store cannot be reached. */
     unreachable = false;
+    /** False while there is no shared store at all (never reached). */
+    present = true;
+    inUse() {
+        return this.present;
+    }
     writes = 0;
     async load(): Promise<ForgetFileContents> {
         if (this.unreachable) throw new Error('Shared store is not connected');
@@ -920,6 +925,29 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         await memory.reportUnreportedForgets();
         expect(told()).toHaveLength(1);
         expect(store.contents().pending).toEqual([]);
+    });
+
+    it('is quiet, and says it is kept in this process only, while there is no shared store at all; and uses it once it is there (Sentry)', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        store.present = false;
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        expect(await memory.forgetThingsReported(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]))).toEqual({ went: 1, waiting: 1, durable: false });
+        clearTimeout(memory.unreportedRetryTimer);
+        // No complaint about a store that was never there, and nothing written to it
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('shared store'));
+        expect(store.writes).toBe(0);
+        // It is looked for again, and once it is there what is owed is written
+        store.present = true;
+        clearTimeout(memory.queueRestoreTimer);
+        memory.queueRestoreTimer = null;
+        await memory.restoreForgetQueue(false);
+        await memory.queueWriting;
+        expect(store.contents().pending).toHaveLength(1);
+        clearTimeout(memory.unreportedRetryTimer);
+        clearTimeout(memory.queueRestoreTimer);
+        warn.mockRestore();
     });
 
     it('never overwrites what another bot server wrote: each thing is its own entry in the store', async () => {

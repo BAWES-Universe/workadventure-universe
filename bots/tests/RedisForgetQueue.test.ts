@@ -82,4 +82,21 @@ describe('the forget queue in the shared store', () => {
         expect(kept.pending[0].itemKey).toBe('k3');
         expect(redis.hash('bots:forgets:pending').size).toBe(MAX_PENDING_FORGETS);
     });
+
+    it('fails when the shared store does not answer in time, so a silent connection never holds a memory load or save', async () => {
+        const redis = fakeRedis();
+        const silent: ForgetQueueRedis = { hGetAll: () => new Promise(() => undefined), multi: () => ({ hSet: () => undefined, hDel: () => undefined, exec: () => new Promise(() => undefined) }) };
+        const queue = new RedisForgetQueue(() => silent, () => true, 20);
+        await expect(queue.load()).rejects.toThrow('did not answer in time');
+        await expect(queue.write({ pending: { put: [pending('a')], del: [] }, ledger: { put: [], del: [] } })).rejects.toThrow('did not answer in time');
+        expect(redis.state.execs).toBe(0);
+    });
+
+    it('says it is in use only once the shared store has been reached', () => {
+        let seen = false;
+        const queue = new RedisForgetQueue(() => null, () => seen);
+        expect(queue.inUse()).toBe(false);
+        seen = true;
+        expect(queue.inUse()).toBe(true);
+    });
 });
