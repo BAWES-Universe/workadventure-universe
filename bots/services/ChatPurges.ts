@@ -16,8 +16,11 @@ export interface ChatPurgeSweeperConfig {
     everyMs?: number;
 }
 
-/** Most Bricks cleared in one round; the next round takes the rest. */
-const BRICKS_PER_ROUND = 20;
+/**
+ * Most pages read in one round. Orbit lists a page at a time and says where the next one starts (`next`): a Brick that cannot be cleared for now
+ * stays listed, so the round reads on past it and never stops at the first page. A guard only, far above any real list; the next round starts again.
+ */
+const PAGES_PER_ROUND = 200;
 
 export class ChatPurgeSweeper {
     private timer: ReturnType<typeof setInterval> | null = null;
@@ -47,18 +50,28 @@ export class ChatPurgeSweeper {
         this.running = true;
         try {
             const headers = { Authorization: `Bearer ${this.config.botServiceToken}` };
-            const listed = await axios.get(`${this.config.adminApiUrl}/api/brick-chat-purges`, { headers, timeout: 10_000 });
-            const botIds: string[] = Array.isArray(listed.data?.purges)
-                ? listed.data.purges.map((one: { botId?: unknown }) => one?.botId).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
-                : [];
-            const done: string[] = [];
-            for (const botId of botIds.slice(0, BRICKS_PER_ROUND)) {
-                if (await this.config.purge(botId).catch(() => false)) done.push(botId);
+            let after: string | undefined;
+            let cleared = 0;
+            for (let page = 0; page < PAGES_PER_ROUND; page++) {
+                const listed = await axios.get(`${this.config.adminApiUrl}/api/brick-chat-purges`, { headers, params: after ? { after } : undefined, timeout: 10_000 });
+                const botIds: string[] = Array.isArray(listed.data?.purges)
+                    ? listed.data.purges.map((one: { botId?: unknown }) => one?.botId).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
+                    : [];
+                const done: string[] = [];
+                for (const botId of botIds) {
+                    if (await this.config.purge(botId).catch(() => false)) done.push(botId);
+                }
+                // Confirmed page by page, so what was cleared is never cleared twice if a later page fails
+                if (done.length > 0) {
+                    await axios.post(`${this.config.adminApiUrl}/api/brick-chat-purges`, { botIds: done }, { headers, timeout: 10_000 });
+                    cleared += done.length;
+                }
+                // An Orbit that sends no `next` sends the single page it always did; a `next` that does not move on ends the round
+                const next = typeof listed.data?.next === 'string' && listed.data.next.length > 0 ? listed.data.next : undefined;
+                if (!next || next === after) break;
+                after = next;
             }
-            if (done.length > 0) {
-                await axios.post(`${this.config.adminApiUrl}/api/brick-chat-purges`, { botIds: done }, { headers, timeout: 10_000 });
-            }
-            return done.length;
+            return cleared;
         } catch (error) {
             // An Orbit without the route yet answers 404 or 405: nothing is waiting there, nothing to say
             const status = axios.isAxiosError(error) ? error.response?.status : undefined;
