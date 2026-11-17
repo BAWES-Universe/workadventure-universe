@@ -344,7 +344,7 @@ const ABOUT_MOST = 200;
 export interface MemoryToolContext {
     memory: BotPlayerMemory | null | undefined;
     /** Drops these things from memory, with what was built from them, and tells Orbit. Returns how many went. */
-    forget: (keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>) => Promise<number | { went: number; waiting: number }>;
+    forget: (keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>) => Promise<number | { went: number; waiting: number; durable?: boolean }>;
 }
 
 /** Runs one of the two tools. Never throws: the model is told in plain words what happened. */
@@ -396,12 +396,15 @@ export async function runMemoryTool(name: string, args: Record<string, unknown>,
             const result = await context.forget(new Set(chosen.keys()), new Map([...chosen].map(([id, item]) => [id, item.kind])));
             const went = typeof result === 'number' ? result : result.went;
             const waiting = typeof result === 'number' ? 0 : result.waiting;
+            // The waiting forget is kept in a file and sent until Orbit takes it, also after a restart, unless that file could not be written
+            const kept = typeof result === 'number' || result.durable !== false;
+            const tried = kept ? 'It is kept and sent again until it is cleared, even if the server restarts, so they do not need to ask again; say so.' : 'It is tried again for a while, and they may need to ask again later; say so.';
             const missed = notFound > 0 ? ` ${notFound} of the ids were not things you remember.` : '';
             if (went === 0) return { forgotten: [], note: `Nothing was removed just now: ${chosen.size === 1 ? 'it was' : 'they were'} already gone.${missed} Tell them so in one short sentence, and do not say it was forgotten just now.` };
-            const stillSaved = waiting > 0 ? ' The saved copy of what went could not be cleared just now. It is tried again for a while, and they may need to ask again later; say so.' : '';
+            const stillSaved = waiting > 0 ? ` The saved copy of what went could not be cleared just now. ${tried}` : '';
             if (went < chosen.size) return { count: went, asked: chosen.size, ...(waiting > 0 ? { saving: 'waiting' } : {}), note: `Only ${went} of the ${chosen.size} things went; the rest were already gone.${missed}${stillSaved} Tell them so in one short sentence, and do not say all of it was forgotten.` };
             // Orbit could not take it just now: it is gone from this chat and is being sent again, so do not say it is gone for good
-            if (waiting > 0) return { forgotten: [...chosen.values()].map(describe), count: went, saving: 'waiting', note: `It is forgotten in this chat, with the lines it came from, but the saved copy could not be cleared just now. It is tried again for a while, and they may need to ask again later.${missed} Tell them in one short sentence that it is forgotten here and that clearing the saved copy is still going, and do not repeat what it was.` };
+            if (waiting > 0) return { forgotten: [...chosen.values()].map(describe), count: went, saving: 'waiting', note: `It is forgotten in this chat, with the lines it came from, but the saved copy could not be cleared just now. ${tried}${missed} Tell them in one short sentence that it is forgotten here and that clearing the saved copy is still going, and do not repeat what it was.` };
             return { forgotten: [...chosen.values()].map(describe), count: went, note: `It is forgotten, with the lines of this chat it came from.${missed} Tell them in one short sentence, and do not repeat what it was.` };
         } catch (error) {
             console.warn('[MemoryTools] Could not forget:', error instanceof Error ? error.message : error);
