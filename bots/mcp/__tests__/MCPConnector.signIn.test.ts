@@ -319,3 +319,39 @@ describe('Test server and Connect (#1654)', () => {
         expect(reports).toEqual([]);
     });
 });
+
+describe('the tool server list cannot be read (#1819)', () => {
+    const keyApp = {
+        serverId: 'key-1',
+        connectionId: 'conn-1',
+        name: 'Attio',
+        short: 'Attio',
+        definitionHash: 'h1',
+        enabled: true,
+        working: true,
+        operations: [{ id: 'op1', label: 'Find people', heading: 'looksUp', verified: true, tool: 'find_people', fingerprint: 'f1', inputSchema: { type: 'object', properties: {} } }],
+    };
+    const failListWith = (error: unknown) => {
+        const normal = http.get.getMockImplementation()!;
+        http.get.mockImplementation(async (url: string, ...rest: unknown[]) => {
+            if (url.endsWith('/mcp-servers')) throw error;
+            if (url.endsWith('/key-apps')) return { status: 200, data: { apps: [keyApp], services: [] } };
+            return (normal as (...args: unknown[]) => Promise<unknown>)(url, ...rest);
+        });
+    };
+    const names = (found: { tools: Array<{ function: { name: string } }> }) => found.tools.map((t) => t.function.name);
+
+    it('keeps the Apps with a key, and says nothing of the servers (so a shown card stays)', async () => {
+        failListWith(httpError(500));
+        const found = await discover();
+        expect(found.issues).toBeUndefined();
+        expect(names(found).some((n) => n.includes('find_people'))).toBe(true);
+    });
+
+    it('keeps the Apps with a key for a Brick with no servers (404), with nothing down', async () => {
+        failListWith(httpError(404));
+        const found = await discover();
+        expect(found.issues).toEqual([]);
+        expect(names(found).some((n) => n.includes('find_people'))).toBe(true);
+    });
+});

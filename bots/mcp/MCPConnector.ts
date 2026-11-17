@@ -847,6 +847,7 @@ export class MCPConnector {
 
         // Fetch MCP server configs from admin API
         let servers: McpServerConfig[] = [];
+        let listFailed = false;
         const loading = this.loadServers(botId, adminApiUrl, adminApiToken);
         // Asked at the same time as the servers (after their request is sent), so Apps with a key add no waiting of their own
         const keyApps = loadKeyApps(botId, adminApiUrl, botServiceToken);
@@ -864,10 +865,11 @@ export class MCPConnector {
                 Sentry.captureException(
                     error instanceof Error ? error : new Error(String(error))
                 );
-                return { tools: [], toolServerMap };
+                listFailed = true;
             }
-            // Apps with a key come from another list: this one failing does not take them away
-            return this.withKeyApps(keyApps, { tools: [], toolServerMap, issues: [] });
+            // Apps with a key come from another list: this one failing does not take them away. When the list could not be read,
+            // nothing is known of the servers' state (no `issues`), so a card shown before stays as it is (#1819).
+            return this.withKeyApps(keyApps, { tools: [], toolServerMap, ...(listFailed ? {} : { issues: [] as ToolIssue[] }) });
         }
 
         // Query each enabled server and collect tools
