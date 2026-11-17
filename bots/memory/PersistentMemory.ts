@@ -25,6 +25,11 @@ export interface PersistentMemoryConfig {
     immediateSaveEnabled?: boolean; // Whether to immediately save emotion changes (default: true)
     /** Where forgets Orbit has not taken yet are kept across a restart (#2031). Without it they are kept in this process only. */
     forgetQueueFile?: string;
+    /**
+     * Whether that file is somewhere a redeploy keeps (a mounted folder). When it is not, it still survives a restart of the
+     * process, but a person is told only that, never that it is kept for good (default: it is).
+     */
+    forgetQueueSurvivesRedeploy?: boolean;
 }
 
 export class PersistentMemory extends ConversationMemory {
@@ -48,6 +53,7 @@ export class PersistentMemory extends ConversationMemory {
     private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string; since: number; first: number }> = new Map();
     private unreportedRetryTimer: NodeJS.Timeout | null = null;
     private forgetQueueFile: ForgetQueueFile | null = null;
+    private forgetQueueSurvivesRedeploy = true;
     /**
      * Everything a person forgot, kept after Orbit took it, by "botId|uuid|key": what Orbit hands back later (a restored
      * archive, a copy older than the forget) is taken out again by it, and Orbit is told again. Only keys, never words.
@@ -84,6 +90,8 @@ export class PersistentMemory extends ConversationMemory {
         if (config.forgetQueueFile) {
             // What Orbit had not taken before the last restart is still owed to it, and is tried again now
             this.forgetQueueFile = new ForgetQueueFile(config.forgetQueueFile);
+            this.forgetQueueSurvivesRedeploy = config.forgetQueueSurvivesRedeploy !== false;
+            if (!this.forgetQueueSurvivesRedeploy) console.warn(`[PersistentMemory] Forgets Orbit has not taken are kept in ${config.forgetQueueFile}, which a redeploy onto a fresh container loses. Set BOT_STATE_DIR to a mounted folder.`);
             const kept = this.forgetQueueFile.load();
             for (const entry of kept.pending) this.unreportedItemForgets.set(`${entry.botId}|${entry.userUuid}|${entry.itemKey}`, entry);
             for (const entry of kept.ledger) this.forgottenLedger.set(`${entry.botId}|${entry.userUuid}|${entry.itemKey}`, entry);
@@ -256,8 +264,8 @@ export class PersistentMemory extends ConversationMemory {
 
     /**
      * As forgetThings, and how many of the things Orbit has not taken yet. Those are kept in a file and told to Orbit again
-     * until it takes them, also after a restart; `durable` is false only when that file could not be written, which is when
-     * a restart would lose them.
+     * until it takes them, also after a restart; `durable` is false when that file could not be written, or is somewhere a
+     * redeploy loses (no BOT_STATE_DIR), which is when what is waiting could still be lost.
      */
     async forgetThingsReported(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number; durable: boolean }> {
         const memory = this.getMemory(botId, playerId);
@@ -283,6 +291,7 @@ export class PersistentMemory extends ConversationMemory {
             for (const itemKey of keys) {
                 if (!this.recordForget({ botId, userUuid, itemKey, kind: kinds.get(itemKey) ?? 'fact', since: askedAt })) durable = false;
             }
+            if (!this.forgetQueueSurvivesRedeploy) durable = false;
             const taken = await Promise.all(
                 [...keys].map((itemKey) => this.memoryStorage.reportForgottenItem(botId, userUuid, itemKey, kinds.get(itemKey) ?? 'fact', askedAt))
             );

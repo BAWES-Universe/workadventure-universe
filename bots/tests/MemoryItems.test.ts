@@ -714,6 +714,21 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         warn.mockRestore();
     });
 
+    it('says it is kept only until a restart when the file is in a folder a redeploy loses', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueueFile: file, forgetQueueSurvivesRedeploy: false });
+        memory.useHeard(() => heardInDm());
+        memory.setUserUuid(BOT, SARA, 'uuid-sara', true);
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        expect(await memory.forgetThingsReported(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]))).toEqual({ went: 1, waiting: 1, durable: false });
+        // It is still written, and a restart of the process still finds it
+        expect(contents().pending).toHaveLength(1);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('BOT_STATE_DIR'));
+        clearTimeout(memory.unreportedRetryTimer);
+        warn.mockRestore();
+    });
+
     it('keeps trying through an Orbit outage and two restarts, and tells Orbit once when it is back', async () => {
         const first = start();
         first.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');

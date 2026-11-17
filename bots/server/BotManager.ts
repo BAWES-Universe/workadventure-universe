@@ -229,6 +229,8 @@ export class BotManager {
                 immediateSaveEnabled: true,
                 // A forget Orbit has not taken survives a restart of the bot server (#2031). BOT_STATE_DIR can point at a kept folder.
                 forgetQueueFile: path.join(process.env.BOT_STATE_DIR || path.join(os.tmpdir(), 'universe-bot-state'), 'pending-forgets.json'),
+                // Without BOT_STATE_DIR the file is in the temp folder: it survives a process restart but not a redeploy onto a fresh container, so a person is not told it is kept for good
+                forgetQueueSurvivesRedeploy: !!process.env.BOT_STATE_DIR,
             });
             this.conversationMemory = persistentMemory;
             // Orbit tells the bot server who a manager asked a private bot to forget (#435)

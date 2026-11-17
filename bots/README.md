@@ -259,6 +259,8 @@ docker-compose -f docker-compose.yaml -f docker-compose.bots.yaml up
 - **Bot Registry**: Redis-based registry for horizontal scaling
 - **Health Check**: `/health` endpoint for monitoring
 
+**Kept state:** `BOT_STATE_DIR` is a folder that must survive a redeploy (a mounted volume; `docker-compose.bots.yaml` mounts one). Forgets Orbit has not taken yet are kept there, so an Orbit outage plus a redeploy cannot lose one. Without it they are kept in the temp folder: a restart of the process keeps them, a redeploy onto a fresh container does not, and the bot says so.
+
 **Configuration:**
 - Environment variables for Admin API, Redis, and WorkAdventure URLs
 - Traefik integration for reverse proxy routing (accessible at `http://bot-server.workadventure.localhost`)
