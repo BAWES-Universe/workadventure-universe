@@ -133,6 +133,20 @@ describe('MatrixDmBridge: purging a deleted Brick\'s chats (R29)', () => {
         expect(client.leaveRoom).toHaveBeenCalledTimes(1);
     });
 
+    it('stays in a room whose members it cannot read, so the shared store\'s links to it are dropped on a later try, not lost', async () => {
+        const client = makeClient(history());
+        client.getJoinedMembers.mockRejectedValueOnce(new Error('Matrix 502'));
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        // The room it could not read was neither redacted nor left; the other was cleared
+        expect(client.leaveRoom.mock.calls.map((call: any[]) => call[1])).toEqual([ROOM_B]);
+        expect(stores.roomsOf.has(`${BOT}|${ALICE}`)).toBe(true);
+        client.getJoinedRooms.mockResolvedValue([ROOM_A]);
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(stores.roomsOf.size).toBe(0);
+        expect(stores.rooms.size).toBe(0);
+    });
+
     it('does nothing at the homeserver for a Brick that never had a chat account, and says it is done', async () => {
         const client = makeClient({}, null);
         const bridge = new MatrixDmBridge(config, client as never, stores.deps);

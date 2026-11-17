@@ -936,7 +936,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** Redacts what the Brick said in one room, then leaves and forgets it. Nothing is left before the redactions are all in. */
     private async purgeRoom(botId: string, userId: string, roomId: string): Promise<void> {
-        const members = await this.client.getJoinedMembers(userId, roomId).catch(() => [] as string[]);
+        // Not swallowed: without the members the links to this room in the shared store could not be dropped, and the room is gone from the Brick's joined list after the leave
+        const members = await this.client.getJoinedMembers(userId, roomId);
         let from: string | undefined;
         for (let page = 0; page < PURGE_PAGES_MAX; page++) {
             const { events, end } = await this.client.getMessagesPage(userId, roomId, from, PURGE_PAGE_SIZE);
