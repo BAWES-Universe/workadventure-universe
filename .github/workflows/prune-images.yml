@@ -68,7 +68,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE: ${{ matrix.package }}
-          # What dev and production run now stays. A server that is not configured protects nothing.
+          # What dev and production run now stays. A missing uuid, address or token stops the run before anything is deleted.
           DEV_COOLIFY_BASE: ${{ vars.DEV_COOLIFY_BASE }}
           DEV_COOLIFY_TOKEN: ${{ secrets.DEV_COOLIFY_TOKEN }}
           DEV_APPS: |
@@ -77,7 +77,7 @@ jobs:
             uploader-universe ${{ vars.DEV_COOLIFY_UPLOADER_UUID }}
             bot-server-universe ${{ vars.DEV_COOLIFY_BOT_SERVER_UUID }}
             play-universe ${{ vars.DEV_COOLIFY_PLAY_UUID }}
-            voice-worker-universe ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID }}
+            voice-worker-universe ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID || 'none' }}
           PROD_COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
           PROD_COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           PROD_APPS: |
@@ -87,7 +87,7 @@ jobs:
             bot-server-universe ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
             discord-bot-universe ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
             uploader-universe ${{ secrets.COOLIFY_UPLOADER_UUID }}
-            voice-worker-universe ${{ secrets.COOLIFY_VOICE_WORKER_UUID }}
+            voice-worker-universe ${{ secrets.COOLIFY_VOICE_WORKER_UUID || 'none' }}
           CLOSED_BRANCH: ${{ github.event.pull_request.head.ref }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |

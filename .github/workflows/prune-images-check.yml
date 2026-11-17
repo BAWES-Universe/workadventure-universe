@@ -68,7 +68,7 @@ jobs:
             uploader-universe ${{ vars.DEV_COOLIFY_UPLOADER_UUID }}
             bot-server-universe ${{ vars.DEV_COOLIFY_BOT_SERVER_UUID }}
             play-universe ${{ vars.DEV_COOLIFY_PLAY_UUID }}
-            voice-worker-universe ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID }}
+            voice-worker-universe ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID || 'none' }}
           PROD_COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
           PROD_COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           PROD_APPS: |
@@ -78,5 +78,5 @@ jobs:
             bot-server-universe ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
             discord-bot-universe ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
             uploader-universe ${{ secrets.COOLIFY_UPLOADER_UUID }}
-            voice-worker-universe ${{ secrets.COOLIFY_VOICE_WORKER_UUID }}
+            voice-worker-universe ${{ secrets.COOLIFY_VOICE_WORKER_UUID || 'none' }}
         run: node .github/scripts/prune-images-cli.mjs --package "$PACKAGE" --prod-branch universe --dev-branch universe-develop
