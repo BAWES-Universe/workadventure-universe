@@ -111,6 +111,15 @@ describe('what Brick says when a computer job ends or waits', () => {
         expect(firstSentence(text).endsWith('… is done.')).toBe(true);
     });
 
+    it('cuts a long title between whole characters, never through an emoji', () => {
+        const title = `${'a'.repeat(46)}😀😀😀 and more`;
+        const text = reportText(report({ title }));
+        const headline = firstSentence(text);
+        expect(headline).toBe(`${'a'.repeat(46)}😀… is done.`);
+        // No half of an emoji is left behind
+        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(text)).toBe(false);
+    });
+
     it('draws the “Worked on its computer” line from how long the machine was held', () => {
         const { field, text } = workedLine(base, 1_000_000);
         expect(text).toBe('Worked on its computer');
