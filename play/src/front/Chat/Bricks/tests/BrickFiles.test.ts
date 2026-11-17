@@ -321,17 +321,14 @@ describe("a Brick's files (#2003)", () => {
         it("puts a result in the zip from its own read, not from a link, and counts one it could not read as missed", async () => {
             const fetcher = vi.fn();
             const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-            const originalCreate = URL.createObjectURL;
-            URL.createObjectURL = vi.fn(() => "blob:zip");
+            vi.stubGlobal("URL", { createObjectURL: () => "blob:zip", revokeObjectURL: vi.fn() });
             try {
                 const done = await downloadEverything(
                     [
-                        { name: "a.pdf", load: async () => new Blob(["a"]) },
+                        { name: "a.pdf", load: () => Promise.resolve(new Blob(["a"])) },
                         {
                             name: "b.pdf",
-                            load: async () => {
-                                throw new Error("offline");
-                            },
+                            load: () => Promise.reject(new Error("offline")),
                         },
                     ],
                     "files.zip",
@@ -341,7 +338,7 @@ describe("a Brick's files (#2003)", () => {
                 expect(fetcher).not.toHaveBeenCalled();
             } finally {
                 click.mockRestore();
-                URL.createObjectURL = originalCreate;
+                vi.unstubAllGlobals();
             }
         });
     });
@@ -359,8 +356,7 @@ describe("a Brick's files (#2003)", () => {
         it("lists them, opens one with the person's own sign-in, and says false when it cannot be read", async () => {
             orbit.getDeletedBrickResults.mockResolvedValue({ results: [gone({ id: "g1" })] });
             const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-            const originalCreate = URL.createObjectURL;
-            URL.createObjectURL = vi.fn(() => "blob:file");
+            vi.stubGlobal("URL", { createObjectURL: () => "blob:file", revokeObjectURL: vi.fn() });
             try {
                 const list = deletedBrickFilesList();
                 await list.load();
@@ -372,7 +368,7 @@ describe("a Brick's files (#2003)", () => {
                 expect(await list.downloadResult({ id: "g1", name: "visa-receipt.pdf" })).toBe(false);
             } finally {
                 click.mockRestore();
-                URL.createObjectURL = originalCreate;
+                vi.unstubAllGlobals();
             }
         });
 

@@ -430,6 +430,8 @@ export function deletedBrickFilesList(): DeletedBrickFilesList {
                 const seen = new Set<string>();
                 let cursor: string | null = null;
                 for (let page = 0; page < DELETED_RESULTS_PAGES_MAX; page++) {
+                    // One page after another on purpose: each page says where the next one starts
+                    // eslint-disable-next-line no-await-in-loop
                     const answer: unknown = await botApiService.getDeletedBrickResults(cursor);
                     for (const result of parseDeletedBrickResults(answer)) {
                         if (!seen.has(result.id)) {
