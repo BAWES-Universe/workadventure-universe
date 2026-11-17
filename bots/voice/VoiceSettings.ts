@@ -27,6 +27,8 @@ export interface VoiceLimits {
     followUpSeconds: number;
     textReserveShare: number;
     guestVoiceReplies: number;
+    /** The longest voice note a bot hears, in seconds (Orbit's Limits, "Longest voice note"). An Orbit from before does not send it. */
+    longestNoteSeconds?: number;
 }
 
 /** GET /api/bots/:id/voice/active. */

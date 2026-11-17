@@ -15,6 +15,7 @@
     import BotRoomCard from "../../Bots/BotRoomCard.svelte";
     import BotStepsLine from "../../Bots/BotStepsLine.svelte";
     import ArtifactCardView from "../../../Artifacts/ArtifactCardView.svelte";
+    import SpokenReplyControl from "../Bots/SpokenReplyControl.svelte";
     import { readArtifactLine } from "../../../Artifacts/artifactCard";
     import { bodyShownWithCard } from "../../LinkPreview/ChatLinkKind";
     import MessageOptions from "./MessageOptions.svelte";
@@ -42,6 +43,8 @@
     export let replyDepth = 0;
     /** First message of its run (see MessageRuns): it shows the name, the time and the face. */
     export let runStart = true;
+    /** Words the game shows itself (a Brick's hello, #1995): drawn as a message, with nothing to do to it. */
+    export let plain = false;
 
     let messageRef: HTMLDivElement | undefined;
     let bubbleRef: HTMLDivElement | undefined;
@@ -138,6 +141,7 @@
 
     const actions = availableActions(message);
     $: actionable =
+        !plain &&
         !isSteps &&
         replyDepth === 0 &&
         !isQuotedMessage &&
@@ -317,6 +321,9 @@
                     {/if}
                     {#if message.roomLink && !$isDeleted}
                         <BotRoomCard link={message.roomLink} botName={sender?.username} />
+                    {/if}
+                    {#if message.voiceReply && !$isDeleted}
+                        <SpokenReplyControl reply={message.voiceReply} />
                     {/if}
                 {:else if $content.body.trim() !== ""}
                     <div class="opacity-70">

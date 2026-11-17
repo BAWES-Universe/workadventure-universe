@@ -3,6 +3,7 @@ import axios from 'axios';
 import { AIService } from '../ai/AIService';
 import { artifactToolDefinitions } from '../ai/ArtifactTools';
 import { fileToolDefinitions, formatFileResult, runFileTool, type FileToolContext } from '../ai/FileTools';
+import { ASK_IN_PRIVATE } from '../ai/PrivateAnswers';
 import { readBotLimits } from '../ai/types';
 import { linkOfStore } from '../services/ChatFiles';
 import { FileParser } from '../services/FileParser';
@@ -256,6 +257,60 @@ describe("Orbit's answers, in words the bot can pass on", () => {
     });
 });
 
+describe('in a reply other people read (game #1993)', () => {
+    const everyone = { ...call, chat: { kind: 'nearby' as const, ref: 'bubble-1' }, everyoneHere: true, others: ['uuid-sara'] };
+    const group = (extra: Partial<FileToolContext> = {}) => context({ call: everyone, everyoneHere: true, ...extra });
+    const failing = (error: Error) => group({ admin: { findBotFiles: vi.fn(async () => { throw error; }), getBotFile: vi.fn(async () => { throw error; }), readBotFile: vi.fn(async () => { throw error; }) } as never });
+
+    it('finds, opens and sends again saying who else is there, so Orbit uses only files all of them were there for', async () => {
+        const ctx = group();
+        await runFileTool('find_files', {}, ctx);
+        await runFileTool('open_file', { id: 'f3' }, ctx);
+        await runFileTool('send_again', { id: 'f212' }, ctx);
+
+        expect(ctx.admin.findBotFiles.mock.calls[0][0]).toEqual(everyone);
+        expect(ctx.admin.readBotFile.mock.calls[0][0]).toEqual(everyone);
+        for (const got of ctx.admin.getBotFile.mock.calls) expect(got[0]).toEqual(everyone);
+    });
+
+    it('when nothing is found, never says whether the person has it somewhere else: it offers direct messages, and guesses at nothing', async () => {
+        const none = group({ admin: { ...context().admin, findBotFiles: vi.fn(async () => ({ items: [], total: 0, page: 1, pages: 1, matched: null, hidden: false })) } });
+        const found = await runFileTool('find_files', { words: 'payslip' }, none);
+        expect(found.everyoneHere).toBe(true);
+        expect(formatFileResult('find_files', found)).toBe(`find_files: Nothing found for "payslip". Try fewer or other words, or no type. ${ASK_IN_PRIVATE}`);
+        // What is found reads as always
+        expect(formatFileResult('find_files', await runFileTool('find_files', {}, group()))).not.toContain('direct messages');
+    });
+
+    it('says the same for an id that is not one everyone here was shown, whether or not it is a file of theirs', async () => {
+        const missing = failing(new ArtifactCallError('not_found', 404, 'No such file.'));
+        const words = `There's no file with that id that everyone here was shown. ${ASK_IN_PRIVATE}`;
+        expect((await runFileTool('open_file', { id: 'f9' }, missing)).error).toBe(words);
+        expect((await runFileTool('send_again', { id: 'f9' }, missing)).error).toBe(words);
+    });
+
+    it('uses no file with an Orbit from before it kept who was there, and says so', async () => {
+        const older = failing(new ArtifactCallError('Invalid request data', 400, 'Invalid request data'));
+        for (const [tool, args] of [['find_files', {}], ['open_file', { id: 'f3' }], ['send_again', { id: 'f212' }]] as const) {
+            expect((await runFileTool(tool, args, older)).error).toBe("Files can't be looked up while other people are here yet. Say so in one short line.");
+        }
+        expect(older.send).not.toHaveBeenCalled();
+    });
+
+    it('alone with the bot, nothing changes: no word of other people, nothing added to what is found', async () => {
+        const alone = context({ admin: { ...context().admin, findBotFiles: vi.fn(async () => ({ items: [], total: 0, page: 1, pages: 1, matched: null, hidden: false })) } });
+        const found = await runFileTool('find_files', {}, alone);
+        expect(found).not.toHaveProperty('everyoneHere');
+        expect(formatFileResult('find_files', found)).toBe('find_files: Nothing found. Try fewer or other words, or no type.');
+        const gone = vi.fn(async () => { throw new ArtifactCallError('not_found', 404, 'x'); });
+        const missing = context({ admin: { findBotFiles: gone, getBotFile: gone, readBotFile: gone } as never });
+        const words = (await runFileTool('open_file', { id: 'f9' }, missing)).error as string;
+        expect(words).toContain("There's no file with that id");
+        expect(words).not.toContain('everyone here');
+        expect(words).not.toContain('direct messages');
+    });
+});
+
 describe('the tools', () => {
     it('find artifacts too when they are on here, and list_artifacts folds into find_files', () => {
         const names = (tools: Array<{ function: { name: string; description: string } }>) => tools.map((tool) => tool.function.name);
@@ -311,6 +366,8 @@ describe('the file tools in AIService', () => {
         sendAudio: vi.fn(async () => 'https://cdn.example.com/new.mp3'),
         markStored: vi.fn(),
         sendImage: vi.fn(),
+        // Who else is in the bubble with the person right now
+        othersWith: vi.fn((): string[] | undefined => ['uuid-sara']),
     });
     const withFiles = (memory?: Record<string, unknown>) => {
         const ai = new AIService(null!, null!, '');
@@ -318,6 +375,32 @@ describe('the file tools in AIService', () => {
         (ai as unknown as { conversationMemory: unknown }).conversationMemory = { getMemory: () => memory };
         return ai;
     };
+
+    it('holds back an earlier file or card for everyone here when someone has walked up since the reply started (#1993)', () => {
+        const ai = withFiles();
+        const here: { others: string[] | undefined } = { others: ['uuid-sara'] };
+        const bot = { othersWith: () => here.others } as never;
+        const came = (present: readonly string[] | undefined) => ai['someoneCameSince'](bot, 'bubble-1', 7, present);
+
+        // For the person alone nothing is asked: it goes to them only
+        expect(came(undefined)).toBe(false);
+        expect(came(['uuid-sara'])).toBe(false);
+        here.others = ['uuid-sara', 'uuid-omar'];
+        expect(came(['uuid-sara'])).toBe(true);
+        // Someone left: everyone still here was asked about
+        here.others = [];
+        expect(came(['uuid-sara'])).toBe(false);
+        // Who is here cannot be told: as if a stranger were
+        here.others = undefined;
+        expect(came(['uuid-sara'])).toBe(true);
+        // People the bot cannot name read as the same mark: a second one is still someone new
+        here.others = ['?', '?'];
+        expect(came(['?'])).toBe(true);
+        expect(came(['?', '?'])).toBe(false);
+        here.others = ['uuid-sara', '?'];
+        expect(came(['uuid-sara', '?'])).toBe(false);
+        expect(came(['?'])).toBe(true);
+    });
 
     it('offers find_files, open_file and send_again in place of list_artifacts with an Orbit that keeps files, and nothing new without one', async () => {
         const names = async (ai: AIService, channel: 'world' | 'dm') =>
@@ -370,8 +453,8 @@ describe('the file tools in AIService', () => {
             { limit: 10, kinds: ['audio'] }
         );
         expect(found.result.items).toHaveLength(1);
-        // No asker: it is already on the person's list
-        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg');
+        // No asker: it is already on the person's list. Asked for alone with the bot, it goes to them and nobody else (#1993)
+        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg', 7);
         // A link kept as it was typed goes the usual way, with its checks
         expect(bot.markStored).not.toHaveBeenCalled();
         expect(sent.result).toMatchObject({ sent: true });
@@ -384,7 +467,7 @@ describe('the file tools in AIService', () => {
         expect(refused).toBeNull();
         expect(bot.markStored).toHaveBeenCalledWith('https://cdn.example.com/signed/song.mp3');
         // With what Orbit says it is: a stored file's link may have no extension to tell
-        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/signed/song.mp3', undefined, 'audio/mpeg');
+        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/signed/song.mp3', undefined, 'audio/mpeg', undefined);
     });
 
     it("takes no look at an image for a reply on a person's own key", async () => {
@@ -491,7 +574,7 @@ describe('the file tools in AIService', () => {
                 chat: { kind: 'nearby', ref: 'bubble-1' },
             });
             expect(bot.sendChatMessage).toHaveBeenCalledTimes(1);
-            expect(bot.sendChatMessage).toHaveBeenCalledWith('bubble-1', `::artifact:${ID}:2:page::AutoNode`);
+            expect(bot.sendChatMessage).toHaveBeenCalledWith('bubble-1', `::artifact:${ID}:2:page::AutoNode`, 7);
             expect(first.result).toEqual({ sent: true, artifact: { id: ID, title: 'AutoNode', kind: 'page', version: 2 } });
             expect(second.result).toEqual(first.result);
             expect(admin.makeArtifact).not.toHaveBeenCalled();
@@ -540,5 +623,142 @@ describe('the file tools in AIService', () => {
     it('sends a file tool of the same name down to its MCP server when Orbit keeps no files', async () => {
         const [result] = await new AIService(null!, null!, '')['executeToolCalls']([{ id: 't1', name: 'find_files', arguments: '{}' }], client() as never, orbit() as never, new Map(), 'uuid-alice', 'bubble-1', 'bot1', 7);
         expect(result.result).not.toHaveProperty('items');
+    });
+
+    describe('in a reply other people read (game #1993)', () => {
+        const who = { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-alice', name: 'Alice' }, chat: { kind: 'nearby', ref: 'bubble-1' } };
+        const everyone = { ...who, everyoneHere: true, others: ['uuid-sara'] };
+        /** The tools of one reply: `present` is everyone else who reads it, left out when the person is alone with the bot. */
+        const run = (ai: AIService, tools: Array<{ id: string; name: string; arguments: string }>, bot: unknown, admin: unknown, present?: string[]) =>
+            ai['executeToolCalls'](tools, bot as never, admin as never, undefined, 'uuid-alice', 'bubble-1', 'bot1', 7, undefined, undefined, false, undefined, undefined, present);
+        /** What each call to Orbit was asked with: who, where, and who else is there. */
+        const askedOf = (fn: unknown) => (fn as { mock: { calls: unknown[][] } }).mock.calls.map((one) => one[0]);
+        const find = { id: 't1', name: 'find_files', arguments: '{"type":"audio"}' };
+        const open = { id: 't2', name: 'open_file', arguments: '{"id":"f212"}' };
+        const again = { id: 't3', name: 'send_again', arguments: '{"id":"f212"}' };
+
+        it('asks Orbit for only the files everyone there was there for, and sends one again to all of them', async () => {
+            const bot = client();
+            const admin = orbit();
+            await run(withFiles({}), [find, open, again], bot, admin, ['uuid-sara']);
+
+            expect(askedOf(admin.findBotFiles)[0]).toEqual(everyone);
+            for (const asked of askedOf(admin.getBotFile)) expect(asked).toEqual(everyone);
+            // Everyone there was there for it, so it goes into the space for all of them, asked about once more as it goes out
+            expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg', undefined, expect.any(Function));
+        });
+
+        it('does not send it when someone walks up while it is uploaded: who is here is asked again as it goes out', async () => {
+            const ai = withFiles({});
+            const here: { others: string[] } = { others: ['uuid-sara'] };
+            const asked: boolean[] = [];
+            const bot = {
+                ...client(),
+                othersWith: vi.fn(() => here.others),
+                // As BotClient does: the upload waits, then the file goes out unless it is held back
+                sendAudio: vi.fn(async (_space: string, _url: string, _asker: unknown, _mime: unknown, _only: unknown, mayGo?: () => boolean) => {
+                    here.others = ['uuid-sara', 'uuid-omar'];
+                    const may = mayGo ? mayGo() : true;
+                    asked.push(may);
+                    if (!may) throw Object.assign(new Error('held back'), { _heldBack: true });
+                    return 'https://cdn.example.com/new.mp3';
+                }),
+            };
+            const refused = await ai['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/song.mp3', {
+                botClient: bot as never,
+                spaceName: 'bubble-1',
+                botId: 'bot1',
+                playerId: 7,
+                mayGo: () => !ai['someoneCameSince'](bot as never, 'bubble-1', 7, ['uuid-sara']),
+            });
+
+            expect(asked).toEqual([false]);
+            expect(refused).toMatch(/Someone else just joined, so it wasn't sent/);
+        });
+
+        it('does not send it when someone walked up while it was looked up: they were not asked about', async () => {
+            const bot = client();
+            bot.othersWith.mockReturnValue(['uuid-sara', 'uuid-omar']);
+            const results = await run(withFiles({}), [again], bot, orbit(), ['uuid-sara']);
+
+            expect(bot.sendAudio).not.toHaveBeenCalled();
+            expect(JSON.stringify(results[0].result)).toMatch(/Someone else just joined, so it wasn't sent/);
+        });
+
+        it('alone with the bot: asks as before, and what it sends again goes to that person only', async () => {
+            const bot = client();
+            const admin = orbit();
+            await run(withFiles({}), [find, again], bot, admin);
+
+            expect(askedOf(admin.findBotFiles)[0]).toEqual(who);
+            expect(askedOf(admin.getBotFile)[0]).toEqual(who);
+            expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg', 7);
+        });
+
+        it('takes someone it cannot name as someone no file was shown to', async () => {
+            const admin = orbit();
+            await run(withFiles({}), [find], client(), admin, ['?']);
+            expect(askedOf(admin.findBotFiles)[0]).toEqual({ ...who, everyoneHere: true, others: ['?'] });
+        });
+
+        it('names in the prompt only the newest files everyone there was shown', async () => {
+            const admin = orbit();
+            const ai = withFiles({});
+            ai['botLimits'].set('bot1', readBotLimits({ findResults: 10, recentFiles: 3 }));
+            await ai['recentFilesFor']('bot1', 7, client() as never, 'bubble-1', admin as never, ['uuid-sara']);
+            await ai['recentFilesFor']('bot1', 7, client() as never, 'bubble-1', admin as never);
+
+            expect(askedOf(admin.findBotFiles)).toEqual([everyone, who]);
+        });
+
+        describe('an artifact', () => {
+            const ID = '5e9f889a-73fe-47da-aa03-2a1103c85c94';
+            const OTHER = '0b7c1d2e-1111-4222-8333-944455556666';
+            const page = { id: ID, title: 'AutoNode', kind: 'page', makerName: 'Tavily Researcher', version: 2 };
+            const withArtifacts = () => ({
+                ...orbit(),
+                readArtifact: vi.fn(async () => ({ artifact: page, version: { number: 2, summary: null }, content: '<h1>x</h1>', hidden: false })),
+                listArtifactsInChat: vi.fn(async () => ({ artifacts: [page], hidden: false })),
+            });
+            /** Khalid pasted one link in a direct message and one in front of Sara. */
+            const pasted = () => ({
+                conversationHistory: [
+                    { sender: 'person', message: `https://orbit.example/a/${OTHER}`, heard: { place: 'dm', with: [] } },
+                    { sender: 'person', message: `https://orbit.example/a/${ID}`, heard: { place: 'nearby', with: ['uuid-sara'] } },
+                ],
+            });
+            const card = { id: 't1', name: 'send_again', arguments: JSON.stringify({ id: ID }) };
+            const read = { id: 't2', name: 'read_artifact', arguments: JSON.stringify({ id: ID }) };
+
+            it('is read as something only pointed at in front of everyone there, and its card goes to all of them', async () => {
+                const bot = { ...client(), sendChatMessage: vi.fn() };
+                const admin = withArtifacts();
+                await run(withFiles(pasted()), [card, read], bot, admin, ['uuid-sara']);
+
+                // The link from the direct message points at nothing here
+                for (const got of admin.readArtifact.mock.calls as unknown as Array<[string, unknown]>) {
+                    expect(got[1]).toEqual({ ...who, everyoneHere: true, referencedArtifactIds: [ID] });
+                }
+                expect(admin.readArtifact).toHaveBeenCalledTimes(2);
+                expect(bot.sendChatMessage).toHaveBeenCalledWith('bubble-1', `::artifact:${ID}:2:page::AutoNode`);
+            });
+
+            it('points at nothing in front of someone who was not there when the link was pasted', async () => {
+                const admin = withArtifacts();
+                await run(withFiles(pasted()), [read], { ...client(), sendChatMessage: vi.fn() }, admin, ['uuid-omar']);
+                expect((admin.readArtifact.mock.calls as unknown as Array<[string, unknown]>)[0][1]).toEqual({ ...who, everyoneHere: true });
+            });
+
+            it('alone with the bot: everything the person pointed at counts, and the card goes to them only', async () => {
+                const bot = { ...client(), sendChatMessage: vi.fn() };
+                const admin = withArtifacts();
+                await run(withFiles(pasted()), [card], bot, admin);
+
+                const asked = (admin.readArtifact.mock.calls as unknown as Array<[string, { referencedArtifactIds: string[] }]>)[0][1];
+                expect(asked).toEqual({ ...who, referencedArtifactIds: expect.any(Array) });
+                expect([...asked.referencedArtifactIds].sort()).toEqual([OTHER, ID].sort());
+                expect(bot.sendChatMessage).toHaveBeenCalledWith('bubble-1', `::artifact:${ID}:2:page::AutoNode`, 7);
+            });
+        });
     });
 });

@@ -1,0 +1,1282 @@
+[
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 82.65100900000016,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 84.58341000000019,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 84.52591199999915,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 81.46862900000087,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 103.96726599999965,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 95.41401599999881,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 88.0999269999993,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 81.09467399999994,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 101.60136400000192,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 86.33499800000209,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 85.32707800000207,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 86.74683599999844,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 87.79916200000298,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 85.26738199999818,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 84.741068000003,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 87.26583499999833,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 82.59070599999541,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 82.68473499999527,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 87.31995099999767,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 82.3357779999933,
+  "why": {}
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 86.39023400000588,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 83.95195699999749,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 84.54098199999135,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 87.25122099999862,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 97.29659499999252,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 87.10535700000764,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 97.51161700001103,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 83.86148399999365,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 102.12987099999737,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 102.3608760000061,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 104.00789300000179,
+  "backMs": 0.21922800000174902,
+  "framesAfterBack": 22,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 84.16907000000356,
+  "backMs": 18.261759000000893,
+  "framesAfterBack": 21,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 85.2954299999983,
+  "backMs": 18.324005000002217,
+  "framesAfterBack": 21,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 81.72137500002282,
+  "backMs": 17.51665299999877,
+  "framesAfterBack": 21,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 101.78576199998497,
+  "backMs": 36.85149100000854,
+  "framesAfterBack": 21,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 99.36305499999435,
+  "backMs": 17.19464999999036,
+  "framesAfterBack": 22,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 86.3753110000107,
+  "backMs": 16.467754999990575,
+  "framesAfterBack": 22,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 83.68527299998095,
+  "backMs": 17.66384399999515,
+  "framesAfterBack": 22,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 85.26926900001126,
+  "backMs": 13.818282000022009,
+  "framesAfterBack": 21,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 81.88642299998901,
+  "backMs": 17.62804199999664,
+  "framesAfterBack": 21,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 83.29259699999238,
+  "backMs": 17.00927499998943,
+  "framesAfterBack": 21,
+  "voiceSilentMs": 42.95531299998402,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 83.39146700000856,
+  "backMs": 37.47574500000337,
+  "framesAfterBack": 21,
+  "voiceSilentMs": 82.12173500002245,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 82.74627500001225,
+  "backMs": 17.162493999989238,
+  "framesAfterBack": 22,
+  "voiceSilentMs": 42.244066000013845,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 84.56298499999684,
+  "backMs": 0.2579039999982342,
+  "framesAfterBack": 21,
+  "voiceSilentMs": 25.075698000000557,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 81.5450659999915,
+  "backMs": 17.786019000021042,
+  "framesAfterBack": 21,
+  "voiceSilentMs": 50.518725999980234,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 85.2313509999949,
+  "backMs": 35.422346000006655,
+  "framesAfterBack": 21,
+  "voiceSilentMs": 29.584304999996675,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 84.6031120000116,
+  "backMs": 19.68035099998815,
+  "framesAfterBack": 22,
+  "voiceSilentMs": 49.76836099999491,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 88.57078100001672,
+  "backMs": 0.218295999977272,
+  "framesAfterBack": 21,
+  "voiceSilentMs": 24.947667999978876,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 86.0745890000253,
+  "backMs": 19.247506999992765,
+  "framesAfterBack": 21,
+  "voiceSilentMs": 49.44187899999088,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "proximity",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 84.47108899999876,
+  "backMs": 38.146080000035,
+  "framesAfterBack": 22,
+  "voiceSilentMs": 20.911634999967646,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 174.4548300000024,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 137.67437500000233,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 143.85129100002814,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 170.82914899999741,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 130.37028299999656,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 136.80309200001648,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 171.3682760000229,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 181.29792300000554,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 135.88091900001746,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 134.7590500000515,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 169.64376299997093,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 185.3479149999912,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 172.73270599998068,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 171.13477499998407,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 179.71644300001208,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 185.85709499998484,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 172.5006070000236,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 169.99470199999632,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 184.87115000002086,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "today",
+  "kind": "hum",
+  "stopped": true,
+  "silentMs": 174.4032710000174,
+  "why": {}
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 179.4235869999975,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 139.76298100000713,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 179.7966090000118,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 189.81310500000836,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 182.6700140000321,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 139.23530400003074,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 192.42410800000653,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 189.85932699998375,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 189.9028269999544,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "voice",
+  "stopped": true,
+  "silentMs": 197.41998800000874,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "confirmed_detector": 1,
+   "stops": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 210.02735499996925,
+  "backMs": 42.65258199995151,
+  "framesAfterBack": 44,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 194.4612189999898,
+  "backMs": 47.137587999983225,
+  "framesAfterBack": 44,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 209.8209270000225,
+  "backMs": 41.799539000028744,
+  "framesAfterBack": 44,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 200.17936400003964,
+  "backMs": 42.78631300001871,
+  "framesAfterBack": 43,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 187.9074149999651,
+  "backMs": 45.03167000005487,
+  "framesAfterBack": 43,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 191.92388600000413,
+  "backMs": 48.456187000032514,
+  "framesAfterBack": 43,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 188.17420400003903,
+  "backMs": 40.53836200002115,
+  "framesAfterBack": 44,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 198.86345000000438,
+  "backMs": 46.108202999981586,
+  "framesAfterBack": 44,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 206.66050200001337,
+  "backMs": 36.50398099998711,
+  "framesAfterBack": 41,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "hum",
+  "stopped": false,
+  "silentMs": 192.41688999999315,
+  "backMs": 48.9537179999752,
+  "framesAfterBack": 44,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "ended_empty": 1,
+   "resumes": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 207.53993599995738,
+  "backMs": 49.17989299999317,
+  "framesAfterBack": 44,
+  "voiceSilentMs": 168.81495199998608,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 194.6280160000315,
+  "backMs": 46.32547300000442,
+  "framesAfterBack": 44,
+  "voiceSilentMs": 150.03988900000695,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 198.9641169999959,
+  "backMs": 48.57016000000294,
+  "framesAfterBack": 44,
+  "voiceSilentMs": 173.0385070000193,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 200.10473899997305,
+  "backMs": 49.73379099997692,
+  "framesAfterBack": 43,
+  "voiceSilentMs": 174.17814899998484,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 200.15858000004664,
+  "backMs": 49.34360000002198,
+  "framesAfterBack": 43,
+  "voiceSilentMs": 152.97036199999275,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 199.85952900000848,
+  "backMs": 46.58015799999703,
+  "framesAfterBack": 44,
+  "voiceSilentMs": 161.41834999999264,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 207.57484600000316,
+  "backMs": 46.75706299999729,
+  "framesAfterBack": 44,
+  "voiceSilentMs": 159.49217000004137,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 199.3108239999856,
+  "backMs": 44.67053400003351,
+  "framesAfterBack": 42,
+  "voiceSilentMs": 163.65382100001443,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 219.92972100002225,
+  "backMs": 46.89069099992048,
+  "framesAfterBack": 43,
+  "voiceSilentMs": 167.3571290000109,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ },
+ {
+  "transport": "livekit",
+  "behaviour": "pause",
+  "kind": "fan",
+  "stopped": true,
+  "silentMs": 209.96738099993672,
+  "backMs": 47.216485999990255,
+  "framesAfterBack": 44,
+  "voiceSilentMs": 158.558585000108,
+  "why": {
+   "episodes": 1,
+   "holds": 1,
+   "candidates": 1,
+   "stops": 1,
+   "continues": 1,
+   "confirmed_detector_while_continuing": 1
+  }
+ }
+]

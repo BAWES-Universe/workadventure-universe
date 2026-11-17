@@ -42,6 +42,49 @@ afterEach(async () => {
     }
 });
 
+describe('listening in a group (round 8), peer-to-peer', () => {
+    it('stops taking a microphone when a friend joins, takes it again once the person asks and the worker confirms, and stops on request', async () => {
+        const r = await rig();
+        r.calls.groupGate = true;
+        const granted: string[] = [];
+        r.calls.onListenGranted = (_space, person) => granted.push(person);
+        const alice = human('alice');
+        r.calls.spaceUsers(r.game.spaceName, [{ spaceUserId: 'alice', uuid: 'uuid-alice', tags: [], name: 'alice' } as never]);
+        await connectBot(r, alice);
+        await waitFor('the audio connection', () => joined(r, 'alice'));
+        alice.startMic();
+        await waitFor('microphone audio', () => r.worker.counters.get('frames_heard') >= 10);
+
+        // Bob joins the bubble: alice's microphone is not taken any more
+        r.calls.spaceUserJoined(r.game.spaceName, { spaceUserId: 'bob', uuid: 'uuid-bob', tags: [], name: 'bob' } as never);
+        await sleep(150);
+        const heard = r.worker.counters.get('frames_heard');
+        await sleep(300);
+        expect(r.worker.counters.get('frames_heard')).toBe(heard);
+        expect(r.game.listens.filter(([to]) => to === 'alice').pop()?.[1]).toEqual({ state: 'off', reason: 'others_joined' });
+
+        // She asks the bot to keep listening: the worker confirms for her connection, and her microphone is taken again
+        const ask = (listen: string) =>
+            r.calls.handlePrivateEvent(privateEvent(r.game, 'alice', { $case: 'voiceModeChoice', voiceModeChoice: { mode: 'talk', listen } }));
+        ask('keep');
+        await waitFor('the confirmation', () => r.fromWorker.some((m) => m.type === 'mode.ack' && m.participantId === 'alice'));
+        const ack = r.fromWorker.find((m) => m.type === 'mode.ack')!;
+        expect(ack).toMatchObject({ mode: 'talk', path: 'lane', epoch: 1 });
+        await waitFor('her microphone again', () => r.worker.counters.get('frames_heard') > heard + 10);
+        expect(r.game.listens.filter(([to]) => to === 'alice').pop()?.[1]).toEqual({ state: 'on', reason: '' });
+        expect(granted).toEqual(['alice']);
+
+        // And stops
+        ask('stop');
+        await waitFor('the stop to be confirmed', () => r.game.listens.filter(([to]) => to === 'alice').pop()?.[1].state === 'off');
+        const after = r.worker.counters.get('frames_heard');
+        await sleep(300);
+        expect(r.worker.counters.get('frames_heard')).toBe(after);
+        expect(granted).toEqual(['alice']);
+        expect(r.violations).toEqual([]);
+    });
+});
+
 describe('a voice bot and a person in a peer-to-peer bubble', () => {
     it('carries fake bot speech to the person and counts the permitted microphone audio', async () => {
         const frames: InputFrame[] = [];

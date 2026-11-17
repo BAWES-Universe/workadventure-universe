@@ -32,6 +32,9 @@ const ViewerBody = z.object({ chat: Chat.optional() });
 const InChatBody = z.object({ chat: Chat, offset: z.number().int().min(0).max(1_000_000).optional() });
 const OwnedBody = z.object({ offset: z.number().int().min(0).max(1_000_000).optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
+const PayBody = z
+    .object({ chat: Chat.optional(), start: z.boolean().optional(), order: z.string().min(1).max(100).optional() })
+    .strict();
 const ShareBody = z
     .object({
         chat: Chat.optional(),
@@ -79,11 +82,13 @@ export class ArtifactController extends BaseHttpController {
          *   post:
          *     description: Opens a live artifact for the signed token's person. Answers with the artifact, the version to
          *       show (the latest unless one is asked for), the address its file is served from, and what the person may do.
+         *       The address of a "Just you" artifact is for this one opening, and `urlLifeMs` says how long it goes on working.
          *     responses:
          *       200:
          *         description: The artifact and what the person may do with it
          *       404:
-         *         description: No such artifact, or the person may not open it
+         *         description: No such artifact, or the person may not open it ("kept_private" when its owner keeps it
+         *           to themselves and the person is in the chat it was made in)
          *       429:
          *         description: Too many requests; try again in a minute
          */
@@ -106,6 +111,9 @@ export class ArtifactController extends BaseHttpController {
             res.status(200).send("");
         });
         this.app.options("/artifacts/:id/share", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });
+        this.app.options("/artifacts/:id/pay", (req: Request, res: Response) => {
             res.status(200).send("");
         });
 
@@ -230,7 +238,7 @@ export class ArtifactController extends BaseHttpController {
          * @openapi
          * /artifacts/{id}/share:
          *   post:
-         *     description: The owner says who can open it ("chat" or "link") and who can ask for changes ("owner" or
+         *     description: The owner says who can open it ("me", "chat" or "link") and who can ask for changes ("owner" or
          *       "openers"), one or both. Answers with the artifact as it now is.
          *     responses:
          *       200:
@@ -241,6 +249,9 @@ export class ArtifactController extends BaseHttpController {
          *         description: The person may open it but is not its owner
          *       404:
          *         description: No such artifact, or the person may not open it
+         *       503:
+         *         description: '"me" was asked for and Orbit cannot keep files private as it is set up
+         *           ("private_files_not_configured"); nothing changed'
          */
         this.app.post(
             "/artifacts/:id/share",
@@ -254,6 +265,34 @@ export class ArtifactController extends BaseHttpController {
                 });
             }
         );
+
+        /**
+         * @openapi
+         * /artifacts/{id}/pay:
+         *   post:
+         *     description: The payment side of a page that takes payments (game #2044). With neither `start` nor `order`,
+         *       answers { enabled }. `start: true` starts a checkout for the amount its owner set (the body holds no amount)
+         *       and answers { orderId, checkoutUrl, app }. `order` answers where that order stands { status, checkoutUrl,
+         *       testPayment }. Whoever may open the artifact may pay on it.
+         *     responses:
+         *       200:
+         *         description: What was asked
+         *       404:
+         *         description: No such artifact, or the person may not open it
+         *       409:
+         *         description: Payments are unavailable on this page ("unavailable")
+         *       429:
+         *         description: Too many tries ("limit"), or too many requests
+         */
+        this.app.post("/artifacts/:id/pay", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
+            await this.answer(req, res, "pay on", async (viewer, id) => {
+                const body = PayBody.safeParse(req.body ?? {});
+                if (!body.success || (body.data.start && body.data.order))
+                    throw new ArtifactsError("invalid_request", 400);
+                const { chat, ...request } = body.data;
+                return artifactsService.pay(id, request, viewer(chat));
+            });
+        });
     }
 
     private async answer(

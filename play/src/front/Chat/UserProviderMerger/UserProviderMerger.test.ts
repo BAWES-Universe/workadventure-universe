@@ -266,4 +266,34 @@ describe("UserProviderMerger names in Universe", () => {
 
         expect(refreshIfStale).toHaveBeenCalledOnce();
     });
+
+    it("carries the 'On a call' label of a person through the merge (game #2004)", () => {
+        const onACall = writable<boolean | undefined>(true);
+        const merger = new UserProviderMerger([
+            {
+                users: writable<PartialChatUser[]>([
+                    {
+                        chatId: "@sara:matrix",
+                        uuid: "uuid-sara",
+                        username: "Sara",
+                        roomName: "Room1",
+                        playUri: "playUri1",
+                        spaceUserId: "tab-1",
+                        availabilityStatus: writable(AvailabilityStatus.ONLINE),
+                        onACall,
+                    },
+                ]),
+                setFilter: () => Promise.resolve(),
+            },
+            {
+                users: writable<PartialChatUser[]>([{ chatId: "@sara:matrix", username: "Sara" }]),
+                setFilter: () => Promise.resolve(),
+            },
+        ]);
+        const sara = [...get(merger.usersByRoomStore).values()][0].users[0];
+        expect(sara.onACall).toBeDefined();
+        expect(get(sara.onACall ?? readable(undefined))).toBe(true);
+        onACall.set(false);
+        expect(get(sara.onACall ?? readable(undefined))).toBe(false);
+    });
 });

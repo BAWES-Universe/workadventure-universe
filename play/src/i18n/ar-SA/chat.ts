@@ -599,6 +599,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     },
     inviteFooter: {
         button: "ادعُ شخصًا للانضمام",
+        buttonShort: "دعوة",
         title: "ادعُ شخصًا للانضمام",
         hint: "أي شخص لديه الرابط يدخل هذه الغرفة مباشرة. بلا تنزيل وبلا حساب.",
         hintRoom: "أي شخص لديه الرابط يدخل {room} مباشرة. بلا تنزيل وبلا حساب.",

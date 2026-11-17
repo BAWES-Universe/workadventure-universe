@@ -8,14 +8,20 @@
  * Uses posthog-node SDK for capture (v4.18.0).
  * Flush uses pg.flush() (not shutdown) to avoid destroying the singleton.
  * 
+ * Metadata only, and only what telemetryAllowlist lists (a property that is not listed, or whose value is not the shape
+ * it should be, is dropped; the error is sent as a class). An event never carries words: no $ai_input, no $ai_output, no tool results, no emails, no files, no
+ * memory, and no text from the provider's errors. It carries the model, provider, token counts, cost, latency, the error's
+ * status, tool names and counts, and the bot, conversation and room ids that were already there.
+ *
  * PostHog LLM Observability data model:
  *   $ai_session_id    — Stable across all turns in one conversation (bot-player pair)
  *   $ai_trace_id      — Unique per-turn (identifies one response cycle)
- *   $ai_trace         — Root event per turn (input + output state)
- *   $ai_generation    — Per-LLM-call event (model, tokens, cost, output choices)
+ *   $ai_trace         — Root event per turn (totals only)
+ *   $ai_generation    — Per-LLM-call event (model, tokens, cost, latency)
  */
 
 import { PostHog } from 'posthog-node';
+import { AI_EVENT, SERVER_EVENTS, allowed, errorStatusOf, id, type Schema } from './telemetryAllowlist';
 
 const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
 // Support both POSTHOG_HOST and POSTHOG_URL for backward compatibility
@@ -23,7 +29,7 @@ const POSTHOG_HOST = (process.env.POSTHOG_HOST || process.env.POSTHOG_URL || 'ht
 
 let client: PostHog | null = null;
 
-export function getPostHogClient(): PostHog | null {
+function getPostHogClient(): PostHog | null {
     if (!POSTHOG_API_KEY) return null;
     if (!client) {
         client = new PostHog(POSTHOG_API_KEY, {
@@ -42,8 +48,6 @@ export interface CapturedGeneration {
     sessionId: string;
     model: string;
     provider: string;
-    input: string;
-    output: string;
     /** All input tokens of the call, the cached ones included */
     inputTokens: number;
     /** Input tokens served from the provider's cache (a subset of inputTokens). Omitted when the provider did not report it. */
@@ -57,8 +61,19 @@ export interface CapturedGeneration {
     botId?: string;
     playerId?: string;
     space?: string;
-    /** Why the reply left the person with nothing (#1498): marks the event as an error in PostHog's LLM views. */
+    /** Names of the tools the call asked for, in order. Names only: never what was passed to them or what came back. */
+    toolNames?: string[];
+    /** Why the reply left the person with nothing (#1498): marks the event as an error in PostHog's LLM views. Plain words about the status, never what the provider said. */
     error?: string;
+}
+
+/**
+ * What the event says about the tools of a call: how many, and which. The names are checked in telemetryAllowlist: a tool
+ * server can name a tool after anything, so a name that does not look like a function name is sent as "other".
+ */
+function toolProperties(params: CapturedGeneration): Record<string, unknown> {
+    if (!params.toolNames?.length) return {};
+    return { tool_names: params.toolNames, tool_call_count: params.toolNames.length };
 }
 
 /**
@@ -75,44 +90,53 @@ function cacheProperties(params: CapturedGeneration): Record<string, unknown> {
     };
 }
 
+/** What an AI event holds before the allowlist looks at it. Nothing here is text a person said or a tool returned. */
+function aiProperties(params: CapturedGeneration): Record<string, unknown> {
+    return {
+        $ai_session_id: params.sessionId,
+        $ai_trace_id: params.traceId,
+        $ai_model: params.model,
+        $ai_provider: params.provider,
+        $ai_input_tokens: params.inputTokens,
+        ...(params.cachedInputTokens !== undefined ? { $ai_cache_read_input_tokens: params.cachedInputTokens } : {}),
+        $ai_output_tokens: params.outputTokens,
+        ...cacheProperties(params),
+        $ai_latency: params.latency,
+        $ai_cost: params.cost,
+        bot_id: params.botId,
+        player_id: params.playerId,
+        space: params.space,
+        ...toolProperties(params),
+        // The error's class and status only (telemetryAllowlist): the line itself is never sent
+        ...(params.error ? { $ai_is_error: true, $ai_error: params.error, error_status: errorStatusOf(params.error) } : {}),
+    };
+}
+
+/**
+ * The one place an event leaves for PostHog. The distinct id and the properties are checked against the allowlist
+ * first; an id of the wrong shape sends nothing. Never throws.
+ */
+function send(distinctId: string, event: string, schema: Schema, raw: Record<string, unknown>, extra: Record<string, unknown> = {}): void {
+    try {
+        const pg = getPostHogClient();
+        if (!pg) return;
+        if (id(distinctId) === undefined) {
+            console.warn(`[PostHog] Did not send ${event}: its distinct id is not an id`);
+            return;
+        }
+        pg.capture({ distinctId, event, properties: { ...allowed(event, schema, raw), ...extra }, timestamp: new Date() });
+    } catch (e) {
+        console.error('[PostHog] Failed to capture an event:', e);
+    }
+}
+
 /**
  * Capture a per-LLM-call $ai_generation event.
  * Emit one call per generateStream() invocation so PostHog's trace view
  * correctly reflects multi-call tool flows (initial call + tool follow-up).
  */
 export function captureAiGeneration(params: CapturedGeneration): void {
-    try {
-        const pg = getPostHogClient();
-        if (!pg) return;
-
-        const timestamp = new Date();
-
-        pg.capture({
-            distinctId: params.distinctId,
-            event: '$ai_generation',
-            properties: {
-                $ai_session_id: params.sessionId,
-                $ai_trace_id: params.traceId,
-                $ai_model: params.model,
-                $ai_provider: params.provider,
-                $ai_input: [{role: 'user', content: params.input}],
-                $ai_input_tokens: params.inputTokens,
-                ...(params.cachedInputTokens !== undefined ? { $ai_cache_read_input_tokens: params.cachedInputTokens } : {}),
-                $ai_output_tokens: params.outputTokens,
-                ...cacheProperties(params),
-                $ai_latency: params.latency,
-                $ai_cost: params.cost,
-                $ai_output_choices: [{role: 'assistant', content: params.output}],
-                bot_id: params.botId,
-                player_id: params.playerId,
-                space: params.space,
-                ...(params.error ? { $ai_is_error: true, $ai_error: params.error } : {}),
-            },
-            timestamp,
-        });
-    } catch (e) {
-        console.error('[PostHog] Failed to capture $ai_generation:', e);
-    }
+    send(params.distinctId, '$ai_generation', AI_EVENT, aiProperties(params));
 }
 
 /**
@@ -121,38 +145,7 @@ export function captureAiGeneration(params: CapturedGeneration): void {
  * any tool call rounds into one trace event per turn.
  */
 export function captureAiTrace(params: CapturedGeneration): void {
-    try {
-        const pg = getPostHogClient();
-        if (!pg) return;
-
-        const timestamp = new Date();
-
-        pg.capture({
-            distinctId: params.distinctId,
-            event: '$ai_trace',
-            properties: {
-                $ai_session_id: params.sessionId,
-                $ai_trace_id: params.traceId,
-                $ai_model: params.model,
-                $ai_provider: params.provider,
-                $ai_input: [{role: 'user', content: params.input}],
-                $ai_input_tokens: params.inputTokens,
-                ...(params.cachedInputTokens !== undefined ? { $ai_cache_read_input_tokens: params.cachedInputTokens } : {}),
-                $ai_output_tokens: params.outputTokens,
-                ...cacheProperties(params),
-                $ai_latency: params.latency,
-                $ai_cost: params.cost,
-                $ai_output: params.output,
-                bot_id: params.botId,
-                player_id: params.playerId,
-                space: params.space,
-                ...(params.error ? { $ai_is_error: true, $ai_error: params.error } : {}),
-            },
-            timestamp,
-        });
-    } catch (e) {
-        console.error('[PostHog] Failed to capture $ai_trace:', e);
-    }
+    send(params.distinctId, '$ai_trace', AI_EVENT, aiProperties(params));
 }
 
 /**
@@ -172,14 +165,13 @@ export async function flushPostHog(): Promise<void> {
 
 /**
  * Capture a plain event that is not about a person (for example the voice worker's load, #1751). No person profile
- * is made for it. Never throws.
+ * is made for it. Only the events and properties listed in telemetryAllowlist are sent. Never throws.
  */
 export function captureServerEvent(distinctId: string, event: string, properties: Record<string, unknown>): void {
-    try {
-        const pg = getPostHogClient();
-        if (!pg) return;
-        pg.capture({ distinctId, event, properties: { ...properties, $process_person_profile: false }, timestamp: new Date() });
-    } catch (e) {
-        console.error(`[PostHog] Failed to capture ${event}:`, e);
+    const schema = Object.prototype.hasOwnProperty.call(SERVER_EVENTS, event) ? SERVER_EVENTS[event] : undefined;
+    if (!schema) {
+        console.warn(`[PostHog] Did not send an event that is not in the allowlist: ${id(event) ?? '(unsafe name)'}`);
+        return;
     }
+    send(distinctId, event, schema, properties, { $process_person_profile: false });
 }

@@ -69,6 +69,7 @@ import { getBotServerUrl } from "../../external-modules/bots/services/BotServerU
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { clearHandsOffHere, myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
 import { attendeeCameraAreaSpacesStore, stopShowingCameraToSpeakers } from "../../Space/AttendeeCamera";
+import { shareOnACall } from "../../Chat/Bricks/Call/CallPresence";
 import { bindPodiumToRaiseHand, clearStageState } from "../../Space/RaiseHand/PodiumStore";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
@@ -223,6 +224,7 @@ import { startObjectSounds } from "./objectSoundsForScene";
 import type { ObjectSounds } from "./ObjectSounds";
 import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
+import { getCameraViewport } from "./CameraViewport";
 import { AreaLiveState } from "./GameMap/AreaLiveState";
 import { gameManager } from "./GameManager";
 import { Game } from "./Game";
@@ -429,6 +431,7 @@ export class GameScene extends DirtyScene {
     private stopKeepingNearbyShared: (() => void) | undefined;
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
     private unsubscribeChatBlockSync: (() => void) | undefined;
+    private unsubscribeOnACall: (() => void) | undefined;
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
     private _worldPeopleCounter: ForwardableStore<number> = new ForwardableStore(0);
     // Everyone in the world space (the unfiltered source behind the People tab), undefined until the space is joined
@@ -1386,6 +1389,8 @@ export class GameScene extends DirtyScene {
     public cleanupClosingScene(reconnecting = false): void {
         this.unsubscribeChatBlockSync?.();
         this.unsubscribeChatBlockSync = undefined;
+        this.unsubscribeOnACall?.();
+        this.unsubscribeOnACall = undefined;
         // No broadcast join may land on a destroyed registry.
         this.broadcastSceneClosing = true;
         this.pendingBroadcastJoins.clear();
@@ -1783,10 +1788,7 @@ export class GameScene extends DirtyScene {
         }
 
         // We detect NaN values here for obscure reasons (Phaser bug)
-        const left = Math.max(0, camera.scrollX - margin);
-        const top = Math.max(0, camera.scrollY - margin);
-        const right = camera.scrollX + camera.width + margin;
-        const bottom = camera.scrollY + camera.height + margin;
+        const { left, top, right, bottom } = getCameraViewport(camera, margin);
         if (Number.isNaN(left) || Number.isNaN(top) || Number.isNaN(right) || Number.isNaN(bottom)) {
             console.error("NaN detected in viewport calculation", { left, top, right, bottom, camera });
             return;
@@ -2191,12 +2193,7 @@ export class GameScene extends DirtyScene {
                     {
                         ...this.startPositionCalculator.startPosition,
                     },
-                    {
-                        left: camera.scrollX,
-                        top: camera.scrollY,
-                        right: camera.scrollX + camera.width,
-                        bottom: camera.scrollY + camera.height,
-                    },
+                    getCameraViewport(camera),
                     gameManager.getCompanionTextureId(),
                     get(availabilityStatusStore),
                     this.getGameMap().getLastCommandId(),
@@ -2252,11 +2249,14 @@ export class GameScene extends DirtyScene {
                     .joinSpace(
                         WORLD_SPACE_NAME,
                         FilterType.ALL_USERS,
-                        ["availabilityStatus", "chatID"],
+                        ["availabilityStatus", "chatID", "onACall"],
                         this.abortController.signal
                     )
                     .then((space) => {
                         this.allUserSpace = space;
+                        // Other people see "On a call" next to this person while a call with a Brick lasts (#2004)
+                        // A join that answers after the scene closed must not start telling anyone anything
+                        if (!this.cleanupDone) this.unsubscribeOnACall = shareOnACall(space);
                         worldUserProvider = new WorldUserProvider(space);
                         this._worldUserCounter.forward(worldUserProvider.userCount);
                         this._worldPeopleCounter.forward(worldUserProvider.peopleCount);
@@ -4197,13 +4197,7 @@ export class GameScene extends DirtyScene {
     private doPushPlayerPosition(event: HasPlayerMovedInterface): void {
         this.lastMoveEventSent = event;
         this.lastSentTick = this.currentTick;
-        const camera = this.cameras.main;
-        let viewport = {
-            left: camera.scrollX,
-            top: camera.scrollY,
-            right: camera.scrollX + camera.width,
-            bottom: camera.scrollY + camera.height,
-        };
+        let viewport = getCameraViewport(this.cameras.main);
         if (!this.scene.scene.renderer) {
             // In the very special case where we have no renderer, the viewport will not move along the Woka.
             // We need to adjust it manually. We set it to something very large to make sure the Woka sees

@@ -26,6 +26,8 @@ import type { AdminMessageInterface } from "../models/Websocket/Admin/AdminMessa
 import { isAdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
 import { adminService } from "../services/AdminService";
 import { chatIdVerifier } from "../services/ChatIdVerifier";
+import { memberTagsFor } from "../services/BotTokenTags";
+import { callOnlySpaceUserId, isAllowedForCallOnly, mayOpenCallOnly } from "../services/CallOnlyConnection";
 import { worldSpaceNamespace } from "../services/SpaceNamespace";
 import { validateWebsocketQuery } from "../services/QueryValidator";
 import type { SocketData, SpaceName } from "../models/Websocket/SocketData";
@@ -261,6 +263,11 @@ export class IoSocketController {
                             roomName: z.string(),
                             cameraState: z.string().transform((val) => val === "true"),
                             microphoneState: z.string().transform((val) => val === "true"),
+                            // A bot's call-only connection (game #2004): never joins the room, see CallOnlyConnection
+                            callOnly: z
+                                .string()
+                                .optional()
+                                .transform((val) => val === "true"),
                         })
                     );
 
@@ -345,6 +352,10 @@ export class IoSocketController {
 
                         if (DISABLE_ANONYMOUS && !tokenData) {
                             throw new Error("Expecting token");
+                        }
+
+                        if (query.callOnly && !mayOpenCallOnly(tokenData?.tags)) {
+                            throw new Error("Only a bot can open a call-only connection");
                         }
 
                         const userIdentifier = tokenData ? tokenData.identifier : "";
@@ -447,7 +458,8 @@ export class IoSocketController {
                                 }
                                 throw err;
                             }
-                            memberTags = userData.tags;
+                            // Orbit answers a bot with no tags: the bot keeps the "bot" and "voice-bot" its token carries
+                            memberTags = memberTagsFor(userIdentifier, isLogged, tokenData?.tags, userData.tags);
                             memberVisitCardUrl = userData.visitCardUrl;
                             characterTextures = userData.characterTextures;
                             companionTexture = userData.companionTexture ?? undefined;
@@ -511,6 +523,7 @@ export class IoSocketController {
                             },
                             batchTimeout: null,
                             backConnection: undefined,
+                            callOnly: query.callOnly || undefined,
                             listenedZones: new Set<string>(),
                             pusherRoom: undefined,
                             spaces: new Set<SpaceName>(),
@@ -622,7 +635,12 @@ export class IoSocketController {
                         emitInBatch(socket, payload);
                     };
 
-                    await socketManager.handleJoinRoom(socket);
+                    if (socketData.callOnly) {
+                        // No room: nothing on the map, in no list and in no count. The space is all it has.
+                        socketData.spaceUserId = callOnlySpaceUserId();
+                    } else {
+                        await socketManager.handleJoinRoom(socket);
+                    }
 
                     //get data information and show messages
                     if (socketData.messages && Array.isArray(socketData.messages)) {
@@ -735,6 +753,13 @@ export class IoSocketController {
                         const message = ClientToServerMessage.decode(new Uint8Array(arrayBuffer));
                         if (!message.message) {
                             console.warn("Empty message received.");
+                            return;
+                        }
+
+                        if (socket.getUserData().callOnly && !isAllowedForCallOnly(message.message)) {
+                            console.warn(
+                                `A call-only connection sent "${message.message.$case}", which is not about its call. Dropped.`
+                            );
                             return;
                         }
 

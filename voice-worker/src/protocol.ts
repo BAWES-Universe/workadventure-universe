@@ -17,8 +17,19 @@ export type Signal =
     | { type: 'transceiverRequest'; transceiverRequest: { kind: 'audio'; init?: { direction: 'recvonly' | 'sendrecv' } } };
 
 export type LeaveReason = 'closed' | 'failed' | 'left' | 'superseded' | 'timeout';
-/** `barge_in`: a person spoke over the bot. `limit`: the reply reached its longest time. */
-export type PlaybackReason = 'completed' | 'voice_stop' | 'retract' | 'mode' | 'lane_loss' | 'rejected' | 'barge_in' | 'limit' | 'provider';
+/**
+ * `barge_in`: a person spoke over the bot. `limit`: the reply reached its longest time. `private`: the reply was for one
+ * person alone, and a path it would go out on reaches other people too.
+ */
+export type PlaybackReason = 'completed' | 'voice_stop' | 'retract' | 'mode' | 'lane_loss' | 'rejected' | 'barge_in' | 'limit' | 'provider' | 'private';
+
+/**
+ * What this worker can do beyond the first version of the bridge, named in `session.start`. A bot server relies on one
+ * only after it has seen its name: an older worker ignores the fields it does not know.
+ *   say.onlyFor: `bot.say` may name the one person a reply is for, and its audio reaches nobody else (game #1993).
+ */
+export const SAY_ONLY_FOR = 'say.onlyFor';
+export const FEATURES: readonly string[] = [SAY_ONLY_FOR];
 
 /** How much feeling the voice puts in. Handed to the speech connector, which maps it to what its provider offers. */
 export type Expression = 'restrained' | 'natural' | 'expressive';
@@ -53,9 +64,17 @@ export interface SessionOpen extends Base { type: 'session.open'; bubbleId: stri
 export interface LaneOpen extends Base { type: 'lane.open'; participantId: string; epoch: number; mode?: Mode }
 export interface LaneSignalIn extends Base { type: 'lane.signal'; participantId: string; epoch: number; signal: Signal }
 export interface LaneClose extends Base { type: 'lane.close'; participantId: string; epoch: number; reason?: LeaveReason }
-export interface ModeSet extends Base { type: 'mode.set'; mode: Mode; participantId?: string }
-/** `maxMs`: the longest this reply may play; at it the audio stops (the text is in the chat in full). */
-export interface BotSay extends Base { type: 'bot.say'; segmentId: string; text: string; committed: true; lang?: string; maxMs?: number }
+/**
+ * `requestId`: the bot server wants to know when this person's mode has been applied (a person asked the bot to listen, or to stop).
+ * The worker answers with `mode.ack` once the path that carries their audio follows the new mode. Only with `participantId`.
+ */
+export interface ModeSet extends Base { type: 'mode.set'; mode: Mode; participantId?: string; requestId?: string }
+/**
+ * `maxMs`: the longest this reply may play; at it the audio stops (the text is in the chat in full).
+ * `onlyFor`: the one person this reply is for (their participant id). Its audio is sent only on a path that reaches them
+ * and nobody else; when the path reaches others too, it is not said and ends with reason `private`.
+ */
+export interface BotSay extends Base { type: 'bot.say'; segmentId: string; text: string; committed: true; lang?: string; maxMs?: number; onlyFor?: string }
 export interface BotRetract extends Base { type: 'bot.retract'; segmentId: string }
 export interface VoiceStop extends Base { type: 'voice.stop'; reason: 'allowance_ended' | 'other' }
 export interface SessionEnd extends Base { type: 'session.end' }
@@ -68,7 +87,8 @@ export interface RecognitionTerms extends Base { type: 'recognition.terms'; term
 export interface RoomPeople extends Base { type: 'room.people'; epoch: number; people: { participantId: string; mode: Mode }[] }
 
 // worker -> bot server
-export interface SessionStart extends Base { type: 'session.start'; bubbleId: string; mode: Mode; engine: { id: string; kind: 'ts' } }
+/** `features`: see `FEATURES`. Left out by a worker from before there were any. */
+export interface SessionStart extends Base { type: 'session.start'; bubbleId: string; mode: Mode; engine: { id: string; kind: 'ts' }; features?: string[] }
 export interface ParticipantJoin extends Base { type: 'participant.join'; participantId: string; epoch: number }
 export interface ParticipantLeave extends Base { type: 'participant.leave'; participantId: string; epoch: number; reason: LeaveReason }
 export interface LaneSignalOut extends Base { type: 'lane.signal'; participantId: string; epoch: number; signal: Signal }
@@ -82,6 +102,12 @@ export interface EngineStatus extends Base {
     room?: { epoch: number; connected: boolean };
     counters?: Record<string, number>;
 }
+/**
+ * A `mode.set` with a `requestId` has been applied. `path`: what carries the person's audio now and follows the mode, with its `epoch`:
+ * their own connection (`lane`), the bubble's LiveKit room when they are named in it (`room`), or nothing yet (`none`, the mode applies
+ * when a path opens: `lane.open` and `room.people` carry it).
+ */
+export interface ModeAck extends Base { type: 'mode.ack'; participantId: string; requestId: string; mode: Mode; path: 'lane' | 'room' | 'none'; epoch?: number }
 export interface RoomState extends Base { type: 'room.state'; epoch: number; state: 'connected' | 'closed' | 'failed' }
 /** A person started speaking to the bot. */
 export interface UserSpeechStarted extends Base { type: 'user.speech_started'; participantId: string; epoch: number; turnId: string }
@@ -106,5 +132,5 @@ export interface ErrorMsg extends Base { type: 'error'; code: string; message: s
 
 export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd | RoomJoin | RoomLeave | RoomPeople | RecognitionTerms;
 export type WorkerToBot =
-    | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | RoomState | UserSpeechStarted | UserPartial | UserTurn | ProviderOk | ProviderFailed | ErrorMsg;
+    | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | ModeAck | RoomState | UserSpeechStarted | UserPartial | UserTurn | ProviderOk | ProviderFailed | ErrorMsg;
 

@@ -7,6 +7,7 @@ import {
     helloFailureOf,
     isNoVoiceList,
     isOwnServer,
+    listKey,
     voiceNameFailureOf,
     limitsOf,
     modelLabel,
@@ -35,6 +36,8 @@ import {
     doorVoices,
     startingPayer,
     voiceLanguages,
+    voiceListPart,
+    speakingRowModels,
     type BotVoice,
     type FullVoiceProfile,
     type VoiceChoice,
@@ -693,6 +696,38 @@ describe("talking models (#1910)", () => {
         // Nothing to do for a voice that never talked live
         const plain = full(uai);
         expect(settleTalk(voice, plain)).toBe(plain);
+    });
+
+    it("lists a talking model's voices apart only on a key that also speaks on its own, whose voices differ", () => {
+        const SONIC = "amazon.nova-2-sonic-v1:0";
+        const aws = keyAnswer({
+            id: "key-aws",
+            adapter: "aws",
+            name: "My AWS",
+            recognition: true,
+            speech: true,
+            models: [
+                { id: "generative", label: "Generative", kind: "speech" },
+                { id: SONIC, label: "Nova 2 Sonic", kind: "talk" },
+            ],
+        });
+        const voice = read({ lentKeys: [aws, openAi()] });
+        const both = { kind: "key" as const, key: voice.lentKeys[0] };
+        expect(voiceListPart(both, SONIC)).toBe("talk");
+        expect(voiceListPart(both, "generative")).toBe("speech");
+        expect(voiceListPart(both, undefined)).toBe("speech");
+        // A key that only talks live already lists its talking voices as its speaking ones
+        expect(voiceListPart({ kind: "key", key: voice.lentKeys[1] }, "gpt-realtime-2.1")).toBe("speech");
+        expect(voiceListPart({ kind: "universe-ai" }, "eleven_v4_turbo")).toBe("speech");
+        expect(listKey(both, "talk")).toBe("key-aws#talk");
+        expect(listKey(both)).toBe("key-aws");
+        expect(listKey({ kind: "universe-ai" })).toBe("universe-ai");
+        // The Speaking model row offers the key's own speaking models, then its talking ones
+        expect(speakingRowModels(voice, { kind: "key", key: voice.lentKeys[0] }).map((model) => model.id)).toEqual([
+            "generative",
+            SONIC,
+        ]);
+        expect(speakingRowModels(voice, { kind: "universe-ai" }).map((model) => model.id)).toEqual(["eleven_v4_turbo"]);
     });
 });
 

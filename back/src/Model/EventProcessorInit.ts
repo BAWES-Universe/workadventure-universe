@@ -31,6 +31,9 @@ eventProcessor.registerPublicEventProcessor("spaceMessage", (event, senderId, us
             spoken: event.spaceMessage.spoken,
             voiceDurationMs: event.spaceMessage.voiceDurationMs,
             voiceWaveform: event.spaceMessage.voiceWaveform ?? [],
+            // The one person a bot's message is for (#1993). Passed on as it is: the pusher delivers it to that person
+            // alone, and only when a bot sent it
+            onlyFor: event.spaceMessage.onlyFor,
         },
     };
 });
@@ -54,6 +57,28 @@ eventProcessor.registerPublicEventProcessor("spaceMessageReaction", (event, send
             reaction: event.spaceMessageReaction.reaction,
             add: event.spaceMessageReaction.add,
             name: sender.name,
+        },
+    };
+});
+
+eventProcessor.registerPublicEventProcessor("spaceMessageTranscript", (event, senderId, users) => {
+    if (event.$case !== "spaceMessageTranscript") {
+        // FIXME: improve the typing of the method to avoid this
+        throw new Error("Invalid event type");
+    }
+
+    if (!users.some((user) => user.spaceUserId === senderId)) {
+        throw new Error("Sender not found");
+    }
+
+    // Passed on as it is: receivers accept it only from a bot, and only under the note with that id from that sender.
+    return {
+        $case: "spaceMessageTranscript",
+        spaceMessageTranscript: {
+            messageId: event.spaceMessageTranscript.messageId,
+            state: event.spaceMessageTranscript.state,
+            text: event.spaceMessageTranscript.text,
+            senderUserId: event.spaceMessageTranscript.senderUserId,
         },
     };
 });

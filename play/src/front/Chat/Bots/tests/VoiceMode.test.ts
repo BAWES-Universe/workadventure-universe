@@ -5,6 +5,8 @@ import {
     choiceHearsBot,
     choiceSpeaksToBot,
     parseBotVoiceStatus,
+    voiceBarFor,
+    voiceBarMs,
     voiceAllowanceLine,
     voiceButtonState,
     voiceModeOf,
@@ -34,6 +36,8 @@ describe("what a bot says about its voice", () => {
                 botName: "Nora",
                 state: "on",
                 followUpSeconds: 30,
+                listening: "",
+                listeningReason: "",
             }
         );
     });
@@ -45,6 +49,8 @@ describe("what a bot says about its voice", () => {
                 botName: "Nora",
                 state: "paused",
                 followUpSeconds: 0,
+                listening: "",
+                listeningReason: "",
             }
         );
     });
@@ -149,5 +155,55 @@ describe("which state the Voice button shows", () => {
         expect(voiceButtonState("type_and_listen", "on", true)).toBe("tap_to_hear");
         expect(voiceButtonState("speak_and_read", "on", true)).toBe("speak_and_read");
         expect(voiceButtonState("text_only", "on", true)).toBe("text_only");
+    });
+});
+
+describe("the bar beside the Voice button (round 8)", () => {
+    const at = (listening: string, listeningReason = "") =>
+        ({ listening, listeningReason } as Parameters<typeof voiceBarFor>[1]);
+
+    it("says listening paused only to someone who lost it, and only once", () => {
+        expect(voiceBarFor(at(""), at("off", "others_joined"), false)).toBe("paused");
+        expect(voiceBarFor(at("off", "others_joined"), at("off", "others_joined"), false)).toBeUndefined();
+        expect(voiceBarFor(at("on"), at("on"), false)).toBeUndefined();
+    });
+
+    it("tells someone new to a group once a visit, and nothing for a mode without the microphone", () => {
+        expect(voiceBarFor(undefined, at("off"), false)).toBe("not_listening");
+        expect(voiceBarFor(at(""), at("off"), true)).toBeUndefined();
+        expect(voiceBarFor(undefined, at(""), false)).toBeUndefined();
+    });
+
+    it("follows an ask as it goes, and says listening only when it was confirmed", () => {
+        expect(voiceBarFor(at("off"), at("pending"), true)).toBe("turning_on");
+        expect(voiceBarFor(at("pending"), at("on"), true)).toBe("listening");
+        expect(voiceBarFor(at("pending"), at("off", "failed"), true)).toBe("failed");
+        expect(voiceBarFor(at("on"), at("stopping"), true)).toBeUndefined();
+        expect(voiceBarFor(at("stopping"), at("checking"), true)).toBe("checking");
+        expect(voiceBarFor(at("stopping"), at("off"), true)).toBeUndefined();
+    });
+
+    it("folds an offer after 8 seconds and listening after 3; turning on and checking stay until the next change", () => {
+        expect(voiceBarMs("paused")).toBe(8000);
+        expect(voiceBarMs("listening")).toBe(3000);
+        expect(voiceBarMs("turning_on")).toBeUndefined();
+        expect(voiceBarMs("checking")).toBeUndefined();
+    });
+});
+
+describe("what a bot says about listening in a group", () => {
+    it("is read, and anything unknown is nothing to show", () => {
+        const base = { botId: "b-1", botName: "Nora", state: "on", followUpSeconds: 0 };
+        expect(parseBotVoiceStatus({ ...base, listening: "on", listeningReason: "" }, "x")?.listening).toBe("on");
+        expect(parseBotVoiceStatus({ ...base, listening: "off", listeningReason: "others_joined" }, "x")).toMatchObject(
+            {
+                listening: "off",
+                listeningReason: "others_joined",
+            }
+        );
+        expect(parseBotVoiceStatus({ ...base, listening: "always", listeningReason: "why" }, "x")).toMatchObject({
+            listening: "",
+            listeningReason: "",
+        });
     });
 });

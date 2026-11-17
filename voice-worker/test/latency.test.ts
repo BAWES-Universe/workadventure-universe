@@ -45,7 +45,7 @@ describe('the speaker times the first sound', () => {
     it('says how long the voice took for its first audio and how long it then took to send it, once per reply', async () => {
         const timings: { segmentId: string; speakMs: number; playMs: number; sentAt: number }[] = [];
         const frames: unknown[] = [];
-        const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, sendFrame: (f) => frames.push(f), clear: () => undefined };
+        const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, reach: () => 'alone', sendFrame: (f) => frames.push(f), clear: () => undefined };
         const speaker = new Speaker({
             counters: new Counters(),
             voice: {

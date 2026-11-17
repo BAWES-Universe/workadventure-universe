@@ -23,6 +23,14 @@ function chatFrom(id: number, message: string) {
     };
 }
 
+let turn = 0;
+/** A line the person said out loud to this voice bot (#1664), not typed: the game marks it as spoken to the bot. */
+function spokenFrom(id: number, message: string) {
+    const typed = chatFrom(id, message);
+    Object.assign(typed.publicEvent.spaceEvent.event.spaceMessage, { spoken: { botId: 'bot-1', turnId: `turn-${++turn}` } });
+    return typed;
+}
+
 const joined = (id: number) => ({
     $case: 'addSpaceUserMessage',
     addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: `room_${id}`, name: `P${id}`, uuid: `uuid-${id}`, isLogged: true } },
@@ -189,6 +197,79 @@ describe('a voice bot told "stop" by one of several people', () => {
         expect(t.onChatMessage).toHaveBeenCalledTimes(2);
     });
 
+    it('does not answer what was said while it thought about "stop", nor ask the classifier about it, and stays quiet after', async () => {
+        const t = setup();
+        await bothAnswered(t);
+
+        // The bot is slow to judge "stop": people go on talking meanwhile, and each line waits behind it
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        t.ai.generateBotResponseStream.mockImplementationOnce((async function* () {
+            await gate;
+            yield { content: block(', "doneTalking": true'), done: false };
+            yield { content: '', done: true };
+        }) as never);
+        t.ai.quickClassify.mockClear();
+        const stop = t.receive(chatFrom(KHALID, 'ok that is all, stop'));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await t.receive(spokenFrom(KHALID, 'so what did you think of the plan'));
+        await t.receive(spokenFrom(KHALID, 'and the budget'));
+        // More than the queue holds: the rest is dropped without the "I'll answer once I've finished" line, which would be spoken to the room
+        for (const line of ['and the dates', 'and the team', 'and the risks']) await t.receive(spokenFrom(KHALID, line));
+        expect(t.ai.quickClassify).not.toHaveBeenCalled();
+        expect(t.streamed.mock.calls.some((call) => String(call[4]).includes("I'll answer your messages"))).toBe(false);
+        release();
+        await stop;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // The stop was judged, the lines said meanwhile were dropped unanswered, and nothing was said
+        expect(t.ai.generateBotResponseStream).toHaveBeenCalledTimes(3);
+        expect(privateTo(t.sent, 'botVoiceDone')).toEqual(['room_7']);
+        const finals = t.streamed.mock.calls.filter((call) => call[3] === true);
+        expect(finals.map((call) => call[4])).toEqual(['']);
+
+        // Talk after it is not for the bot, however long it goes on; only the name brings Khalid back
+        t.onChatMessage.mockClear();
+        for (const line of ['yes the budget is fine', 'what about Tuesday', 'and the plan']) await t.receive(chatFrom(KHALID, line));
+        expect(t.onChatMessage).not.toHaveBeenCalled();
+        script(t, 'Back.');
+        await t.receive(chatFrom(KHALID, 'Nora, one more thing'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+        // ...and once it answered him, he can follow up again as before
+        await t.receive(chatFrom(KHALID, 'and the day after'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps a line that calls the bot by name even when it was said while the bot thought about "stop", and answers it', async () => {
+        const t = setup();
+        await bothAnswered(t);
+
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        t.ai.generateBotResponseStream.mockImplementationOnce((async function* () {
+            await gate;
+            yield { content: block(', "doneTalking": true'), done: false };
+            yield { content: '', done: true };
+        }) as never);
+        const stop = t.receive(chatFrom(KHALID, 'ok that is all, stop'));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await t.receive(spokenFrom(KHALID, 'so what did you think of the plan'));
+        await t.receive(spokenFrom(KHALID, 'Nora, actually what about the risks'));
+        script(t, 'The risks are small.');
+        release();
+        await stop;
+        await new Promise((resolve) => setTimeout(resolve, 80));
+
+        // The plan talk was dropped; the call by name was answered, and his window is open again after it
+        expect(privateTo(t.sent, 'botVoiceDone')).toEqual(['room_7']);
+        const said = t.streamed.mock.calls.filter((call) => call[3] === true).map((call) => call[4]);
+        expect(said).toEqual(['', 'The risks are small.']);
+        t.onChatMessage.mockClear();
+        script(t, 'Sure.');
+        await t.receive(chatFrom(KHALID, 'and the day after'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+    });
+
     it('drops words the bot wrote anyway, so nothing is said or spoken', async () => {
         const t = setup();
         await bothAnswered(t);
@@ -238,5 +319,103 @@ describe('a voice bot told "stop" by one of several people', () => {
         vi.spyOn(t.behavior, 'isSummonedBy').mockImplementation((id: number) => id === KHALID);
         expect(t.bot.mayEndFollowUp(SPACE, KHALID)).toBe(false);
         expect(t.bot.mayEndFollowUp(SPACE, SARA)).toBe(true);
+    });
+});
+
+describe('a person who TYPES while a voice bot answers them, with others in the bubble', () => {
+    /** The bot is in the middle of a long answer to Khalid: it has written a first part and is still working. */
+    async function midAnswer(t: ReturnType<typeof setup>) {
+        await bothAnswered(t);
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        t.ai.generateBotResponseStream.mockImplementationOnce((async function* (...args: unknown[]) {
+            yield { content: 'Here is the first part of the plan. ', done: false };
+            await gate;
+            // As a provider does: a stream that was cut off ends there
+            if ((args[9] as AbortSignal | undefined)?.aborted) throw new Error('aborted');
+            yield { content: `And here is the rest of the plan. ${block('')}`, done: false };
+            yield { content: '', done: true };
+        }) as never);
+        t.ai.quickClassify.mockClear();
+        const answering = t.receive(chatFrom(KHALID, 'Nora, write me the whole plan'));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { answering, release };
+    }
+
+    const finals = (t: ReturnType<typeof setup>) => t.streamed.mock.calls.filter((call) => call[3] === true).map((call) => String(call[4]));
+
+    it('still stops the answer on a typed "stop"', async () => {
+        const t = setup();
+        const { answering, release } = await midAnswer(t);
+        t.ai.quickClassify.mockResolvedValueOnce({ action: 'cancel', message: 'Okay, I stopped.' });
+
+        await t.receive(chatFrom(KHALID, 'stop'));
+        expect(t.ai.quickClassify).toHaveBeenCalledTimes(1);
+        expect(t.ai.quickClassify.mock.calls[0][2]).toBe('stop');
+        release();
+        await answering;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // The answer was cut off where it was, the stop was confirmed, and the rest was never said
+        expect(finals(t)).toContain('Okay, I stopped.');
+        expect(finals(t).some((text) => text.includes('the rest of the plan'))).toBe(false);
+    });
+
+    it('still changes the answer on a typed "do this instead"', async () => {
+        const t = setup();
+        const { answering, release } = await midAnswer(t);
+        t.ai.quickClassify.mockResolvedValueOnce({ action: 'update', message: 'Sure, the short one then.' });
+        script(t, 'Short plan: ship on Tuesday.');
+
+        await t.receive(chatFrom(KHALID, 'actually just give me the short version instead'));
+        release();
+        await answering;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // The long answer was dropped and the new request answered in its place
+        expect(t.ai.quickClassify).toHaveBeenCalledTimes(1);
+        const asked = t.ai.generateBotResponseStream.mock.calls.map((call: unknown[]) => call.find((arg) => typeof arg === 'string' && arg.includes('short version')));
+        expect(asked.filter(Boolean)).toHaveLength(1);
+        expect(finals(t)).toContain('Short plan: ship on Tuesday.');
+        expect(finals(t).some((text) => text.includes('the rest of the plan'))).toBe(false);
+    });
+
+    it('answers a line that waited behind the answer as written when it came, so a card shown meanwhile is not answered by it (#1661)', async () => {
+        const t = setup();
+        const { answering, release } = await midAnswer(t);
+        t.ai.quickClassify.mockResolvedValueOnce({ action: 'queue', message: '' });
+        const before = Date.now();
+        await t.receive(chatFrom(KHALID, 'and the budget'));
+        const after = Date.now();
+        // The answer goes on for a while (it may show a card at its end) before the waiting line gets its turn
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        const releasedAt = Date.now();
+        let heardAt: number | undefined;
+        t.ai.generateBotResponseStream.mockImplementationOnce((async function* () {
+            heardAt = t.bot.lineHeardAt(KHALID);
+            yield { content: `The budget is fine. ${block('')}`, done: false };
+            yield { content: '', done: true };
+        }) as never);
+        release();
+        await answering;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(heardAt).toBeGreaterThanOrEqual(before);
+        expect(heardAt).toBeLessThanOrEqual(after);
+        expect(heardAt).toBeLessThan(releasedAt);
+        expect(finals(t)).toContain('The budget is fine.');
+    });
+
+    it('says it is busy when more typed lines come than wait in line, instead of dropping them without a word', async () => {
+        const t = setup();
+        const { answering, release } = await midAnswer(t);
+        t.ai.quickClassify.mockResolvedValue({ action: 'queue', message: '' });
+
+        for (const line of ['and the dates', 'and the team', 'and the budget', 'and the risks']) await t.receive(chatFrom(KHALID, line));
+        expect(t.ai.quickClassify).toHaveBeenCalledTimes(4);
+        expect(finals(t).some((text) => text.includes("I'll answer your messages"))).toBe(true);
+        release();
+        await answering;
+        await new Promise((resolve) => setTimeout(resolve, 50));
     });
 });

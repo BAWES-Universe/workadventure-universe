@@ -1,4 +1,4 @@
-import type { SubMessage, PusherToBackSpaceMessage } from "@workadventure/messages";
+import type { SubMessage, PusherToBackSpaceMessage, BackToPusherSpaceMessage } from "@workadventure/messages";
 import { SpaceUser } from "@workadventure/messages";
 import { describe, it, vi, expect } from "vitest";
 import { mock } from "vitest-mock-extended";
@@ -692,6 +692,169 @@ describe("SpaceToFrontDispatcher", () => {
 
                 expect(mockEmitInBatch2).toHaveBeenCalledOnce();
                 expect(mockEmitInBatch).not.toHaveBeenCalled();
+            });
+        });
+        describe("a bot's reply to someone who was alone with it (#1993)", () => {
+            const user = (spaceUserId: string, extra: Partial<SpaceUser> = {}) => {
+                const spaceUser = SpaceUser.fromPartial({ spaceUserId, ...extra });
+                const emitInBatch = vi.fn();
+                const socket = mock<Socket>({ getUserData: vi.fn().mockReturnValue({ spaceUser, emitInBatch }) });
+                return { spaceUser, socket, emitInBatch };
+            };
+            const spaceWith = (...users: ReturnType<typeof user>[]) =>
+                ({
+                    name: "test",
+                    users: new Map<string, SpaceUser>(users.map((one) => [one.spaceUser.spaceUserId, one.spaceUser])),
+                    _localConnectedUser: new Map<string, Socket>(
+                        users.map((one) => [one.spaceUser.spaceUserId, one.socket])
+                    ),
+                    _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(
+                        users.map((one) => [one.socket, one.spaceUser])
+                    ),
+                    _localWatchers: new Set<string>(),
+                    localName: "test",
+                } as unknown as Space);
+            const reply = (senderUserId: string, onlyFor?: string) =>
+                ({
+                    message: {
+                        $case: "publicEvent",
+                        publicEvent: {
+                            spaceName: "test",
+                            senderUserId,
+                            spaceEvent: {
+                                event: {
+                                    $case: "spaceStreamMessage",
+                                    spaceStreamMessage: {
+                                        responseId: "r1",
+                                        token: "",
+                                        isFinal: true,
+                                        finalContent: "Your interview is at 10.",
+                                        isError: false,
+                                        reset: false,
+                                        ...(onlyFor ? { onlyFor } : {}),
+                                    },
+                                },
+                            },
+                        },
+                    },
+                } as const);
+
+            it("reaches that person and nobody who walked up meanwhile", () => {
+                const bot = user("room_12", { uuid: "bot-nora", tags: ["bot"] });
+                const khalid = user("room_7");
+                const sara = user("room_9");
+                const otherBot = user("room_11", { uuid: "bot-linear", tags: ["bot"] });
+                const dispatcher = new SpaceToFrontDispatcher(
+                    spaceWith(bot, khalid, sara, otherBot),
+                    new EventProcessor()
+                );
+
+                dispatcher.handleMessage(reply("room_12", "room_7"));
+
+                expect(khalid.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(JSON.stringify(khalid.emitInBatch.mock.calls[0][0])).toContain("Your interview is at 10.");
+                expect(sara.emitInBatch).not.toHaveBeenCalled();
+                expect(otherBot.emitInBatch).not.toHaveBeenCalled();
+                expect(bot.emitInBatch).not.toHaveBeenCalled();
+            });
+
+            it("reaches nobody when that person has left", () => {
+                const bot = user("room_12", { uuid: "bot-nora", tags: ["bot"] });
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(bot, sara), new EventProcessor());
+
+                dispatcher.handleMessage(reply("room_12", "room_7"));
+
+                expect(sara.emitInBatch).not.toHaveBeenCalled();
+            });
+
+            it("goes to everyone when the bot named nobody, as before", () => {
+                const bot = user("room_12", { uuid: "bot-nora", tags: ["bot"] });
+                const khalid = user("room_7");
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(bot, khalid, sara), new EventProcessor());
+
+                dispatcher.handleMessage(reply("room_12"));
+
+                expect(khalid.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(sara.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(bot.emitInBatch).not.toHaveBeenCalled();
+            });
+
+            it("is a bot's to say: from a person the event goes to everyone", () => {
+                const khalid = user("room_7", { uuid: "uuid-khalid" });
+                const sara = user("room_9");
+                const omar = user("room_10");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(khalid, sara, omar), new EventProcessor());
+
+                dispatcher.handleMessage(reply("room_7", "room_9"));
+
+                expect(sara.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(omar.emitInBatch).toHaveBeenCalledTimes(1);
+            });
+
+            // What the bot sends with such a reply: a picture, a file, a card
+            const sent = (senderUserId: string, onlyFor?: string): BackToPusherSpaceMessage => ({
+                message: {
+                    $case: "publicEvent",
+                    publicEvent: {
+                        spaceName: "test",
+                        senderUserId,
+                        spaceEvent: {
+                            event: {
+                                $case: "spaceMessage",
+                                spaceMessage: {
+                                    message: "Your payslip",
+                                    characterTextures: [],
+                                    url: "https://files.example.test/payslip.pdf",
+                                    mediaType: "file",
+                                    galleryUrls: [],
+                                    fileNames: [],
+                                    voiceWaveform: [],
+                                    ...(onlyFor ? { onlyFor } : {}),
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+
+            it("a file sent with it reaches that person and nobody who walked up meanwhile", () => {
+                const bot = user("room_12", { uuid: "bot-nora", tags: ["bot"] });
+                const khalid = user("room_7");
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(bot, khalid, sara), new EventProcessor());
+
+                dispatcher.handleMessage(sent("room_12", "room_7"));
+
+                expect(khalid.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(JSON.stringify(khalid.emitInBatch.mock.calls[0][0])).toContain("payslip.pdf");
+                expect(sara.emitInBatch).not.toHaveBeenCalled();
+                expect(bot.emitInBatch).not.toHaveBeenCalled();
+            });
+
+            it("a file a bot sends to everyone goes to everyone, as before", () => {
+                const bot = user("room_12", { uuid: "bot-nora", tags: ["bot"] });
+                const khalid = user("room_7");
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(bot, khalid, sara), new EventProcessor());
+
+                dispatcher.handleMessage(sent("room_12"));
+
+                expect(khalid.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(sara.emitInBatch).toHaveBeenCalledTimes(1);
+            });
+
+            it("a person's own message goes to everyone, whatever it names", () => {
+                const khalid = user("room_7", { uuid: "uuid-khalid" });
+                const sara = user("room_9");
+                const omar = user("room_10");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(khalid, sara, omar), new EventProcessor());
+
+                dispatcher.handleMessage(sent("room_7", "room_9"));
+
+                expect(sara.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(omar.emitInBatch).toHaveBeenCalledTimes(1);
             });
         });
         describe("privateEvent", () => {

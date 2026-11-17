@@ -189,5 +189,16 @@ describe('a spoken line is for the bot that heard it', () => {
             await t.receive(line('room_3', 'or something typed'));
             expect(t.bot.takeSpoken(SPACE, 3)).toBe(false);
         });
+
+        it('tells a spoken line from a typed one without using up the answer a card needs', async () => {
+            const t = await voiceBot();
+            await t.receive(line('room_3', 'jazz please', { botId: 'voice-1', turnId: '2-4' }));
+            expect(t.bot.saidOutLoud(SPACE, 3)).toBe(true);
+            expect(t.bot.saidOutLoud(SPACE, 3)).toBe(true);
+            expect(t.bot.takeSpoken(SPACE, 3)).toBe(true);
+            await t.receive(line('room_3', 'jazz please', { botId: 'voice-1', turnId: '2-5' }));
+            await t.receive(line('room_3', 'stop'));
+            expect(t.bot.saidOutLoud(SPACE, 3)).toBe(false);
+        });
     });
 });

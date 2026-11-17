@@ -13,6 +13,7 @@ import { withNearbySteps } from './NearbySteps';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
+import { copyHeard, namedOthers, viewFor, type Heard } from '../memory/Heard';
 import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcessor';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
@@ -53,6 +54,8 @@ export interface ConversationState {
     activeResponseId?: string;
     /** The bot judged that this person is done talking with it (#1670): this turn is not an answer, so it opens no follow-up window */
     endedByPerson?: boolean;
+    /** When the line being answered now reached the bot: a card shown after that was not there when it was written (#1661) */
+    heardAt?: number;
 }
 
 /**
@@ -91,9 +94,12 @@ export interface QueuedMessage {
     mediaType?: string;
     mimeType?: string;
     galleryUrls?: string[];
+    /** When the line reached the bot (not when it was put in line) */
     timestamp: number;
     /** 'answer' | 'queue' — set when queued via interruption classification */
     classification?: string;
+    /** Who heard the line when it came (#1993): what its answer's analysis finds is heard by them, however long it waited */
+    heard?: ReadonlyArray<Heard | undefined>;
 }
 
 export interface BehaviorConfig {
@@ -159,6 +165,15 @@ export abstract class BaseBehavior {
     /** Called when the bot has finished answering a person (not when it was cancelled): who and where. */
     onAnswerFinished?: (userId: number, spaceName: string) => void;
 
+    /**
+     * When the line the bot is answering for this person right now reached it, even if it waited in line behind an earlier
+     * answer. A card shown after that time was not there when they wrote it, so the line is not their answer to it (#1661).
+     */
+    lineHeardAt(userId: number): number | undefined {
+        const state = this.activeConversations.get(userId);
+        return state?.isGenerating ? state.heardAt : undefined;
+    }
+
     /** Whether the bot is answering this person right now, or has a line of theirs waiting for its turn. */
     isBusyWith(userId: number): boolean {
         const state = this.activeConversations.get(userId);
@@ -198,25 +213,12 @@ export abstract class BaseBehavior {
         return identifier ? { userId: identifier, isGuest: !signedIn } : null;
     }
 
-    /**
-     * A voice bot's greeting is a Universe AI reply nobody asked for. It is made only while replies beyond the ones kept for text are
-     * left (#1669, Orbit's reply-allowance with `greeting`); a greeting that isn't made is not announced. Anything that can't be
-     * settled (no id yet, Orbit can't be asked, a bot on its maker's own key) lets it through, as for any reply.
-     */
-    async mayGreetWithinAllowance(playerId: number): Promise<boolean> {
-        const botId = this.bot?.getBotId();
-        const aiProviderRef = this.bot?.getFullConfig()?.aiProviderRef;
-        const talker = this.getTalker(playerId);
-        if (!botId || !aiProviderRef || !talker || !this.aiService || !this.adminApiService) return true;
-        const source = await this.aiService.replySource(aiProviderRef, botId);
-        if (!source || source === 'own-key') return true;
-        const answer = await this.adminApiService.checkReplyAllowance(botId, { userId: talker.userId, isGuest: talker.isGuest, source, greeting: true });
-        return answer.allowed;
-    }
     // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet
     // This helps match addSpaceUserMessage when it arrives after a chat message
     protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();
     protected readonly PROXIMITY_RADIUS = 64; // Pixels - react when player is inside bubble
+    protected readonly SUMMON_RELEASE_RADIUS = 200; // A summoned bot goes back once its person is further away than this
+    protected readonly SUMMON_SETTING_OFF_GRACE_MS = 5000;
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
     /** A bot standing still turns to look at someone walking by within 4 tiles. Looking never stops it or starts a chat. */
     protected readonly LOOK_RADIUS = 128;
@@ -236,6 +238,8 @@ export abstract class BaseBehavior {
     // Summon state - track when bot is summoned to a player
     protected isSummoned = false;
     protected summonedPlayerUuid: string | null = null;
+    protected summonerJoinedBubble = false; // Whether the person has stood in a bubble with the bot since it came, so stepping out of it sends the bot back
+    protected summonStartedAt = 0; // When the current summon began, so a bot still setting off is not read as left behind
     protected originalPosition: PositionInterface | null = null; // Position to return to after summon (set on first summon only)
     protected spawnPosition: PositionInterface | null = null; // Bot's spawn/assigned position (set when bot is initialized)
     protected isReturning = false; // Track if bot is returning to original position (for speed matching)
@@ -314,9 +318,11 @@ export abstract class BaseBehavior {
      * 2. Player info from BotClient (room nickname, excluding 'Unknown' sentinel)
      * 3. 'Someone' (safe fallback)
      */
-    protected resolvePlayerName(botId: string, playerId: number, conversationMemory: ConversationMemory | null): string | null {
+    protected resolvePlayerName(botId: string, playerId: number, conversationMemory: ConversationMemory | null, spaceName?: string): string | null {
         const playerInfo = this.bot?.getPlayerInfo(playerId);
-        return conversationMemory?.getPersonalInfo(botId, playerId)?.name
+        // A name the person gave privately is not said where other people read the greeting (#1993)
+        const view = spaceName !== undefined && this.bot ? viewFor(this.bot.othersWith?.(spaceName, playerId)) : 'all';
+        return conversationMemory?.nameFor(botId, playerId, view)
             || (playerInfo && playerInfo.name !== 'Unknown' ? playerInfo.name : null);
     }
 
@@ -370,27 +376,9 @@ export abstract class BaseBehavior {
             return;
         }
         
-        // If summoned, check if the summoned player moved far away (> 200px)
-        if (this.isSummoned) {
-            const playerPos = this.getSummonedPlayerPosition();
-            if (!playerPos) {
-                // Player not found - they likely left, end summon
-                console.log(`[Behavior] Summoned player not found, ending summon and returning`);
-                this.endSummon();
-                return;
-            }
-            
-            const botPos = this.bot.getState().getPosition();
-            const dx = playerPos.x - botPos.x;
-            const dy = playerPos.y - botPos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // If player moved far away (> 200px) and we're not in a conversation, return
-            if (distance > 200 && this.engagedWithUsers.size === 0) {
-                console.log(`[Behavior] Summoned player moved far away (${Math.round(distance)}px), ending summon and returning`);
-                this.endSummon();
-                return;
-            }
+        // If summoned, let the bot go back once the person it came for has left or walked far away
+        if (this.isSummoned && this.endSummonIfPersonAway()) {
+            return;
         }
         
         const behaviorType = (this.config as any).type;
@@ -452,6 +440,10 @@ export abstract class BaseBehavior {
         }
         if (this.nearbyPlayers.delete(playerId)) {
             this.updateProximityEngagement();
+        }
+        // They send no last move, so a summon to the person who just left would otherwise never end
+        if (this.isSummoned) {
+            this.endSummonIfPersonAway();
         }
     }
 
@@ -843,6 +835,8 @@ export abstract class BaseBehavior {
         
         this.isSummoned = true;
         this.summonedPlayerUuid = playerUuid;
+        this.summonStartedAt = Date.now();
+        this.summonerJoinedBubble = false;
         
         // Only store original position on FIRST summon (don't overwrite on subsequent summons)
         // This ensures bot always returns to its spawn/assigned position, not the last summon position
@@ -862,30 +856,62 @@ export abstract class BaseBehavior {
     }
 
     /**
-     * Get the position of the summoned player (if available)
+     * Where the person this bot was summoned to stands now, found by who they are. Null once they are not in the
+     * room. It must never be "whoever is close": another person, or another bot, standing near this one would then
+     * stand in for the summoner and the bot would never be released.
      */
     protected getSummonedPlayerPosition(): PositionInterface | null {
         if (!this.bot || !this.summonedPlayerUuid) return null;
-        
-        // Try to find the player by checking all players
-        // Since we don't have UUID in PlayerInfo, we'll use the first nearby player
-        // or check engaged users
-        const allPlayers = this.bot.getAllPlayers();
-        for (const player of allPlayers) {
-            // Check if this player is nearby (within reasonable range)
-            const botPos = this.bot.getState().getPosition();
-            const dx = player.position.x - botPos.x;
-            const dy = player.position.y - botPos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // If player is within 200px, assume it might be the summoned player
-            if (distance < 200) {
-                return player.position;
-            }
+        return this.bot.getPlayerPositionByUuid(this.summonedPlayerUuid) ?? null;
+    }
+
+    /** Still setting off, or walking, towards the person it was called to. */
+    protected isSummonOnItsWay(): boolean {
+        return !!this.bot && (this.bot.getIsFollowingPath() || Date.now() - this.summonStartedAt < this.SUMMON_SETTING_OFF_GRACE_MS);
+    }
+
+    /**
+     * Whether a person other than the summoner is in a conversation with the bot. Neither the summoner themselves
+     * nor another bot sharing the bubble keeps a summon going.
+     */
+    protected isTalkingWithSomeoneElse(): boolean {
+        const summonerId = this.summonedPlayerUuid ? this.getUserIdForUuid(this.summonedPlayerUuid) : undefined;
+        return [...this.engagedWithUsers.keys()].some((userId) => userId !== summonerId && !this.bot?.isOtherBot(userId));
+    }
+
+    /**
+     * Let the bot go back to where it was when the person it came for has left the room or walked far away, unless
+     * it is still on its way to them or is in a conversation with someone else. Checked on every move, when somebody
+     * leaves and on every tick, so it does not hang on one more step from the person.
+     * @returns true when the summon was ended
+     */
+    protected endSummonIfPersonAway(): boolean {
+        if (!this.bot || !this.isSummoned) return false;
+
+        const playerPos = this.getSummonedPlayerPosition();
+        if (!playerPos) {
+            console.log(`[Behavior] Summoned player not found, ending summon and returning`);
+            this.endSummon();
+            return true;
         }
-        
-        // If no nearby player found, return null (player might have left)
-        return null;
+
+        if (this.isSummonOnItsWay()) {
+            return false;
+        }
+
+        const botPos = this.bot.getState().getPosition();
+        const distance = Math.hypot(playerPos.x - botPos.x, playerPos.y - botPos.y);
+        if (distance <= this.SUMMON_RELEASE_RADIUS) {
+            return false;
+        }
+
+        if (this.isTalkingWithSomeoneElse()) {
+            return false;
+        }
+
+        console.log(`[Behavior] Summoned player moved far away (${Math.round(distance)}px), ending summon and returning`);
+        this.endSummon();
+        return true;
     }
 
     /**
@@ -894,6 +920,14 @@ export abstract class BaseBehavior {
      */
     protected checkSummonedPlayerStillNearby(): boolean {
         if (!this.bot || !this.summonedPlayerUuid) return false;
+
+        // Called when the bot's bubble is gone. If the person had stood in it with the bot, they stepped out of it.
+        // This is the rule on purpose: it goes by who is in the bubble, never by how close the person stands. A person
+        // right beside the bot who is no longer in its bubble has still left it, so no distance check may soften this.
+        if (this.summonerJoinedBubble) return false;
+
+        // The bubble it passed through on the way to a person far off is not a person leaving
+        if (this.isSummonOnItsWay()) return true;
 
         // Check if we can find the player position
         const playerPos = this.getSummonedPlayerPosition();
@@ -907,7 +941,7 @@ export abstract class BaseBehavior {
         const dy = playerPos.y - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
-        return distance < 200; // Player is still nearby
+        return distance < this.SUMMON_RELEASE_RADIUS; // Player is still nearby
     }
 
     /**
@@ -1112,6 +1146,7 @@ export abstract class BaseBehavior {
         const originalPos = this.originalPosition;
         this.isSummoned = false;
         this.summonedPlayerUuid = null;
+        this.summonerJoinedBubble = false;
         // Don't clear originalPosition yet - we need it to check when we've reached it
         // Set returning flag so bot moves at 3x speed (matching summon speed)
         this.isReturning = true;
@@ -1374,6 +1409,9 @@ export abstract class BaseBehavior {
         // after the await would re-add the user after they'd already left.
         this.engagedWithUsers.set(user.id, { spaceName, position: undefined });
         this.isEngaged = this.engagedWithUsers.size > 0;
+        if (this.isSummoned && user.uuid && user.uuid === this.summonedPlayerUuid) {
+            this.summonerJoinedBubble = true;
+        }
         
         // Also track UUID in PersistentMemory for memory/emotion persistence
         if (user.uuid) {
@@ -1443,6 +1481,9 @@ export abstract class BaseBehavior {
      * @param userId User ID that left
      */
     onSpaceUserLeft(spaceName: string, userId: number): void {
+        // Whether the person this bot came for just stepped out of the bubble they stood in with it
+        const summonerLeftBubble = this.summonerJoinedBubble && this.isSummonedBy(userId);
+
         // Remove from engaged users
         this.engagedWithUsers.delete(userId);
         this.isEngaged = this.engagedWithUsers.size > 0;
@@ -1468,8 +1509,16 @@ export abstract class BaseBehavior {
         this.userIdToUuid.delete(userId);
         this.userIdToIsLogged.delete(userId);
 
+        // The person it came for stepped out of the bubble: go back, unless it is still talking with someone else
+        if (summonerLeftBubble && !this.isTalkingWithSomeoneElse()) {
+            console.log(`[Behavior] Summoned player stepped out of the bubble, ending summon and returning`);
+            this.endSummon();
+            return;
+        }
+
         // If summoned and no players left, end summon and return
-        if (this.isSummoned && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
+        // (not while it is still on its way: a stranger leaving a bubble it passed through is not its person leaving)
+        if (this.isSummoned && !this.isSummonOnItsWay() && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
             console.log(`[Behavior] Summoned player left space, ending summon and returning`);
             this.endSummon();
             return;
@@ -1550,8 +1599,9 @@ export abstract class BaseBehavior {
      * @param spaceName Space name
      * @param message Chat message
      * @param senderId Sender's user ID
+     * @param heardAt When the line reached the bot, before its files were read or anything was asked about it
      */
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[], heardAt?: number): Promise<void> {
         // Default: do nothing
         return Promise.resolve();
     }
@@ -1894,7 +1944,7 @@ export abstract class BaseBehavior {
                     `Say one short, natural line that genuinely moves the conversation forward — ` +
                     `a new thought, a question, or a fresh angle. Do NOT repeat anything you already said. ` +
                     `No emojis, no apologies for repeating.`;
-                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt, botId);
+                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt, botId, undefined, this.userIdToUuid.get(playerId) ?? 'unknown');
                 if (fallbackMessage.trim()) {
                     processedMessage = fallbackMessage.trim();
                 }
@@ -1963,11 +2013,17 @@ export abstract class BaseBehavior {
         url?: string,
         mediaType?: string,
         mimeType?: string,
-        galleryUrls?: string[]
+        galleryUrls?: string[],
+        /** When the line reached the bot; a line that waited in line keeps the time it came */
+        heardAt = Date.now(),
+        /** Who heard the line(s) this answers, for one that waited in line. Left out, it is the line the person just said */
+        answers?: ReadonlyArray<Heard | undefined>
     ): Promise<'generated' | 'queued' | 'cancelled'> {
         this.pruneStaleConversations();
+        // Taken before anything is awaited: the line was kept just now, and a later one may be kept while this one waits
+        const heard = answers ?? [copyHeard(this.conversationMemory?.lastPersonLine?.(botId, senderId)?.heard)];
 
-        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, heardAt, heard);
         if (action === 'queued' || action === 'cancelled') {
             if (action === 'cancelled') {
                 this.bot?.stopTyping(spaceName);
@@ -1983,7 +2039,9 @@ export abstract class BaseBehavior {
         }
 
         this.startGeneration(senderId, spaceName, originalMessage);
-        const capturedGen = this.activeConversations.get(senderId)?.generation ?? 0;
+        const started = this.activeConversations.get(senderId);
+        if (started) started.heardAt = heardAt;
+        const capturedGen = started?.generation ?? 0;
         // The AbortController for THIS generation — passed to the stream so
         // cancel/update can actually stop the in-flight provider call.
         const abortSignal = this.activeConversations.get(senderId)?.abortController?.signal;
@@ -1994,6 +2052,8 @@ export abstract class BaseBehavior {
             // Inside the try so any throw still reaches the finally that calls
             // finishGeneration (a stuck isGenerating would wedge this player's queue).
             const imageUrls = await this.collectImageUrls(url, mediaType, mimeType, galleryUrls);
+            // What this answer's analysis finds (a wound) is heard where the answered line was, not where a later one is (#1993)
+            this.conversationMemory?.turnAnswers?.(botId, senderId, heard);
             await generator(abortSignal, imageUrls);
         } catch (error) {
             // A stale generation means cancel/update already aborted this stream
@@ -2060,6 +2120,9 @@ export abstract class BaseBehavior {
                     ...first,
                     originalMessage: words.map((item) => item.originalMessage).join('\n'),
                     message: words.map((item) => item.message).join('\n'),
+                    // Answered as one: the words came when the last of them did
+                    timestamp: Math.max(...words.map((item) => item.timestamp)),
+                    heard: words.flatMap((item) => item.heard ?? [undefined]),
                 };
             }
         }
@@ -2076,7 +2139,9 @@ export abstract class BaseBehavior {
             queued.url,
             queued.mediaType,
             queued.mimeType,
-            queued.galleryUrls
+            queued.galleryUrls,
+            queued.timestamp,
+            queued.heard ?? [undefined]
         );
     }
 
@@ -2091,26 +2156,38 @@ export abstract class BaseBehavior {
         url?: string,
         mediaType?: string,
         mimeType?: string,
-        galleryUrls?: string[]
+        galleryUrls?: string[],
+        heardAt = Date.now(),
+        heard?: ReadonlyArray<Heard | undefined>
     ): Promise<'queued' | 'cancelled' | 'proceed'> {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
+
+        // Several people around a voice bot: what a person SAYS while it answers them is kept in line, and never asked about
+        // (it costs a call each) nor allowed to cancel or rewrite the answer: the answer may be the one to "stop", and
+        // room talk would replace it with an answer to the talk. A TYPED line is never room talk: it is checked as always,
+        // so a typed "stop" or "do this instead" still stops or changes the answer
+        if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId) && this.bot.saidOutLoud?.(state.spaceName, senderId)) {
+            // A full line is dropped without a word: "I'll answer once I've finished" would be spoken to a room that was only talking
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true, heardAt, heard);
+            return 'queued';
+        }
 
         const interruptedGen = state.generation;
         const currentTask = state.currentTask || originalMessage;
 
         let result: { action: InterruptionAction; message: string };
         try {
-            result = await this.classifyInterruption(currentTask, originalMessage);
+            result = await this.classifyInterruption(currentTask, originalMessage, senderId);
         } catch {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt, heard);
             return 'queued';
         }
 
         // Guard against the generation advancing during the classifyInterruption await
         const currentState = this.activeConversations.get(senderId);
         if (!currentState || currentState.generation !== interruptedGen) {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt, heard);
             return 'queued';
         }
 
@@ -2158,7 +2235,7 @@ export abstract class BaseBehavior {
                     currentState.pendingAnswers.push(result.message);
                 } else {
                     // No quick answer produced — fall back to queueing so it isn't lost.
-                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer');
+                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer', false, heardAt, heard);
                 }
                 return 'queued';
             }
@@ -2168,7 +2245,7 @@ export abstract class BaseBehavior {
                 if (result.message) {
                     this.sendStatusAck(currentState.spaceName, result.message);
                 }
-                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue');
+                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', false, heardAt, heard);
                 return 'queued';
             }
         }
@@ -2179,12 +2256,12 @@ export abstract class BaseBehavior {
      * Uses the bot's own configured provider so classification works for
      * bots on any provider (not just DeepSeek).
      */
-    private async classifyInterruption(currentTask: string, newMessage: string): Promise<{ action: InterruptionAction; message: string }> {
+    private async classifyInterruption(currentTask: string, newMessage: string, senderId?: number): Promise<{ action: InterruptionAction; message: string }> {
         if (!this.aiService) return { action: 'queue', message: '' };
         const botConfig = this.bot?.getFullConfig();
         const providerId = botConfig?.aiProviderRef;
         if (!providerId) return { action: 'queue', message: '' };
-        return this.aiService.quickClassify(providerId, currentTask, newMessage, botConfig?.botId);
+        return this.aiService.quickClassify(providerId, currentTask, newMessage, botConfig?.botId, senderId !== undefined ? (this.userIdToUuid.get(senderId) ?? 'unknown') : undefined);
     }
 
     private async enqueueMessage(
@@ -2195,18 +2272,21 @@ export abstract class BaseBehavior {
         mediaType?: string,
         mimeType?: string,
         galleryUrls?: string[],
-        classification?: string
+        classification?: string,
+        quiet = false,
+        heardAt = Date.now(),
+        heard?: ReadonlyArray<Heard | undefined>
     ): Promise<void> {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
 
         if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
             // The busy line is fixed text, never an AI call (#1159): a burst of messages must not cost replies
-            this.sendStatusAck(state.spaceName, BUSY_LINE);
+            if (!quiet) this.sendStatusAck(state.spaceName, BUSY_LINE);
             return;
         }
 
-        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: Date.now() });
+        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: heardAt, heard });
     }
 
     /**
@@ -2232,7 +2312,12 @@ export abstract class BaseBehavior {
     protected personIsDone(spaceName: string, playerId: number, emotions: AIEmotionData | null | undefined): boolean {
         if (emotions?.doneTalking !== true || !this.bot?.endFollowUp(spaceName, playerId)) return false;
         const state = this.activeConversations.get(playerId);
-        if (state) state.endedByPerson = true;
+        if (state) {
+            state.endedByPerson = true;
+            // What they said after "stop" while the bot was thinking about it is not for the bot, unless it calls the bot by name
+            state.messageQueue = state.messageQueue.filter((queued) => this.bot?.isForBot(spaceName, playerId, queued.originalMessage) === true);
+            state.pendingAnswers = [];
+        }
         return true;
     }
 
@@ -2356,6 +2441,8 @@ export abstract class BaseBehavior {
         /** Who and where, as Orbit's file routes take them; null when the files can't be kept here. */
         call: ArtifactCall | null;
         personRef: string | null;
+        /** Everyone else who was in the bubble or meeting room when the files were sent (#1993). Nobody in a direct message. */
+        others?: string[];
     }): { line: string; keep: () => void } {
         const files = where.uploads.map((upload) => {
             const parsed = where.read.get(upload.url) ?? null;
@@ -2383,6 +2470,7 @@ export abstract class BaseBehavior {
                     kind: file.kind,
                     pages: file.pages,
                     maxTextChars,
+                    ...(where.others?.length ? { others: where.others } : {}),
                     ...(!textual ? {} : readAgain ? { readAgain: { mimeType: file.parsed!.mimeType } } : { text: keptTextOf(file.parsed) }),
                     onRef: (ref) => {
                         if (entry?.message.includes(file.note)) {
@@ -2400,7 +2488,7 @@ export abstract class BaseBehavior {
      * Files the bot just sent in a bubble (#1508), to the person it is answering: they go on that person's list with the
      * tool that made each one and what the bot asked it for. In the background; nothing here stops the file being sent.
      */
-    onBotMediaSent(spaceName: string, playerId: number, items: SentMedia[]): void {
+    onBotMediaSent(spaceName: string, playerId: number, items: SentMedia[], toThemAlone = false): void {
         const admin = this.adminApiService;
         const botId = this.bot?.getBotId();
         if (!admin || !botId || !this.bot || items.length === 0) return;
@@ -2408,6 +2496,9 @@ export abstract class BaseBehavior {
             call: { botId, person: this.bot.getPersonForArtifacts(playerId), chat: { kind: 'nearby' as const, ref: spaceName } },
             personRef: this.userIdToUuid.get(playerId) ?? null,
             maxTextChars: this.aiService?.botLimitsFor(botId).fileTextChars ?? 0,
+            // Whoever is in the space as it goes out received it with the person (#1993). Sent with a reply written for
+            // the person alone, nobody else received it, whoever has walked up meanwhile
+            others: toThemAlone ? [] : namedOthers(this.bot.heardIn?.(spaceName, playerId)),
         };
         // The bubble sends the uploader's copy: the tool gave back the link it was uploaded from
         const jobs = items.map((item) => sentMediaJob(item, where, this.aiService?.madeFor(item.url, this.bot!.uploadedFromOf(item.url)) ?? null));
@@ -2417,7 +2508,8 @@ export abstract class BaseBehavior {
     /**
      * A bubble's files (#1508): reads them for the reply as before, and gives the line the history keeps with a note
      * for each upload, and `keep` to call once that line is in the history. Text links in the message are read for
-     * the reply but are not files, so only uploads get a note.
+     * the reply but are not files, so only uploads get a note. `arrived` is who heard the message when it came:
+     * the line and what is learned from it are kept with that, not with who is there once the files are read.
      */
     protected async readBubbleFiles(
         spaceName: string,
@@ -2428,11 +2520,14 @@ export abstract class BaseBehavior {
         mediaType: string | undefined,
         galleryUrls: string[] | undefined,
         uploads: ChatUpload[] | undefined
-    ): Promise<{ augmented: string; line: string; keep: () => void }> {
+    ): Promise<{ augmented: string; line: string; keep: () => void; arrived: { heard: Heard | undefined } }> {
+        // Who was there when it was sent, asked before the files are read: reading takes a while, and someone who walks
+        // up meanwhile was never sent the message or its files (#1993)
+        const arrived = { heard: this.bot?.heardIn?.(spaceName, senderId) };
         const read = new Map<string, ParsedFile | null>();
         const augmented = await this.formatParsedAttachment(message, url, mimeType, mediaType, galleryUrls, undefined, read);
         const botId = this.bot?.getBotId();
-        if (!uploads?.length || !botId || !this.bot) return { augmented, line: message, keep: () => undefined };
+        if (!uploads?.length || !botId || !this.bot) return { augmented, line: message, keep: () => undefined, arrived };
         const noted = this.noteSentFiles({
             botId,
             playerId: senderId,
@@ -2442,8 +2537,10 @@ export abstract class BaseBehavior {
             // The same person and chat the artifact tools name: Orbit decides who may use the file from them
             call: { botId, person: this.bot.getPersonForArtifacts(senderId), chat: { kind: 'nearby', ref: spaceName } },
             personRef: this.userIdToUuid.get(senderId) ?? null,
+            // Whoever was in the space when they sent it saw it too (#1993)
+            others: namedOthers(arrived.heard),
         });
-        return { augmented, ...noted };
+        return { augmented, ...noted, arrived };
     }
 
     protected async formatParsedAttachment(
@@ -2455,10 +2552,12 @@ export abstract class BaseBehavior {
         /** The bot reading it, for a caller with no bot client (a direct message). */
         botId?: string,
         /** Filled with what was read from each link (null when reading it failed), for keeping the files (#1508). */
-        found?: Map<string, ParsedFile | null>
+        found?: Map<string, ParsedFile | null>,
+        /** How much of each file is read, for a caller with no bot (the Brick for guests). */
+        readCharsOverride?: number
     ): Promise<string> {
         const allUrls = [...new Set([url, ...(galleryUrls || [])])];
-        const readChars = this.aiService?.readCharsFor(botId ?? this.bot?.getBotId());
+        const readChars = readCharsOverride ?? this.aiService?.readCharsFor(botId ?? this.bot?.getBotId());
         let augmentedMessage = message;
 
         // Hoist dynamic import and load all files in parallel

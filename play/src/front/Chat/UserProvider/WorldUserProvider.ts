@@ -2,8 +2,9 @@ import type { Readable, Writable } from "svelte/store";
 import { derived, writable } from "svelte/store";
 import type { PartialAdminUser } from "../Connection/ChatConnection";
 import type { SpaceInterface } from "../../Space/SpaceInterface";
+import { searchesForBots } from "../Bricks/Brick";
 import type { UserProviderInterface } from "./UserProviderInterface";
-import { mapExtendedSpaceUserToChatUser } from "./ChatUserMapper";
+import { isBotUser, mapExtendedSpaceUserToChatUser } from "./ChatUserMapper";
 
 export class WorldUserProvider implements UserProviderInterface {
     public readonly users: Readable<PartialAdminUser[]>;
@@ -16,8 +17,13 @@ export class WorldUserProvider implements UserProviderInterface {
         this.users = derived(
             [allUsersInWorldSpace.usersStore, this.filter],
             ([users, filter]) => {
+                // "Bot" and "Brick" are the same word (game #1995): either, typed whole, finds every bot whatever its name.
+                const findsBots = searchesForBots(filter);
                 return Array.from(users.values())
-                    .filter((user) => user.name.toLowerCase().includes(filter.toLowerCase()))
+                    .filter(
+                        (user) =>
+                            (findsBots && isBotUser(user)) || user.name.toLowerCase().includes(filter.toLowerCase())
+                    )
                     .map(mapExtendedSpaceUserToChatUser);
             },
             []

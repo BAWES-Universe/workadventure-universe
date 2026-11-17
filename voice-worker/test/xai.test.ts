@@ -2,7 +2,7 @@
 // The model hears and speaks; the bot's own Mind writes every answer, so the model is never asked to answer.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
 import { LISTEN_ONLY, READ_ALOUD } from '../src/openai.ts';
@@ -217,9 +217,26 @@ describe('speaking', () => {
 });
 
 describe('the worker', () => {
-    it('has xAI for hearing and speaking under one adapter', () => {
+    it('has xAI for hearing and speaking under one adapter, a talking model going to the talking connectors', async () => {
         const worker = new VoiceWorker({ connectors: new ConnectorRegistry() } as ConstructorParameters<typeof VoiceWorker>[0]);
-        expect(worker.connectors.recognition('xai')).toBeInstanceOf(XaiRecognition);
-        expect(worker.connectors.speech('xai')).toBeInstanceOf(XaiSpeech);
+        // xAI's own transcription and text to speech share the name (src/xaiVoice.ts): a talking model still talks
+        const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
+        const listen = vi.spyOn(XaiRecognition.prototype, 'listen').mockReturnValue(recognizer as never);
+        const events = { partial: () => undefined, final: () => undefined, failed: () => undefined };
+        expect(worker.connectors.recognition('xai')!.listen({ adapter: 'xai', model: 'grok-voice-latest', key: new Secret('k'), endpoint: '' }, events)).toBe(recognizer);
+        expect(listen).toHaveBeenCalledTimes(1);
+        const speak = vi.spyOn(XaiSpeech.prototype, 'speak').mockImplementation(async function* () {
+            yield new Int16Array([3]);
+        });
+        const said: number[] = [];
+        for await (const piece of worker.connectors.speech('xai')!.speak({
+            text: 'Hi',
+            settings: { adapter: 'xai', model: 'grok-voice-latest', voiceId: 'ara', key: new Secret('k'), endpoint: '' },
+            signal: new AbortController().signal,
+        }))
+            said.push(...piece);
+        expect(said).toEqual([3]);
+        expect(speak).toHaveBeenCalledTimes(1);
+        vi.restoreAllMocks();
     });
 });

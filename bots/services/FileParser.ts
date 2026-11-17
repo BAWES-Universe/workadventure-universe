@@ -22,6 +22,7 @@
  *  - video/*: note type only
  *  - unknown: note filename and type
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolve4, resolve6 } from 'dns/promises';
 import { extractWebContent } from './WebPageExtractor';
 
@@ -58,7 +59,21 @@ export interface ParsedFile {
     };
 }
 
+/** Files whose bytes were already read and checked, by their link: inside `FileParser.withLoadedFiles`, the only ones that can be read. */
+export type LoadedFiles = ReadonlyMap<string, { bytes: ArrayBuffer; type: string }>;
+
 export class FileParser {
+    private static readonly loaded = new AsyncLocalStorage<LoadedFiles>();
+
+    /**
+     * Runs `work` (the same reading every bot does) on files whose bytes were read and checked already, a guest's uploads for
+     * instance: their links read from those bytes, and nothing else can be fetched while it runs, so a document that names other
+     * addresses never reaches the network.
+     */
+    static withLoadedFiles<T>(files: LoadedFiles, work: () => Promise<T>): Promise<T> {
+        return FileParser.loaded.run(files, work);
+    }
+
     // Short-lived URL-keyed memo for sniffContentType: coalesces in-flight
     // requests and caches results briefly (see sniffContentType).
     private static sniffCache = new Map<
@@ -757,9 +772,16 @@ export class FileParser {
      * Uses redirect: 'manual' and validates each hop to prevent redirect
      * chains from pivoting to internal or private addresses.
      */
-    private static async fetchBuffer(url: string): Promise<ArrayBuffer> {
+    private static async fetchBuffer(url: string, maxBytes = 25 * 1024 * 1024): Promise<ArrayBuffer> {
+        const loaded = FileParser.loaded.getStore();
+        if (loaded) {
+            const file = loaded.get(url);
+            if (!file) throw new Error('Only the files already read can be read here');
+            if (file.bytes.byteLength > maxBytes) throw new Error(`File too large (over ${maxBytes / 1024 / 1024}MB)`);
+            return file.bytes;
+        }
         const MAX_REDIRECTS = 5;
-        const MAX_BYTES = 25 * 1024 * 1024; // 25MB cap (same as BotClient)
+        const MAX_BYTES = maxBytes; // 25MB cap by default (same as BotClient)
         let currentUrl = url;
         for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
             await FileParser.validateUrl(currentUrl);
@@ -814,12 +836,22 @@ export class FileParser {
         throw new Error(`Too many redirects (${MAX_REDIRECTS}) fetching ${url}`);
     }
 
+    /** A file's bytes by the same SSRF-safe fetch the parser uses, with its own size cap (a voice note's clip is read this way). */
+    static fetchBytes(url: string, maxBytes: number): Promise<ArrayBuffer> {
+        return FileParser.fetchBuffer(url, maxBytes);
+    }
+
     /**
      * SSRF guard: validate a URL before fetching.
      * Public so other modules (e.g. vision image-URL collection) can apply the
      * same safe-destination check to URLs they hand off to external providers.
      */
     static async validateUrl(url: string): Promise<void> {
+        const loaded = FileParser.loaded.getStore();
+        if (loaded) {
+            if (loaded.has(url)) return;
+            throw new Error('Only the files already read can be read here');
+        }
         let parsedUrl: URL;
         try {
             parsedUrl = new URL(url);
@@ -918,18 +950,27 @@ export class FileParser {
         }
         let safe = true;
         let resolved = false;
+        let notNow: string | undefined;
         try {
             const v4 = await resolve4(hostname);
             resolved = true;
             if (v4.some(ip => FileParser.isPrivateIp(ip))) safe = false;
-        } catch { /* no A record */ }
+        } catch (error) { notNow ??= FileParser.dnsNotNow(error); /* no A record */ }
         try {
             const v6 = await resolve6(hostname);
             resolved = true;
             if (v6.some(ip => FileParser.isPrivateIp(ip))) safe = false;
-        } catch { /* no AAAA record */ }
+        } catch (error) { notNow ??= FileParser.dnsNotNow(error); /* no AAAA record */ }
+        // A resolver that did not answer just now is said as such (to ask again later), never as a private address; still fail-closed
+        if (!resolved && notNow) throw new Error(`DNS not answered for '${hostname}' just now (${notNow})`);
         // Fail-closed: if neither A nor AAAA resolved, we can't verify safety
         return resolved ? safe : false;
+    }
+
+    /** The code of a DNS failure that may pass on its own (a timeout, a resolver that failed or refused), or undefined. */
+    private static dnsNotNow(error: unknown): string | undefined {
+        const code = (error as { code?: unknown } | null)?.code;
+        return typeof code === 'string' && /^(ETIMEOUT|ESERVFAIL|ECONNREFUSED|EAI_AGAIN|ECANCELLED|ETIMEDOUT)$/.test(code) ? code : undefined;
     }
 
     /**
@@ -946,6 +987,8 @@ export class FileParser {
      * coalesced; cached results expire after SNIFF_CACHE_TTL_MS.
      */
     static sniffContentType(url: string): Promise<string | null> {
+        const loaded = FileParser.loaded.getStore();
+        if (loaded) return Promise.resolve(loaded.get(url)?.type ?? null);
         const cached = FileParser.sniffCache.get(url);
         if (cached && cached.expiresAt > Date.now()) {
             return cached.promise;

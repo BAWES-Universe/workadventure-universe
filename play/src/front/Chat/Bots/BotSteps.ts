@@ -4,8 +4,14 @@ import { botIdFromChatId } from "./BotChatStatus";
  * The steps line of a bot's reply (#1545): one notice per reply that the bot server updates while the bot uses its
  * tools, carried in its `universe.steps` field. Drawn as a quiet line, not a bubble.
  */
-/** unknown: the call went out and no answer came back, so it may have run (#1692). */
-export type BotStepState = "running" | "done" | "failed" | "unknown";
+/** unknown: the call went out and no answer came back, so it may have run (#1692). waiting: a card waits for the person's OK (#2061). */
+export type BotStepState = "running" | "done" | "failed" | "unknown" | "waiting";
+
+/** One labelled line of what a step sent or got back (#2061). */
+export interface BotStepLine {
+    label?: string;
+    text: string;
+}
 
 export interface BotStep {
     /** While it runs, e.g. "Reading workadventu.re". */
@@ -21,6 +27,10 @@ export interface BotStep {
     note?: string;
     /** What it is about, for the working emoji beside the bot's Woka (#1667). */
     kind?: BotStepKind;
+    /** How long it took, in seconds (#2061). */
+    secs?: number;
+    /** What it sent and got back, only in a direct message (#2061). */
+    shows?: BotStepLine[];
 }
 
 export type BotStepKind = "read" | "search" | "write";
@@ -33,11 +43,15 @@ export interface BotSteps {
     line: string;
     /** When the first step started (the bot server's clock), for the clock while working. */
     startedAt: number;
+    /** Once the reply is over: how long the steps took in all, in seconds (#2061). */
+    took?: number;
     steps: BotStep[];
 }
 
 const STATES = ["working", "done", "stopped"];
-const STEP_STATES = ["running", "done", "failed", "unknown"];
+const STEP_STATES = ["running", "done", "failed", "unknown", "waiting"];
+/** A step opens to at most this many lines. */
+const SHOWS_MAX = 8;
 /** Each text is one short line from the bot server; a longer one is cut so it can't stretch the chat. */
 const TEXT_MAX = 200;
 
@@ -71,12 +85,15 @@ export function parseBotSteps(value: unknown): BotSteps | undefined {
             again: step.again === true,
             note: text(step.note) || undefined,
             kind: STEP_KINDS.includes(step.kind as string) ? (step.kind as BotStepKind) : undefined,
+            secs: seconds(step.secs),
+            shows: lines(step.shows),
         });
     }
     return {
         state: field.state as BotSteps["state"],
         line,
         startedAt: typeof field.startedAt === "number" && Number.isFinite(field.startedAt) ? field.startedAt : 0,
+        took: seconds(field.took),
         steps,
     };
 }
@@ -92,7 +109,8 @@ export function workKindOf(steps: BotSteps): BotStepKind | undefined {
 
 /** What a step shows under its words: why it didn't work or may have run, else what it was about. */
 export function stepMore(step: BotStep): string | undefined {
-    if ((step.state === "failed" || step.state === "unknown") && step.note) return step.note;
+    if ((step.state === "failed" || step.state === "unknown" || step.state === "waiting") && step.note)
+        return step.note;
     return step.detail;
 }
 
@@ -109,6 +127,30 @@ export function currentStep(steps: BotSteps): BotStep | undefined {
 export function stepsClock(seconds: number): string {
     const s = Math.max(0, Math.floor(seconds));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** "1.3s" under ten seconds, "42s" under a minute, "1m 5s" beyond (#2061). */
+export function tookWords(secs: number): string {
+    if (secs < 10) return `${Math.round(secs * 10) / 10}s`;
+    const whole = Math.round(secs);
+    return whole < 60 ? `${whole}s` : `${Math.floor(whole / 60)}m ${whole % 60}s`;
+}
+
+function seconds(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value < 86_400 ? value : undefined;
+}
+
+function lines(value: unknown): BotStepLine[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const out: BotStepLine[] = [];
+    for (const raw of value.slice(0, SHOWS_MAX)) {
+        if (!raw || typeof raw !== "object") continue;
+        const shown = text((raw as Record<string, unknown>).text);
+        if (!shown) continue;
+        const label = text((raw as Record<string, unknown>).label);
+        out.push(label ? { label, text: shown } : { text: shown });
+    }
+    return out.length ? out : undefined;
 }
 
 function text(value: unknown): string | undefined {

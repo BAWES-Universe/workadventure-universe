@@ -206,6 +206,82 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         expect(r.worker.counters.get('room_unsubscribed')).toBeGreaterThanOrEqual(1);
     });
 
+    it.each([1500, 3000])('hears a person again when listening comes back %i ms after it stopped, and the other person throughout', async (pauseMs) => {
+        const frames: InputFrame[] = [];
+        const r = await startRig({ input: (f) => frames.push(f) });
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const alice = await person('room_alice').join(roomName, [GrantSource.MICROPHONE]);
+        await alice.publishAudio(TrackSource.SOURCE_MICROPHONE);
+        const bob = await person('room_bob').join(roomName, [GrantSource.MICROPHONE]);
+        await bob.publishAudio(TrackSource.SOURCE_MICROPHONE, 330);
+        r.calls.spaceUsers(r.game.spaceName, [roster('room_alice'), roster('room_bob'), roster(r.game.botId, { tags: ['bot'] })]);
+        await invite(r, roomName);
+        const from = (id: string) => frames.filter((f) => f.participantId === id).length;
+        await waitFor('both to be heard', () => from('room_alice') > 50 && from('room_bob') > 50);
+
+        r.calls.setMode(r.game.spaceName, 'off', 'room_bob');
+        await waitFor('bob to be dropped', () => r.worker.roomSubscriptions().map((s) => s.identity).join() === 'room_alice');
+        await sleep(pauseMs);
+        const before = { alice: from('room_alice'), bob: from('room_bob') };
+        r.calls.setMode(r.game.spaceName, 'talk', 'room_bob');
+        // Back within about the first check and the short gap after it (1.1 s), with room to spare
+        await waitFor('bob to be heard again', () => from('room_bob') - before.bob > 50, 4000);
+        expect(r.worker.roomSubscriptions().map((s) => s.identity).sort()).toEqual(['room_alice', 'room_bob']);
+        expect(from('room_alice') - before.alice).toBeGreaterThan(50);
+        expect(r.worker.counters.get('room_resubscribe_gave_up')).toBe(0);
+    }, 30_000);
+
+    it('asking again for a microphone never outlasts the permission: off again while it is being asked for, it stays off', async () => {
+        const frames: InputFrame[] = [];
+        const r = await startRig({ input: (f) => frames.push(f) });
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const bob = await person('room_bob').join(roomName, [GrantSource.MICROPHONE]);
+        await bob.publishAudio(TrackSource.SOURCE_MICROPHONE, 330);
+        r.calls.spaceUsers(r.game.spaceName, [roster('room_bob'), roster(r.game.botId, { tags: ['bot'] })]);
+        await invite(r, roomName);
+        await waitFor('bob to be heard', () => frames.length > 50);
+        r.calls.setMode(r.game.spaceName, 'off', 'room_bob');
+        await waitFor('bob to be dropped', () => r.worker.roomSubscriptions().length === 0);
+        await sleep(2000);
+        r.calls.setMode(r.game.spaceName, 'talk', 'room_bob');
+        // Off again before the bot's first check would ask once more
+        await sleep(500);
+        r.calls.setMode(r.game.spaceName, 'off', 'room_bob');
+        const after = frames.length;
+        await sleep(5000);
+        expect(r.worker.roomSubscriptions()).toEqual([]);
+        expect(frames.length).toBe(after);
+        expect(r.worker.counters.get('room_resubscribe_retries')).toBe(0);
+    }, 30_000);
+
+    it('in a group, subscribes to a person\'s microphone only after they ask the bot to keep listening, and confirms it for the room (round 8)', async () => {
+        const r = await startRig();
+        rigs.push(r);
+        r.calls.groupGate = true;
+        const roomName = r.game.spaceName;
+        const alice = await person('room_alice').join(roomName);
+        await alice.publishAudio(TrackSource.SOURCE_MICROPHONE);
+        const bob = await person('room_bob').join(roomName);
+        await bob.publishAudio(TrackSource.SOURCE_MICROPHONE, 330);
+        r.calls.spaceUsers(r.game.spaceName, [roster('room_alice'), roster('room_bob')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+        await sleep(500);
+        expect(r.worker.roomSubscriptions()).toEqual([]);
+
+        r.calls.handlePrivateEvent(privateEvent(r.game, 'room_alice', { $case: 'voiceModeChoice', voiceModeChoice: { mode: 'talk', listen: 'keep' } }));
+        await waitFor('alice to be heard', () => r.worker.roomSubscriptions().map((s) => s.identity).join() === 'room_alice');
+        await waitFor('the confirmation', () => r.game.listens.some(([to, l]) => to === 'room_alice' && l.state === 'on'));
+        expect(r.fromWorker.find((m) => m.type === 'mode.ack')).toMatchObject({ participantId: 'room_alice', path: 'room', mode: 'talk' });
+
+        r.calls.handlePrivateEvent(privateEvent(r.game, 'room_alice', { $case: 'voiceModeChoice', voiceModeChoice: { mode: 'talk', listen: 'stop' } }));
+        await waitFor('alice to be dropped', () => r.worker.roomSubscriptions().length === 0);
+        await waitFor('the stop to be confirmed', () => r.game.listens.filter(([to]) => to === 'room_alice').pop()?.[1].state === 'off');
+        expect(r.violations).toEqual([]);
+    });
+
     it('does not hear anyone when the mode does not listen, and plays nothing to a mode that does not play', async () => {
         const r = await startRig();
         rigs.push(r);
@@ -307,6 +383,115 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         expect(r.worker.roomSubscriptions()).toEqual([]);
         expect(r.violations).toEqual([]);
     });
+
+    it('says a reply for one person alone into the room only while nobody else is in the bubble (#1993)', async () => {
+        const r = await startRig();
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const bot = r.game.botId;
+        const finished = (segmentId: string) =>
+            r.fromWorker.find((m) => m.type === 'playback.progress' && m.segmentId === segmentId && m.finished) as Extract<(typeof r.fromWorker)[number], { type: 'playback.progress' }> | undefined;
+        const alice = await person('room_alice').join(roomName);
+        r.calls.spaceUsers(roomName, [roster('room_alice')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+
+        // Alone in the room with the bot: it is said, and she hears it
+        r.calls.say(roomName, 'one-1', 'an answer for alice and nobody else in the room', undefined, 'room_alice');
+        await waitFor('the reply to be heard', () => alice.loudFrom(bot) >= 20);
+        await waitFor('the reply to end', () => !!finished('one-1'));
+        expect(finished('one-1')).toMatchObject({ interrupted: false, reason: 'completed' });
+
+        // Bob walks into the bubble. The game says so first, then he connects to the room: the bot has one track here,
+        // so he would hear what is said into it
+        r.calls.spaceUserJoined(roomName, roster('room_bob'));
+        const bob = await person('room_bob').join(roomName);
+        await waitFor('bob to see the bot', () => bob.room.remoteParticipants.has(bot));
+        await sleep(500);
+        const sent = r.worker.counters.get('room_frames_out');
+        const heard = alice.loudFrom(bot);
+        r.calls.say(roomName, 'one-2', 'another answer for alice that is not said with someone else there', undefined, 'room_alice');
+        await waitFor('the reply to be turned down', () => !!finished('one-2'));
+        expect(finished('one-2')).toMatchObject({ playedMs: 0, interrupted: true, reason: 'private' });
+        await sleep(600);
+        // Nothing of it went into the room, and neither of them received any
+        expect(r.worker.counters.get('room_frames_out')).toBe(sent);
+        expect(bob.loudFrom(bot)).toBe(0);
+        expect(alice.loudFrom(bot)).toBe(heard);
+
+        // What is said to everyone reaches both, so his silence was the rule and not a broken connection
+        r.calls.say(roomName, 'all-1', 'and this one is for everyone in the room');
+        await waitFor('both to hear the bot', () => bob.loudFrom(bot) >= 20 && alice.loudFrom(bot) >= heard + 20);
+        expect(r.violations).toEqual([]);
+    }, 30000);
+
+    it('stops a reply for one person alone when someone else walks into the bubble while it plays, and they hear none of it (#1993)', async () => {
+        const r = await startRig();
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const bot = r.game.botId;
+        const finished = (segmentId: string) =>
+            r.fromWorker.find((m) => m.type === 'playback.progress' && m.segmentId === segmentId && m.finished) as Extract<(typeof r.fromWorker)[number], { type: 'playback.progress' }> | undefined;
+        const alice = await person('room_alice').join(roomName);
+        r.calls.spaceUsers(roomName, [roster('room_alice')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+
+        // About nine seconds of fake speech
+        r.calls.say(roomName, 'one-1', 'This is an answer for one person in the room, and it goes on long enough for someone else to come in while it is being said.', undefined, 'room_alice');
+        await waitFor('the reply to be heard', () => alice.loudFrom(bot) >= 20);
+        expect(finished('one-1')).toBeUndefined();
+
+        // Bob walks into the bubble while it plays: the game tells the bot at once, before he can connect to the room
+        r.calls.spaceUserJoined(roomName, roster('room_bob'));
+        await waitFor('the reply to stop', () => !!finished('one-1'), 1000);
+        expect(finished('one-1')).toMatchObject({ interrupted: true, reason: 'private' });
+        expect(finished('one-1')!.playedMs).toBeGreaterThan(0);
+        expect(finished('one-1')!.playedMs).toBeLessThan(8000);
+
+        const bob = await person('room_bob').join(roomName);
+        await waitFor('bob to see the bot', () => bob.room.remoteParticipants.has(bot));
+        await sleep(800);
+        // Not a frame of it reached him: it had stopped, and what the bot's track still held was dropped, before he connected
+        expect(bob.loudFrom(bot)).toBe(0);
+        const heard = alice.loudFrom(bot);
+        await sleep(400);
+        expect(alice.loudFrom(bot)).toBe(heard);
+
+        // What is said to everyone next reaches him
+        r.calls.say(roomName, 'all-1', 'and this one is for everyone in the room');
+        await waitFor('bob to hear the bot', () => bob.loudFrom(bot) >= 20);
+        expect(r.violations).toEqual([]);
+    }, 30000);
+
+    it('does not say a reply for one person alone once the media server has told it of someone the game never named (#1993)', async () => {
+        const r = await startRig();
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const bot = r.game.botId;
+        const finished = (segmentId: string) =>
+            r.fromWorker.find((m) => m.type === 'playback.progress' && m.segmentId === segmentId && m.finished) as Extract<(typeof r.fromWorker)[number], { type: 'playback.progress' }> | undefined;
+        const alice = await person('room_alice').join(roomName);
+        r.calls.spaceUsers(roomName, [roster('room_alice')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+        await waitFor('the bot to see alice', () => r.worker.roomParticipants().includes('room_alice'), 8000);
+
+        // Someone connects to the room whom the game told the bot nothing about. The media server tells the bot about a
+        // participant who sends nothing a few seconds late, which is why the game's word is the first guard and this
+        // the second: from the moment the bot knows of them, nothing for one person alone goes into the room
+        const stranger = await person('room_stranger').join(roomName);
+        await waitFor('the bot to be told of the stranger', () => r.worker.roomParticipants().includes('room_stranger'), 8000);
+        const sent = r.worker.counters.get('room_frames_out') ?? 0;
+        r.calls.say(roomName, 'one-1', 'an answer for alice that is not said with a stranger in the room', undefined, 'room_alice');
+        await waitFor('the reply to be turned down', () => !!finished('one-1'));
+        expect(finished('one-1')).toMatchObject({ playedMs: 0, interrupted: true, reason: 'private' });
+        await sleep(600);
+        expect(r.worker.counters.get('room_frames_out') ?? 0).toBe(sent);
+        expect(stranger.loudFrom(bot)).toBe(0);
+        expect(alice.loudFrom(bot)).toBe(0);
+        expect(r.violations).toEqual([]);
+    }, 30000);
 
     it('leaves the bot out of the room and text-only when the token it was given is not for the bot\'s own room', async () => {
         const r = await startRig();

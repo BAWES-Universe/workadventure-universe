@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startVoiceNoteRecording } from "./VoiceNoteRecorder";
+import { FILE_SHAPE_WAIT_MS, startVoiceNoteRecording } from "./VoiceNoteRecorder";
+import { readAudioShape } from "./AudioShape";
 import type { RecordingFormat } from "./VoiceNote";
+
+vi.mock("./AudioShape", () => ({ readAudioShape: vi.fn() }));
 
 const format: RecordingFormat = { recorderType: "audio/mp4", fileType: "audio/mp4", extension: "m4a" };
 
@@ -144,5 +147,93 @@ describe("recording a voice note", () => {
 
         expect(trackStop).toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
+    });
+    it("reads the note's shape from the file when the browser kept sound from running the whole time", async () => {
+        const state = { value: "suspended" };
+        vi.stubGlobal(
+            "AudioContext",
+            class {
+                get state() {
+                    return state.value;
+                }
+                createAnalyser() {
+                    return { fftSize: 0, getFloatTimeDomainData: () => undefined };
+                }
+                createMediaStreamSource() {
+                    return { connect: () => undefined };
+                }
+                close = contextClose;
+                resume = contextResume;
+            }
+        );
+        URL.createObjectURL = vi.fn(() => "blob:note") as unknown as typeof URL.createObjectURL;
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        vi.mocked(readAudioShape).mockResolvedValue({ duration: 3, levels: [0.2, 0.9, 0.5] });
+        const recording = await startVoiceNoteRecording(format);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const { details } = await recording.stop();
+
+        expect(details.waveform).toEqual([0.2, 0.9, 0.5]);
+        expect(revoke).toHaveBeenCalledWith("blob:note");
+    });
+
+    it("does not hold the note back when reading its shape from the file takes too long", async () => {
+        vi.stubGlobal(
+            "AudioContext",
+            class {
+                state = "suspended";
+                createAnalyser() {
+                    return { fftSize: 0, getFloatTimeDomainData: () => undefined };
+                }
+                createMediaStreamSource() {
+                    return { connect: () => undefined };
+                }
+                close = contextClose;
+                resume = contextResume;
+            }
+        );
+        URL.createObjectURL = vi.fn(() => "blob:slow") as unknown as typeof URL.createObjectURL;
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        // Stuck behind other audio being read in the chat
+        vi.mocked(readAudioShape).mockReturnValue(
+            new Promise(() => {
+                // never finishes
+            })
+        );
+        const recording = await startVoiceNoteRecording(format);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        let finished: Awaited<ReturnType<typeof recording.stop>> | undefined;
+        void recording.stop().then((done) => (finished = done));
+        await vi.advanceTimersByTimeAsync(FILE_SHAPE_WAIT_MS - 1);
+        expect(finished).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(1);
+
+        // The note goes on with the meter's own (quiet) shape, and the file's link is let go
+        expect(finished?.file).toBeInstanceOf(File);
+        expect(finished?.details.waveform.length).toBeGreaterThan(0);
+        expect(revoke).toHaveBeenCalledWith("blob:slow");
+    });
+
+    it("keeps the meter's own shape when sound was running", async () => {
+        vi.mocked(readAudioShape).mockClear();
+        const recording = await startVoiceNoteRecording(format);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await recording.stop();
+
+        expect(readAudioShape).not.toHaveBeenCalled();
+    });
+
+    it("asks the browser again to let sound run, but not once it runs or is closed", async () => {
+        const recording = await startVoiceNoteRecording(format);
+        contextResume.mockClear();
+        recording.resume();
+        // The stubbed context says it is running: nothing to ask.
+        expect(contextResume).not.toHaveBeenCalled();
+        recording.cancel();
     });
 });

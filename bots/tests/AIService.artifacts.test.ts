@@ -76,7 +76,7 @@ describe('artifact tools in AIService', () => {
             []
         );
         expect(client.getPersonForArtifacts).toHaveBeenCalledWith(7);
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board', 7);
         expect(result.result).toEqual({ success: true, id: 'art-1', title: 'Quests board', kind: 'app', version: 1 });
     });
 
@@ -151,7 +151,7 @@ describe('artifact tools in AIService', () => {
         const client = botClient();
         const change = { id: 't2', name: 'change_artifact', arguments: JSON.stringify({ id: 'art-1', edits: [{ old: 'a', new: 'b' }] }) };
         await service()['executeToolCalls']([change], client as never, admin() as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7);
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:2:app::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:2:app::Quests board', 7);
 
         client.sendChatMessage.mockClear();
         const refusing = admin({ changeArtifact: vi.fn(async () => { throw Object.assign(new Error('no'), { code: 'change_not_allowed' }); }) });
@@ -239,7 +239,7 @@ describe('artifact tools in AIService', () => {
         // Asked again with the bubble back, the card goes out
         const [again] = await call();
         expect(again.result).not.toHaveProperty('notShown');
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board', 7);
     });
 
     it('leaves the results of a same-named MCP tool alone when artifacts are off', async () => {
@@ -284,5 +284,21 @@ describe('artifact tools in AIService', () => {
         ai['noteTurnMedia']([{ id: '1', name: 'generate_music', result: { url: 'https://cdn.example/old.mp3' } }], older);
         expect(memory.turnMedia).toHaveLength(1);
         expect(older).toHaveLength(1);
+    });
+
+    it("a reply for someone but the Brick's owner never runs an artifact tool, even one the model was not offered (CodeRabbit on #2023)", async () => {
+        const orbit = admin({ readArtifact: vi.fn() });
+        const calls = [make, { id: 't2', name: 'read_artifact', arguments: JSON.stringify({ id: 'x' }) }, { id: 't3', name: 'list_artifacts', arguments: '{}' }];
+        const results = await service({ userUuid: 'uuid-9', dmRoomId: '!dm:matrix.test', pendingArtifacts: [] })['executeToolCalls'](
+            calls, botClient() as never, orbit as never, undefined, 'uuid-9', 'bubble-1', 'bot1', 7, undefined, undefined, false, undefined, undefined, undefined, false, true
+        );
+        expect(results.map((r: { result: unknown }) => r.result)).toEqual([
+            { error: 'Unknown tool: make_artifact' },
+            { error: 'Unknown tool: read_artifact' },
+            { error: 'Unknown tool: list_artifacts' },
+        ]);
+        expect(orbit.makeArtifact).not.toHaveBeenCalled();
+        expect(orbit.readArtifact).not.toHaveBeenCalled();
+        expect(orbit.listArtifactsInChat).not.toHaveBeenCalled();
     });
 });

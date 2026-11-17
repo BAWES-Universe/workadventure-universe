@@ -12,6 +12,7 @@ import { resolveVisionSupport } from './visionModels';
 import { decryptApiKey } from '../encryption';
 import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import * as Sentry from '@sentry/node';
+import { providerFailureLine } from '../../utils/sanitizedError';
 import { stepMessages, tooLongOf, type ReplySteps } from '../replySteps';
 import { refusesStreamOptions, statedContext, statedOutputCeiling } from './OpenAIProvider';
 import { inlineImages } from './inlineImages';
@@ -404,7 +405,7 @@ export class LMStudioProvider implements AIProvider {
             } catch (error: any) {
                 const latency = Date.now() - startTime;
 
-                span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                span.setStatus({ code: 2, message: providerFailureLine(error) });
 
                 // External cancellation (stop/correction or quick-call deadline)
                 // is not a provider failure — propagate it so callers treat it

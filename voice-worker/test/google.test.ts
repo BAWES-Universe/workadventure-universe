@@ -2,7 +2,7 @@
 // The model hears and speaks; the bot's own Mind writes every answer.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
 import { LISTEN_ONLY, READ_ALOUD } from '../src/openai.ts';
@@ -208,9 +208,22 @@ describe('speaking', () => {
 });
 
 describe('the worker', () => {
-    it('has Google for hearing and speaking under one adapter', () => {
+    it('has Google for hearing and speaking under one adapter, a talking model going to the talking connector', async () => {
         const worker = new VoiceWorker({ connectors: new ConnectorRegistry() } as ConstructorParameters<typeof VoiceWorker>[0]);
         expect(worker.connectors.recognition('google')).toBeInstanceOf(GoogleRecognition);
-        expect(worker.connectors.speech('google')).toBeInstanceOf(GoogleSpeech);
+        // Gemini text to speech shares the name (src/geminiSpeech.ts): a talking model still talks
+        const speak = vi.spyOn(GoogleSpeech.prototype, 'speak').mockImplementation(async function* () {
+            yield new Int16Array([3]);
+        });
+        const said: number[] = [];
+        for await (const piece of worker.connectors.speech('google')!.speak({
+            text: 'Hi',
+            settings: { adapter: 'google', model: 'gemini-3.8-live', voiceId: 'Puck', key: new Secret('k'), endpoint: '' },
+            signal: new AbortController().signal,
+        }))
+            said.push(...piece);
+        expect(said).toEqual([3]);
+        expect(speak).toHaveBeenCalledTimes(1);
+        vi.restoreAllMocks();
     });
 });

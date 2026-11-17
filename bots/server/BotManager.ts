@@ -24,7 +24,11 @@ import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
-import { BotUnavailableError } from '../utils/summonErrors';
+import { randomUUID } from 'crypto';
+import { BotCannotCallError, BotUnavailableError } from '../utils/summonErrors';
+import { callSpaceName } from '../../libs/shared-utils/src/Space/callSpaceName';
+import { VisitingBrickBehavior } from '../behaviors/VisitingBrickBehavior';
+import { HomedBrickBehavior } from '../behaviors/HomedBrickBehavior';
 import { hasPlayersInRoom } from './roomOccupancy';
 import {
     buildBehaviorConfig,
@@ -33,6 +37,9 @@ import {
     type LegacyBehaviorType,
 } from '../behaviors/behaviorModel';
 import { chatFileKeeper } from '../services/ChatFileKeeper';
+import { FileRemovalSweeper } from '../services/FileRemovals';
+import { heardInDm, type Heard } from '../memory/Heard';
+import { DM_SPACE_NAME } from './DmReplyService';
 
 export interface BotInstance {
     botId: string;
@@ -41,6 +48,26 @@ export interface BotInstance {
     status: 'connecting' | 'connected' | 'disconnected' | 'error';
     lastHeartbeat: number;
 }
+
+interface LiveCall {
+    client: BotClient;
+    spaceName: string;
+    /** Hangs the call up if its caller never joins the space; cleared when they do, or when the call ends. */
+    joinTimer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * How long the bot waits in a call's space for the caller to come in before it hangs up. Internal safety only (a
+ * caller who closed the tab between asking and joining, or a script calling the route): never shown to anyone.
+ */
+export const CALL_JOIN_DEADLINE_MS = 45_000;
+
+const clearJoinTimer = (call: LiveCall): void => {
+    if (call.joinTimer) clearTimeout(call.joinTimer);
+    call.joinTimer = undefined;
+};
+
+const callKey = (botId: string, callerUuid: string): string => `${botId}|${callerUuid}`;
 
 interface RoomState {
     botIds: Set<string>;
@@ -107,13 +134,46 @@ function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unkno
     }
 }
 
+/** When the person's game saw them come into the room (ms), and which page load of it said so. */
+export interface VisitSince {
+    at: number;
+    clientId: string;
+}
+
+/** What a visit sync answers: the Brick now on the map, or why none was put there. */
+export interface VisitSyncAnswer {
+    botId: string | null;
+    /**
+     * Why no Brick is there, when it may be only for now: no place for it to start from, or Orbit could not be asked. A plain
+     * "none" (nothing to bring along here) has no reason.
+     */
+    reason?: 'no_position' | 'orbit_unavailable';
+}
+
 export class BotManager {
+    /**
+     * The Brick that walks beside each signed-in person on this server (#2005), by their game uuid: which Brick, and in
+     * which room it was put on the map. One per person: bringing another along swaps them.
+     */
+    private visitors: Map<string, { botId: string; roomUrl: string; since?: VisitSince }> = new Map();
     private bots: Map<string, BotInstance> = new Map();
     /**
      * Every bot spawned since this server started. Its memory stays held here after it despawns (to come back when it
      * respawns), so a Forget must reach it too (#435).
      */
     private botsHoldingMemory: Set<string> = new Set();
+    /** Takes files people deleted from a Brick's list off the uploader (#2003) */
+    private fileRemovals: FileRemovalSweeper | null = null;
+    /**
+     * The calls going on now (game #2004), one per person and bot. A call's client is its own: it is not one of
+     * `bots` (the bot standing in a room), so a call never shows on the map or in any count of the room's bots.
+     */
+    private calls: Map<string, LiveCall> = new Map();
+    /**
+     * Calls being set up (before they are in `calls`): a hang-up or a newer start while the settings are fetched and the
+     * client is built cancels the setup, so a caller who already hung up is never connected afterwards.
+     */
+    private startingCalls: Map<string, { cancelled: boolean }> = new Map();
     private adminApiService: AdminApiService;
     /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
     private accessGate: BotAccessGate;
@@ -134,6 +194,12 @@ export class BotManager {
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
     private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
+    // One start or replacement of a bot at a time. A Brick that lives in a room is synced by whichever room asks, and the
+    // room locks above do not stop two rooms from starting the same Brick at once
+    private botStartLocks: Map<string, Promise<void>> = new Map();
+    // Rooms whose last read of the Bricks that live there failed: they stay listed, so the room check reads them again
+    // while people are in them, instead of waiting for someone to walk in
+    private homedReadFailed: Set<string> = new Set();
     private verificationInterval: NodeJS.Timeout | null = null;
     private readonly VERIFICATION_INTERVAL_MS = 60 * 1000; // 1 minute
 
@@ -167,6 +233,8 @@ export class BotManager {
                 chatFileKeeper.forget(botId, notice);
                 persistentMemory.forget(botId, notice);
             });
+            // Things a person forgot one at a time, in their list in Orbit or in the chat (#2003)
+            this.adminApiService.setItemForgetHandler?.((botId, items) => persistentMemory.forgetItems(botId, items));
             
             // Initialize AI service
             const adminApiUrl = process.env.ADMIN_API_URL || '';
@@ -192,6 +260,10 @@ export class BotManager {
             }
         }
         
+        // Each thing a bot remembers carries where it was said and who else was there (#1993): a direct message, or the
+        // bubble or meeting room with whoever is in it at that moment
+        this.conversationMemory.useHeard((botId, playerId, spaceName, sender) => this.whoHeard(botId, playerId, spaceName, sender));
+
         // Initialize metrics collector
         this.metricsCollector = new BotMetricsCollector(this.adminApiService);
         
@@ -284,6 +356,14 @@ export class BotManager {
             }
         );
 
+        // Files people deleted from a Brick's list leave the uploader too (#2003)
+        this.fileRemovals = new FileRemovalSweeper({
+            adminApiUrl: process.env.ADMIN_API_URL,
+            uploaderUrl: process.env.UPLOADER_URL,
+            botServiceToken: process.env.BOT_SERVICE_TOKEN,
+        });
+        this.fileRemovals.start();
+
         // TODO: Load bots from storage (WAM files + Admin API)
         // This will be called on server startup
 
@@ -298,7 +378,11 @@ export class BotManager {
      * If bot already exists and is connected, returns existing instance
      * If bot exists but is disconnected, despawns it first and spawns a new one
      */
-    async spawnBot(botId: string, config: BotConfiguration): Promise<BotClient> {
+    async spawnBot(botId: string, config: BotConfiguration, options: { position?: { x: number; y: number } } = {}): Promise<BotClient> {
+        // A Brick (#1995) lives in its owner's chats: it stands in no room, so it is never put on a map. One that walks
+        // beside its person (#2005) is put on the map of the room it visits, and one that has a home (#2005) in its room
+        if ((config.brick && !config.brick.visiting && !config.brick.home) || !config.roomUrl) throw new Error(`Bot ${botId} has no room, so it cannot be put on a map`);
+
         // Check if bot already exists
         const existingInstance = this.bots.get(botId);
         if (existingInstance) {
@@ -329,90 +413,17 @@ export class BotManager {
             console.log(`[BotManager] Spawning bot: ${botId}`);
         }
 
-        // Create bot client config
-        // BotClient requires: botId, name, roomUrl, pusherUrl, position, viewport, characterTextureIds
-        const pusherUrl = process.env.PUSHER_URL || process.env.WORKADVENTURE_URL || 'http://localhost:8080';
-
-        // The game WebSocket can be served from a different host than the pusher (WS_URL). It defaults
-        // to the pusher URL, and a root-relative WS_URL is resolved against it, so this changes nothing
-        // unless the operator sets WS_URL explicitly.
-        const wsUrl = resolveWsUrl(process.env.WS_URL, pusherUrl);
-
-        // Get position from assignedSpace.center (required field)
-        const position = config.assignedSpace?.center || { x: 0, y: 0 };
-
-        const botConfig = {
-            botId,
-            name: config.name || `Bot ${botId}`,
-            roomUrl: config.roomUrl,
-            pusherUrl: pusherUrl.replace('ws://', 'http://').replace('wss://', 'https://'),
-            wsUrl,
-            position,
-            viewport: { top: 0, bottom: 1000, left: 0, right: 1000 }, // TODO: Get from config
-            characterTextureIds: config.characterTextureIds || [], // TODO: Get from config or WAM file
-            companionTextureId: config.companionTextureId || undefined,
-            uploaderUrl: process.env.UPLOADER_URL,
-        };
-        
-        const client = new BotClient(botConfig);
-        // Cards in nearby chat and voice come and go through the AI service's side of it (#1658)
-        client.setAsks(this.aiService.asksPort());
-        client.setAccessGate(this.accessGate);
-        
-        // Store botId mapping
-        botIdMap.set(client, botId);
-        
-        // Set behavior based on config
-        const { IdleBehavior, PatrolBehavior, SocialBehavior } = await import('../behaviors');
-        
-        // Pick the behaviour from the bot's model (where it moves, whether it goes to people), filling in
-        // every default. The same helper runs on live edits, so spawn and edit can't disagree.
-        const built = buildBehaviorConfig(config.behaviorType, config.behaviorConfig, config.assignedSpace);
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[BotManager] Bot ${botId} behaviour: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
-        }
-        const behavior = instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
-        
-        // Set services for behavior (including response processor and metrics collector for metrics)
-        behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
-        
-        // Set shared conversation memory (so behaviors use PersistentMemory if enabled)
-        if (behavior.setConversationMemory) {
-            behavior.setConversationMemory(this.conversationMemory);
-        }
-
-        // Load persisted memories for this bot from Admin API
-        // This is critical for restoring emotional state, wounds, etc. after server restart
-        const hasLoadMemories = 'loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function';
-        
-        if (hasLoadMemories) {
-            this.botsHoldingMemory.add(botId);
-            // A Forget pressed while the bot was away is applied to what is still held for it before anyone can be
-            // remembered from it (Orbit's answer carries the Forget; this never throws)
-            await this.adminApiService.isBotPrivate?.(botId, { fresh: true });
-            const MAX_LOAD_RETRIES = 2;
-            for (let attempt = 1; attempt <= MAX_LOAD_RETRIES; attempt++) {
-                try {
-                    await (this.conversationMemory as any).loadMemories(botId);
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotManager] Loaded persisted memories for bot ${botId}`);
-                    }
-                    break;
-                } catch (error) {
-                    console.warn(`[BotManager] Failed to load memories for bot ${botId} (attempt ${attempt}/${MAX_LOAD_RETRIES}):`, error);
-                    if (attempt === MAX_LOAD_RETRIES) {
-                        Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
-                    } else {
-                        await new Promise(r => setTimeout(r, 2000));
-                    }
-                }
-            }
-        }
-
-        // Store full config in client so behaviors can access it without HTTP requests
-        client.setFullConfig(config);
-
-        client.setBehavior(behavior);
+        // A visiting Brick starts beside its person (#2005)
+        const visiting = config.brick?.visiting;
+        const home = config.brick?.home;
+        // Whose it is is told to the AI service before the bot can hear anyone: a message in the moment between connecting and
+        // being noted would otherwise be answered as for nobody in particular (#2005)
+        const company = visiting ?? home;
+        if (company) this.aiService.noteRoomBrick(botId, { ownerUuid: company.ownerUuid, ownerName: company.ownerName, roomUrl: config.roomUrl });
+        const client = await this.buildClient(botId, config, { position: options.position }).catch((error: unknown) => {
+            if (company && !this.bots.has(botId)) this.aiService.noteRoomBrick(botId, undefined);
+            throw error;
+        });
 
         // Connect bot
         try {
@@ -451,8 +462,123 @@ export class BotManager {
             return client;
         } catch (error) {
             console.error(`[BotManager] Failed to spawn bot ${botId}:`, error);
+            // A start that fails part-way (the registry could not be reached after the client connected) leaves nothing behind:
+            // not a connected client standing on the map, and not a connected-looking instance the next sync would find and skip
+            if (this.bots.get(botId)?.client === client) {
+                this.bots.delete(botId);
+                this.aiService.noteRoomBrick(botId, undefined);
+            } else if (!this.bots.has(botId)) {
+                this.aiService.noteRoomBrick(botId, undefined);
+            }
+            try {
+                await client.disconnect();
+            } catch (disconnectError) {
+                console.warn(`[BotManager] Could not disconnect bot ${botId} after a failed start:`, disconnectError);
+            }
             throw error;
         }
+    }
+
+    /**
+     * Builds a bot's client with its behaviour, services and memory, ready to connect. Spawning a bot on the map and
+     * opening a call-only connection for a call (game #2004) build it the same way, so the bot talks the same in both.
+     */
+    private async buildClient(botId: string, config: BotConfiguration, options: { callOnly?: boolean; position?: { x: number; y: number } } = {}): Promise<BotClient> {
+        // Create bot client config
+        // BotClient requires: botId, name, roomUrl, pusherUrl, position, viewport, characterTextureIds
+        const pusherUrl = process.env.PUSHER_URL || process.env.WORKADVENTURE_URL || 'http://localhost:8080';
+
+        // The game WebSocket can be served from a different host than the pusher (WS_URL). It defaults
+        // to the pusher URL, and a root-relative WS_URL is resolved against it, so this changes nothing
+        // unless the operator sets WS_URL explicitly.
+        const wsUrl = resolveWsUrl(process.env.WS_URL, pusherUrl);
+
+        // Get position from assignedSpace.center (required field). A visiting Brick starts beside its person
+        const position = options.position ?? config.assignedSpace?.center ?? { x: 0, y: 0 };
+        const visiting = config.brick?.visiting;
+        const home = config.brick?.home;
+
+        const botConfig = {
+            botId,
+            name: config.name || `Bot ${botId}`,
+            roomUrl: config.roomUrl,
+            pusherUrl: pusherUrl.replace('ws://', 'http://').replace('wss://', 'https://'),
+            wsUrl,
+            position,
+            viewport: { top: 0, bottom: 1000, left: 0, right: 1000 }, // TODO: Get from config
+            characterTextureIds: config.characterTextureIds || [], // TODO: Get from config or WAM file
+            companionTextureId: config.companionTextureId || undefined,
+            uploaderUrl: process.env.UPLOADER_URL,
+            callOnly: options.callOnly === true ? true : undefined,
+        };
+        
+        const client = new BotClient(botConfig);
+        // Cards in nearby chat and voice come and go through the AI service's side of it (#1658)
+        client.setAsks(this.aiService.asksPort());
+        client.setAccessGate(this.accessGate);
+        
+        // Store botId mapping
+        botIdMap.set(client, botId);
+        
+        // Set behavior based on config
+        const { IdleBehavior, PatrolBehavior, SocialBehavior } = await import('../behaviors');
+        
+        // Pick the behaviour from the bot's model (where it moves, whether it goes to people), filling in
+        // every default. The same helper runs on live edits, so spawn and edit can't disagree.
+        const built = visiting
+            ? buildBehaviorConfig('idle', {}, undefined)
+            : buildBehaviorConfig(config.behaviorType, config.behaviorConfig, config.assignedSpace);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[BotManager] Bot ${botId} behaviour: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
+        }
+        const behavior = visiting
+            ? this.visitingBehavior(visiting.ownerUuid, botId, config.roomUrl, built.config, client)
+            : home
+              ? new HomedBrickBehavior(built.config as unknown as ConstructorParameters<typeof HomedBrickBehavior>[0])
+              : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
+        
+        // Set services for behavior (including response processor and metrics collector for metrics)
+        behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
+        
+        // Set shared conversation memory (so behaviors use PersistentMemory if enabled)
+        if (behavior.setConversationMemory) {
+            behavior.setConversationMemory(this.conversationMemory);
+        }
+
+        // Load persisted memories for this bot from Admin API
+        // This is critical for restoring emotional state, wounds, etc. after server restart
+        const hasLoadMemories = 'loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function';
+        
+        // A call-only client of a bot that is already running shares what the running bot holds: loading again would only repeat it
+        if (hasLoadMemories && !(options.callOnly && this.bots.has(botId))) {
+            this.botsHoldingMemory.add(botId);
+            // A Forget pressed while the bot was away is applied to what is still held for it before anyone can be
+            // remembered from it (Orbit's answer carries the Forget; this never throws)
+            await this.adminApiService.isBotPrivate?.(botId, { fresh: true });
+            const MAX_LOAD_RETRIES = 2;
+            for (let attempt = 1; attempt <= MAX_LOAD_RETRIES; attempt++) {
+                try {
+                    await (this.conversationMemory as any).loadMemories(botId);
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] Loaded persisted memories for bot ${botId}`);
+                    }
+                    break;
+                } catch (error) {
+                    console.warn(`[BotManager] Failed to load memories for bot ${botId} (attempt ${attempt}/${MAX_LOAD_RETRIES}):`, error);
+                    if (attempt === MAX_LOAD_RETRIES) {
+                        Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                    } else {
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
+                }
+            }
+        }
+
+        // Store full config in client so behaviors can access it without HTTP requests
+        client.setFullConfig(config);
+
+        client.setBehavior(behavior);
+        return client;
     }
 
     /**
@@ -480,6 +606,7 @@ export class BotManager {
 
             // Remove from map
             this.bots.delete(botId);
+            this.aiService.noteRoomBrick(botId, undefined);
 
             // Remove from room tracking
             for (const [roomId, roomState] of this.roomsWithBots.entries()) {
@@ -499,6 +626,18 @@ export class BotManager {
             console.error(`[BotManager] Error despawning bot ${botId}:`, error);
             throw error;
         }
+    }
+
+    /**
+     * Where a line said to this bot is heard, and by whom (#1993). A direct message has nobody else in it; on the map it is
+     * whoever the bot's own client sees in that space. Undefined when the bot is not there to see: the line is then kept
+     * as private. The bot's own line (`sender` 'bot') is heard by whoever its reply went to: its person alone when the
+     * reply was written for them alone, whoever has walked up since.
+     */
+    whoHeard(botId: string, playerId: number, spaceName: string, sender?: 'bot' | 'person'): Heard | undefined {
+        if (spaceName === DM_SPACE_NAME) return heardInDm();
+        const bot = this.getBot(botId);
+        return sender === 'bot' ? bot?.saidIn(spaceName, playerId) : bot?.heardIn(spaceName, playerId);
     }
 
     /**
@@ -718,7 +857,14 @@ export class BotManager {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[BotManager] Live update for ${botId}: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
             }
-            const behavior = instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
+            // A Brick that walks beside its person (#2005) keeps walking beside them: an edit never turns it into a room bot
+            const visiting = instance.config.brick?.visiting;
+            const lives = instance.config.brick?.home;
+            const behavior = visiting
+            ? this.visitingBehavior(visiting.ownerUuid, botId, instance.config.roomUrl, built.config, instance.client)
+            : lives
+              ? new HomedBrickBehavior(built.config as unknown as ConstructorParameters<typeof HomedBrickBehavior>[0])
+              : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
             // Set services for behavior (required for AI responses)
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
             if (behavior.setConversationMemory) {
@@ -876,6 +1022,311 @@ export class BotManager {
     }
 
     /**
+     * Puts the Brick a person brought along on the map of the room they are in, or takes it off (game #2005). Orbit
+     * decides: the person is asked about there, by their own uuid, and Orbit says which Brick (if any) walks beside them
+     * in this room, and nothing at all where the universe does not take visits. Called when the person walks into a
+     * room, brings a Brick along, or ends the visit. The Brick of an earlier room, or a Brick they swapped it for, is
+     * taken off the map first. Never throws for a person Orbit has nothing for: it only takes the Brick off.
+     */
+    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true, since?: VisitSince): Promise<VisitSyncAnswer> {
+        return this.inVisitLine(person.uuid, () => this.runVisitSync(roomUrl, person.uuid, position, mayPlace, since));
+    }
+
+    /**
+     * One thing at a time per person for their visiting Brick: a sync that puts it on the map, one that takes it off, and the
+     * Brick leaving because its person did. Calls that queue behind the same one wake together, so each goes only when none
+     * is left in front of it (a loop), and two never put the Brick on the map twice or find one that is being taken off.
+     */
+    private async inVisitLine<T extends VisitSyncAnswer | void>(uuid: string, work: () => Promise<T>): Promise<T> {
+        let pending = this.visitSyncs.get(uuid);
+        while (pending) {
+            await pending.catch(() => undefined);
+            pending = this.visitSyncs.get(uuid);
+        }
+        const run = work();
+        this.visitSyncs.set(uuid, run as Promise<VisitSyncAnswer | void>);
+        try {
+            return await run;
+        } finally {
+            if (this.visitSyncs.get(uuid) === run) this.visitSyncs.delete(uuid);
+        }
+    }
+
+    private visitSyncs: Map<string, Promise<VisitSyncAnswer | void>> = new Map();
+
+    /**
+     * How many times a visiting Brick came or went in each room. A Brick replaced by another leaves the count of them as it was,
+     * so the room check compares this too: a change of either means the game's count and ours are of two moments.
+     */
+    private visitorChanges: Map<string, number> = new Map();
+
+    /** Visiting Bricks being connected or disconnected in each room right now: the game's own list of the room is behind or ahead of ours meanwhile. */
+    private visitorOpsInFlight: Map<string, number> = new Map();
+
+    private async withVisitorOp<T>(roomUrl: string, work: () => Promise<T>): Promise<T> {
+        this.visitorOpsInFlight.set(roomUrl, (this.visitorOpsInFlight.get(roomUrl) ?? 0) + 1);
+        this.noteVisitorChange(roomUrl);
+        try {
+            return await work();
+        } finally {
+            const left = (this.visitorOpsInFlight.get(roomUrl) ?? 1) - 1;
+            if (left > 0) this.visitorOpsInFlight.set(roomUrl, left);
+            else this.visitorOpsInFlight.delete(roomUrl);
+            this.noteVisitorChange(roomUrl);
+        }
+    }
+
+    private dropVisitorRecordsOf(botId: string): void {
+        for (const [uuid, visitor] of [...this.visitors.entries()]) {
+            if (visitor.botId !== botId) continue;
+            this.visitors.delete(uuid);
+            this.noteVisitorChange(visitor.roomUrl);
+        }
+    }
+
+    private noteVisitorChange(roomUrl: string): void {
+        this.visitorChanges.set(roomUrl, (this.visitorChanges.get(roomUrl) ?? 0) + 1);
+    }
+
+    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true, since?: VisitSince): Promise<VisitSyncAnswer> {
+        // A sync for a room the person came into before the room the Brick now stands in (it was held up on the way) says
+        // nothing about where they are: it must not take down, or hold off, the newer placement. Times are only compared from
+        // the same page load of the game, like Orbit does.
+        const placed = this.visitors.get(uuid);
+        if (placed && placed.roomUrl !== roomUrl && since && placed.since && placed.since.clientId === since.clientId && since.at < placed.since.at) {
+            return { botId: null };
+        }
+        let configs: BotConfiguration[];
+        try {
+            configs = await (since === undefined ? this.adminApiService.getVisitingBricks(roomUrl, [uuid]) : this.adminApiService.getVisitingBricks(roomUrl, [uuid], since));
+        } catch (error) {
+            // Orbit cannot answer: what is on the map stays as it is
+            console.warn('[BotManager] Could not ask Orbit for the visiting Brick:', error instanceof Error ? error.message : error);
+            // (a Brick standing in another room is not on the map of this one)
+            const standing = this.visitors.get(uuid);
+            return standing && standing.roomUrl === roomUrl ? { botId: standing.botId } : { botId: null, reason: 'orbit_unavailable' };
+        }
+        const mine = configs.find((config) => config.brick?.visiting?.ownerUuid === uuid);
+        const current = this.visitors.get(uuid);
+        if (current && (!mine || mine.botId !== current.botId || current.roomUrl !== roomUrl)) {
+            await this.endVisitor(uuid, current.botId);
+        }
+        if (!mine) return { botId: null };
+        // Taking a Brick off the map is always allowed (ending a visit is never refused); only putting one on needs the
+        // caller to have been checked
+        if (!mayPlace) return { botId: this.visitors.get(uuid)?.botId ?? null };
+
+        const running = this.bots.get(mine.botId);
+        if (running && running.status === 'connected' && this.visitors.get(uuid)?.botId === mine.botId) {
+            running.config = { ...running.config, ...mine };
+            running.client.setFullConfig(running.config);
+            const standing = this.visitors.get(uuid);
+            if (standing && since && standing.roomUrl === roomUrl) standing.since = since;
+            return { botId: mine.botId };
+        }
+        // Its own chat is the owner's: a Brick that is also somewhere else as a room Brick (#2005, home) stands there too
+        // and is one bot with one name, so a Brick that already runs is not started a second time
+        if (running && running.status === 'connected') return { botId: mine.botId };
+        const start = position && Number.isFinite(position.x) && Number.isFinite(position.y) ? { x: position.x, y: position.y } : undefined;
+        // Where its person stands is where it first appears. Without it the Brick is not put on the map at all (never at the
+        // map's corner, to walk across the whole room): the caller says "no position yet" and tries again with one
+        if (!start) return { botId: null, reason: 'no_position' };
+        await this.withVisitorOp(roomUrl, () => this.spawnBot(mine.botId, mine, { position: start }));
+        this.visitors.set(uuid, { botId: mine.botId, roomUrl, ...(since ? { since } : {}) });
+        this.noteVisitorChange(roomUrl);
+        return { botId: mine.botId };
+    }
+
+    /** The behaviour of a Brick that walks beside its person, with what it tells the manager. */
+    private visitingBehavior(ownerUuid: string, botId: string, roomUrl: string | undefined, built: unknown, client: BotClient): VisitingBrickBehavior {
+        return new VisitingBrickBehavior({
+            ...(built as ConstructorParameters<typeof VisitingBrickBehavior>[0]),
+            ownerUuid,
+            // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
+            onOwnerGone: () => {
+                this.inVisitLine(ownerUuid, () => this.endVisitor(ownerUuid, botId, client)).catch((error) => console.warn(`[BotManager] Could not take ${botId} off the map:`, error));
+            },
+            // Its own client sees its person: Orbit is told, and says when the visit is over (ended, switched, ran out, the Brick
+            // switched off or deleted, the place stopped taking visits, or the person may no longer open the room)
+            onOwnerSeen: () => {
+                if (roomUrl) void this.keepVisitSeen(ownerUuid, botId, roomUrl, client);
+            },
+        });
+    }
+
+    private async keepVisitSeen(ownerUuid: string, botId: string, roomUrl: string, client: BotClient): Promise<void> {
+        try {
+            const alive = await this.adminApiService.keepVisitAlive(botId, ownerUuid, roomUrl);
+            if (alive === false) await this.inVisitLine(ownerUuid, () => this.endVisitor(ownerUuid, botId, client));
+        } catch (error) {
+            // Orbit cannot answer: the Brick stays as it is and is asked again at the next sighting
+            console.warn(`[BotManager] Could not tell Orbit ${botId} is still with its person:`, error instanceof Error ? error.message : error);
+        }
+    }
+
+    /**
+     * Takes a person's visiting Brick off the map. Only the one it is asked about, and only while it is still theirs.
+     * `client` is the stand the caller spoke for: a late report from a room the person has already left (its answer comes
+     * after the sync that put the Brick in the next room) finds another client on the map and takes down nothing.
+     */
+    private async endVisitor(uuid: string, botId: string, client?: BotClient): Promise<void> {
+        const instance = this.bots.get(botId);
+        if (client && instance?.client !== client) return;
+        let despawned = false;
+        try {
+            if (instance?.config.brick?.visiting?.ownerUuid === uuid) {
+                const standingIn = this.visitors.get(uuid)?.roomUrl ?? instance.config.roomUrl;
+                await (standingIn ? this.withVisitorOp(standingIn, () => this.despawnBot(botId)) : this.despawnBot(botId));
+            }
+            despawned = true;
+        } finally {
+            // The visitor is dropped after the despawn, not before: dropped first, a Brick whose despawn then failed (the
+            // registry could not be reached) would stand on the map with nobody to end it. And a failed despawn must not
+            // leave a connected-looking instance behind (it would be counted as present and be found again by the next sync):
+            // its client is already disconnected, so it is forgotten here and the error still goes on.
+            if (!despawned && instance && this.bots.get(botId) === instance) {
+                this.bots.delete(botId);
+                this.aiService.noteRoomBrick(botId, undefined);
+            }
+            const visitor = this.visitors.get(uuid);
+            if (visitor?.botId === botId) {
+                this.visitors.delete(uuid);
+                this.noteVisitorChange(visitor.roomUrl);
+            }
+        }
+    }
+
+    /**
+     * A person calls a bot (game #2004): the bot opens a call-only connection, which is no body in any room, and joins
+     * the call's private space; the caller's browser joins the same space and offers the audio. Whether the person may
+     * call is Orbit's answer, asked by the caller of this. One call per person and bot: a new one replaces the old
+     * (a reload, a second tab). Returns the name of the space to join.
+     */
+    /** Whether this bot has a voice to take a call with (for the call button: the start asks again). */
+    async canTakeCall(botId: string): Promise<boolean> {
+        try {
+            const config = await this.adminApiService.getBotConfiguration(botId);
+            return !!config && (config as { enabled?: boolean }).enabled !== false && config.voiceEnabled === true;
+        } catch {
+            return false;
+        }
+    }
+
+    async startCall(botId: string, callerUuid: string): Promise<{ spaceName: string }> {
+        const key = callKey(botId, callerUuid);
+        // Registered at once, before anything is awaited: a hang-up or a newer start cancels it
+        const starting = { cancelled: false };
+        const earlier = this.startingCalls.get(key);
+        if (earlier) earlier.cancelled = true;
+        this.startingCalls.set(key, starting);
+        await this.endLiveCall(key);
+        if (starting.cancelled) throw new BotUnavailableError('The call was ended before it started');
+        const cancelledError = () => new BotUnavailableError('The call was ended before it started');
+        try {
+            return await this.startCallSetUp(botId, callerUuid, key, starting, cancelledError);
+        } finally {
+            if (this.startingCalls.get(key) === starting) this.startingCalls.delete(key);
+        }
+    }
+
+    private async startCallSetUp(
+        botId: string,
+        callerUuid: string,
+        key: string,
+        starting: { cancelled: boolean },
+        cancelledError: () => Error
+    ): Promise<{ spaceName: string }> {
+        const config = await this.adminApiService.getBotConfiguration(botId);
+        if (starting.cancelled) throw cancelledError();
+        if (!config || (config as { enabled?: boolean }).enabled === false) {
+            throw new BotUnavailableError(`Bot ${botId} not found`);
+        }
+        if (config.voiceEnabled !== true) {
+            throw new BotCannotCallError();
+        }
+        const spaceName = callSpaceName({ botId, callerUuid, callId: randomUUID() });
+        const client = await this.buildClient(botId, config, { callOnly: true });
+        // Hung up while it was being built: nothing was connected, so nothing is left to end
+        if (starting.cancelled) throw cancelledError();
+        const call: LiveCall = { client, spaceName };
+        // Two starts for the same person and bot can both be here: the one registered last wins, and the one that
+        // was registered first (maybe already connected) is ended, so none is left running with no entry.
+        // Registered before it connects: a later start for the same person ends this one instead of racing it.
+        const previous = this.calls.get(key);
+        this.calls.set(key, call);
+        if (previous) {
+            clearJoinTimer(previous);
+            await previous.client.endCall(previous.spaceName);
+        }
+        const hangUp = (): void => {
+            clearJoinTimer(call);
+            if (this.calls.get(key) === call) this.calls.delete(key);
+            client.disconnect();
+        };
+        client.onDisconnect = () => {
+            clearJoinTimer(call);
+            if (this.calls.get(key) === call) this.calls.delete(key);
+        };
+        // The caller left the space (closed the tab, lost the connection): nobody is left to talk to
+        client.onCallOver = hangUp;
+        // The caller is in the space (or was before the bot): the join deadline no longer applies
+        let callerIn = false;
+        client.onCallJoined = () => {
+            callerIn = true;
+            clearJoinTimer(call);
+        };
+        try {
+            await client.connect();
+            if (this.calls.get(key) !== call) {
+                client.disconnect();
+                throw new BotUnavailableError('The call was replaced by a newer one');
+            }
+            if (!(await client.acceptCall(spaceName))) {
+                throw new BotUnavailableError(`Bot ${botId} could not take the call`);
+            }
+            // Ended or replaced while the bot was joining: the caller must not be told it is on
+            if (this.calls.get(key) !== call) {
+                throw new BotUnavailableError('The call was replaced or ended while the bot was taking it');
+            }
+        } catch (error) {
+            hangUp();
+            throw error;
+        }
+        // A call nobody joins would stay open until this server restarts: hang up if the caller never comes
+        if (!callerIn && this.calls.get(key) === call) {
+            call.joinTimer = setTimeout(hangUp, CALL_JOIN_DEADLINE_MS);
+            call.joinTimer.unref?.();
+        }
+        return { spaceName };
+    }
+
+    /** The call is over (the caller hung up): the bot leaves its space and closes its connection. Never throws. */
+    async endCall(botId: string, callerUuid: string): Promise<boolean> {
+        const key = callKey(botId, callerUuid);
+        const starting = this.startingCalls.get(key);
+        if (starting) {
+            starting.cancelled = true;
+            this.startingCalls.delete(key);
+        }
+        const ended = await this.endLiveCall(key);
+        return ended || starting !== undefined;
+    }
+
+    private async endLiveCall(key: string): Promise<boolean> {
+        const call = this.calls.get(key);
+        if (!call) return false;
+        this.calls.delete(key);
+        clearJoinTimer(call);
+        await call.client.endCall(call.spaceName);
+        return true;
+    }
+
+    /** How many calls are going on now. */
+    liveCalls(): number {
+        return this.calls.size;
+    }
+
+    /**
      * Handle a player entering a room
      * Initializes room if needed and ensures bots are spawned
      * Player count is tracked by verification system querying WA /rooms API
@@ -909,13 +1360,16 @@ export class BotManager {
      * NOTE: This does NOT increment playerCount - use handlePlayerEnterRoom for that
      */
     async ensureBotsForRoom(roomId: string): Promise<void> {
-        // Wait for any existing sync to complete (prevent race conditions)
-        const existingLock = this.roomSyncLocks.get(roomId);
-        if (existingLock) {
+        // Wait for any existing sync to complete (prevent race conditions). Waiters are woken together when a sync ends, so
+        // each looks again before it takes the lock: with one wait, two callers queued behind a sync would both run at once
+        // and could spawn the same bot twice (a voice switch flipped twice in a row syncs the room twice).
+        let existingLock = this.roomSyncLocks.get(roomId);
+        while (existingLock) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[BotManager] Waiting for existing sync for room: ${roomId}`);
             }
             await existingLock;
+            existingLock = this.roomSyncLocks.get(roomId);
         }
 
         // Create a new lock for this sync operation
@@ -930,6 +1384,30 @@ export class BotManager {
         } finally {
             releaseLock!();
             this.roomSyncLocks.delete(roomId);
+        }
+    }
+
+    /**
+     * Runs one start or replacement of a bot at a time. `waited` says whether another one was ahead of this one.
+     */
+    private async withBotStartLock<T>(botId: string, run: (waited: boolean) => Promise<T>): Promise<T> {
+        let waited = false;
+        let ahead = this.botStartLocks.get(botId);
+        while (ahead) {
+            waited = true;
+            await ahead;
+            ahead = this.botStartLocks.get(botId);
+        }
+        let release!: () => void;
+        const lock = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        this.botStartLocks.set(botId, lock);
+        try {
+            return await run(waited);
+        } finally {
+            this.botStartLocks.delete(botId);
+            release();
         }
     }
 
@@ -956,7 +1434,16 @@ export class BotManager {
 
         try {
             // Always load bot configs from Admin API to catch new/deleted bots
-            const bots = await this.adminApiService.getBotConfigurations({ roomUrl: roomId });
+            const roomBots = await this.adminApiService.getBotConfigurations({ roomUrl: roomId });
+            // The Bricks that live in this room (#2005) stand here like room bots. When Orbit cannot say, the ones already
+            // here stay: a failed read must not clear them off the map
+            const homed = await this.adminApiService.getHomedBricks(roomId).catch((error) => {
+                console.warn('[BotManager] Could not ask Orbit for the Bricks that live in the room:', error instanceof Error ? error.message : error);
+                return undefined;
+            });
+            if (homed) this.homedReadFailed.delete(roomId);
+            else this.homedReadFailed.add(roomId);
+            const bots = [...roomBots, ...(homed ?? [])];
             
             // Filter to only enabled bots (if enabled field exists)
             const enabledBots = bots.filter(bot => {
@@ -981,6 +1468,9 @@ export class BotManager {
 
             // Get set of enabled bot IDs from Admin API
             const enabledBotIds = new Set(enabledBots.map(b => b.botId));
+            if (!homed) {
+                for (const botId of targetRoom.botIds) if (this.bots.get(botId)?.config.brick?.home) enabledBotIds.add(botId);
+            }
             
             // Despawn bots that are no longer in Admin API (deleted)
             for (const botId of targetRoom.botIds) {
@@ -997,50 +1487,71 @@ export class BotManager {
             let newBotsSpawned = 0;
             for (const bot of enabledBots) {
                 try {
-                    const existingInstance = this.bots.get(bot.botId);
-                    
-                    // Check if bot is already spawned
-                    if (existingInstance) {
-                        // Check if bot needs respawn (config changed OR disconnected/errored)
-                        const needsRespawn = 
-                            existingInstance.status !== 'connected' ||
-                            existingInstance.config.name !== bot.name ||
-                            existingInstance.config.behaviorType !== bot.behaviorType ||
-                            JSON.stringify(existingInstance.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
-                            (existingInstance.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
-                            // The voice tag is part of the bot's token, so a change of the owner's choice reconnects it
-                            !!existingInstance.config.voiceEnabled !== !!bot.voiceEnabled ||
-                            JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
-                        
-                        if (needsRespawn) {
-                            const reason = existingInstance.status !== 'connected' 
-                                ? `status is ${existingInstance.status}` 
-                                : `config changed`;
-                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.log(`[BotManager] Bot ${bot.botId} ${reason}, respawning with new config`);
-                            }
-                            // Despawn old bot
-                            await this.despawnBot(bot.botId);
-                            // Spawn with new config
-                            await this.spawnBot(bot.botId, bot);
-                            targetRoom.botIds.add(bot.botId);
-                            newBotsSpawned++;
-                        } else {
-                            // Config unchanged, just update the stored config in case other fields changed
-                            existingInstance.config = { ...existingInstance.config, ...bot };
-                            existingInstance.client.setFullConfig(existingInstance.config);
-                            targetRoom.botIds.add(bot.botId);
-                        }
-                        continue;
-                    }
+                    await this.withBotStartLock(bot.botId, async (waited) => {
+                        // Read inside the lock: another room may have started or replaced this bot while we waited
+                        const existingInstance = this.bots.get(bot.botId);
 
-                    // Bot not spawned yet, spawn it
-                    await this.spawnBot(bot.botId, bot);
-                    targetRoom.botIds.add(bot.botId);
-                    newBotsSpawned++;
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
-                    }
+                        // A homed Brick is brought here (or replaced) only when Orbit still says it lives in this room. The list
+                        // may have been read before the Brick was moved or taken out while another room was syncing, so it is
+                        // read again when the Brick is not already standing here or when another start was ahead of us
+                        const standsElsewhere = !existingInstance || existingInstance.config.roomUrl !== bot.roomUrl;
+                        if (bot.brick?.home && (waited || standsElsewhere)) {
+                            const now = await this.adminApiService.getHomedBricks(bot.roomUrl).catch(() => undefined);
+                            // Orbit says it lives elsewhere now, or cannot say: it is not started or replaced on the strength of a
+                            // list that may be older than a move or a take-out. The next sync of the room brings it
+                            if (!now?.some((current) => current.botId === bot.botId)) return;
+                        }
+                        // A Brick that stands here as a room Brick is no one's visitor: a visit it had (Orbit ended it as the home was
+                        // placed) would otherwise be counted next to it as a second bot of the room
+                        if (bot.brick?.home) this.dropVisitorRecordsOf(bot.botId);
+                        const current = this.bots.get(bot.botId);
+
+                        // Check if bot is already spawned
+                        if (current) {
+                            // Check if bot needs respawn (config changed OR disconnected/errored)
+                            const needsRespawn =
+                                current.status !== 'connected' ||
+                                current.config.name !== bot.name ||
+                                current.config.behaviorType !== bot.behaviorType ||
+                                JSON.stringify(current.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
+                                (current.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
+                                // The voice tag is part of the bot's token, so a change of the owner's choice reconnects it
+                                !!current.config.voiceEnabled !== !!bot.voiceEnabled ||
+                                JSON.stringify(current.config.assignedSpace) !== JSON.stringify(bot.assignedSpace) ||
+                                // A Brick moved to another room (same spot or not) is connected to the room it was in: it joins this one
+                                current.config.roomUrl !== bot.roomUrl ||
+                                (current.config.brick?.home?.ownerUuid ?? null) !== (bot.brick?.home?.ownerUuid ?? null);
+
+                            if (needsRespawn) {
+                                const reason = current.status !== 'connected'
+                                    ? `status is ${current.status}`
+                                    : `config changed`;
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[BotManager] Bot ${bot.botId} ${reason}, respawning with new config`);
+                                }
+                                // Despawn old bot
+                                await this.despawnBot(bot.botId);
+                                // Spawn with new config
+                                await this.spawnBot(bot.botId, bot);
+                                targetRoom.botIds.add(bot.botId);
+                                newBotsSpawned++;
+                            } else {
+                                // Config unchanged, just update the stored config in case other fields changed
+                                current.config = { ...current.config, ...bot };
+                                current.client.setFullConfig(current.config);
+                                targetRoom.botIds.add(bot.botId);
+                            }
+                            return;
+                        }
+
+                        // Bot not spawned yet, spawn it
+                        await this.spawnBot(bot.botId, bot);
+                        targetRoom.botIds.add(bot.botId);
+                        newBotsSpawned++;
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
+                        }
+                    });
                 } catch (error) {
                     console.error(`[BotManager] Failed to spawn bot ${bot.botId} for room ${roomId}:`, error);
                     // Continue spawning other bots even if one fails
@@ -1052,8 +1563,21 @@ export class BotManager {
             }
             console.log(`[BotManager] Room ${roomId} has ${targetRoom.botIds.size} bots total`);
             // A room without bots isn't kept, so room ids that have no bots (or don't exist) don't pile up
-            if (targetRoom.botIds.size === 0) {
+            if (targetRoom.botIds.size === 0 && !this.homedReadFailed.has(roomId)) {
                 this.roomsWithBots.delete(roomId);
+            } else if (targetRoom.botIds.size === 0) {
+                // Orbit could not say which Bricks live here: the room stays listed so the room check asks again
+                if (!this.roomsWithBots.has(roomId)) this.roomsWithBots.set(roomId, targetRoom);
+            } else {
+                // Respawning the only bot of a room (a changed voice switch, a new name) despawns it, and despawning the last
+                // bot drops the room's entry while this sync still holds the old one: keep the room listed, with its bots,
+                // so the bot is still found when the room empties.
+                const listed = this.roomsWithBots.get(roomId);
+                if (!listed) {
+                    this.roomsWithBots.set(roomId, targetRoom);
+                } else if (listed !== targetRoom) {
+                    for (const botId of targetRoom.botIds) listed.botIds.add(botId);
+                }
             }
         } catch (error) {
             console.error(`[BotManager] Error ensuring bots for room ${roomId}:`, error);
@@ -1157,6 +1681,19 @@ export class BotManager {
                 connected++;
             }
         }
+        return connected + this.visitingBrickCount(roomId);
+    }
+
+    /**
+     * The Bricks walking beside their person (#2005) that are connected in this room. They are in the game's list of the
+     * room like any bot, are no person, and are not in `roomsWithBots` (a room's own bots only), so every count of who is
+     * a person has to add them.
+     */
+    private visitingBrickCount(roomId: string): number {
+        let connected = 0;
+        for (const visitor of this.visitors.values()) {
+            if (visitor.roomUrl === roomId && this.bots.get(visitor.botId)?.status === 'connected') connected++;
+        }
         return connected;
     }
 
@@ -1220,6 +1757,11 @@ export class BotManager {
             return; // No rooms to verify
         }
 
+        // What the game counts in a room and what this server counts must be of the same moment: a visiting Brick put on the
+        // map, or taken off, while the game was asked is a count from two moments, and the room is left alone this time
+        const visitingBefore = new Map<string, string>();
+        const placementOf = (roomId: string) => `${this.visitingBrickCount(roomId)}:${this.visitorChanges.get(roomId) ?? 0}:${this.visitorOpsInFlight.get(roomId) ?? 0}`;
+        for (const roomId of this.roomsWithBots.keys()) visitingBefore.set(roomId, placementOf(roomId));
         const waRooms = await this.queryWorkAdventureRooms();
         console.log(`[BotManager] WA rooms query returned ${waRooms.size} rooms`);
         
@@ -1228,15 +1770,31 @@ export class BotManager {
             return; // Query failed or no rooms
         }
 
-        for (const [roomId, roomState] of this.roomsWithBots.entries()) {
+        // A snapshot of the rooms: reading Orbit again below can drop a room's entry and put it back, and the live map would
+        // then offer the room a second time in this pass, now with a count of the game taken before that
+        for (const roomId of [...this.roomsWithBots.keys()]) {
+            const roomState = this.roomsWithBots.get(roomId);
+            if (!roomState) continue; // dropped by an earlier room in this pass
             const waUserCount = waRooms.get(roomId) || 0;
-            const ourBotCount = roomState.botIds.size;
+            // Kept only for a read of Orbit that failed: with nobody in it, there is nothing to read for
+            if (roomState.botIds.size === 0 && this.visitingBrickCount(roomId) === 0 && waUserCount === 0) {
+                this.roomsWithBots.delete(roomId);
+                this.homedReadFailed.delete(roomId);
+                continue;
+            }
+            // A visiting Brick is in the game's count of the room too, and is no person
+            const visiting = this.visitingBrickCount(roomId);
+            if ((this.visitorOpsInFlight.get(roomId) ?? 0) > 0 || placementOf(roomId) !== visitingBefore.get(roomId)) {
+                console.log(`[BotManager] Room ${roomId}: a visiting Brick is, or was while the game was asked, being connected, disconnected or replaced. Checking again next time.`);
+                continue;
+            }
+            const ourBotCount = roomState.botIds.size + visiting;
 
             // If WA reports at or below our bot count, room is empty of real players
             // WA user count includes bots, so waUserCount <= ourBotCount means no real players present
             if (waUserCount <= ourBotCount) {
                 // Double-check: are any bots actually connected?
-                let connectedBots = 0;
+                let connectedBots = visiting;
                 for (const botId of roomState.botIds) {
                     const instance = this.bots.get(botId);
                     if (instance && instance.status === 'connected') {
@@ -1274,6 +1832,13 @@ export class BotManager {
                 console.log(
                     `[BotManager] Room ${roomId} has ${realPlayerCount} real player(s) (WA: ${waUserCount} total, bots: ${ourBotCount})`
                 );
+                // Orbit returns a Brick on its own (a deleted room, a switch turned off, a take-out by someone else) and tells nobody:
+                // while people are here, a room with a Brick that lives in it is read again, once a minute, so it is never kept longer
+                if (this.homedReadFailed.has(roomId) || [...roomState.botIds].some((botId) => this.bots.get(botId)?.config.brick?.home)) {
+                    await this.ensureBotsForRoom(roomId).catch((error: unknown) => {
+                        console.warn(`[BotManager] Could not read Orbit again for room ${roomId}:`, error instanceof Error ? error.message : error);
+                    });
+                }
             }
         }
     }
@@ -1333,7 +1898,15 @@ export class BotManager {
         // Stop verification interval
         this.stopRoomVerification();
         this.adminApiService.stopPrivacySync?.();
+        this.fileRemovals?.stop();
 
+        for (const starting of this.startingCalls.values()) starting.cancelled = true;
+        this.startingCalls.clear();
+        for (const call of this.calls.values()) {
+            clearJoinTimer(call);
+            call.client.disconnect();
+        }
+        this.calls.clear();
         const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
         await Promise.all(shutdownPromises);
 
