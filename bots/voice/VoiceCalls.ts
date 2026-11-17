@@ -255,6 +255,7 @@ export class VoiceCalls {
     private readonly unreported = new Map<string, string>();
     /** Set while a shutdown waits for the last reports: told whenever one comes. */
     private reportArrived?: () => void;
+    private shuttingDown = false;
     /** Who each player is for the books, kept from when they were here: a report of what they said or heard can arrive after they left. Oldest first out. */
     private readonly talkers = new Map<number, VoiceWho>();
     /** Only for a bot whose voice Orbit decides (see VoiceSettings): asked just before a reply is said. */
@@ -1105,6 +1106,9 @@ export class VoiceCalls {
     }
 
     private endSession(sessionId: string): void {
+        // A call that ends while the bot keeps running: the worker's last report of its replies is booked whenever it comes, and nobody waits
+        // for it. Only a shutdown, which closes the link, has to hold on for it
+        if (!this.shuttingDown) for (const [segmentId, owner] of [...this.unreported]) if (owner === sessionId) this.unreported.delete(segmentId);
         // A session that was never opened has nothing to end on the worker
         if (!this.opening.delete(sessionId)) this.link.send({ type: 'session.end', sessionId });
     }
@@ -1774,6 +1778,7 @@ export class VoiceCalls {
      * take it), so whoever switches the server off can wait for it.
      */
     shutdown(): Promise<void> {
+        this.shuttingDown = true;
         for (const call of [...this.calls.values()]) this.game.sendDisconnect(call.spaceName, call.participantId);
         for (const bubble of this.bubbles.values()) {
             this.endSession(bubble.sessionId);

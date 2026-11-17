@@ -372,6 +372,15 @@ describe('a live call is booked in Orbit', () => {
         expect(b.link.close).toHaveBeenCalledTimes(1);
     });
 
+    it('shutting down does not wait for a reply of a call that ended long before: its last report was the worker\u2019s answer to that end', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        await b.say(reply(1), 'Queued, never played.');
+        b.calls.spaceLeft(SPACE);
+        await b.calls.shutdown();
+        expect(b.link.close).toHaveBeenCalledTimes(1);
+    });
+
     it('books nothing for a reply of which no moment was heard', async () => {
         const b = bot({ recognition: false, speech: false });
         await b.connect();
