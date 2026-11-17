@@ -24,7 +24,7 @@ export interface PriceCallInput {
 }
 
 const usageIsReadable = (usage: CallUsage): boolean =>
-    [usage.inputTokens, usage.cachedTokens, usage.cacheWriteTokens, usage.outputTokens, usage.reasoningTokens].every(
+    [usage.inputTokens, usage.cachedTokens, usage.cacheWriteTokens, usage.outputTokens, usage.reasoningTokens, usage.cacheWrite1hTokens ?? 0].every(
         (count) => typeof count === 'number' && Number.isFinite(count) && count >= 0
     );
 
@@ -59,13 +59,27 @@ function ratesFor(prices: ModelPrices, context: number): Rates {
  * input price. Reasoning is charged as output unless the list gives it a price of its own.
  */
 function dollarsFor(rates: Rates, usage: CallUsage): number {
+    // A write to the one-hour cache is its own price (Claude: twice the input price); the rest are the short kind (S2)
+    const longWrites = Math.min(Math.max(usage.cacheWrite1hTokens ?? 0, 0), usage.cacheWriteTokens);
     const perMillion =
         usage.inputTokens * rates.input +
         usage.cachedTokens * (rates.cache_read ?? rates.input) +
-        usage.cacheWriteTokens * (rates.cache_write ?? rates.input) +
+        (usage.cacheWriteTokens - longWrites) * (rates.cache_write ?? rates.input) +
+        longWrites * (rates.cache_write_1h ?? rates.input * 2) +
         usage.outputTokens * rates.output +
         usage.reasoningTokens * (rates.reasoning ?? rates.output);
     return perMillion / 1e6;
+}
+
+/**
+ * What the provider itself billed for a call (R6), in millionths of a dollar: the cost it reported if it reported one, else the price list's
+ * figure. A super admin's own rate (costPerToken) is never in it: that rate decides what a member is charged, not what the provider billed.
+ * Null when nobody knows.
+ */
+export function providerCostMicros(input: PriceCallInput): number | null {
+    if (typeof input.reportedCostUsd === 'number' && Number.isFinite(input.reportedCostUsd) && input.reportedCostUsd >= 0) return toMicros(input.reportedCostUsd);
+    const { costPerToken: _rate, markup: _markup, ...settings } = input.config.settings ?? {};
+    return priceCall({ ...input, config: { ...input.config, settings } }).micros;
 }
 
 const unknown = (reason: string): CallCost => ({ basis: 'unknown', micros: null, source: null, version: null, reason });

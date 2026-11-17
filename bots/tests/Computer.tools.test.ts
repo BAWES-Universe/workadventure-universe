@@ -80,6 +80,24 @@ describe('use_computer (#2000)', () => {
         expect(String(allowance.note)).toMatch(/Never give a number or a price/);
         const busy = await run(asking({ ok: true, job: job({ status: 'queued', queuedFor: 'busy' }), restoredFrom: null }));
         expect(String(busy.note)).toMatch(/nothing needs asking for/);
+        expect(String(busy.note)).toMatch(/waiting uses none of it/);
+    });
+
+    it('says a job paused for money is saved and carries on by itself, with no Ask for more and no money named', async () => {
+        for (const queuedFor of ['budget', 'funds', 'paused']) {
+            const paused = await run(asking({ ok: true, job: job({ status: 'queued', queuedFor }), restoredFrom: null }));
+            expect(paused).toMatchObject({ started: false, queued: true });
+            expect(String(paused.note)).toMatch(/saved and paused/);
+            expect(String(paused.note)).toMatch(/nothing they need to do/);
+            expect(String(paused.note)).not.toMatch(/Ask for more\.? Say|tap Ask for more/);
+        }
+    });
+
+    it('says this Brick’s AI cannot run a computer yet, from Orbit’s typed reason', async () => {
+        for (const reason of ['ai_unsupported', 'ai_cannot_run_computer', 'unsupported']) {
+            const result = await run(asking({ ok: false, reason }));
+            expect(String(result.note)).toMatch(/cannot run a computer yet/);
+        }
     });
 
     it('starts no pretend job for one that is only waiting', async () => {

@@ -4,7 +4,7 @@
  * Prices are written out by hand here, so a changed list shows up as a failing test and not as a silent new cost.
  */
 import { describe, expect, it, vi } from "vitest";
-import { priceCall, toMicros } from "../ai/pricing/costing";
+import { priceCall, providerCostMicros, toMicros } from "../ai/pricing/costing";
 import { catalog, findPrices, providerForAddress } from "../ai/pricing/priceCatalog";
 import { isChineseHoliday, isDeepSeekPeak } from "../ai/pricing/overrides";
 import { emptyUsage } from "../ai/pricing/types";
@@ -235,5 +235,41 @@ describe("toMicros", () => {
         expect(toMicros(0.00002)).toBe(20);
         expect(toMicros(0.0000004)).toBe(1);
         expect(toMicros(0)).toBe(0);
+    });
+});
+
+describe("Claude cache writes by their real lifetime (S2)", () => {
+    const claude = { type: "openai", endpoint: "https://api.anthropic.com/v1", model: "claude-sonnet-4-5" };
+    it("prices a write to the five-minute cache at 1.25 times input and one to the one-hour cache at twice input, and the rest as before", () => {
+        const base = priceCall({ config: claude, usage: usage({ inputTokens: 1000, cacheWriteTokens: 10000 }), at: monday("05:00") }).micros!;
+        const hour = priceCall({ config: claude, usage: usage({ inputTokens: 1000, cacheWriteTokens: 10000, cacheWrite1hTokens: 10000 }), at: monday("05:00") }).micros!;
+        const half = priceCall({ config: claude, usage: usage({ inputTokens: 1000, cacheWriteTokens: 10000, cacheWrite1hTokens: 5000 }), at: monday("05:00") }).micros!;
+        // sonnet-4-5: input 3, cache_write 3.75, so the one-hour price is 6
+        expect(base).toBe(1000 * 3 + 10000 * 3.75);
+        expect(hour).toBe(1000 * 3 + 10000 * 6);
+        expect(half).toBe(1000 * 3 + 5000 * 3.75 + 5000 * 6);
+    });
+    it("never counts more one-hour writes than there were writes", () => {
+        const over = priceCall({ config: claude, usage: usage({ cacheWriteTokens: 100, cacheWrite1hTokens: 900 }), at: monday("05:00") }).micros!;
+        expect(over).toBe(priceCall({ config: claude, usage: usage({ cacheWriteTokens: 100, cacheWrite1hTokens: 100 }), at: monday("05:00") }).micros);
+    });
+});
+
+describe("the provider's own figure beside the member's price (R6)", () => {
+    const rated = { ...deepseek, settings: { costPerToken: 0.0000001 } };
+    const used = usage({ inputTokens: 100_000, outputTokens: 100_000 });
+    it("keeps the cost the provider reported when a super admin's rate sets the member price", () => {
+        // the member is charged by the rate: 200,000 tokens x $0.0000001 = $0.02 ...
+        expect(priceCall({ config: rated, usage: used, at: monday("05:00"), reportedCostUsd: 0.1 }).micros).toBe(20_000);
+        // ... and the provider's $0.10 is what it billed
+        expect(providerCostMicros({ config: rated, usage: used, at: monday("05:00"), reportedCostUsd: 0.1 })).toBe(100_000);
+    });
+    it("falls back to the price list for the provider's figure, never to the super admin's rate", () => {
+        const listed = priceCall({ config: deepseek, usage: used, at: monday("05:00") }).micros;
+        expect(providerCostMicros({ config: rated, usage: used, at: monday("05:00") })).toBe(listed);
+        expect(listed).not.toBe(20_000);
+    });
+    it("is unknown when nobody knows", () => {
+        expect(providerCostMicros({ config: { type: "openai", endpoint: "https://nobody.example/v1", model: "x" }, usage: used, at: monday("05:00") })).toBeNull();
     });
 });
