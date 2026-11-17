@@ -887,14 +887,16 @@ describe('going on needs the whole stretch: words or lost audio from before the 
         c.control.close();
     });
 
-    it('20 ms of audio missing before the gate: never goes on, never resolved empty', async () => {
+    it('20 ms of audio missing before the gate: never goes on, never resolved empty; a stop at once, not after the watchdog', async () => {
         const c = composed({ firstDroppedMs: 20 });
         await c.fan(1800);
         expect(c.calls).not.toContain('resume r1');
         expect(c.counters.get('yield_continues')).toBe(0);
         expect(c.counters.get('yield_resumes')).toBe(0);
-        expect(c.counters.get('yield_watchdog')).toBe(1);
+        expect(c.counters.get('yield_watchdog')).toBe(0);
+        expect(c.counters.get('yield_paused_audio_missing')).toBe(1);
         expect(c.counters.get('yield_stops')).toBe(1);
+        expect(c.spoke).toEqual([true]);
         c.recognition.dispose();
         c.control.close();
     });
@@ -902,9 +904,15 @@ describe('going on needs the whole stretch: words or lost audio from before the 
     it('audio missing after the gate: no going on while paused; a stop, once, while going on', async () => {
         const paused = composed();
         await paused.fan(200);
-        await paused.fan(1700, 20);
+        await paused.fan(100, 20);
+        // At once, as today: within the next 100 ms, not held until the stretch ends or the watchdog
+        expect(paused.spoke).toEqual([true]);
+        expect(paused.counters.get('yield_paused_audio_missing')).toBe(1);
+        await paused.fan(1600);
         expect(paused.calls).not.toContain('resume r1');
         expect(paused.counters.get('yield_stops')).toBe(1);
+        expect(paused.counters.get('yield_watchdog')).toBe(0);
+        expect(paused.spoke).toEqual([true]);
         paused.recognition.dispose();
         paused.control.close();
 

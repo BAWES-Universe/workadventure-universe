@@ -203,6 +203,11 @@ export class YieldControl implements Interruptions {
             missing: turn.missingMs > 0,
         };
         episode.candidates.set(turn.turnId, candidate);
+        if (candidate.missing) {
+            // Audio of theirs already went missing before the gate: it can never resume or go on, so a stop, as today, at once
+            this.stop(episode, 'paused_audio_missing', candidate);
+            return true;
+        }
         const ep = episode;
         candidate.cancel = observer.confirm(turn.participantId, turn.epoch, (fallback) => {
             if (ep.candidates.get(turn.turnId) !== candidate) return;
@@ -239,8 +244,9 @@ export class YieldControl implements Interruptions {
         const candidate = episode?.candidates.get(turnId);
         if (!episode || !candidate || candidate.end || ms <= 0) return;
         candidate.missing = true;
-        // While going on provisionally, the stretch can no longer be followed whole: a stop, as today
-        if (episode.phase === 'continuing') this.stop(episode, 'continuing_audio_missing', candidate);
+        // The stretch can no longer be followed whole, so nothing can resume or go on over it: a stop, as today, at once
+        // (while paused too, not after a later end of the stretch or the watchdog)
+        this.stop(episode, episode.phase === 'continuing' ? 'continuing_audio_missing' : 'paused_audio_missing', candidate);
     }
 
     ended(turnId: string, how: TurnEnd): void {
