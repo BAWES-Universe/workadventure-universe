@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
-import { createComputerModelRelay, estimateCallMicros, inputTokensOf, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, outputCapOf, relayOrbitFor, type AuthorizeInput, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { stepKindOf, createComputerModelRelay, estimateCallMicros, inputTokensOf, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, outputCapOf, relayOrbitFor, type AuthorizeInput, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -66,17 +66,28 @@ beforeAll(async () => {
     upstreamBase = `${urlOf(upstream)}/v1`;
 
     orbit = { identify: vi.fn(), authorize: vi.fn(), settle: vi.fn(), contract: vi.fn() } as never;
+});
+
+/** A relay of its own for each test: the limits Orbit last served are kept by the relay, and must not carry from one test into the next. */
+const startRelay = async () => {
     const app = express();
     app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], sleep: (ms) => waits.sleep(ms) }));
     relay = await listen(app);
     relayBase = urlOf(relay);
-});
+};
 
 afterAll(async () => {
-    await Promise.all([upstream, relay].map((server) => new Promise<void>((resolve) => { server.closeAllConnections?.(); server.close(() => resolve()); })));
+    await Promise.all([upstream].map((server) => new Promise<void>((resolve) => { server.closeAllConnections?.(); server.close(() => resolve()); })));
 });
 
-beforeEach(() => {
+afterEach(async () => {
+    await new Promise<void>((resolve) => {
+        relay.closeAllConnections?.();
+        relay.close(() => resolve());
+    });
+});
+
+beforeEach(async () => {
     upstreamRequests = [];
     upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } });
     orbit.identify.mockReset().mockResolvedValue({ ok: true, jobId: JOB, botId: BOT });
@@ -86,6 +97,7 @@ beforeEach(() => {
     waits.slept = [];
     waits.sleep = async (ms: number) => { waits.slept.push(ms); };
     route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
+    await startRelay();
 });
 
 describe('who may call', () => {
@@ -627,6 +639,15 @@ describe('the same step keeps one id (contract version 2)', () => {
         expect(new Set(settled().map((entry) => entry.callId)).size).toBe(2);
     });
 
+    it('names the kind of step: a picture back is vision, a tool that writes is edit, any other tool is tool, the person’s words are a reply', () => {
+        const call = (name: string) => ({ role: 'assistant', content: '', tool_calls: [{ id: 'c', type: 'function', function: { name, arguments: '{}' } }] });
+        expect(stepKindOf({ messages: [{ role: 'user', content: 'hi' }] })).toBe('reply');
+        expect(stepKindOf({ messages: [{ role: 'user', content: 'hi' }, call('write_file'), { role: 'tool', tool_call_id: 'c', content: 'ok' }] })).toBe('edit');
+        expect(stepKindOf({ messages: [{ role: 'user', content: 'hi' }, call('browser_click'), { role: 'tool', tool_call_id: 'c', content: 'ok' }] })).toBe('tool');
+        expect(stepKindOf({ messages: [{ role: 'user', content: 'hi' }, call('screenshot'), { role: 'tool', tool_call_id: 'c', content: [{ type: 'image_url', image_url: { url: 'https://x/y.png' } }] }] })).toBe('vision');
+        expect(stepKindOf({ messages: [] })).toBe('other');
+    });
+
     it('sends the version 2 ingredients: the input, the price of an output token, the real answer limit, the kind of step and the route', async () => {
         const body = {
             max_tokens: 700,
@@ -638,7 +659,7 @@ describe('the same step keeps one id (contract version 2)', () => {
         };
         await askAndSettle(body);
         const input = authorizeInputs()[0];
-        expect(input).toMatchObject({ payer: 'universe', route: 'universe-ai', stepKind: 'browser_click', estimate: { maxOutputTokens: 700 } });
+        expect(input).toMatchObject({ payer: 'universe', route: 'universe-ai', model: 'gpt-test', modelFormat: 'openai', stepKind: 'tool', estimate: { maxOutputTokens: 700 } });
         // the test model is priced at $0.000001 a token: an output token is one millionth of a dollar, so a million cost 1,000,000 millionths
         expect(input.estimate.outputMicrosPerMillion).toBe(1_000_000);
         expect(input.estimate.inputTokens).toBeGreaterThan(0);
@@ -969,7 +990,23 @@ describe('the three pairings of the contract (6.3)', () => {
         expect(sent).not.toHaveProperty('estimateMicros');
         expect(sent).not.toHaveProperty('callId');
         await orbitReal.settle(settleInput);
-        expect(bodiesOf(a)[1].body).toMatchObject({ contract: 2, providerCostMicros: 100_000, costMicros: 20_000, unexplained: { tokens: 9, costMicros: 3 }, tokens: { cacheWrite1h: 0 } });
+        const settleSent = bodiesOf(a)[1].body;
+        expect(settleSent).toMatchObject({ contract: 2, operationId: 'op_1', providerCostMicros: 100_000, costMicros: 20_000, unexplained: { tokens: 9, costMicros: 3 }, tokens: { cacheWrite1h: 0 } });
+        // the strict version 2 route knows no callId
+        expect(settleSent).not.toHaveProperty('callId');
+        // and every name sent is one the contract lists
+        const listed = ['contract', 'jobId', 'operationId', 'sent', 'costMicros', 'providerCostMicros', 'basis', 'payerPersonId', 'route', 'tokens', 'unexplained', 'cutShort'];
+        expect(Object.keys(settleSent).filter((key) => !listed.includes(key))).toEqual([]);
+        const authorizeListed = ['contract', 'token', 'operationId', 'payer', 'route', 'model', 'modelFormat', 'stepKind', 'inputTokens', 'inputMicros', 'outputMicrosPerMillion', 'maxOutputTokens', 'providerMaxMicros'];
+        expect(Object.keys(sent).filter((key) => !authorizeListed.includes(key))).toEqual([]);
+    });
+
+    it('both new: authorize with no room needed for an own-key call still sends every required number', async () => {
+        const a = admin([{ status: 200, data: { ok: true, contract: 2, memberMicros: 0, providerMaxMicros: 0, authorisation: null } }]);
+        const own = askInput({ payer: 'own-key', route: 'own-key', estimate: { inputTokens: 3, inputMicros: 0, outputMicrosPerMillion: null, maxOutputTokens: null, providerMaxMicros: null }, estimateMicros: 50_000 });
+        await relayOrbitFor(a).authorize(own);
+        expect(bodiesOf(a)[0].body).toMatchObject({ contract: 2, payer: 'own-key', inputMicros: 0, outputMicrosPerMillion: 0 });
+        expect(bodiesOf(a)[0].body.maxOutputTokens).toBeGreaterThanOrEqual(1);
     });
 
     it('both new: a wait, a rule, a budget and a Brick whose AI cannot run a computer are each read as what they are', async () => {
@@ -977,7 +1014,11 @@ describe('the three pairings of the contract (6.3)', () => {
         expect(await read({ reason: 'busy', retryAfterSeconds: 7 })).toEqual({ ok: false, reason: 'busy', retryAfterSeconds: 7 });
         expect(await read({ reason: 'holds', retryAfterSeconds: 4 })).toEqual({ ok: false, reason: 'busy', retryAfterSeconds: 4 });
         expect(await read({ reason: 'rule', words: 'Your rule.' })).toEqual({ ok: false, reason: 'rule', words: 'Your rule.' });
-        expect(await read({ reason: 'budget' })).toEqual({ ok: false, reason: 'allowance' });
+        expect(await read({ reason: 'budget', words: 'Computer work is paused for now.', paused: true, canAskForMore: false })).toEqual({ ok: false, reason: 'allowance', words: 'Computer work is paused for now.' });
+        expect(await read({ reason: 'funds' })).toEqual({ ok: false, reason: 'allowance' });
+        expect(await read({ reason: 'paused' })).toEqual({ ok: false, reason: 'allowance' });
+        expect(await read({ reason: 'unpriced' })).toEqual({ ok: false, reason: 'unpriced' });
+        expect(await read({ reason: 'refused' })).toEqual({ ok: false, reason: 'refused' });
         expect(await read({ reason: 'unsupported' })).toEqual({ ok: false, reason: 'unsupported' });
         expect(await read({ reason: 'brand_new', retryAfterSeconds: 2 })).toEqual({ ok: false, reason: 'other', code: 'brand_new', retryAfterSeconds: 2 });
     });

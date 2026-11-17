@@ -52,14 +52,20 @@ export interface CallEstimate {
     providerMaxMicros: number | null;
 }
 
+export type StepKind = 'reply' | 'edit' | 'tool' | 'vision' | 'other';
+
 export interface AuthorizeInput {
     token: string;
     /** One operation is one step. The same id when Hermes asks again for the same step, so Orbit never takes room twice for it. */
     operationId: string;
     payer: 'universe' | 'own-key';
     route: 'universe-ai' | 'provider' | 'own-key';
-    /** What kind of step this is, where it can be told (the tool the last step called, or "message"). */
-    stepKind?: string;
+    /** The model the call goes to, so comparable steps group for Orbit's estimate. */
+    model?: string;
+    /** The wire format of the route (the check before a paid wake, and Gemini's gap). */
+    modelFormat?: 'openai' | 'gemini-compatible' | 'other';
+    /** What kind of step this is, where it can be told. */
+    stepKind?: StepKind;
     estimate: CallEstimate;
     /** The one amount version 1 holds: the whole most of the call. */
     estimateMicros: number;
@@ -71,11 +77,13 @@ export interface AuthorizeInput {
  */
 export type Refusal =
     | { reason: 'refused' }
-    | { reason: 'allowance' }
+    /** Truly out: the person's credit, Universe's budget, a provider's funds, or a job already paused. `words` is Orbit's sentence for the person, when it gave one. */
+    | { reason: 'allowance'; words?: string }
     | { reason: 'pool' }
     | { reason: 'busy'; retryAfterSeconds: number }
     | { reason: 'rule'; words: string }
     | { reason: 'unsupported' }
+    | { reason: 'unpriced' }
     | { reason: 'other'; code: string; retryAfterSeconds?: number };
 
 export type AuthorizeResult = ({ ok: true; limits?: RelayLimits } | ({ ok: false } & Refusal));
@@ -105,7 +113,10 @@ function limitsOf(data: unknown): RelayLimits | undefined {
     return Object.keys(limits).length ? limits : undefined;
 }
 
-/** The version 2 body of an authorise: the two amounts' ingredients, never one summed amount. */
+/**
+ * The version 2 body of an authorise, with exactly the names of docs/computer-llm-contract-v2.md (Orbit refuses any other field): the two amounts'
+ * ingredients, never one summed amount. A call on the owner's own key takes no room, so its amounts are 0 and its answer length a placeholder Orbit ignores.
+ */
 function authorizeBodyV2(input: AuthorizeInput): Record<string, unknown> {
     const { estimate } = input;
     return {
@@ -114,11 +125,13 @@ function authorizeBodyV2(input: AuthorizeInput): Record<string, unknown> {
         operationId: input.operationId,
         payer: input.payer,
         route: input.route,
+        ...(input.model ? { model: input.model.slice(0, 120) } : {}),
+        ...(input.modelFormat ? { modelFormat: input.modelFormat } : {}),
         ...(input.stepKind ? { stepKind: input.stepKind } : {}),
         inputTokens: estimate.inputTokens,
         inputMicros: estimate.inputMicros,
-        ...(estimate.outputMicrosPerMillion !== null ? { outputMicrosPerMillion: estimate.outputMicrosPerMillion } : {}),
-        ...(estimate.maxOutputTokens !== null ? { maxOutputTokens: estimate.maxOutputTokens } : {}),
+        outputMicrosPerMillion: estimate.outputMicrosPerMillion ?? 0,
+        maxOutputTokens: estimate.maxOutputTokens ?? RELAY_GUARDS.defaultOutputTokens,
         ...(estimate.providerMaxMicros !== null ? { providerMaxMicros: estimate.providerMaxMicros } : {}),
     };
 }
@@ -135,32 +148,39 @@ function refusalV1(data: Record<string, unknown>): Refusal {
             return { reason: 'allowance' };
         case 'pool':
             return { reason: 'pool' };
-        case 'unsupported':
-            return { reason: 'unsupported' };
         case 'rule':
-            return { reason: 'rule', words: typeof data.words === 'string' && data.words.trim() ? data.words.trim() : 'A rule you set does not let this computer spend that much.' };
+            return { reason: 'rule', words: wordsFrom(data) ?? 'A rule you set does not let this computer spend that much.' };
         default:
             return { reason: 'other', code: typeof data.reason === 'string' ? data.reason.slice(0, 40) : 'unknown' };
     }
 }
 
-/** Reads a refusal of version 2: the typed reason, the wait where waiting helps, the rule's words. */
+const wordsFrom = (data: Record<string, unknown>): string | undefined => (typeof data.words === 'string' && data.words.trim() ? data.words.trim().slice(0, 500) : undefined);
+
+/** Reads a refusal of version 2: the typed reason, the wait where waiting helps, Orbit's words. */
 function refusalV2(data: Record<string, unknown>): Refusal {
     const wait = countOf(data.retryAfterSeconds);
     const reason = typeof data.reason === 'string' ? data.reason : 'unknown';
-    if (wait && (reason === 'busy' || reason === 'holds' || reason === 'capacity' || reason === 'pool')) return { reason: 'busy', retryAfterSeconds: wait };
+    const words = wordsFrom(data);
     switch (reason) {
+        case 'busy':
+        case 'holds':
+            // Waiting helps. With no time said, a short one: never "out"
+            return { reason: 'busy', retryAfterSeconds: wait ?? RELAY_GUARDS.defaultRetryAfterSeconds };
         case 'refused':
-        case 'allowance':
-        case 'pool':
+            return { reason: 'refused' };
         case 'rule':
+            return { reason: 'rule', words: words ?? 'A rule you set does not let this computer spend that much.' };
         case 'unsupported':
-            return refusalV1({ ...data, reason });
+            return { reason: 'unsupported' };
+        case 'unpriced':
+            return { reason: 'unpriced' };
+        case 'allowance':
         case 'budget':
         case 'funds':
         case 'paused':
-            // Truly out of what Universe or a company account can spend: the job is saved and paused, never "bad key"
-            return { reason: 'allowance' };
+            // Truly out of what a person, Universe or a provider can spend (the job is saved and paused by Orbit): the turn stops, never "bad key"
+            return { reason: 'allowance', ...(words ? { words } : {}) };
         default:
             return { reason: 'other', code: reason.slice(0, 40), ...(wait ? { retryAfterSeconds: wait } : {}) };
     }
@@ -205,7 +225,7 @@ export function relayOrbitFor(admin: { computerRelayCall(step: 'identify' | 'aut
         },
         async settle(input) {
             // Version 1's route refuses a field it does not know, so only what it knows is sent to it
-            const body = contract === 1 ? settleBodyV1(input) : { contract: 2, ...input, callId: input.callId };
+            const body = contract === 1 ? settleBodyV1(input) : settleBodyV2(input);
             const { status } = await admin.computerRelayCall('settle', body);
             // 404: Orbit knows no such call, so nothing was written; telling it again would change nothing
             if (status === 404) return { ok: false };
@@ -213,6 +233,12 @@ export function relayOrbitFor(admin: { computerRelayCall(step: 'identify' | 'aut
             return { ok: true };
         },
     };
+}
+
+/** What version 2's settle route takes: `operationId` is the call's id there (the strict route refuses `callId`). */
+function settleBodyV2(input: SettleInput): Record<string, unknown> {
+    const { callId, ...rest } = input;
+    return { contract: 2, ...rest, operationId: callId };
 }
 
 /** What version 1's settle route takes: the same fields it always had. */
@@ -392,7 +418,9 @@ export function refuse(res: Response, refusal: Refusal): void {
         case 'refused':
             return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         case 'allowance':
-            return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
+            return problem(res, 429, refusal.words ?? 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
+        case 'unpriced':
+            return problem(res, 422, 'This Brick’s AI has no price in Universe’s list, so a computer cannot run on it yet.', 'model_not_priced');
         case 'pool':
             return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error', RELAY_GUARDS.defaultRetryAfterSeconds);
         case 'busy':
@@ -408,18 +436,30 @@ export function refuse(res: Response, refusal: Refusal): void {
     }
 }
 
-/** What kind of step this is, where it can be told: the tool the last step called, else "message". Names only, never words. */
-export function stepKindOf(body: Record<string, unknown>): string | undefined {
+const hasPicture = (message: unknown): boolean =>
+    isRecord(message) && Array.isArray(message.content) && message.content.some((part) => isRecord(part) && (part.type === 'image_url' || part.type === 'input_image' || part.type === 'image'));
+
+/**
+ * What kind of step this is, where it can be told: a step that just got a picture back is `vision`, one that follows a tool that wrote or changed
+ * something is `edit`, one that follows any other tool is `tool`, and one that answers the person's words is `reply`. Comparable steps group by it for
+ * Orbit's estimate. Never words, only the kind.
+ */
+export function stepKindOf(body: Record<string, unknown>): StepKind {
     const messages = Array.isArray(body.messages) ? body.messages : [];
-    for (let at = messages.length - 1; at >= 0; at--) {
-        const message = messages[at];
-        if (!isRecord(message) || message.role !== 'assistant') continue;
-        const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-        const last = calls[calls.length - 1];
-        const name = isRecord(last) && isRecord(last.function) && typeof last.function.name === 'string' ? last.function.name : '';
-        return /^[A-Za-z0-9_.-]{1,64}$/.test(name) ? name : 'message';
+    const last = messages[messages.length - 1];
+    if (!isRecord(last)) return 'other';
+    if (hasPicture(last) || hasPicture(messages[messages.length - 2])) return 'vision';
+    if (last.role === 'tool') {
+        for (let at = messages.length - 2; at >= 0; at--) {
+            const message = messages[at];
+            if (!isRecord(message) || message.role !== 'assistant') continue;
+            const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+            const names = calls.map((call) => (isRecord(call) && isRecord(call.function) && typeof call.function.name === 'string' ? call.function.name : ''));
+            return names.some((name) => /write|edit|patch|replace|create|save|append|delete|move/i.test(name)) ? 'edit' : 'tool';
+        }
+        return 'tool';
     }
-    return 'message';
+    return last.role === 'user' || last.role === 'assistant' ? 'reply' : 'other';
 }
 
 /**
@@ -677,8 +717,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
         if (!token || !who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         const { jobId, botId } = who as { ok: true; jobId: string; botId: string };
-        // What Orbit serves now is what stands: an answer with no limits leaves the version 1 guards
-        served = who.limits;
+        if (who.limits) served = who.limits;
 
         const body = req.body;
         if (!isRecord(body) || !Array.isArray(body.messages) || body.messages.length === 0) {
@@ -738,7 +777,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 operationId: operation.id,
                 payer,
                 route: source,
-                ...(stepKindOf(body) ? { stepKind: stepKindOf(body) } : {}),
+                model: config.model,
+                modelFormat: imageRuleName(config) === 'gemini' ? 'gemini-compatible' : 'openai',
+                stepKind: stepKindOf(body),
                 estimate,
                 estimateMicros: estimate.providerMaxMicros ?? RELAY_GUARDS.unpricedHoldMicros,
             };
