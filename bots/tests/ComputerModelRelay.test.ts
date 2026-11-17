@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
-import { createComputerModelRelay, estimateCallMicros, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { createComputerModelRelay, estimateCallMicros, inputTokensOf, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -143,6 +143,18 @@ describe('room before the call', () => {
         expect(small).toBeGreaterThan(0);
         expect(big).toBeGreaterThan(small);
         expect(estimateCallMicros({ messages }, config({ endpoint: 'https://nobody.example/v1', model: 'mystery' }), 100, new Date())).toBe(50_000);
+    });
+
+    it('reads text that takes several bytes a character (Arabic, Chinese, emoji) at what it costs, not at a third of it (audit F9)', () => {
+        const latin = { messages: [{ role: 'user', content: 'a'.repeat(3000) }] };
+        const arabic = { messages: [{ role: 'user', content: 'م'.repeat(3000) }] };
+        const chinese = { messages: [{ role: 'user', content: '你'.repeat(3000) }] };
+        // Same number of characters, more bytes: more tokens held, and a Chinese character is at least a token
+        expect(inputTokensOf(arabic)).toBeGreaterThan(inputTokensOf(latin));
+        expect(inputTokensOf(chinese)).toBeGreaterThanOrEqual(3000);
+        // A fixed price per token, so the test does not depend on the price catalog
+        const priced = config({ model: 'any', settings: { costPerToken: 0.000001 } });
+        expect(estimateCallMicros(chinese, priced, 100, new Date())).toBeGreaterThan(estimateCallMicros(latin, priced, 100, new Date()));
     });
 
     it('allows a reply as long as Hermes asked, up to the guard, else what the provider says', () => {
