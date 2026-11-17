@@ -59,8 +59,10 @@
     $: exportCount = searching ? foundCount : $files.count;
     $: if ($files.made.nextCursor !== null || $files.sent.nextCursor !== null) long = true;
     $: computer = $files.computer;
-    $: madeLeft = $files.made.fileTotal - $files.made.files.length;
-    $: sentLeft = $files.sent.total - $files.sent.files.length;
+    // What is left is whatever Orbit has a next page for: a file that was left out of a page (not whole) or already shown
+    // never keeps "Show older files" on the page once there is no next page
+    $: madeLeft = $files.made.nextCursor === null ? 0 : Math.max(1, $files.made.fileTotal - $files.made.files.length);
+    $: sentLeft = $files.sent.nextCursor === null ? 0 : Math.max(1, $files.sent.total - $files.sent.files.length);
 
     onMount(() => {
         list.load().catch((error) => console.error(error));

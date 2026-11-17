@@ -488,6 +488,27 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
                 expect(rowsText("filesSentRow")[129]).toContain("sent-130.pdf");
             });
 
+            it("takes the end of a list from Orbit's next place, not from counting, so a file left out never keeps the button", async () => {
+                game.getBrickFiles.mockResolvedValue(
+                    answer({
+                        sent: { files: sentPage(1, 50), total: 52, nextCursor: "sent-next" },
+                        count: 54,
+                    })
+                );
+                // The last page holds one whole file and one that is not whole (left out), and Orbit says it is the last
+                game.getBrickFilesPage.mockResolvedValueOnce({
+                    section: "sent",
+                    files: [sentFile(51), file({ id: "" })],
+                    total: 52,
+                    nextCursor: null,
+                });
+                await openGroup();
+                byId("filesMoreSentButton")?.click();
+                await settle();
+                expect(all("filesSentRow")).toHaveLength(51);
+                expect(byId("filesMoreSent")).toBeNull();
+            });
+
             it("shows more of what it made without leaving the list, and keeps the artifacts one tap away apart", async () => {
                 game.getBrickFiles.mockResolvedValue(longAnswer());
                 await openGroup();
