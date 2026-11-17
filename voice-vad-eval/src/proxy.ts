@@ -12,7 +12,9 @@ if (proxy) {
         createConnection(options: Record<string, unknown>, done: (err: Error | null, socket?: net.Socket) => void): undefined {
             const host = String(options.host ?? options.hostname);
             const targetPort = Number(options.port ?? 443);
-            const raw = net.connect(proxyPort, hostname, () => raw.write(`CONNECT ${host}:${targetPort} HTTP/1.1\r\nHost: ${host}:${targetPort}\r\n\r\n`));
+            const connect = () => raw.write(`CONNECT ${host}:${targetPort} HTTP/1.1\r\nHost: ${host}:${targetPort}\r\n\r\n`);
+            // An https: proxy speaks TLS itself: CONNECT goes inside that TLS, and the target's TLS inside the tunnel
+            const raw: net.Socket = protocol === 'https:' ? tls.connect({ host: hostname, port: proxyPort, servername: hostname }, connect) : net.connect(proxyPort, hostname, connect);
             let head = '';
             const onData = (chunk: Buffer) => {
                 head += chunk.toString('latin1');
