@@ -213,7 +213,7 @@ function bot(owners: { recognition: boolean; speech: boolean }, options: { withM
     }
     const present = new Set<string>();
     return {
-        calls, speech, requests: o.requests, sent,
+        calls, speech, requests: o.requests, sent, link,
         async connect(who = 'room_7') {
             present.add(who);
             calls.spaceUsers(SPACE, [...present].map((id) => ({ spaceUserId: id, uuid: `uuid-${id}`, tags: [], name: id }) as never));
@@ -339,6 +339,37 @@ describe('a live call is booked in Orbit', () => {
         answer(true);
         await done;
         expect(over).toBe(true);
+    });
+
+    it('shutting down keeps the worker link open for the last report of a reply that was playing, books it, and only then closes the link', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        await b.say(reply(1), 'Still talking.');
+        let over = false;
+        const done = b.calls.shutdown().then(() => (over = true));
+        await vi.advanceTimersByTimeAsync(200);
+        expect(b.sent.some((m) => m.type === 'session.end')).toBe(true);
+        expect(b.link.close).not.toHaveBeenCalled();
+        expect(over).toBe(false);
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 2500, totalMs: 4000, finished: true, interrupted: true, reason: 'session_end' });
+        await done;
+        expect(b.link.close).toHaveBeenCalledTimes(1);
+        expect(b.requests.flat().map((e) => [e.detail.part, e.quantity])).toEqual([['speaking', 3]]);
+    });
+
+    it('shutting down does not wait for ever for a worker that never reports, and closes at once when no reply was playing', async () => {
+        const quiet = bot({ recognition: false, speech: false });
+        await quiet.connect();
+        await quiet.calls.shutdown();
+        expect(quiet.link.close).toHaveBeenCalledTimes(1);
+
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        await b.say(reply(1), 'Never reported.');
+        const done = b.calls.shutdown();
+        await vi.advanceTimersByTimeAsync(60_000);
+        await done;
+        expect(b.link.close).toHaveBeenCalledTimes(1);
     });
 
     it('books nothing for a reply of which no moment was heard', async () => {

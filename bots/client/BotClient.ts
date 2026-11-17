@@ -155,6 +155,8 @@ export class BotClient {
     private readonly chatIds = new Map<number, string>();
     /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
     private voice: VoiceCalls | null = null;
+    /** What earlier stops of the voice are still sending to Orbit. */
+    private readonly draining = new Set<Promise<void>>();
     /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
     private speech: BotSpeech | null = null;
     /** Which meeting room the bot stands in, for a voice bot only (see voice/MeetingAreas.ts). */
@@ -3117,12 +3119,17 @@ export class BotClient {
     /** Ends the voice. Answers when what the calls used has been sent to Orbit, so a server being switched off can wait for it. */
     private stopVoice(): Promise<void> {
         this.speech?.shutdown();
-        const drained = this.voice?.shutdown() ?? Promise.resolve();
+        const drain = this.voice?.shutdown();
+        if (drain) {
+            // Kept here, not on the voice that is about to be forgotten: the next stop (the server being switched off) waits for this one too
+            const pending: Promise<void> = drain.catch(() => undefined).finally(() => this.draining.delete(pending));
+            this.draining.add(pending);
+        }
         this.voice = null;
         this.speech = null;
         this.meeting?.reset();
         this.meeting = null;
-        return drained;
+        return Promise.all([...this.draining]).then(() => undefined);
     }
 
     /** The meeting rooms of the map (areas with a LiveKit room setting). Only a voice bot ever uses them. */

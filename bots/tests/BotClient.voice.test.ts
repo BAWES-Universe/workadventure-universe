@@ -175,6 +175,24 @@ describe('BotClient voice', () => {
         });
     });
 
+    it('disconnecting answers only when what the calls used was sent, even when the voice was already ended by the socket closing', async () => {
+        const { bot, internals } = setup(true);
+        internals.startVoice();
+        let sent!: () => void;
+        const drain = new Promise<void>((resolve) => (sent = resolve));
+        (bot as unknown as { voice: { shutdown: () => Promise<void> } }).voice.shutdown = () => drain;
+        // The socket to the game closing ends the voice first, then the server being switched off disconnects the bot
+        void (bot as unknown as { stopVoice(): Promise<void> }).stopVoice();
+        let over = false;
+        const done = bot.disconnect().then(() => (over = true));
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(over).toBe(false);
+        sent();
+        await done;
+        expect(over).toBe(true);
+    });
+
     it('closes the socket to the worker when the bot disconnects', () => {
         const { bot, internals } = setup(true);
         internals.startVoice();
