@@ -152,7 +152,8 @@ describe('room before the call', () => {
         // Same number of characters, more bytes: more tokens held, and a Chinese character is at least a token
         expect(inputTokensOf(arabic)).toBeGreaterThan(inputTokensOf(latin));
         expect(inputTokensOf(chinese)).toBeGreaterThanOrEqual(3000);
-        const priced = config({ endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' });
+        // A fixed price per token, so the test does not depend on the price catalog
+        const priced = config({ model: 'any', settings: { costPerToken: 0.000001 } });
         expect(estimateCallMicros(chinese, priced, 100, new Date())).toBeGreaterThan(estimateCallMicros(latin, priced, 100, new Date()));
     });
 
