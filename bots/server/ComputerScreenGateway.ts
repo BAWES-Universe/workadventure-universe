@@ -299,7 +299,9 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
         };
         grantedAt(askedAt);
 
-        // Orbit is asked every few seconds; no answer from it is a no (a screen is never left open on a state nobody can vouch for)
+        // Orbit is asked every few seconds; no answer from it is a no (a screen is never left open on a state nobody can vouch for).
+        // An input socket is asked often enough to be confirmed before its own deadline, whatever interval Orbit names: 60% of the deadline
+        // leaves the rest (2.8 s of 7) for the round trip of a check.
         timer = setInterval(() => {
             if (checking || over) return;
             checking = true;
@@ -313,7 +315,7 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
                 })
                 .catch(() => end(1011, 'The screen could not be checked'))
                 .finally(() => (checking = false));
-        }, Math.max(1000, opened.checkEveryMs));
+        }, Math.max(1000, opened.mode === 'input' ? Math.min(opened.checkEveryMs, Math.round(inputYesMs * 0.6)) : opened.checkEveryMs));
         limit = setTimeout(() => end(1000, 'The screen was open too long'), Math.max(1000, opened.maxMs));
     };
 

@@ -327,6 +327,25 @@ describe('the screen gateway', () => {
         expect(await Promise.race([closed(socket), new Promise<string>((resolve) => setTimeout(() => resolve('still open'), 3500))])).toBe(1011);
     });
 
+    it('asks an input socket often enough to stay open however long an interval Orbit names', async () => {
+        await gateway.close();
+        gateway = createScreenGateway({
+            orbit,
+            connect: () => new WebSocket(machineUrl, 'binary'),
+            inputYesMs: 1500,
+            log: { warn: () => undefined, error: () => undefined },
+        });
+        // Orbit says "ask every 60 s", longer than the socket's own deadline: it is still asked in time and stays open while the answer is yes
+        orbit.open.mockResolvedValue(opened('input', { checkEveryMs: 60_000 }));
+        orbit.check.mockResolvedValue({ ok: true, mode: 'input' });
+        const socket = await viewer();
+        let gone = false;
+        void closed(socket).then(() => (gone = true));
+        await new Promise((resolve) => setTimeout(resolve, 3200));
+        expect(gone).toBe(false);
+        expect(orbit.check.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
     it('does not put the input deadline on a watching socket: it only looks', async () => {
         await gateway.close();
         gateway = createScreenGateway({
