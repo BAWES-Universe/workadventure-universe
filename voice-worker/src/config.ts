@@ -5,7 +5,11 @@ import { DEFAULT_BARGE_IN_MS } from './recognition.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS } from './soniox.ts';
 import { DEFAULT_MAX_PREVIEWS, DEFAULT_MAX_PREVIEW_SECONDS } from './preview.ts';
 import { sileroLoader } from './speechObserverRuntime.ts';
+import { YIELD_POLICIES, type YieldPolicy } from './yieldControl.ts';
 import { DEFAULT_MAX_REPLY_SECONDS, DEFAULT_MAX_UTTERANCE_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS, type WorkerOptions } from './server.ts';
+
+/** People the speech observer watches at once when switched on: the load it was measured at (9 + 6). */
+export const DEFAULT_SPEECH_OBSERVER_MAX_STREAMS = 15;
 
 const int = (value: string | undefined, fallback: number): number => {
     const parsed = Number.parseInt(value ?? '', 10);
@@ -22,6 +26,16 @@ function parseIce(env: NodeJS.ProcessEnv): IceConfig {
     // VOICE_PUBLIC_IP: the address people can reach this machine on, when it is behind a NAT
     if (env.VOICE_PUBLIC_IP) ice.iceAdditionalHostAddresses = env.VOICE_PUBLIC_IP.split(',').map((a) => a.trim());
     return ice;
+}
+
+/**
+ * The pause (yieldControl.ts), on for every bot whenever the speech observer is on: a bot's voice pauses on a loud sound and
+ * stops only once it is speech. VOICE_YIELD_POLICY picks how (`hold`, the default; `confirm` and `dip` exist only to be
+ * compared). There is no per-bot list and nothing for anyone to set.
+ */
+function yieldFromEnv(env: NodeJS.ProcessEnv): Pick<WorkerOptions, 'yieldBots'> {
+    const policy = (YIELD_POLICIES as readonly string[]).includes(env.VOICE_YIELD_POLICY ?? '') ? (env.VOICE_YIELD_POLICY as YieldPolicy) : 'hold';
+    return { yieldBots: { policy } };
 }
 
 export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOptions {
@@ -41,9 +55,19 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         maxPreviewSeconds: int(env.VOICE_MAX_PREVIEW_SECONDS, DEFAULT_MAX_PREVIEW_SECONDS),
         maxPreviews: int(env.VOICE_MAX_PREVIEWS, DEFAULT_MAX_PREVIEWS),
         recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000),
-        // Internal and off unless both are set: a second listener that only counts (speechObserver.ts). It changes nothing anyone hears.
-        ...(env.VOICE_SPEECH_OBSERVER === '1' && env.VOICE_SPEECH_OBSERVER_MODEL
-            ? { speechObserver: { load: sileroLoader({ modelPath: env.VOICE_SPEECH_OBSERVER_MODEL, runtime: env.VOICE_SPEECH_OBSERVER_RUNTIME, env }) } }
+        // The speech detector (speechObserver.ts) and with it the pause, on wherever the model is (the image sets it). The one
+        // way off, for engineers only: VOICE_SPEECH_OBSERVER=0, then restart; every bot is back to today's rule (the voice
+        // stops on any loud sound). It watches at most VOICE_SPEECH_OBSERVER_MAX_STREAMS people at once (default 15, the load
+        // it was measured at: 9 people in 3 proximity sessions and 6 in 2 LiveKit rooms); anyone beyond that is not watched,
+        // and today's rule decides for them.
+        ...(env.VOICE_SPEECH_OBSERVER !== '0' && env.VOICE_SPEECH_OBSERVER_MODEL
+            ? {
+                  speechObserver: {
+                      load: sileroLoader({ modelPath: env.VOICE_SPEECH_OBSERVER_MODEL, runtime: env.VOICE_SPEECH_OBSERVER_RUNTIME, env }),
+                      maxStreams: int(env.VOICE_SPEECH_OBSERVER_MAX_STREAMS, DEFAULT_SPEECH_OBSERVER_MAX_STREAMS),
+                  },
+                  ...yieldFromEnv(env),
+              }
             : {}),
     };
 }
