@@ -209,7 +209,7 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
     const SARA = '@sara:matrix.test';
     const ROOM = '!dm:matrix.test';
 
-    function bridgeWith(opts: { room?: string | null; members?: string[]; access?: any; sendFails?: boolean }) {
+    function bridgeWith(opts: { room?: string | null; members?: string[]; membersOf?: Record<string, string[]>; access?: any; sendFails?: boolean }) {
         const sendMessage = vi.fn(async (..._args: unknown[]) => {
             if (opts.sendFails) throw new Error('homeserver down');
             return '$said';
@@ -218,7 +218,7 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
         const client = {
             sendMessage,
             uploadMedia,
-            getJoinedMembers: vi.fn(async (..._args: unknown[]) => opts.members ?? [SARA, BRICK_USER]),
+            getJoinedMembers: vi.fn(async (...args: unknown[]) => opts.membersOf?.[String(args[1])] ?? opts.members ?? [SARA, BRICK_USER]),
         };
         const deps: any = {
             getBotConfig: vi.fn(async () => ({ botId: BRICK, name: 'Brick', enabled: true })),
@@ -385,12 +385,31 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
             expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, expect.anything(), 't');
         });
 
-        it('says origin_gone, and sends nothing, when the chat the two share now is not the one it began in (never a chat picked or made for it)', async () => {
-            const { bridge, sendMessage, uploadMedia } = bridgeWith({});
+        it('says origin_gone, and sends nothing, when the chat the two share now is another one and the chat it began in is not theirs any more (never a chat picked or made for it)', async () => {
+            const { bridge, sendMessage, uploadMedia } = bridgeWith({ membersOf: { '!old-chat:matrix.test': [SARA] } });
             const answer = await bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: '!old-chat:matrix.test', files: [{ id: 'f1', name: 'a.pdf', mime: 'application/pdf', bytes: 1, load: async () => Buffer.from('a'), delivered: async () => undefined }] });
             expect(answer).toEqual({ ok: false, reason: 'origin_gone' });
             expect(sendMessage).not.toHaveBeenCalled();
             expect(uploadMedia).not.toHaveBeenCalled();
+        });
+
+        it('still speaks in the chat the job began in when the chat kept for the person is another one, as long as it is still the two of them alone; a look that failed waits', async () => {
+            // The record points at ROOM, the job began in the older chat, which is still the person and the Brick alone
+            const both = bridgeWith({});
+            expect(await both.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: '!old-chat:matrix.test' })).toEqual({ ok: true, eventId: '$said' });
+            expect(both.sendMessage).toHaveBeenCalledWith(BRICK_USER, '!old-chat:matrix.test', expect.anything(), 't');
+            // Nothing is said in the chat kept now, and the record never moves to the older chat
+            expect(both.sendMessage).not.toHaveBeenCalledWith(BRICK_USER, ROOM, expect.anything(), expect.anything());
+            expect(both.deps.rooms.rememberDmRoomOf).not.toHaveBeenCalledWith(BRICK, SARA, '!old-chat:matrix.test');
+            // Someone else is in it: gone, not a retry
+            const shared = bridgeWith({ membersOf: { '!old-chat:matrix.test': [SARA, BRICK_USER, '@someone:matrix.test'] } });
+            expect(await shared.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: '!old-chat:matrix.test' })).toEqual({ ok: false, reason: 'origin_gone' });
+            expect(shared.sendMessage).not.toHaveBeenCalled();
+            // The look failed: tried again later, never marked gone
+            const down = bridgeWith({});
+            down.client.getJoinedMembers.mockRejectedValueOnce(new Error('homeserver down'));
+            expect(await down.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: '!old-chat:matrix.test' })).toEqual({ ok: false, reason: 'unsure' });
+            expect(down.sendMessage).not.toHaveBeenCalled();
         });
 
         it('uses the chat the job began in when the shared store has lost its record of it, and notes it again; a store that could not be read waits', async () => {

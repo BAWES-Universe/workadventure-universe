@@ -921,7 +921,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
             looked = { roomId: expectedRoomId, unsure: false };
         }
         if (!looked.roomId) return { ok: false, reason: looked.unsure ? 'unsure' : 'no_chat' };
-        if (expectedRoomId && looked.roomId !== expectedRoomId) return { ok: false, reason: 'origin_gone' };
+        if (expectedRoomId && looked.roomId !== expectedRoomId) {
+            // The chat kept for this person now is another one (a second chat was made, or the record moved). The chat the work began in is still the
+            // one to speak in when it is still the two of them alone; only when it is not theirs any more is it gone. Could not look: tried again.
+            const theirs = await this.isOnlyTheTwoOf(botId, matrixUserId, expectedRoomId);
+            if (theirs === null) return { ok: false, reason: 'unsure' };
+            if (!theirs) return { ok: false, reason: 'origin_gone' };
+            looked = { roomId: expectedRoomId, unsure: false };
+        }
         let access: DmAccessResult;
         try {
             access = await this.access(botId, matrixUserId, true);
