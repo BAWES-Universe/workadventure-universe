@@ -41,6 +41,8 @@
     import VoiceDraftCard from "../Bots/VoiceDraftCard.svelte";
     import VoiceListeningRow from "../Bots/VoiceListeningRow.svelte";
     import BotAskCard from "../Bots/BotAskCard.svelte";
+    import BotToolSignInCard from "../Bots/BotToolSignInCard.svelte";
+    import { closeToolSignIn, isToolSignInClosed } from "../../Bots/BotToolSignIn";
     import {
         askBarFits,
         chatAsks,
@@ -537,6 +539,14 @@
     // Cards the bot asks one answer with (#1657), in a direct message with a bot. The oldest waiting card is pinned above the
     // message box until it is answered, closed or runs out; the chat keeps the ones that ended, where they were asked.
     // And in nearby chat (#1658), where a bot shows the card to the person who asked and nobody else.
+    // The newest Reconnect card a bot showed this person (#1819), pinned above the message box until they close it. A
+    // direct message keeps its cards in the chat: the card checks with Orbit that the sign-in is still lost before it shows.
+    let signInClosedCount = 0;
+    $: dockedSignIn = (() => {
+        void signInClosedCount;
+        const newest = [...($messages ?? [])].reverse().find((message) => message.toolSignIn);
+        return newest && !isToolSignInClosed(newest.id) ? newest : undefined;
+    })();
     $: askStore = (partnerBotId || proximityRoom) && messages ? chatAsks(messages) : readable([]);
     let askNow = Date.now();
     let askTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1641,6 +1651,8 @@
                             {#if shownReplyLimits.has(entry.message.id)}
                                 <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
                             {/if}
+                        {:else if entry.message.toolSignIn}
+                            <!-- The Reconnect card is pinned above the message box, so the chat never repeats it. -->
                         {:else if askById.has(entry.message.id)}
                             <!-- A waiting card is pinned above the message box, so the chat never repeats it. Once it
                                  ended, it moves into the chat where it was asked, as it ended. -->
@@ -1746,6 +1758,17 @@
                         onShowQueued={() => (pagedToAskId = waitingAsks[queuedSoonIndex]?.message.id)}
                         onOpen={() => chatSheetSnapStore.set("full")}
                     />
+                {/if}
+                {#if dockedSignIn?.toolSignIn}
+                    {#key dockedSignIn.id}
+                        <BotToolSignInCard
+                            signIn={dockedSignIn.toolSignIn}
+                            onClose={() => {
+                                closeToolSignIn(dockedSignIn?.id ?? "");
+                                signInClosedCount += 1;
+                            }}
+                        />
+                    {/key}
                 {/if}
                 {#if brickCard && ownBrick}
                     <!-- The Brick's own suggestions (#1995), on the question card: ways to start, then ideas. A tap

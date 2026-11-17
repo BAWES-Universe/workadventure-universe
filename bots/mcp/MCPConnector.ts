@@ -17,6 +17,15 @@ import { sanitizedError } from '../utils/sanitizedError';
 import { linkExternalAbort } from '../ai/providers/abortUtils';
 import { checkOutboundUrl, guardedLookup } from './outboundGuard';
 import {
+    ToolHealth,
+    type SeenServer,
+    isNoAnswer,
+    isSignInRefusal,
+    reportToolState,
+    type ToolIssue,
+    type ToolIssueState,
+} from './ToolSignIn';
+import {
     MAX_TOOLS_PER_SERVER,
     fingerprintTool,
     keptTools,
@@ -50,6 +59,9 @@ export interface McpServerConfig {
     readyMade?: boolean;
     /** Where Orbit is, set when `readyMade`. Never sent anywhere else. */
     orbitUrl?: string;
+    /** When Orbit last saw this server's sign-in refused, or the server not answer (#1819); null when not */
+    signInLostAt?: string | null;
+    noAnswerAt?: string | null;
 }
 
 export interface McpToolDefinition {
@@ -73,6 +85,8 @@ interface CachedTools {
 
 /** Where a tool lives, for routing a call to it and for telling whether it is the tool a person confirmed. */
 export interface ToolServerEntry {
+    /** The bot this entry was found for, so a call that is refused can tell Orbit whose sign-in it was (#1819). */
+    botId?: string;
     serverId: string;
     serverUrl: string;
     authType: string;
@@ -267,6 +281,8 @@ interface JsonRpcOutcome {
     retryable: boolean;
     /** The server said, in its answer, that its list of tools changed */
     listChanged?: boolean;
+    /** The HTTP status of a refusal or failure, when the server gave one (#1819) */
+    status?: number;
 }
 
 /** Sent, or maybe sent, with no answer: the server may have run it */
@@ -287,6 +303,10 @@ export type ToolCallOutcome = 'not_sent' | 'failed' | 'uncertain';
  */
 const NOT_SENT_ERROR = "Couldn't reach it. Nothing ran";
 const NOT_SENT_HINT = 'The call never reached the tool server, so nothing was done. Trying again is safe.';
+const SIGN_IN_EXPIRED_ERROR = 'Sign-in expired. Nothing ran';
+const SIGN_IN_EXPIRED_HINT =
+    "The tool server turned this bot's sign-in away, so nothing was done. Do not call this tool again. Tell the person plainly " +
+    'that its sign-in expired and that you have let the people who manage you know, then help with what you can without it.';
 const NO_ANSWER_ERROR = 'No answer. May have finished';
 const EMPTY_ANSWER_ERROR = 'Empty answer. May have finished';
 const MAY_HAVE_RUN_HINT =
@@ -651,7 +671,7 @@ async function sendJsonRpc(
                 mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
             }
             const neverRan = requestNeverRan(error, sessionId !== undefined);
-            return { data: null, neverRan, retryable: neverRan };
+            return { data: null, neverRan, retryable: neverRan, ...(typeof status === 'number' ? { status } : {}) };
         } else {
             // The error's words can quote what was asked of the tool: only the method and the kind of error are kept
             const kind = error instanceof Error ? error.name : 'Error';
@@ -742,12 +762,15 @@ export class MCPConnector {
      * saved to Orbit as if it were the whole one, so the tools of the pages that were not read can't look removed or
      * unconfirmed. The next read tries again.
      */
-    private static async listAllTools(server: McpServerConfig): Promise<{ tools: RawTool[]; cut: ToolListCut | null } | null> {
+    private static async listAllTools(
+        server: McpServerConfig,
+        failure?: { outcome?: JsonRpcOutcome }
+    ): Promise<{ tools: RawTool[]; cut: ToolListCut | null } | null> {
         const all: RawTool[] = [];
         let cursor: string | undefined;
         let moreLeft = false;
         for (let page = 0; page < MAX_TOOL_PAGES; page++) {
-            const response = await jsonRpcRequest(
+            const outcome = await sendJsonRpc(
                 server.serverUrl,
                 'tools/list',
                 cursor ? { cursor } : undefined,
@@ -759,7 +782,9 @@ export class MCPConnector {
                 undefined,
                 server.readyMade === true && server.orbitUrl ? { orbitUrl: server.orbitUrl, botId: server.botId, serverId: server.id, forOwner: true } : undefined
             );
+            const response = outcome.data;
             if (!response || !response.result || !Array.isArray(response.result.tools)) {
+                if (failure) failure.outcome = outcome;
                 return null;
             }
             for (const item of response.result.tools) {
@@ -813,8 +838,13 @@ export class MCPConnector {
     ): Promise<{
         tools: McpToolDefinition[];
         toolServerMap: Map<string, ToolServerEntry>;
+        /** Servers that are not working for the bot right now: a refused sign-in, or no answer (#1819). Left out when the
+         * server list could not be read: nothing is known then, and a card shown before stays as it is. */
+        issues?: ToolIssue[];
     }> {
         const toolServerMap = new Map<string, ToolServerEntry>();
+        const orbit = { adminApiUrl, adminApiToken };
+
         // Fetch MCP server configs from admin API
         let servers: McpServerConfig[] = [];
         const loading = this.loadServers(botId, adminApiUrl, adminApiToken);
@@ -834,9 +864,10 @@ export class MCPConnector {
                 Sentry.captureException(
                     error instanceof Error ? error : new Error(String(error))
                 );
+                return { tools: [], toolServerMap };
             }
             // Apps with a key come from another list: this one failing does not take them away
-            return this.withKeyApps(keyApps, { tools: [], toolServerMap });
+            return this.withKeyApps(keyApps, { tools: [], toolServerMap, issues: [] });
         }
 
         // Query each enabled server and collect tools
@@ -852,6 +883,7 @@ export class MCPConnector {
                 seenToolNames.add(tool.function.name);
                 allTools.push(tool);
                 toolServerMap.set(tool.function.name, {
+                    botId,
                     serverId: server.id,
                     serverUrl: server.serverUrl,
                     authType: server.authType,
@@ -872,9 +904,18 @@ export class MCPConnector {
             server: McpServerConfig
         ): Promise<void> {
             const cacheKey = `${botId}:${server.id}`;
+            // A server that refused the sign-in, or did not answer, is left alone until its time is up (#1819); a new
+            // sign-in or key is tried at once
+            if (MCPConnector.health.shouldSkip(botId, server)) {
+                toolListCache.delete(cacheKey);
+                return;
+            }
             const cached = toolListCache.get(cacheKey);
 
             if (cached && Date.now() < cached.cachedAt + CACHE_TTL) {
+                // A list in the cache was read from a server that answered: a mark taken from Orbit's list while its
+                // `ok` was still on the way is old
+                MCPConnector.health.ok(botId, server.id);
                 const rawByName = new Map(cached.raw.map((tool) => [tool.name, tool]));
                 for (const tool of cached.tools) {
                     addUniqueTool(tool, server, cached.titles[tool.function.name], rawByName.get(tool.function.name));
@@ -882,9 +923,15 @@ export class MCPConnector {
                 return;
             }
 
-            const read = await MCPConnector.listAllTools(server);
+            const failure: { outcome?: JsonRpcOutcome } = {};
+            const read = await MCPConnector.listAllTools(server, failure);
 
             if (read) {
+                // It answers: any mark it had is gone, and Orbit is told
+                const told =
+                    MCPConnector.health.ok(botId, server.id) || server.signInLostAt || server.noAnswerAt
+                        ? reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString())
+                        : undefined;
                 const raw = read.tools;
                 const { tools: toolDefs, titles } = MCPConnector.toDefinitions(raw);
 
@@ -897,6 +944,11 @@ export class MCPConnector {
                     serverId: server.id,
                 });
 
+                // Orbit did not hear it: forget the list, so the next read goes to the server again and tells Orbit again
+                // (Orbit's own mark brings it back)
+                void told?.then((ok) => {
+                    if (!ok) toolListCache.delete(cacheKey);
+                });
                 const rawByName = new Map(raw.map((tool) => [tool.name, tool]));
                 for (const toolDef of toolDefs) {
                     addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
@@ -910,6 +962,15 @@ export class MCPConnector {
                 console.warn(
                     `[MCPConnector] Server ${server.name} (${server.id}) returned no tools or invalid response`
                 );
+                const status = failure.outcome?.status;
+                const state: ToolIssueState | null = isSignInRefusal(status)
+                    ? 'expired'
+                    : failure.outcome && !failure.outcome.data && isNoAnswer(status) && !failure.outcome.neverRan
+                      ? 'no-answer'
+                      : null;
+                if (state) MCPConnector.markFailed(botId, server, state, orbit, status);
+                // Any other failure (a 404, a 429, a refused connection) leaves the mark as it is, and its wait starts over
+                else MCPConnector.health.touch(botId, server.id);
             }
         }
 
@@ -925,14 +986,15 @@ export class MCPConnector {
             }
         }
 
-        return this.withKeyApps(keyApps, { tools: allTools, toolServerMap });
+        const enabledIds = new Set(enabledServers.map((server) => server.id));
+        return this.withKeyApps(keyApps, { tools: allTools, toolServerMap, issues: MCPConnector.health.issuesFor(botId, enabledIds) });
     }
 
     /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner. */
-    private static async withKeyApps(
+    private static async withKeyApps<T extends { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }>(
         keyApps: Promise<KeyApp[]>,
-        found: { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }
-    ): Promise<{ tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }> {
+        found: T
+    ): Promise<T> {
         const keyed = keyAppTools(await keyApps);
         for (const tool of keyed.tools) {
             const name = tool.function.name;
@@ -942,6 +1004,43 @@ export class MCPConnector {
             found.toolServerMap.set(name, entry);
         }
         return found;
+    }
+
+    /** What the bot server has seen of its tool servers: refused sign-ins and servers that did not answer (#1819). */
+    static health = new ToolHealth();
+
+    /** A server was tried and failed this way: remember it, and tell Orbit when the state is new. */
+    private static markFailed(
+        botId: string,
+        server: SeenServer,
+        state: ToolIssueState,
+        orbit: { adminApiUrl: string; adminApiToken: string },
+        status?: number
+    ): void {
+        if (!this.health.fail(botId, server, state)) return;
+        const since = this.health.issuesFor(botId, new Set([server.id])).find((issue) => issue.serverId === server.id)?.since;
+        // In the background: the reply does not wait for Orbit. A report that fails is sent again at the next failure.
+        const sent = reportToolState(orbit, botId, server.id, state, since ?? new Date().toISOString(), status).then((told) => {
+            if (told) this.health.reported(botId, server.id);
+        });
+        this.health.track(botId, server.id, sent);
+    }
+
+    /** A call came back refused while a reply was running (the sign-in ran out since the list was read): same as at the list. */
+    static noteRefused(
+        entry: Pick<ToolServerEntry, 'botId' | 'serverId' | 'serverName' | 'authType' | 'authConfig' | 'headers' | 'connectionId' | 'readyMade'>,
+        orbit: { adminApiUrl: string; adminApiToken: string },
+        status: number
+    ): void {
+        if (!entry.botId) return;
+        toolListCache.delete(`${entry.botId}:${entry.serverId}`);
+        this.markFailed(
+            entry.botId,
+            { id: entry.serverId, name: entry.serverName ?? 'This tool', authType: entry.authType, authConfig: entry.authConfig, headers: entry.headers, connectionId: entry.connectionId, readyMade: entry.readyMade },
+            'expired',
+            orbit,
+            status
+        );
     }
 
     /** Saves one server's list to Orbit in the background. A failure is logged; Orbit keeps what it had. */
@@ -975,11 +1074,27 @@ export class MCPConnector {
     ): Promise<{ read: false; reason: string } | { read: true; tools: number; saved: SyncResult } | null> {
         const server = (await this.loadServers(botId, adminApiUrl, adminApiToken)).find((candidate) => candidate.id === serverId);
         if (!server) return null;
-        const read = await this.listAllTools(server);
-        if (!read) return { read: false, reason: 'The server did not answer with a list of tools' };
+        const failure: { outcome?: JsonRpcOutcome } = {};
+        const read = await this.listAllTools(server, failure);
+        const orbit = { adminApiUrl, adminApiToken };
+        if (!read) {
+            // Test server finds out the same as a reply does (#1819)
+            const status = failure.outcome?.status;
+            if (isSignInRefusal(status)) this.markFailed(botId, server, 'expired', orbit, status);
+            return { read: false, reason: 'The server did not answer with a list of tools' };
+        }
+        // It answers: any mark it had is gone, and Orbit is told
+        const told =
+            this.health.ok(botId, server.id) || server.signInLostAt || server.noAnswerAt
+                ? reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString())
+                : undefined;
         const raw = read.tools;
         const { tools, titles } = this.toDefinitions(raw);
         toolListCache.set(`${botId}:${server.id}`, { tools, titles, raw, cachedAt: Date.now(), serverId: server.id });
+        // Orbit did not hear it: the next read goes to the server again and tells Orbit again
+        void told?.then((ok) => {
+            if (!ok) toolListCache.delete(`${botId}:${server.id}`);
+        });
         const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest, read.cut);
         // Orbit did not get it: the next read tries to save it again
         if (saved.result === 'skipped') toolListCache.delete(`${botId}:${server.id}`);
@@ -1049,6 +1164,11 @@ export class MCPConnector {
             }
         }
 
+        // The tool server turned the sign-in away (401 or 403): nothing ran, and trying again is no use (#1819)
+        if (!response && isSignInRefusal(attempt.status)) {
+            return { error: SIGN_IN_EXPIRED_ERROR, outcome: 'failed' satisfies ToolCallOutcome, hint: SIGN_IN_EXPIRED_HINT, signInRefused: attempt.status };
+        }
+
         if (!response) {
             // A call that went out and got no answer may have run: say so, so nothing takes it as never sent
             const outcome: ToolCallOutcome = attempt.neverRan ? 'not_sent' : 'uncertain';
@@ -1114,6 +1234,8 @@ export class MCPConnector {
      * Useful on bot respawn.
      */
     static clearCache(botId?: string): void {
+        // What was seen of the bot's tool servers goes too: Orbit's marks bring back whatever still holds (#1819)
+        this.health.forgetBot(botId);
         if (botId) {
             const prefix = `${botId}:`;
             for (const key of toolListCache.keys()) {

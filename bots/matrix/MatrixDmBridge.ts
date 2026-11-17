@@ -26,6 +26,7 @@ import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
 import { tidyTranscript } from '../voice/NoteHearing';
 import type { NoteHearingService } from '../voice/NoteHearingWiring';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
+import { toolSignInContent } from '../mcp/ToolSignInCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
 import type { SpokeAnswer } from '../server/BrickRunner';
 
@@ -1456,6 +1457,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await this.client
                     .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not say what bot ${botId} may do with an App:`, error?.message ?? error));
+            }
+            if (reply.toolSignIn) {
+                // A tool's sign-in expired and this person manages the bot (#1819): the game draws the Reconnect card from it
+                await this.client
+                    .sendMessage(botUserId, event.room_id, toolSignInContent(reply.toolSignIn, await this.botName(botId, config)))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send the Reconnect card from bot ${botId}:`, error?.message ?? error));
             }
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it

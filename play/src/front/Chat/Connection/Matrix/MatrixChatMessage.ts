@@ -7,6 +7,7 @@ import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { readBotToolSignIn, type BotToolSignIn } from "../../Bots/BotToolSignIn";
 import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readAnsweredNearby } from "../../Bots/PrivateAnswer";
 import {
@@ -76,6 +77,7 @@ export class MatrixChatMessage implements ChatMessage {
     readonly botStatusAt: number | undefined;
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
+    readonly toolSignIn: BotToolSignIn | undefined;
     readonly artifact: ArtifactCard | undefined;
     readonly answeredNearby: boolean;
     /** A Brick's fixed "what I can do" answer (#1995): shown in the person's language, with its ideas under it. */
@@ -110,6 +112,11 @@ export class MatrixChatMessage implements ChatMessage {
         this.botStatusAt = this.botStatus ? event.localTimestamp : undefined;
         this.roomLink = readBotRoomLink(event.getSender(), event.getOriginalContent(), window.location.origin);
         this.replyLimit = readBotReplyLimit(
+            event.getSender(),
+            event.getOriginalContent(),
+            room.getMember(event.getSender() ?? "")?.name ?? ""
+        );
+        this.toolSignIn = readBotToolSignIn(
             event.getSender(),
             event.getOriginalContent(),
             room.getMember(event.getSender() ?? "")?.name ?? ""

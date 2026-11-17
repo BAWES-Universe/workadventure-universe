@@ -24,6 +24,8 @@ import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { sanitizedError } from '../utils/sanitizedError';
 import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { toolIssueNote, type ToolIssue } from '../mcp/ToolSignIn';
+import { ToolSignInShown, toolSignInCard, type ToolSignInCard } from '../mcp/ToolSignInCard';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -444,6 +446,12 @@ export class AIService {
                     ? { orbitUrl: entry.orbitUrl, botId: use.botId, serverId: entry.serverId, callId: use.callId, ...(use.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use.forOwner ? { forOwner: true } : {}) }
                     : undefined
             );
+            // The tool server turned the sign-in away: Orbit is told, and the bot stops calling it (#1819)
+            const refused = (rawResult as { signInRefused?: unknown } | null)?.signInRefused;
+            if (typeof refused === 'number') {
+                const adminApiToken = this.adminApiService?.['adminApiToken'];
+                if (adminApiToken) MCPConnector.noteRefused(entry, { adminApiUrl: this.adminApiUrl, adminApiToken }, refused);
+            }
             // Process MCP resource blobs (base64 binary data) by uploading to CDN
             // and returning CDN URLs so the AI can use send_image/send_audio/etc.
             if (Array.isArray(rawResult)) {
@@ -1481,8 +1489,8 @@ export class AIService {
 
             // Define tools for function calling
             // An answer for one person alone has none (#1993): a tool's steps, cards and files are shown to the whole space
-            const { tools, toolServerMap } = options?.onlyForThem
-                ? { tools: [] as any[], toolServerMap: new Map<string, ToolServerEntry>() }
+            const { tools, toolServerMap, issues: toolIssues } = options?.onlyForThem
+                ? { tools: [] as any[], toolServerMap: new Map<string, ToolServerEntry>(), issues: undefined as ToolIssue[] | undefined }
                 : await this.buildTools(
                       botId,
                       botClient,
@@ -1502,12 +1510,16 @@ export class AIService {
                 toolServerMap.clear();
             }
             if (taskSettings && !forOthers) this.offerTaskTools(tools, toolServerMap);
+            // A tool whose sign-in expired, or that did not answer: the bot is told which, and the people who manage it get the card (#1819).
+            // Never for an answer for one person alone or for a Brick standing in for others: they use none of the owner's apps (#1993, #2005)
+            const toolSignIn = options?.onlyForThem || forOthers ? undefined : await this.toolSignInFor(botId, toolIssues, channel, botClient, spaceName, playerId);
+            if (toolSignIn) yield { content: '', done: false, toolSignIn };
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, forOthers || options?.onlyForThem ? '' : toolIssueNote(toolIssues ?? []), visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -3292,9 +3304,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false, instant: InstantListing | null = null): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false, instant: InstantListing | null = null): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry>; issues: ToolIssue[] | undefined }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
+        // Undefined when the tool servers could not be asked: nothing is known then
+        let issues: ToolIssue[] | undefined = [];
 
         if (botClient) {
             // Tool: Get people on the map
@@ -3519,6 +3533,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // offered and the one run, so the definition the model reads and the call that runs always belong together
                 const instantNames = new Set(tools.filter((tool) => isInstantTool(tool.function?.name ?? '')).map((tool) => tool.function.name));
                 const mcpTools = (mcpResult.tools as any[]).filter((tool) => !instantNames.has(tool.function?.name));
+                issues = mcpResult.issues;
 
                 // Transfer tool→server mapping to the outer-scope map
                 for (const [key, value] of mcpResult.toolServerMap) {
@@ -3557,11 +3572,75 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             } catch (e) {
                 console.warn('[AIService] Failed to discover MCP tools:', e);
+                issues = undefined;
                 Sentry.captureException(e instanceof Error ? e : new Error(String(e)));
             }
         }
 
-        return { tools, toolServerMap };
+        return { tools, toolServerMap, issues };
+    }
+
+    /** Who was shown a Reconnect card for which outage (#1819). */
+    private readonly signInShown = new ToolSignInShown();
+
+    /**
+     * The Reconnect card for the people who manage this bot when a tool server turned its sign-in away (#1819). In a
+     * bubble it goes to that person alone, as a private event, and is taken back once the sign-in is back. In a direct
+     * message the card is returned for the reply to send as a notice. Nobody else sees it; no one is shown a card on a
+     * guess about who manages the bot.
+     */
+    private async toolSignInFor(
+        botId: string | undefined,
+        issues: readonly ToolIssue[] | undefined,
+        channel: 'world' | 'dm',
+        botClient: BotClient | undefined,
+        spaceName: string | undefined,
+        playerId: number | undefined
+    ): Promise<ToolSignInCard | undefined> {
+        // The tool servers could not be asked: a card shown before stays as it is
+        if (!botId || !issues) return undefined;
+        try {
+            const person = this.gatePerson(botId, playerId, botClient, spaceName);
+            const key = `${botId}|${channel}|${spaceName ?? ''}|${channel === 'world' ? playerId : person.signedIn ? person.identifier : ''}`;
+            const nearby = channel === 'world' && !!botClient && !!spaceName && playerId !== undefined;
+            // No sign-in is lost any more (a server that only does not answer has no card): a card shown before is taken back once
+            if (!toolSignInCard(issues)) {
+                if (nearby && this.signInShown.cleared(key)) {
+                    botClient!.sendAskEvent(spaceName!, playerId!, {
+                        kind: 'signin',
+                        id: `signin-${botId}`,
+                        revision: Math.floor(Date.now() / 1000),
+                        body: JSON.stringify({ lost: [] }),
+                    });
+                } else {
+                    this.signInShown.cleared(key);
+                }
+                return undefined;
+            }
+            if (!person.signedIn || !person.identifier) return undefined;
+            if (!(await this.toolGate.canManage(botId, person.identifier))) return undefined;
+            // The card goes once Orbit has the state it shows: the page checks with Orbit as the card opens. Only a manager's
+            // reply waits for this, and only while a report is still on its way.
+            await MCPConnector.health.settled(botId);
+            const card = toolSignInCard(issues.filter((issue) => MCPConnector.health.isReported(botId, issue.serverId)));
+            if (!card) return undefined;
+            if (!this.signInShown.shouldShow(key, card)) return undefined;
+            if (nearby) {
+                const sent = botClient!.sendAskEvent(spaceName!, playerId!, {
+                    kind: 'signin',
+                    id: `signin-${botId}`,
+                    revision: Math.floor(Date.now() / 1000),
+                    body: JSON.stringify(card),
+                });
+                // The person is not in the space (any more): they are shown the card when they are next here
+                if (!sent) this.signInShown.forget(key);
+                return undefined;
+            }
+            return channel === 'dm' ? card : undefined;
+        } catch (error) {
+            console.warn('[AIService] Could not show the Reconnect card:', error instanceof Error ? error.message : error);
+            return undefined;
+        }
     }
 
     /**
