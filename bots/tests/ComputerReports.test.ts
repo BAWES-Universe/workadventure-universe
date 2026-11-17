@@ -187,6 +187,20 @@ describe('what the bot server tells Orbit about delivery', () => {
         return { service, calls };
     }
 
+    it('waits for Orbit to hand the files over when a job finishes (minutes), and for nothing else longer than a few seconds', async () => {
+        const service = new AdminApiService() as unknown as { brickCall: (...args: unknown[]) => Promise<unknown>; computerJobAction(bot: string, job: string, body: Record<string, unknown>): Promise<unknown> };
+        const calls: unknown[][] = [];
+        service.brickCall = vi.fn(async (...args: unknown[]) => {
+            calls.push(args);
+            return { data: {} };
+        });
+        await service.computerJobAction('bot-1', 'job-1', { action: 'finish', outcome: 'done' });
+        await service.computerJobAction('bot-1', 'job-1', { action: 'renew' });
+        // The fifth argument is how long the call may take: the finish may wait past the files' time budget (4 minutes), the others keep the short one
+        expect(calls[0][4]).toBeGreaterThan(4 * 60_000);
+        expect(calls[1][4]).toBe(8_000);
+    });
+
     it('says a report is undeliverable with its reason, which is never the same call as told', async () => {
         const { service, calls } = admin();
         expect(await service.keepComputerReportUndeliverable({ jobId: 'job-1', kind: 'done', seq: null }, 'origin_gone')).toBe(true);

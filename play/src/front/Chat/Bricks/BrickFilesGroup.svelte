@@ -76,11 +76,11 @@
         return kind === "image" ? IconPhoto : kind === "sheet" ? IconFileText : IconFile;
     }
 
-    // The words and the language come in as arguments, so the row is drawn again when the language changes (a store read inside a function the template calls is not tracked)
-    function resultNote(result: BrickResult, words: TranslationFunctions, language: string): string {
+    // The words, the language and the Brick's name come in as arguments, so the row is drawn again when the language changes (a store read inside a function the template calls is not tracked)
+    function resultNote(result: BrickResult, words: TranslationFunctions, language: string, brickName: string): string {
         const where =
             result.delivery === "delivered"
-                ? words.chat.brick.files.resultDelivered({ name })
+                ? words.chat.brick.files.resultDelivered({ name: brickName })
                 : result.delivery === "waiting"
                 ? words.chat.brick.files.resultWaiting()
                 : words.chat.brick.files.resultNotDelivered();
@@ -179,7 +179,7 @@
                         <span class="bkg-ico"><IconFile font-size="20" /></span>
                         <span class="bkg-mtx">
                             <span class="bkg-t">{result.name}</span>
-                            <span class="bkg-cn">{resultNote(result, $LL, $locale)}</span>
+                            <span class="bkg-cn">{resultNote(result, $LL, $locale, name)}</span>
                             <span class="bkg-acts">
                                 <PageButton testId="filesResultDownload" on:click={() => downloadResult(result)}
                                     >{$LL.chat.brick.files.download()}</PageButton

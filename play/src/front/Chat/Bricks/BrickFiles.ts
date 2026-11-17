@@ -126,6 +126,15 @@ export function parseDeletedBrickResults(value: unknown): BrickResult[] {
     return parseResults((value as { results?: unknown } | null)?.results);
 }
 
+/** Where the next page of the results of deleted Bricks starts, when Orbit says there is one. */
+export function nextDeletedBrickResultsPage(value: unknown): string | null {
+    const next = (value as { next?: unknown } | null)?.next;
+    return typeof next === "string" && next !== "" ? next : null;
+}
+
+/** The most pages of results of deleted Bricks read in one go (a hundred a time): far more than a person has, and a stop for an answer that never ends. */
+const DELETED_RESULTS_PAGES_MAX = 50;
+
 /** Orbit's answer for a Brick's files. Anything that is not whole is left out. */
 export function parseBrickFiles(value: unknown): BrickFiles {
     const answer = (value ?? {}) as {
@@ -416,7 +425,22 @@ export function deletedBrickFilesList(): DeletedBrickFilesList {
         results: { subscribe: results.subscribe },
         async load() {
             try {
-                known = parseDeletedBrickResults(await botApiService.getDeletedBrickResults());
+                // Every page, so a person with many results from deleted Bricks sees them all (a hundred at a time from Orbit)
+                const all: BrickResult[] = [];
+                const seen = new Set<string>();
+                let cursor: string | null = null;
+                for (let page = 0; page < DELETED_RESULTS_PAGES_MAX; page++) {
+                    const answer: unknown = await botApiService.getDeletedBrickResults(cursor);
+                    for (const result of parseDeletedBrickResults(answer)) {
+                        if (!seen.has(result.id)) {
+                            seen.add(result.id);
+                            all.push(result);
+                        }
+                    }
+                    cursor = nextDeletedBrickResultsPage(answer);
+                    if (!cursor) break;
+                }
+                known = all;
                 show();
             } catch (error) {
                 console.warn("Could not read the files of deleted Bricks", error);

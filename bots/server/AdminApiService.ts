@@ -503,6 +503,8 @@ export type GuestBrickAllowance =
     | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
 
 const BRICK_CALL_TIMEOUT_MS = 8_000;
+/** Ending a computer job: Orbit hands its files over before it answers, which can take up to about four minutes. */
+const COMPUTER_FINISH_TIMEOUT_MS = 6 * 60_000;
 /** A file a computer job made can be as big as Limits allow, so its fetch gets longer than a call for a list. */
 const COMPUTER_FILE_TIMEOUT_MS = 120_000;
 /** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
@@ -1083,7 +1085,7 @@ export class AdminApiService {
         };
     }
 
-    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1092,7 +1094,7 @@ export class AdminApiService {
             ...(body === undefined ? {} : { data: body }),
             ...(params ? { params } : {}),
             headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-            timeout: BRICK_CALL_TIMEOUT_MS,
+            timeout: timeoutMs,
         });
     }
 
@@ -1603,7 +1605,8 @@ export class AdminApiService {
 
     /** What a running job tells Orbit (#2000): steps, renewing its room, handing over, finishing. Throws when Orbit says no. */
     async computerJobAction(viaBotId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
-        const response = await this.brickCall<Record<string, unknown>>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`, body);
+        // Finishing waits for Orbit to read the job's files off its computer (it is limited by time there, up to a few minutes): the other calls answer at once
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`, body, undefined, body.action === 'finish' ? COMPUTER_FINISH_TIMEOUT_MS : BRICK_CALL_TIMEOUT_MS);
         return response.data ?? {};
     }
 

@@ -6,7 +6,7 @@ const orbit = vi.hoisted(() => ({
     deleteBrickFile: vi.fn<(brickId: string, fileId: string) => Promise<unknown>>(),
     getBrickResult: vi.fn<(brickId: string, fileId: string) => Promise<Blob>>(),
     deleteBrickResult: vi.fn<(brickId: string, fileId: string) => Promise<unknown>>(),
-    getDeletedBrickResults: vi.fn<() => Promise<unknown>>(),
+    getDeletedBrickResults: vi.fn<(cursor?: string | null) => Promise<unknown>>(),
     getOwnBrickResult: vi.fn<(fileId: string) => Promise<Blob>>(),
     deleteOwnBrickResult: vi.fn<(fileId: string) => Promise<unknown>>(),
 }));
@@ -374,6 +374,26 @@ describe("a Brick's files (#2003)", () => {
                 click.mockRestore();
                 URL.createObjectURL = originalCreate;
             }
+        });
+
+        it("reads every page of them, a page at a time, and never lists one twice", async () => {
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults
+                .mockResolvedValueOnce({ results: [gone({ id: "g1" }), gone({ id: "g2" })], next: "p2" })
+                .mockResolvedValueOnce({ results: [gone({ id: "g2" }), gone({ id: "g3" })], next: "p3" })
+                .mockResolvedValueOnce({ results: [gone({ id: "g4" })], next: null });
+            const list = deletedBrickFilesList();
+            await list.load();
+            expect(get(list.results).map((one) => one.id)).toEqual(["g1", "g2", "g3", "g4"]);
+            expect(orbit.getDeletedBrickResults.mock.calls.map((call) => call[0] ?? null)).toEqual([null, "p2", "p3"]);
+        });
+
+        it("stops asking for pages when Orbit never says it is the last", async () => {
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults.mockResolvedValue({ results: [], next: "again" });
+            const list = deletedBrickFilesList();
+            await list.load();
+            expect(orbit.getDeletedBrickResults.mock.calls.length).toBeLessThanOrEqual(50);
         });
 
         it("deletes one at once, and brings it back when Orbit refuses", async () => {

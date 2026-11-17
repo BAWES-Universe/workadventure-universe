@@ -1774,8 +1774,8 @@ export class BotApiService {
     }
 
     /** What a person's Bricks' computers made, whose Brick is gone: theirs, with "A deleted Brick" on them. */
-    async getDeletedBrickResults(): Promise<unknown> {
-        return await this.brickWrite("/api/bricks/results", {});
+    async getDeletedBrickResults(cursor?: string | null): Promise<unknown> {
+        return await this.brickWrite(cursor ? `/api/bricks/results?cursor=${encodeURIComponent(cursor)}` : "/api/bricks/results", {});
     }
 
     /** One of the person's own results, whichever Brick made it (it may be gone), as bytes. Throws when Orbit refuses or has no such file. */
