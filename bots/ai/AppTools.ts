@@ -135,6 +135,7 @@ export async function runAppTool(args: Record<string, unknown>, context: AppTool
         topic,
         app: app.key,
         name: app.name,
+        connectKind: app.kind,
         // Connected and working, only not used by this Brick yet: "Let it use", never a second sign-in
         state: app.connectionId && app.connected ? 'connected' : 'new',
         connectionId: app.connectionId,

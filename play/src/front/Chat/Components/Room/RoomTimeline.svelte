@@ -97,6 +97,7 @@
         brickStartersCard,
     } from "../../Bricks/BrickHello";
     import { connectFromCard } from "../../Bricks/Apps/ChatConnect";
+    import { connectApp } from "../../Bricks/Apps/ConnectApp";
     import { openAppsPage } from "../../Bricks/Apps/OpenApps";
     import { signInInPopup } from "../../Bricks/Apps/Reconnect";
     import { loadMyApps } from "../../Bricks/Apps/AppsStore";
@@ -751,6 +752,8 @@
         return connectFromCard(offer, brickId, {
             connectListedApp: (key) => botApiService.connectListedApp(key),
             signIn: (appId) => signInInPopup(appId),
+            connectReadyMade: ({ key, name }) =>
+                connectApp({ kind: "readyMade", key, name, blurb: "", connectionId: null }),
             isConnected: async (appId) => {
                 const answer = (await botApiService.getMyApp(appId)) as { app?: { connected?: unknown } } | undefined;
                 return answer?.app?.connected === true;
@@ -763,6 +766,8 @@
                 if (result === "connected") closeBrickCard(tappedKey);
                 else if (result === "stopped")
                     warningMessageStore.addWarningMessage(text.signInStopped({ name: offer.name }));
+                else if (result === "unchecked")
+                    warningMessageStore.addWarningMessage(text.signInUnchecked({ name: offer.name }));
                 else if (result === "blocked") warningMessageStore.addWarningMessage(text.signInBlocked());
                 else warningMessageStore.addWarningMessage(text.couldNotLet({ name: offer.name }));
                 // Connected but not let: the card goes, the Apps page is where to finish

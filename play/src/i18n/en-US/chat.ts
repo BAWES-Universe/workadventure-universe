@@ -1135,6 +1135,9 @@ const chat: BaseTranslation = {
             notNowAsked: "Nothing is connected",
             // The sign-in window was closed, blocked or did not start; the card stays so they can try again
             signInStopped: "{name} was not connected. Try again when you're ready.",
+            // The sign-in finished but Orbit could not be asked whether it counted: it may well be connected
+            signInUnchecked:
+                "{name}'s sign-in finished, but we couldn't check it just now. Open Apps in a moment to see it.",
             signInBlocked: "The sign-in window did not open. Allow pop-ups for this page and try again.",
             couldNotLet: "{name} is connected, but this Brick could not be let use it. Choose it in Apps.",
         },

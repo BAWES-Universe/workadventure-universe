@@ -1442,8 +1442,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const appOffer = reply.text ? reply.bricks?.find((note) => note.kind === 'app') : undefined;
             const appTopic = appOffer && appOffer.kind === 'app' && reply.claimApp ? await reply.claimApp() : null;
             if (appOffer && appOffer.kind === 'app' && appTopic) {
-                const { app, name, state, connectionId, ask, asked, other } = appOffer;
-                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, state, connectionId, ask, asked, other } };
+                const { app, name, connectKind, state, connectionId, ask, asked, other } = appOffer;
+                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, connectKind, state, connectionId, ask, asked, other } };
                 const txnId = randomUUID();
                 await this.client
                     .sendMessage(botUserId, event.room_id, content, txnId)
