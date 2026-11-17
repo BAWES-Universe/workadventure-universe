@@ -140,6 +140,28 @@ describe('the meter: sending', () => {
         expect(sent.filter((id) => id.endsWith(':first'))).toHaveLength(1);
     });
 
+    it('sends everything that gathered before the bot is switched off, also what gathered while a request was out and what is more than one request', async () => {
+        const sent: string[] = [];
+        let answer!: (ok: boolean) => void;
+        const gate = new Promise<boolean>((resolve) => (answer = resolve));
+        const recordMeterEvents = vi.fn(async (events: SpeechEvent[]) => {
+            const first = sent.length === 0;
+            sent.push(...events.map((e) => e.eventId));
+            return first ? gate : true;
+        });
+        const m = new VoiceMeter('sam', { recordMeterEvents }, undefined, 'r1');
+        m.add(use('first'));
+        void m.flush();
+        for (let n = 0; n < 130; n += 1) m.add(use(`k${n}`));
+        const done = m.shutdown();
+        answer(true);
+        await done;
+        expect(new Set(sent).size).toBe(131);
+        m.add(use('late'));
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(sent).toHaveLength(131);
+    });
+
     it('sends what is left when the bot is switched off, and books nothing after', async () => {
         const o = orbit();
         const m = new VoiceMeter('sam', o.fake, undefined, 'r1');

@@ -132,7 +132,15 @@ export class VoiceMeter {
 
     /** The bot is switched off: what gathered is sent once more, and nothing is booked after. */
     async shutdown(): Promise<void> {
-        await this.flush().catch(() => undefined);
+        // Everything that gathered goes, a request at a time, including what gathered while one was out. It stops when Orbit does not take a
+        // request (nothing more would be taken now) or when a request took nothing off the list, so it can never loop
+        for (let round = 0; round <= Math.ceil(MAX_PENDING / MAX_PER_REQUEST) + 1 && this.pending.length > 0; round += 1) {
+            const before = this.pending.length;
+            await this.flush().catch(() => undefined);
+            // A request still out that started after this one (the list was long): it is awaited by the next round
+            if (this.pending.length >= before && !this.sending) break;
+        }
+        if (this.sending) await this.sending.catch(() => undefined);
         this.closed = true;
         if (this.timer) clearTimeout(this.timer);
         this.timer = undefined;
