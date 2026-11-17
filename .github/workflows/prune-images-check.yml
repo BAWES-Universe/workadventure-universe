@@ -1,0 +1,82 @@
+name: Prune images check
+
+# On any pull request that changes the image clean-up (prune-images.yml and .github/scripts/prune-images*.mjs):
+# runs its tests, and prints what the clean-up would delete right now, without deleting anything.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/prune-images.yml'
+      - '.github/workflows/prune-images-check.yml'
+      - '.github/scripts/prune-images.mjs'
+      - '.github/scripts/prune-images-cli.mjs'
+      - '.github/scripts/prune-images.test.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node --test .github/scripts/prune-images.test.mjs
+
+  plan:
+    # A PR from a fork gets no package access.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        package:
+          - play-universe
+          - back-universe
+          - map-storage-universe
+          - uploader-universe
+          - discord-bot-universe
+          - bot-server-universe
+          - voice-worker-universe
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: What ${{ matrix.package }} would lose
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE: ${{ matrix.package }}
+          DEV_COOLIFY_BASE: ${{ vars.DEV_COOLIFY_BASE }}
+          DEV_COOLIFY_TOKEN: ${{ secrets.DEV_COOLIFY_TOKEN }}
+          DEV_APPS: |
+            back-universe ${{ vars.DEV_COOLIFY_BACK_UUID }}
+            map-storage-universe ${{ vars.DEV_COOLIFY_MAP_STORAGE_UUID }}
+            uploader-universe ${{ vars.DEV_COOLIFY_UPLOADER_UUID }}
+            bot-server-universe ${{ vars.DEV_COOLIFY_BOT_SERVER_UUID }}
+            play-universe ${{ vars.DEV_COOLIFY_PLAY_UUID }}
+            voice-worker-universe ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID }}
+          PROD_COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          PROD_COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          PROD_APPS: |
+            play-universe ${{ secrets.COOLIFY_PLAY_UUID }}
+            back-universe ${{ secrets.COOLIFY_BACK_UUID }}
+            map-storage-universe ${{ secrets.COOLIFY_MAP_STORAGE_UUID }}
+            bot-server-universe ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
+            discord-bot-universe ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
+            uploader-universe ${{ secrets.COOLIFY_UPLOADER_UUID }}
+            voice-worker-universe ${{ secrets.COOLIFY_VOICE_WORKER_UUID }}
+        run: node .github/scripts/prune-images-cli.mjs --package "$PACKAGE" --prod-branch universe --dev-branch universe-develop
