@@ -91,7 +91,9 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
 /** A job's title as the first words of a message: no stop at its end (a sentence of its own follows it), and short enough to be a headline on a locked phone. */
 function nameOf(title: string, max = 48): string {
     const name = title.replace(/\s+/g, ' ').trim().replace(/[.!?…:;,\s]+$/, '');
-    return name.length > max ? `${name.slice(0, max - 1).trimEnd()}…` : name;
+    // By whole characters, never in the middle of an emoji (a half of one is no text a chat accepts)
+    const letters = Array.from(name);
+    return letters.length > max ? `${letters.slice(0, max - 1).join('').trimEnd()}…` : name;
 }
 
 const sentence = (text: string): string => {
