@@ -3,9 +3,6 @@
  * tests: a person names a thing by its key in their list there, and the bot server must find the same thing by it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 const hoisted = vi.hoisted(() => ({
     axios: { get: vi.fn(), post: vi.fn(), put: vi.fn(), isAxiosError: (e: any) => !!e?.isAxiosError },
@@ -14,6 +11,7 @@ vi.mock('axios', () => ({ default: hoisted.axios, ...hoisted.axios }));
 
 import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
 import { PersistentMemory } from '../memory/PersistentMemory';
+import { forgetKeyOf, RedisForgetQueue, type ForgetFileContents, type ForgetQueueChanges, type ForgetQueueRedis, type ForgetQueueStore } from '../memory/ForgetQueue';
 import { parseItemForgets } from '../memory/ForgetNotice';
 import { dropItems, memoryItemKey, memoryItemsOf, visibleItems } from '../memory/MemoryItems';
 import { heardInDm } from '../memory/Heard';
@@ -624,15 +622,39 @@ describe('PersistentMemory: a forgotten thing is not brought back by a snapshot,
     });
 });
 
+/** The shared store of waiting forgets, in memory: what two bot servers (or one before and after a restart) would both see. */
+class FakeForgetStore implements ForgetQueueStore {
+    pending = new Map<string, Record<string, unknown>>();
+    ledger = new Map<string, Record<string, unknown>>();
+    /** Reads and writes fail while the store cannot be reached. */
+    unreachable = false;
+    writes = 0;
+    async load(): Promise<ForgetFileContents> {
+        if (this.unreachable) throw new Error('Shared store is not connected');
+        return { pending: [...this.pending.values()] as never, ledger: [...this.ledger.values()] as never };
+    }
+    async write(changes: ForgetQueueChanges): Promise<void> {
+        if (this.unreachable) throw new Error('Shared store is not connected');
+        this.writes++;
+        for (const entry of changes.pending.put) this.pending.set(forgetKeyOf(entry), { ...entry });
+        for (const key of changes.pending.del) this.pending.delete(key);
+        for (const entry of changes.ledger.put) this.ledger.set(forgetKeyOf(entry), { ...entry });
+        for (const key of changes.ledger.del) this.ledger.delete(key);
+    }
+    contents() {
+        return { pending: [...this.pending.values()], ledger: [...this.ledger.values()] };
+    }
+}
+
 describe('PersistentMemory: a forget Orbit has not taken survives a restart (#2031)', () => {
-    let dir: string;
-    let file: string;
+    let store: FakeForgetStore;
     const lofi = memoryItemKey('pref', null, 'lo-fi');
     const down = () => hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'down', response: { status: 503 } });
     const up = () => hoisted.axios.post.mockReset().mockResolvedValue({ data: {} });
-    const saved = () => JSON.parse(readFileSync(file, 'utf8')).pending as Array<Record<string, unknown>>;
-    const start = () => {
-        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueueFile: file });
+    const saved = () => store.contents().pending;
+    const start = async () => {
+        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueue: store });
+        await memory.forgetQueueReady;
         memory.useHeard(() => heardInDm());
         return memory as PersistentMemory & Record<string, any>;
     };
@@ -646,50 +668,48 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
     };
 
     beforeEach(() => {
-        dir = mkdtempSync(join(tmpdir(), 'forget-queue-'));
-        file = join(dir, 'state', 'pending-forgets.json');
+        store = new FakeForgetStore();
     });
-    afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-    it('writes a forget Orbit did not take to the file, and a new process finds it and tells Orbit', async () => {
-        const first = start();
+    it('writes a forget Orbit did not take to the shared store, and a new process finds it and tells Orbit', async () => {
+        const first = await start();
         await forgetWhileDown(first);
         clearTimeout(first.unreportedRetryTimer);
         expect(saved()).toEqual([expect.objectContaining({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref' })]);
 
-        // The bot server restarts: a new process, the same file
-        const second = start();
+        // The bot server restarts: a new process, the same shared store
+        const second = await start();
         expect(second.unreportedItemForgets.size).toBe(1);
         up();
         await second.reportUnreportedForgets();
         const told = hoisted.axios.post.mock.calls.filter((call) => String(call[0]).endsWith('/items'));
         expect(told).toHaveLength(1);
         expect(told[0][1]).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', at: expect.any(Number) });
-        // Orbit took it: it is no longer waiting, in this process or in the file
+        // Orbit took it: it is no longer waiting, in this process or in the shared store
         expect(second.unreportedItemForgets.size).toBe(0);
         expect(saved()).toEqual([]);
         clearTimeout(second.unreportedRetryTimer);
     });
 
     it('keeps it through a day of outage and a second restart', async () => {
-        const first = start();
+        const first = await start();
         await forgetWhileDown(first);
         clearTimeout(first.unreportedRetryTimer);
-        const later = start();
+        const later = await start();
         const [entry] = [...later.unreportedItemForgets.values()];
         entry.first = Date.now() - 3 * 24 * 60 * 60 * 1000;
         await later.reportUnreportedForgets();
         clearTimeout(later.unreportedRetryTimer);
         expect(saved()).toHaveLength(1);
-        expect(start().unreportedItemForgets.size).toBe(1);
+        expect((await start()).unreportedItemForgets.size).toBe(1);
     });
 
     it('drops the thing again from what Orbit still has saved when the memories are loaded after the restart', async () => {
-        const first = start();
+        const first = await start();
         await forgetWhileDown(first);
         clearTimeout(first.unreportedRetryTimer);
 
-        const second = start();
+        const second = await start();
         clearTimeout(second.unreportedRetryTimer);
         // Orbit never heard of the forget, so what it saved still holds lo-fi
         const stale = first.cloneMemory(talkingRecord('uuid-sara', ['lo-fi', 'jazz']));
@@ -700,7 +720,7 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
     });
 
     it('keeps the latest ask when the same thing is forgotten twice while Orbit is down', async () => {
-        const memory = start();
+        const memory = await start();
         await forgetWhileDown(memory);
         await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
         clearTimeout(memory.unreportedRetryTimer);
@@ -710,7 +730,7 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
     });
 
     it('lets go of one Orbit refuses for good, and says so', async () => {
-        const memory = start();
+        const memory = await start();
         await forgetWhileDown(memory);
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'gone', response: { status: 410 } });
@@ -723,7 +743,7 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
     });
 
     it('lets go of one Orbit has answered with a client error for over a week, but never one it could not reach (Sentry)', async () => {
-        const memory = start();
+        const memory = await start();
         await forgetWhileDown(memory);
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const [entry] = [...memory.unreportedItemForgets.values()];
@@ -748,27 +768,29 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
         warn.mockRestore();
     });
 
-    it('starts with nothing waiting when the file is missing or damaged', () => {
-        expect(existsSync(file)).toBe(false);
-        expect(start().unreportedItemForgets.size).toBe(0);
+    it('starts with nothing waiting when the shared store is empty, and does not stop when it cannot be read', async () => {
+        expect((await start()).unreportedItemForgets.size).toBe(0);
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-        writeFileSync(join(dir, 'broken.json'), '{ not json');
-        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueueFile: join(dir, 'broken.json') });
+        store.unreachable = true;
+        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueue: store });
+        await memory.forgetQueueReady;
         expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not read the forgets kept in the shared store'));
+        clearTimeout(memory.queueRestoreTimer);
         warn.mockRestore();
     });
 });
 
 describe('PersistentMemory: Forget is kept before it is promised, and stale data never brings it back (A31)', () => {
-    let dir: string;
-    let file: string;
+    let store: FakeForgetStore;
     const lofi = memoryItemKey('pref', null, 'lo-fi');
     const jazz = memoryItemKey('pref', null, 'jazz');
     const down = () => hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'down', response: { status: 503 } });
     const up = () => hoisted.axios.post.mockReset().mockResolvedValue({ data: {} });
-    const contents = () => JSON.parse(readFileSync(file, 'utf8')) as { pending: Array<Record<string, unknown>>; ledger: Array<Record<string, unknown>> };
-    const start = () => {
-        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueueFile: file });
+    const contents = () => store.contents();
+    const start = async () => {
+        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueue: store });
+        await memory.forgetQueueReady;
         memory.useHeard(() => heardInDm());
         memory.setUserUuid(BOT, SARA, 'uuid-sara', true);
         return memory as PersistentMemory & Record<string, any>;
@@ -787,13 +809,11 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
     };
 
     beforeEach(() => {
-        dir = mkdtempSync(join(tmpdir(), 'forget-ledger-'));
-        file = join(dir, 'state', 'pending-forgets.json');
+        store = new FakeForgetStore();
     });
-    afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-    it('writes the forget to the file before Orbit is told, so a crash while Orbit is being told still leaves it owed', async () => {
-        const first = start();
+    it('writes the forget to the shared store before Orbit is told, so a crash while Orbit is being told still leaves it owed', async () => {
+        const first = await start();
         first.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
         let onDiskWhileTelling: Array<Record<string, unknown>> | null = null;
         // Orbit never answers: the process dies here
@@ -805,7 +825,7 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         await new Promise((resolve) => setImmediate(resolve));
         expect(onDiskWhileTelling).toEqual([expect.objectContaining({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi })]);
 
-        const second = start();
+        const second = await start();
         expect(second.unreportedItemForgets.size).toBe(1);
         up();
         await second.reportUnreportedForgets();
@@ -814,57 +834,95 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         clearTimeout(second.unreportedRetryTimer);
     });
 
-    it('tells the person the forget is kept only when the file was written', async () => {
-        const memory = start();
+    it('tells the person the forget is kept only when the shared store was written', async () => {
+        const memory = await start();
         memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
         down();
         expect(await memory.forgetThingsReported(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]))).toEqual({ went: 1, waiting: 1, durable: true });
         clearTimeout(memory.unreportedRetryTimer);
 
-        // A file that cannot be written: a restart would lose it, and it is said so
-        const blocked = join(dir, 'a-file');
-        writeFileSync(blocked, 'x');
-        const unwritable: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueueFile: join(blocked, 'pending-forgets.json') });
-        unwritable.useHeard(() => heardInDm());
-        unwritable.setUserUuid(BOT, SARA, 'uuid-sara', true);
-        unwritable.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        // A shared store that cannot be written just now: a restart would lose it, and it is said so
+        const other = await start();
+        other.addMessage(BOT, SARA, 'I love jazz', 'person', 'dm');
+        store.unreachable = true;
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         down();
-        expect(await unwritable.forgetThingsReported(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]))).toEqual({ went: 1, waiting: 1, durable: false });
-        clearTimeout(unwritable.unreportedRetryTimer);
+        expect(await other.forgetThingsReported(BOT, SARA, new Set([jazz]), new Map([[jazz, 'pref']]))).toEqual({ went: 1, waiting: 1, durable: false });
+        clearTimeout(other.unreportedRetryTimer);
         warn.mockRestore();
     });
 
-    it('says it is kept only until a restart when the file is in a folder a redeploy loses', async () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-        const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueueFile: file, forgetQueueSurvivesRedeploy: false });
-        memory.useHeard(() => heardInDm());
-        memory.setUserUuid(BOT, SARA, 'uuid-sara', true);
+    it('writes what it could not write as soon as the shared store is back, and keeps trying meanwhile', async () => {
+        const memory = await start();
         memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        store.unreachable = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         down();
-        expect(await memory.forgetThingsReported(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]))).toEqual({ went: 1, waiting: 1, durable: false });
-        // It is still written, and a restart of the process still finds it
-        expect(contents().pending).toHaveLength(1);
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('BOT_STATE_DIR'));
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        expect(store.contents().pending).toEqual([]);
+        // It is still owed in this process, and told to Orbit again
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        store.unreachable = false;
+        await memory.reportUnreportedForgets();
+        // Orbit is still down, so it is still owed, and now written
+        expect(store.contents().pending).toHaveLength(1);
+        expect(store.contents().ledger).toHaveLength(1);
         clearTimeout(memory.unreportedRetryTimer);
         warn.mockRestore();
     });
 
+    it('is seen by another bot server: what one wrote, the other reads before it loads memories and drops the thing from them', async () => {
+        const first = await start();
+        first.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await first.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(first.unreportedRetryTimer);
+
+        // A second server started before the forget, with nothing in the store then
+        const empty = new FakeForgetStore();
+        const second: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueue: empty });
+        await second.forgetQueueReady;
+        expect(second.unreportedItemForgets.size).toBe(0);
+        // The forget reaches the shared store; the second server reads it when it next loads memories
+        empty.pending = new Map(store.pending);
+        empty.ledger = new Map(store.ledger);
+        second.queueRefreshedAt = 0;
+        vi.spyOn(second.memoryStorage, 'loadMemories').mockResolvedValue([first.cloneMemory(talkingRecord('uuid-sara', ['lo-fi', 'jazz']))]);
+        await second.loadMemories(BOT);
+        expect(second.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.preferences).toEqual(['jazz']);
+        clearTimeout(second.unreportedRetryTimer);
+    });
+
+    it('never overwrites what another bot server wrote: each thing is its own entry in the store', async () => {
+        const one = await start();
+        one.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await one.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(one.unreportedRetryTimer);
+        // Another server writes a different thing at the same time (it never read the first)
+        store.pending.set('bot-b|uuid-other|k', { botId: 'bot-b', userUuid: 'uuid-other', itemKey: 'k', kind: 'pref', since: 5, first: 5 });
+        one.addMessage(BOT, SARA, 'I love jazz', 'person', 'dm');
+        const jazzKey = memoryItemKey('pref', null, 'jazz');
+        await one.forgetThings(BOT, SARA, new Set([jazzKey]), new Map([[jazzKey, 'pref']]));
+        clearTimeout(one.unreportedRetryTimer);
+        expect(store.contents().pending.map((entry) => entry.itemKey).sort()).toEqual([jazzKey, lofi, 'k'].sort());
+    });
+
     it('keeps trying through an Orbit outage and two restarts, and tells Orbit once when it is back', async () => {
-        const first = start();
+        const first = await start();
         first.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
         down();
         await first.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
         clearTimeout(first.unreportedRetryTimer);
         for (let restart = 0; restart < 2; restart++) {
-            const again = start();
+            const again = await start();
             const [entry] = [...again.unreportedItemForgets.values()];
             entry.first = Date.now() - (restart + 3) * 24 * 60 * 60 * 1000;
             await again.reportUnreportedForgets();
             clearTimeout(again.unreportedRetryTimer);
             expect(contents().pending).toHaveLength(1);
         }
-        const last = start();
+        const last = await start();
         up();
         await last.reportUnreportedForgets();
         expect(told()).toHaveLength(1);
@@ -875,7 +933,7 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
     });
 
     it('drops the thing again, and tells Orbit again, when an archive restore brings it back after Orbit had taken the forget', async () => {
-        const first = start();
+        const first = await start();
         first.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
         up();
         await first.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
@@ -883,11 +941,11 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         const [{ since }] = contents().ledger as Array<{ since: number }>;
 
         // The bot server restarts and Orbit, restored from an older archive, hands back a copy that still has it (and no record of the forget)
-        const second = start();
+        const second = await start();
         hoisted.axios.post.mockClear();
         const back = await load(second, [restored(['lo-fi', 'jazz'], since - 5000)]);
         expect(back.personalInfo.preferences).toEqual(['jazz']);
-        // Orbit lost its record: it is told again, with the time of the forget, and the file owes it until Orbit takes it
+        // Orbit lost its record: it is told again, with the time of the forget, and the shared store owes it until Orbit takes it
         expect(contents().pending).toEqual([expect.objectContaining({ itemKey: lofi, since })]);
         await second.reportUnreportedForgets();
         const retold = told();
@@ -898,20 +956,20 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
     });
 
     it('does not tell Orbit again about a restored copy that does not hold the thing, and keeps what the person said again afterwards', async () => {
-        const first = start();
+        const first = await start();
         first.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
         up();
         await first.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
         const [{ since }] = contents().ledger as Array<{ since: number }>;
 
-        const clean = start();
+        const clean = await start();
         hoisted.axios.post.mockClear();
         expect((await load(clean, [restored(['jazz'], since - 5000)])).personalInfo.preferences).toEqual(['jazz']);
         expect(told()).toHaveLength(0);
         expect(contents().pending).toEqual([]);
 
         // Said again after the forget: it is a new thing and stays
-        const said = start();
+        const said = await start();
         expect((await load(said, [restored(['lo-fi'], since + 5000)])).personalInfo.preferences).toEqual(['lo-fi']);
         expect(told()).toHaveLength(0);
         clearTimeout(clean.unreportedRetryTimer);
@@ -919,11 +977,11 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
     });
 
     it('keeps a person\'s other things, and another person\'s lo-fi, when a restored copy is cleaned', async () => {
-        const first = start();
+        const first = await start();
         first.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
         up();
         await first.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
-        const second = start();
+        const second = await start();
         const other = talkingRecord('uuid-other', ['lo-fi', 'jazz']);
         vi.spyOn((second as any).memoryStorage, 'loadMemories').mockResolvedValue([restored(['lo-fi', 'jazz']), other]);
         await second.loadMemories(BOT);
@@ -935,17 +993,18 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
     });
 
     it('also remembers what a person forgot in their list in Orbit, for an older copy that comes back', async () => {
-        const first = start();
+        const first = await start();
         first.forgetItems(BOT, [{ id: 'forget-1', userUuid: 'uuid-sara', itemKey: lofi, at: 5000 }]);
         clearTimeout(first.unreportedRetryTimer);
+        await first.queueWriting;
         expect(contents().ledger).toEqual([expect.objectContaining({ itemKey: lofi, since: 5000 })]);
-        const second = start();
+        const second = await start();
         expect((await load(second, [restored(['lo-fi', 'jazz'], 1000)])).personalInfo.preferences).toEqual(['jazz']);
         clearTimeout(second.unreportedRetryTimer);
     });
 
     it('drops the thing from a save that was waiting for the person in another chat, so nothing is saved back', async () => {
-        const memory = start();
+        const memory = await start();
         memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
         const other = talkingRecord('uuid-sara', ['lo-fi', 'jazz']);
         (memory as any).pendingSaves.set(`${BOT}_99`, { ...other, playerId: 99 });
@@ -957,23 +1016,24 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
     });
 
     it('forgets everything it kept about a Brick that is deleted for good', async () => {
-        const memory = start();
+        const memory = await start();
         memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
         down();
         await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
         clearTimeout(memory.unreportedRetryTimer);
         expect(contents().ledger).toHaveLength(1);
         memory.purgeForgottenFor('another-bot');
+        await memory.queueWriting;
         expect(contents().ledger).toHaveLength(1);
         memory.purgeForgottenFor(BOT);
+        await memory.queueWriting;
         expect(contents()).toMatchObject({ pending: [], ledger: [] });
-        expect(start().unreportedItemForgets.size).toBe(0);
+        expect((await start()).unreportedItemForgets.size).toBe(0);
     });
 
-    it('starts from the file the first release wrote (no ledger in it)', () => {
-        mkdirSync(join(dir, 'state'), { recursive: true });
-        writeFileSync(file, JSON.stringify({ v: 1, pending: [{ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', since: 5, first: 4 }] }));
-        const memory = start();
+    it('starts from a store that holds waiting forgets and no ledger', async () => {
+        store.pending.set(forgetKeyOf({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi }), { botId: BOT, userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', since: 5, first: 4 });
+        const memory = await start();
         expect(memory.unreportedItemForgets.size).toBe(1);
         expect(memory.forgottenLedger.size).toBe(0);
         clearTimeout(memory.unreportedRetryTimer);

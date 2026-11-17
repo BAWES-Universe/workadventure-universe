@@ -6,6 +6,7 @@
  */
 
 import { createClient, type RedisClientType, commandOptions } from 'redis';
+import type { ForgetQueueRedis } from '../memory/ForgetQueue';
 
 /** How long a stop waits for Redis to answer before it cuts the connection off. */
 const SHUTDOWN_WAIT_MS = 3_000;
@@ -324,6 +325,11 @@ export class BotRegistry {
     async clearTaskCardUnshown(actionId: string): Promise<void> {
         if (!isUp(this.redis)) return;
         await this.redis.del(`bots:task-card-unshown:${actionId}`);
+    }
+
+    /** The shared store's client while it is connected (and ready), null while it is not: where the forgets Orbit has not taken yet are kept for every bot server. */
+    forgetQueueClient(): ForgetQueueRedis | null {
+        return isUp(this.redis) ? (this.redis as unknown as ForgetQueueRedis) : null;
     }
 
     /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */

@@ -2,8 +2,6 @@
  * BotManager - Core service to spawn, manage, and coordinate bot instances
  */
 
-import os from 'node:os';
-import path from 'node:path';
 import { BotClient } from '../client/BotClient';
 import { AdminApiService } from './AdminApiService';
 import { BotAccessGate } from './BotAccessGate';
@@ -12,6 +10,7 @@ import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { PersistentMemory } from '../memory/PersistentMemory';
+import { RedisForgetQueue } from '../memory/ForgetQueue';
 import { MemoryStorage } from '../memory/MemoryStorage';
 import { ResponseProcessor } from '../ai/ResponseProcessor';
 import { AIService } from '../ai/AIService';
@@ -227,10 +226,6 @@ export class BotManager {
                 adminApiUrl: process.env.ADMIN_API_URL,
                 debounceInterval: 30000, // 30 seconds
                 immediateSaveEnabled: true,
-                // A forget Orbit has not taken survives a restart of the bot server (#2031). BOT_STATE_DIR can point at a kept folder.
-                forgetQueueFile: path.join(process.env.BOT_STATE_DIR || path.join(os.tmpdir(), 'universe-bot-state'), 'pending-forgets.json'),
-                // Without BOT_STATE_DIR the file is in the temp folder: it survives a process restart but not a redeploy onto a fresh container, so a person is not told it is kept for good
-                forgetQueueSurvivesRedeploy: !!process.env.BOT_STATE_DIR,
             });
             this.conversationMemory = persistentMemory;
             // Orbit tells the bot server who a manager asked a private bot to forget (#435)
@@ -346,6 +341,8 @@ export class BotManager {
 
         // Initialize bot registry
         await this.botRegistry.connect();
+        // Forgets Orbit has not taken yet are kept in the shared store, for every bot server and across a restart or a redeploy (#2031)
+        if (this.conversationMemory instanceof PersistentMemory) this.conversationMemory.setForgetQueue(new RedisForgetQueue(() => this.botRegistry.forgetQueueClient()));
         
         // Register this server with capacity
         const capacity = parseInt(process.env.BOT_SERVER_CAPACITY || '100', 10);

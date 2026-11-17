@@ -7,10 +7,7 @@ services:
     working_dir: /usr/src/app/bots
     volumes:
       - .:/usr/src/app
-      # Forgets Orbit has not taken yet are kept here, so a redeploy does not lose them (BOT_STATE_DIR)
-      - bot-state:/var/lib/universe-bot-state
     environment:
-      BOT_STATE_DIR: /var/lib/universe-bot-state
       SENTRY_DSN_BOT: ${SENTRY_DSN_BOT:-}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
@@ -61,6 +58,3 @@ services:
   uploader:
     environment:
       BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN}
-
-volumes:
-  bot-state:
