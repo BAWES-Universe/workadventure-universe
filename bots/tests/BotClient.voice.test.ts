@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import jwt from 'jsonwebtoken';
 import { BotClient } from '../client/BotClient';
-import type { BotConfiguration } from '../server/AdminApiService';
+import { adminApiService, type BotConfiguration } from '../server/AdminApiService';
 
 const links: { start: ReturnType<typeof vi.fn>; options: any }[] = [];
 vi.mock('../voice/VoiceLink', () => ({
@@ -208,6 +208,24 @@ describe('BotClient voice', () => {
         sent();
         await all;
         expect(over).toBe(true);
+    });
+
+    it('still knows who a reply was for while the stopped voice waits for the worker\u2019s last report', async () => {
+        vi.spyOn(adminApiService, 'isConfigured').mockReturnValue(true);
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'token');
+        try {
+            const { bot, internals } = setup(true);
+            internals.startVoice();
+            const inner = bot as unknown as { voice: { playerOfSegment?: (id: string) => number | undefined; shutdown: () => Promise<void> }; speech: { playerOfSegment: (id: string) => number | undefined } };
+            const voice = inner.voice;
+            inner.speech.playerOfSegment = (id) => (id === 's1' ? 7 : undefined);
+            voice.shutdown = () => new Promise<void>(() => undefined);
+            void (bot as unknown as { stopVoice(): Promise<void> }).stopVoice();
+            expect(voice.playerOfSegment?.('s1')).toBe(7);
+        } finally {
+            vi.unstubAllEnvs();
+            vi.restoreAllMocks();
+        }
     });
 
     it('closes the socket to the worker when the bot disconnects', () => {

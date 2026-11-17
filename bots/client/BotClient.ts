@@ -3087,7 +3087,10 @@ export class BotClient {
         if (adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN) {
             this.voice.meter = new VoiceMeter(this.config.botId, adminApiService, (message) => console.warn(`[Bot ${this.config.botId}] ${message}`));
             this.voice.talkerOf = (playerId) => this.behavior?.getTalker(playerId) ?? null;
-            this.voice.playerOfSegment = (segmentId) => this.speech?.playerOfSegment(segmentId);
+            // This voice's own speech, not whatever `this.speech` is later: the voice is stopped (and `this.speech` cleared) before the
+            // worker's last report of a reply has come, and that report is still booked for the person it was for
+            const speech = this.speech;
+            this.voice.playerOfSegment = (segmentId) => speech.playerOfSegment(segmentId);
         }
         // A reply for one person alone that others would have heard is not said, and that person is told why (#1993)
         this.voice.aloneWith = (spaceName, personId) => this.aloneWith(spaceName, BotClient.playerIdOf(personId));
