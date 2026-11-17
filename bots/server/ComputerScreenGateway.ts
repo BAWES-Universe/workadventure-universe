@@ -302,7 +302,8 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
         // Orbit is asked every few seconds; no answer from it is a no (a screen is never left open on a state nobody can vouch for).
         // An input socket is asked often enough to be confirmed before its own deadline, whatever interval Orbit names: 60% of the deadline
         // leaves the rest (2.8 s of 7) for the round trip of a check.
-        timer = setInterval(() => {
+        const everyMs = Math.max(1000, opened.mode === 'input' ? Math.min(opened.checkEveryMs, Math.round(inputYesMs * 0.6)) : opened.checkEveryMs);
+        const ask = () => {
             if (checking || over) return;
             checking = true;
             const asked = Date.now();
@@ -315,7 +316,16 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
                 })
                 .catch(() => end(1011, 'The screen could not be checked'))
                 .finally(() => (checking = false));
-        }, Math.max(1000, opened.mode === 'input' ? Math.min(opened.checkEveryMs, Math.round(inputYesMs * 0.6)) : opened.checkEveryMs));
+        };
+        // The first ask of an input socket counts from when the open was asked for, not from when Orbit answered it: an open that took
+        // a few seconds must still be confirmed before the deadline that began with it.
+        timer = setTimeout(
+            () => {
+                ask();
+                timer = setInterval(ask, everyMs);
+            },
+            opened.mode === 'input' ? Math.max(0, askedAt + everyMs - Date.now()) : everyMs,
+        );
         limit = setTimeout(() => end(1000, 'The screen was open too long'), Math.max(1000, opened.maxMs));
     };
 
