@@ -301,7 +301,9 @@ describe("a Brick's files (#2003)", () => {
         });
 
         it("deletes a result at once, with the count and size going down, and brings it back when Orbit refuses", async () => {
-            orbit.getBrickFiles.mockResolvedValue(answer({ results: [result({ id: "r1", sizeBytes: 5000 })], count: 4, bytes: 6000 }));
+            orbit.getBrickFiles.mockResolvedValue(
+                answer({ results: [result({ id: "r1", sizeBytes: 5000 })], count: 4, bytes: 6000 })
+            );
             orbit.deleteBrickResult.mockResolvedValueOnce({ deleted: true });
             const list = brickFilesList(BRICK);
             await list.load();
