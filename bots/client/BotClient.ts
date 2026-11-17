@@ -157,6 +157,13 @@ export class BotClient {
     private voice: VoiceCalls | null = null;
     /** What earlier stops of the voice are still sending to Orbit. */
     private readonly draining = new Set<Promise<void>>();
+    /** The same for every bot: a bot that left its call is no longer held by anyone, but what its call used must still reach Orbit. */
+    private static readonly allDraining = new Set<Promise<void>>();
+
+    /** Answers when what every bot's calls used has been sent to Orbit. Asked by a server being switched off, last. */
+    static drained(): Promise<void> {
+        return Promise.all([...BotClient.allDraining]).then(() => undefined);
+    }
     /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
     private speech: BotSpeech | null = null;
     /** Which meeting room the bot stands in, for a voice bot only (see voice/MeetingAreas.ts). */
@@ -3122,8 +3129,12 @@ export class BotClient {
         const drain = this.voice?.shutdown();
         if (drain) {
             // Kept here, not on the voice that is about to be forgotten: the next stop (the server being switched off) waits for this one too
-            const pending: Promise<void> = drain.catch(() => undefined).finally(() => this.draining.delete(pending));
+            const pending: Promise<void> = drain.catch(() => undefined).finally(() => {
+                this.draining.delete(pending);
+                BotClient.allDraining.delete(pending);
+            });
             this.draining.add(pending);
+            BotClient.allDraining.add(pending);
         }
         this.voice = null;
         this.speech = null;

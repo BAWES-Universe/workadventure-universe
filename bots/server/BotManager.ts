@@ -1911,6 +1911,8 @@ export class BotManager {
         this.calls.clear();
         for (const botId of this.bots.keys()) shutdownPromises.push(this.despawnBot(botId));
         await Promise.all(shutdownPromises);
+        // Bots that left their call just before (nothing holds them any more) may still be sending what it used
+        await BotClient.drained();
 
         // Clear room tracking
         this.roomsWithBots.clear();

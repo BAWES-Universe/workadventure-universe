@@ -193,6 +193,23 @@ describe('BotClient voice', () => {
         expect(over).toBe(true);
     });
 
+    it('a server being switched off can wait for the voice of a bot that already left its call, though nothing holds that bot any more', async () => {
+        const { bot, internals } = setup(true);
+        internals.startVoice();
+        let sent!: () => void;
+        const drain = new Promise<void>((resolve) => (sent = resolve));
+        (bot as unknown as { voice: { shutdown: () => Promise<void> } }).voice.shutdown = () => drain;
+        void (bot as unknown as { stopVoice(): Promise<void> }).stopVoice();
+        let over = false;
+        const all = BotClient.drained().then(() => (over = true));
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(over).toBe(false);
+        sent();
+        await all;
+        expect(over).toBe(true);
+    });
+
     it('closes the socket to the worker when the bot disconnects', () => {
         const { bot, internals } = setup(true);
         internals.startVoice();
