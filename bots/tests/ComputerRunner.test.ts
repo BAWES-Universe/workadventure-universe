@@ -6,6 +6,7 @@ import {
     RUNNER_GUARDS,
     createComputerRunner,
     endingOf,
+    whyOf,
     jobPrompt,
     relayUrlFromEnv,
     runnerOrbitFor,
@@ -118,6 +119,12 @@ describe('a job that runs', () => {
 
     it('ends failed when the agent says it cannot go on', async () => {
         const { orbit, seen } = fakeOrbit([done('The site is down. [[failed]]')]);
+        await runJob(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', why: 'The site is down.' }]);
+    });
+
+    it('says nothing about why when the agent gave no sentence before its marker, and never on a job that finished', async () => {
+        const { orbit, seen } = fakeOrbit([done('[[failed]]')]);
         await runJob(orbit);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
     });
@@ -654,5 +661,24 @@ describe('the bot server’s calls to Orbit', () => {
         expect(relayUrlFromEnv({ PUSHER_URL: 'http://play.example.test' } as never)).toBeNull();
         expect(relayUrlFromEnv({ PUSHER_URL: 'https://10.0.0.5' } as never)).toBeNull();
         expect(relayUrlFromEnv({ PUSHER_URL: 'nonsense' } as never)).toBeNull();
+    });
+});
+
+describe('whyOf: the one sentence the agent gave for why it could not go on', () => {
+    it('is the last sentence before the failed marker', () => {
+        expect(whyOf('I opened the form. The site stopped me at the passport upload and kept showing an error. [[failed]]')).toBe('The site stopped me at the passport upload and kept showing an error.');
+        expect(whyOf('First line\nThe site is down [[failed]]')).toBe('The site is down');
+        expect(whyOf('Tried twice. [[done]] Then the site is down. [[failed]]')).toBe('Then the site is down.');
+    });
+
+    it('is empty when nothing came before the marker, or there is no failed marker', () => {
+        expect(whyOf('[[failed]]')).toBeNull();
+        expect(whyOf('All good [[done]]')).toBeNull();
+        expect(whyOf('')).toBeNull();
+    });
+
+    it('is cut to the last 300 characters, so a runaway reply is not sent whole', () => {
+        const long = whyOf(`${'word '.repeat(200)}[[failed]]`);
+        expect(long && long.length).toBeLessThanOrEqual(300);
     });
 });

@@ -240,6 +240,22 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
         expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Reminder: Pick up the car', 'net.bawes.universe.alone': true }, 'brick-run:run-1');
     });
 
+    it('puts a "Worked on its computer" line above a finished computer job, as a notice under its own transaction id, then says the text', async () => {
+        const { bridge, sendMessage } = bridgeWith({});
+        const field = { v: 1, state: 'done', line: 'Worked on its computer', startedAt: 1, took: 540, steps: [] } as never;
+        expect(await bridge.speakInDirectChat(BRICK, SARA, 'Visa form is done.', 'computer-told:j:done', { steps: { field, text: 'Worked on its computer' } })).toEqual({ ok: true, eventId: '$said' });
+        expect(sendMessage).toHaveBeenNthCalledWith(1, BRICK_USER, ROOM, { msgtype: 'm.notice', body: 'Worked on its computer', 'universe.steps': field }, 'computer-told:j:done:steps');
+        expect(sendMessage).toHaveBeenNthCalledWith(2, BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Visa form is done.', 'net.bawes.universe.alone': true }, 'computer-told:j:done');
+    });
+
+    it('still says the text when the line above it could not be sent', async () => {
+        const { bridge, sendMessage } = bridgeWith({});
+        sendMessage.mockRejectedValueOnce(new Error('homeserver blip'));
+        const field = { v: 1, state: 'done', line: 'Worked on its computer', startedAt: 1, steps: [] } as never;
+        expect(await bridge.speakInDirectChat(BRICK, SARA, 'Visa form is done.', 'k', { steps: { field, text: 'Worked on its computer' } } as never)).toEqual({ ok: true, eventId: '$said' });
+        expect(sendMessage).toHaveBeenLastCalledWith(BRICK_USER, ROOM, expect.objectContaining({ body: 'Visa form is done.' }), 'k');
+    });
+
     it('makes no chat for a person who has none', async () => {
         const { bridge, sendMessage } = bridgeWith({ room: null });
         expect(await bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'no_chat' });

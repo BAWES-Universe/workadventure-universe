@@ -103,6 +103,22 @@ export function endingOf(words: string): Ending {
     return last;
 }
 
+/**
+ * The one sentence the agent gave for why it could not go on: the last sentence before its `[[failed]]` marker, at most 300 characters. Orbit cleans it
+ * (no links or markup) before Brick says it, and says it apart from what the record proves. Null when it said nothing before the marker.
+ */
+export function whyOf(words: string): string | null {
+    const marker = /\[\[\s*failed\s*[^\]]*\]\]/gi;
+    let at = -1;
+    for (let match = marker.exec(words); match; match = marker.exec(words)) at = match.index;
+    if (at < 0) return null;
+    // A line of its own ends a sentence too, so it is split before the spaces are made one
+    const before = words.slice(0, at).replace(/\[\[[^\]]*\]\]/g, ' ');
+    const sentences = before.match(/[^.!?\n]+[.!?]?/g)?.map((one) => one.replace(/\s+/g, ' ').trim()).filter(Boolean) ?? [];
+    const last = sentences[sentences.length - 1] ?? '';
+    return last ? last.slice(-300) : null;
+}
+
 /** The first turn of a job: the job in the person's words, and how to say how it ended. */
 export function jobPrompt(job: { title: string; brief: string | null; writes: boolean }): string {
     return [
@@ -191,8 +207,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
     const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? error.message : '');
 
-    async function finish(job: RunnableJob, outcome: 'done' | 'failed') {
-        await orbit.action(job.botId, job.jobId, { action: 'finish', outcome }).catch((error) => say('Could not end a job:', error));
+    async function finish(job: RunnableJob, outcome: 'done' | 'failed', why?: string | null) {
+        // The computer's own sentence about why it could not go on goes with a failure, for the message that tells the person: Orbit cleans it before it keeps it
+        await orbit.action(job.botId, job.jobId, { action: 'finish', outcome, ...(outcome === 'failed' && why ? { why } : {}) }).catch((error) => say('Could not end a job:', error));
     }
 
     /** Waits while the person has the machine or the job waits for them. 'back' when it is Brick's again, 'over' when it is not coming back. */
@@ -428,7 +445,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
             const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
             if (ending.kind === 'done') return void (await finish(job, 'done'));
-            if (ending.kind === 'failed') return void (await finish(job, 'failed'));
+            if (ending.kind === 'failed') return void (await finish(job, 'failed', whyOf(result.words)));
             if (ending.kind === 'handover') {
                 bad = 0;
                 // The person is only told to come when Orbit took the handover: if it did not, waiting would take the job straight

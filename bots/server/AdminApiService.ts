@@ -11,6 +11,7 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
+import { computerReportOf, type ComputerReport } from './ComputerReports';
 import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
@@ -1348,6 +1349,29 @@ export class AdminApiService {
             return true;
         } catch (error) {
             console.warn('[AdminApiService] Could not keep that a wait was told:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /**
+     * What Brick is to tell people about their computer jobs now (the report back): endings and waits not told yet, each with the facts Orbit's
+     * record proves. Throws when Orbit cannot be asked, so nothing is taken for "nothing to tell".
+     */
+    async computerReports(): Promise<ComputerReport[]> {
+        const response = await this.brickCall<{ reports?: unknown }>('get', 'api/computer/jobs/reports');
+        const reports = Array.isArray(response.data?.reports) ? response.data.reports : [];
+        return reports.map(computerReportOf).filter((report): report is ComputerReport => report !== null);
+    }
+
+    /** That a report was said, or can never be: Orbit does not offer it again. False when Orbit did not take it (it is offered again and said as the same message). Never throws. */
+    async keepComputerReportTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>): Promise<boolean> {
+        try {
+            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }) });
+            return true;
+        } catch (error) {
+            // A job that is gone has nothing left to be told: that is an answer, not a failure
+            if (axios.isAxiosError(error) && error.response?.status === 404) return true;
+            console.warn('[AdminApiService] Could not keep that a computer job was told:', error instanceof Error ? error.message : error);
             return false;
         }
     }

@@ -18,6 +18,7 @@ import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { brickChangedEverywhere, listenForBrickChanges } from './brickChanges';
 import { BrickRunner } from './BrickRunner';
+import { ComputerReports } from './ComputerReports';
 import { movementLogger } from '../utils/MovementLogger';
 import { DmReplyService, instructionsFor, type DmRoomLink } from './DmReplyService';
 import { ModelTaskRunner } from './BrickTaskModel';
@@ -173,6 +174,9 @@ let stopBrickListening: (() => void) | undefined;
 /** How often Orbit is asked for the goals and tasks that fell due (#2002). Nothing depends on exactly when: Orbit is the scheduler. */
 const BRICK_DUE_EVERY_MS = 60 * 1000;
 let brickRunner: BrickRunner | undefined;
+/** Brick tells the person how a computer job went, in their own chat with it (the report back). */
+let computerReports: ComputerReports | undefined;
+const COMPUTER_REPORTS_EVERY_MS = 10 * 1000;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
 /** Real computers: Orbit's sweep, and the runner that works the jobs Orbit says are running. They need no Matrix, so they start whether or not direct messages are set up. */
@@ -288,6 +292,13 @@ async function setupMatrix(): Promise<void> {
         })
     );
     brickRunner.start(BRICK_DUE_EVERY_MS);
+    // A computer job that ended or waits for its person: Brick says so in the same chat, as it says a goal's news. Nothing to switch on.
+    computerReports = new ComputerReports(
+        { reports: () => adminApiService.computerReports(), keepTold: (report) => adminApiService.keepComputerReportTold(report) },
+        { say: (brickId, matrixUserId, text, transactionId, extra) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId, extra) },
+        console
+    );
+    computerReports.start(COMPUTER_REPORTS_EVERY_MS);
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
@@ -333,6 +344,7 @@ async function shutdown(signal: string) {
         // No more tries at hearing Brick changes, even when the game loop never started
         stopBrickListening?.();
         brickRunner?.stop();
+        computerReports?.stop();
         
         // Stop movement analysis
         stopMovementAnalysis();

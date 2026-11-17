@@ -780,10 +780,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * the chat the two share alone, and only for someone Orbit says may message the bot. `transactionId` is the run's own id, so a
      * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
      */
-    async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer> {
+    async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string, extra?: { steps?: { field: StepsField; text: string } }): Promise<SpokeAnswer> {
         const room = await this.roomToSpeakIn(botId, matrixUserId);
         if ('reason' in room) return { ok: false, reason: room.reason };
         try {
+            // A "Worked on its computer" line above what is said (a computer job that finished): a notice, so it never notifies on its own, under its own
+            // transaction id so a retry is the same line. A lost line must not cost the person the message.
+            if (extra?.steps) {
+                try {
+                    await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.notice', body: extra.steps.text, [STEPS_KEY]: extra.steps.field }, `${transactionId}:steps`);
+                } catch (error: any) {
+                    console.warn(`[MatrixDmBridge] Could not show the steps line in the direct chat of bot ${botId}:`, error?.message ?? error);
+                }
+            }
             const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text, [OWN_INITIATIVE_KEY]: true }, transactionId);
             return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
         } catch (error: any) {

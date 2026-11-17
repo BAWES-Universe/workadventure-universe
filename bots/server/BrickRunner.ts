@@ -17,6 +17,7 @@
  */
 
 import type { GoalAsk, TaskResult } from './BrickTaskRun';
+import type { StepsField } from '../ai/ToolSteps';
 
 /** A run Orbit handed out, as far as this part needs it (POST /api/bricks/items/due). */
 export interface DueRun {
@@ -117,7 +118,7 @@ export type SpokeAnswer = { ok: true; eventId: string } | { ok: false; reason: '
 
 /** Says something in a person's own chat with a Brick. */
 export interface BrickSpeaker {
-    say(brickId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer>;
+    say(brickId: string, matrixUserId: string, text: string, transactionId: string, extra?: { steps?: { field: StepsField; text: string } }): Promise<SpokeAnswer>;
 }
 
 /** The kinds of run this server can run, asked of Orbit's due list so it never hands out (and burns) what nothing here will try. Without a model, only reminders. */
