@@ -109,6 +109,10 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                 return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
             case 'broken_start':
                 return { started: false, success: false, note: "Your computer isn't starting right now, so this job has to wait. Say so in plain words: you can still chat and use their apps, and you'll tell them the moment it is back. Do not offer a price or a reason." };
+            case 'ai_unsupported':
+            case 'ai_cannot_run_computer':
+            case 'unsupported':
+                return { started: false, success: false, note: "This Brick's AI cannot run a computer yet. Say so in one plain sentence; you can still chat and use their apps. Do not name a model, a provider or a price." };
             case 'not_owner':
             case 'not_open':
             case 'not_set':
@@ -119,13 +123,19 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     }
     const { job: made, restoredFrom } = started;
     if (made.status === 'queued') {
-        if (made.queuedFor === 'allowance') {
-            return { started: false, queued: true, note: "It is waiting: their computer time for this month is used up. Say so in one sentence, that the work is kept and goes on by itself when more is available, and that they can tap Ask for more in Usage. Never give a number or a price." };
+        // Each line follows the reason Orbit gave for the wait (the words of the Budget mock): never a number, a price, or whose money it is
+        switch (made.queuedFor) {
+            case 'allowance':
+                return { started: false, queued: true, note: "It is waiting: their computer time for this month is used up. Say so in one or two plain sentences: when it starts again (the first of next month), that the work is saved, and that they can tap Ask for more. Never give a number or a price." };
+            case 'budget':
+            case 'funds':
+            case 'paused':
+                return { started: false, queued: true, note: "The job is saved and paused for now. Say so in one plain sentence: you will carry on by yourself as soon as you can and tell them, and there is nothing they need to do. Do not say why, name money, or offer Ask for more: this is not theirs to fix." };
+            case 'turn':
+                return { started: false, queued: true, note: 'It is next in line: your computer does one job at a time. Say so in one line, e.g. "Will do, right after the current job. My computer does one job at a time, so this is next in line."' };
+            default:
+                return { started: false, queued: true, note: 'It is waiting in line: every computer is busy just now. Say so in one line, e.g. "Every computer is busy right now, so the job is waiting in line. You have plenty of computer time left, and waiting uses none of it." It starts by itself, and nothing needs asking for.' };
         }
-        if (made.queuedFor === 'turn') {
-            return { started: false, queued: true, note: 'It is next in line: your computer does one job at a time. Say so in one line, e.g. "Will do, right after the current job. My computer does one job at a time, so this is next in line."' };
-        }
-        return { started: false, queued: true, note: 'It waits in line: every computer is busy just now and nothing needs asking for. Say so in one line, and that it starts by itself.' };
     }
     context.onStarted?.(made.id);
     const when = restoredFrom ? day(restoredFrom) : '';

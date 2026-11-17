@@ -10,8 +10,10 @@ export interface Rates {
     reasoning?: number;
     /** Input read back from the provider's cache. */
     cache_read?: number;
-    /** Input written to the provider's cache (Claude charges extra for this). */
+    /** Input written to the provider's cache (Claude charges extra for this: the five-minute price). */
     cache_write?: number;
+    /** The price of a write to the one-hour cache, when the list gives one. Claude's is twice the input price. */
+    cache_write_1h?: number;
 }
 
 /** A higher (or lower) price that starts once a request's context reaches `from` tokens. */
@@ -42,6 +44,11 @@ export interface CallUsage {
     inputTokens: number;
     cachedTokens: number;
     cacheWriteTokens: number;
+    /**
+     * Of `cacheWriteTokens`, the ones written to a cache that lives an hour (Claude charges those twice the input price, the five-minute
+     * ones 1.25 times). Absent or 0: all of them are the short kind. Never more than `cacheWriteTokens`.
+     */
+    cacheWrite1hTokens?: number;
     outputTokens: number;
     reasoningTokens: number;
 }

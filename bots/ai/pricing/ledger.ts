@@ -13,6 +13,8 @@ export interface CallMetadata {
     completionTokens?: number;
     cachedPromptTokens?: number;
     cacheWriteTokens?: number;
+    /** Of the cache writes, the ones to the one-hour cache (S2). */
+    cacheWrite1hTokens?: number;
     reasoningTokens?: number;
     costUsd?: number;
     error?: boolean;
@@ -28,10 +30,12 @@ export function usageFromMetadata(metadata: CallMetadata | undefined): CallUsage
     const cachedTokens = within(metadata?.cachedPromptTokens, prompt);
     const cacheWriteTokens = within(metadata?.cacheWriteTokens, prompt - cachedTokens);
     const reasoningTokens = within(metadata?.reasoningTokens, completion);
+    const cacheWrite1hTokens = within(metadata?.cacheWrite1hTokens, cacheWriteTokens);
     return {
         inputTokens: prompt - cachedTokens - cacheWriteTokens,
         cachedTokens,
         cacheWriteTokens,
+        ...(cacheWrite1hTokens > 0 ? { cacheWrite1hTokens } : {}),
         outputTokens: completion - reasoningTokens,
         reasoningTokens,
     };
