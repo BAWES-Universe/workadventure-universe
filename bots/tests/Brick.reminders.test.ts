@@ -393,9 +393,29 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
             expect(uploadMedia).not.toHaveBeenCalled();
         });
 
-        it('still says no_chat when there is no chat at all, and keeps the goals’ own room check the same as it was', async () => {
+        it('uses the chat the job began in when the shared store has lost its record of it, and notes it again; a store that could not be read waits', async () => {
+            // Nothing recorded (a restart, a store that was emptied), but the chat the job began in is still the two of them alone
+            const lost = bridgeWith({ room: null });
+            expect(await lost.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: true, eventId: '$said' });
+            expect(lost.sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, expect.anything(), 't');
+            expect(lost.deps.rooms.rememberDmRoomOf).toHaveBeenCalledWith(BRICK, SARA, ROOM);
+            // The record appears later: the same words are sent into the same chat, once the first try had to wait
+            const later = bridgeWith({ room: null });
+            later.client.getJoinedMembers.mockRejectedValueOnce(new Error('homeserver down'));
+            expect(await later.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: false, reason: 'unsure' });
+            expect(later.sendMessage).not.toHaveBeenCalled();
+            expect(await later.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: true, eventId: '$said' });
+            // The chat it began in is not the two of them any more: gone for good, and nothing is said anywhere else
+            const strangers = bridgeWith({ room: null, members: [SARA, BRICK_USER, '@someone:matrix.test'] });
+            expect(await strangers.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: false, reason: 'origin_gone' });
+            expect(strangers.sendMessage).not.toHaveBeenCalled();
+            const left = bridgeWith({ room: null, members: [SARA] });
+            expect(await left.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: false, reason: 'origin_gone' });
+        });
+
+        it('still says no_chat when there is no chat at all and nothing to say where it began, and keeps the goals’ own room check the same as it was', async () => {
             const none = bridgeWith({ room: null });
-            expect(await none.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: false, reason: 'no_chat' });
+            expect(await none.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'no_chat' });
             expect(await none.bridge.roomToSpeakIn(BRICK, SARA)).toEqual({ ok: false, reason: 'no_chat' });
             expect(await bridgeWith({}).bridge.roomToSpeakIn(BRICK, SARA)).toEqual({ ok: true, roomId: ROOM });
         });

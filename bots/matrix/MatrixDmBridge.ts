@@ -606,6 +606,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return joined.length === 2 && joined.includes(botUserId) && joined.includes(matrixUserId);
     }
 
+    /** Whether this room has exactly the bot and the person in it (asked afresh): null when that could not be looked at just now. */
+    private async isOnlyTheTwoOf(botId: string, matrixUserId: string, roomId: string): Promise<boolean | null> {
+        const botUserId = this.botUserId(botId);
+        const joined = await this.client.getJoinedMembers(botUserId, roomId).catch(() => null);
+        if (!joined) return null;
+        this.roomMembers.set(roomId, new Set(joined));
+        return joined.length === 2 && joined.includes(botUserId) && joined.includes(matrixUserId);
+    }
+
     private async noteDirectRoom(botId: string, matrixUserId: string, roomId: string): Promise<void> {
         const key = MatrixDmBridge.pair(botId, matrixUserId);
         // Known here and kept in the shared store: nothing to do. A chat the store could not take is written again the next time it is seen,
@@ -900,6 +909,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not look for the direct chat of bot ${botId}:`, error?.message ?? error);
             return { ok: false, reason: 'unsure' };
+        }
+        if (!looked.roomId && !looked.unsure && expectedRoomId) {
+            // No record of a chat, but Orbit says which chat the work began in. A person only starts a computer job in their own chat with the Brick, so a missing record is
+            // a record that was lost (a restart, a store that was emptied), not a chat that was never there: when that chat is still the two of them alone it is the
+            // one, and it is noted again. Not theirs any more: the chat it began in is gone. Could not look: tried again.
+            const theirs = await this.isOnlyTheTwoOf(botId, matrixUserId, expectedRoomId);
+            if (theirs === null) return { ok: false, reason: 'unsure' };
+            if (!theirs) return { ok: false, reason: 'origin_gone' };
+            await this.noteDirectRoom(botId, matrixUserId, expectedRoomId);
+            looked = { roomId: expectedRoomId, unsure: false };
         }
         if (!looked.roomId) return { ok: false, reason: looked.unsure ? 'unsure' : 'no_chat' };
         if (expectedRoomId && looked.roomId !== expectedRoomId) return { ok: false, reason: 'origin_gone' };

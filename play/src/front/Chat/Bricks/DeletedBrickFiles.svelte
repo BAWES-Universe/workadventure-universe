@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { get } from "svelte/store";
     import LL, { locale } from "../../../i18n/i18n-svelte";
+    import type { TranslationFunctions } from "../../../i18n/i18n-types";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import { warningMessageStore } from "../../Stores/ErrorStore";
     import { deletedBrickFilesList, fileSize, type BrickResult } from "./BrickFiles";
@@ -20,14 +20,15 @@
         list.load().catch((error) => console.error(error));
     });
 
-    function note(result: BrickResult): string {
+    // The words and the language come in as arguments, so the row is drawn again when the language changes (a store read inside a function the template calls is not tracked)
+    function note(result: BrickResult, words: TranslationFunctions, language: string): string {
         const where =
             result.delivery === "delivered"
-                ? $LL.chat.brick.files.resultSent()
+                ? words.chat.brick.files.resultSent()
                 : result.delivery === "waiting"
-                ? $LL.chat.brick.files.resultWaiting()
-                : $LL.chat.brick.files.resultNotDelivered();
-        return [result.brick ?? "", shortDay(result.at, $locale), fileSize(result.sizeBytes, get(locale)), where]
+                ? words.chat.brick.files.resultWaiting()
+                : words.chat.brick.files.resultNotDelivered();
+        return [result.brick ?? "", shortDay(result.at, language), fileSize(result.sizeBytes, language), where]
             .filter(Boolean)
             .join(" · ");
     }
@@ -57,7 +58,7 @@
                 <span class="bkg-ico"><IconFile font-size="20" /></span>
                 <span class="bkg-mtx">
                     <span class="bkg-t">{result.name}</span>
-                    <span class="bkg-cn">{note(result)}</span>
+                    <span class="bkg-cn">{note(result, $LL, $locale)}</span>
                     <span class="bkg-acts">
                         <PageButton testId="deletedBrickFileDownload" on:click={() => download(result)}
                             >{$LL.chat.brick.files.download()}</PageButton

@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import { get } from "svelte/store";
     import LL, { locale } from "../../../i18n/i18n-svelte";
+    import type { TranslationFunctions } from "../../../i18n/i18n-types";
     import { openYourArtifacts } from "../../Artifacts/openYourArtifacts";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import PageGroup from "../../external-modules/bots/components/page/PageGroup.svelte";
@@ -75,14 +76,15 @@
         return kind === "image" ? IconPhoto : kind === "sheet" ? IconFileText : IconFile;
     }
 
-    function resultNote(result: BrickResult): string {
+    // The words and the language come in as arguments, so the row is drawn again when the language changes (a store read inside a function the template calls is not tracked)
+    function resultNote(result: BrickResult, words: TranslationFunctions, language: string): string {
         const where =
             result.delivery === "delivered"
-                ? $LL.chat.brick.files.resultDelivered({ name })
+                ? words.chat.brick.files.resultDelivered({ name })
                 : result.delivery === "waiting"
-                ? $LL.chat.brick.files.resultWaiting()
-                : $LL.chat.brick.files.resultNotDelivered();
-        return [day(result.at), size(result.sizeBytes), where].join(" · ");
+                ? words.chat.brick.files.resultWaiting()
+                : words.chat.brick.files.resultNotDelivered();
+        return [shortDay(result.at, language), fileSize(result.sizeBytes, language), where].join(" · ");
     }
 
     function downloadResult(result: BrickResult) {
@@ -177,7 +179,7 @@
                         <span class="bkg-ico"><IconFile font-size="20" /></span>
                         <span class="bkg-mtx">
                             <span class="bkg-t">{result.name}</span>
-                            <span class="bkg-cn">{resultNote(result)}</span>
+                            <span class="bkg-cn">{resultNote(result, $LL, $locale)}</span>
                             <span class="bkg-acts">
                                 <PageButton testId="filesResultDownload" on:click={() => downloadResult(result)}
                                     >{$LL.chat.brick.files.download()}</PageButton
