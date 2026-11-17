@@ -12,9 +12,11 @@ import type { AdminApiService, OfferableApp } from '../server/AdminApiService';
 import type { AppOfferNote, BrickNote } from './BrickTools';
 
 export const OFFER_APP_TOOL = 'offer_app';
+/** The card for an organization that has not allowed Universe's GitHub app (design 14 Nov, Part 3). */
+export const OFFER_GITHUB_OWNER_OK_TOOL = 'offer_github_owner_ok';
 
 export function isAppTool(name: string): boolean {
-    return name === OFFER_APP_TOOL;
+    return name === OFFER_APP_TOOL || name === OFFER_GITHUB_OWNER_OK_TOOL;
 }
 
 type ToolDefinition = { type: 'function'; function: { name: string; description: string; parameters: object } };
@@ -55,6 +57,25 @@ export function appToolDefinitions(): ToolDefinition[] {
                         other_search: { type: 'string', description: 'With other_label: one or two words to search the list of Apps for, like "calendar".' },
                     },
                     required: ['app', 'asked'],
+                },
+            },
+        },
+        {
+            type: 'function',
+            function: {
+                name: OFFER_GITHUB_OWNER_OK_TOOL,
+                description:
+                    'Offer the person two ways forward, on a small card under your answer, when a GitHub tool told you an organization has not allowed Universe\'s GitHub app yet (its owner has to). ' +
+                    'The tool result tells you when: say in one short sentence that you cannot reach that organization\'s repository yet for that reason, then call this with the organization. ' +
+                    'The card offers "Ask the owner" (GitHub sends the owners their request) and "Use my own GitHub key". Only for an organization a GitHub tool named, at most one card in a reply, and never mention the card in your words. ' +
+                    'If they said no to it before, do not offer it again, and help another way.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        org: { type: 'string', description: 'The organization exactly as the GitHub tool result names it, like "acme-corp".' },
+                        ask: { type: 'string', description: 'The card\'s question, in their language, naming the organization: "Get acme-corp\'s OK?".' },
+                    },
+                    required: ['org'],
                 },
             },
         },
@@ -101,6 +122,48 @@ export interface AppToolContext {
     userId: string;
     /** Where this turn's notes for the game wait until the reply goes out. */
     notes: BrickNote[];
+}
+
+/** Runs offer_github_owner_ok. Never throws: the model is told in plain words what happened. */
+export async function runGitHubOwnerOkTool(args: Record<string, unknown>, context: AppToolContext): Promise<Record<string, unknown>> {
+    const org = text(args.org, 80);
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(org)) return { shown: false, error: 'Say which organization, exactly as the GitHub tool result named it.' };
+    if (context.notes.some((note) => note.kind === 'app')) return { shown: false, note: 'One card in a reply is enough. Do not mention it.' };
+
+    let apps: OfferableApp[];
+    let offeredBefore: string[] = [];
+    try {
+        apps = await context.admin.appsOfferableFor(context.botId, context.userId);
+        offeredBefore = (await context.admin.brickOffersFor(context.botId, context.userId)).topics;
+    } catch (error) {
+        console.warn('[AppTools] Could not read the Apps to offer:', error instanceof Error ? error.message : error);
+        return { shown: false, note: 'This cannot be offered from here right now. Help another way and do not mention it.' };
+    }
+    const github = apps.find((one) => one.key.toLowerCase() === 'github');
+    if (!github) return { shown: false, note: 'GitHub is not set up here. Help another way and do not mention it.' };
+    // Only for a GitHub this Brick works through: a person who has not connected it yet is offered that first
+    if (!github.usable || !github.connectionId) return { shown: false, note: 'GitHub is not connected for you yet. Offer to connect it with offer_app (app "github"), and offer nothing else now.' };
+
+    const topic = topicOf(`github-${org.toLowerCase()}`);
+    if (offeredBefore.some((one) => topicWords(one) === topicWords(topic))) {
+        return { shown: false, note: `They already said not now about ${org}. Never offer it again. Help another way and do not mention it.` };
+    }
+    const note: AppOfferNote = {
+        kind: 'app',
+        topic,
+        app: github.key,
+        name: github.name,
+        connectKind: github.kind,
+        state: 'org',
+        org,
+        connectionId: github.connectionId,
+        ask: text(args.ask, ASK_MAX) || `Get ${org}'s OK?`,
+        asked: false,
+        other: null,
+    };
+    if (context.notes.some((one) => one.kind === 'app')) return { shown: false, note: 'One card in a reply is enough. Do not mention it.' };
+    context.notes.push(note);
+    return { shown: true, note: 'The card goes under your answer. Do not mention it in your words.' };
 }
 
 /** Runs offer_app. Never throws: the model is told in plain words what happened. */

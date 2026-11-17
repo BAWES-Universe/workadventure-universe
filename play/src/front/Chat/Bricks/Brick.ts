@@ -384,8 +384,13 @@ export interface AppOffer {
     name: string;
     /** Which call connects it: "listed" (an App of Orbit's list, and GitHub) or "readyMade". Older messages carry none: "listed". */
     connectKind: "listed" | "readyMade";
-    /** "new": nothing is connected. "connected": they connected it already, and this Brick may not use it yet. */
-    state: "new" | "connected";
+    /**
+     * "new": nothing is connected. "connected": they connected it already, and this Brick may not use it yet. "org": GitHub works
+     * for this Brick, but an organization (`org`) has not allowed Universe's GitHub app: ask its owner, or use a key of their own.
+     */
+    state: "new" | "connected" | "org";
+    /** With state "org": the organization, as GitHub names it. */
+    org: string | null;
     /** Their connection to it, when they have one. */
     connectionId: string | null;
     /** The card's question; empty when they asked for the App by name ("Connect Notion?"). */
@@ -407,13 +412,17 @@ export function readAppOffer(
     const offer = content[APP_OFFER_KEY];
     if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text") return undefined;
     if (!offer || typeof offer !== "object") return undefined;
-    const { topic, app, name, connectKind, state, connectionId, ask, asked, other } = offer as Record<string, unknown>;
+    const { topic, app, name, connectKind, state, connectionId, ask, asked, other, org } = offer as Record<
+        string,
+        unknown
+    >;
     const read: AppOffer = {
         topic: text(topic, TOPIC_MAX),
         app: text(app, 80),
         name: text(name, APP_NAME_MAX),
         connectKind: connectKind === "readyMade" ? "readyMade" : "listed",
-        state: state === "connected" ? "connected" : "new",
+        state: state === "connected" ? "connected" : state === "org" ? "org" : "new",
+        org: typeof org === "string" && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(org) ? org : null,
         connectionId: typeof connectionId === "string" && connectionId ? connectionId : null,
         ask: text(ask, APP_ASK_MAX),
         asked: asked === true,
@@ -430,6 +439,8 @@ export function readAppOffer(
     }
     // A card that "lets it use" an App it does not name a connection for cannot do that: it signs in instead
     if (read.state === "connected" && !read.connectionId) read.state = "new";
+    // An organization card with no organization to ask about is the plain card
+    if (read.state === "org" && !read.org) read.state = "new";
     return read.topic && read.app && read.name ? read : undefined;
 }
 

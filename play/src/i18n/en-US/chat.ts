@@ -1159,6 +1159,17 @@ const chat: BaseTranslation = {
                 "{name}'s sign-in finished, but we couldn't check it just now. Open Apps in a moment to see it.",
             signInBlocked: "The sign-in window did not open. Allow pop-ups for this page and try again.",
             couldNotLet: "{name} is connected, but this Brick could not be let use it. Choose it in Apps.",
+            // An organization that only lets in apps its owner allows, and Universe is not one of them yet (GitHub)
+            orgAsk: "Get {org}'s OK?",
+            askOwner: "Ask the owner",
+            askOwnerLine: "GitHub sends them your request",
+            ownKey: "Use my own GitHub key",
+            ownKeyLine: "Works right away. Paste it once.",
+            notNowOrg: "Nothing changes",
+            // The request went to GitHub; the organization shows as waiting under Apps, GitHub
+            askedOwner:
+                "Asked {org}'s owners. When one says yes, it shows under Apps, GitHub, and your Bricks can reach {org}.",
+            askOwnerBlocked: "GitHub's page did not open. Allow pop-ups for this page and try again.",
         },
         // The starter that opens the Apps page (#2001)
         connectMyApps: "Connect my apps",

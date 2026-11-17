@@ -2,7 +2,15 @@ import { beforeAll, describe, expect, it, vi, type Mock } from "vitest";
 import { i18nObject } from "../../../../i18n/i18n-util";
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { readAppOffer, type AppOffer } from "../Brick";
-import { APP_CONNECT, APP_NOT_NOW, APP_OTHER, BRICK_APP_CARD, brickAppCard } from "../BrickHello";
+import {
+    APP_ASK_OWNER,
+    APP_CONNECT,
+    APP_NOT_NOW,
+    APP_OTHER,
+    APP_OWN_KEY,
+    BRICK_APP_CARD,
+    brickAppCard,
+} from "../BrickHello";
 import { connectFromCard, type ChatConnectSteps } from "../Apps/ChatConnect";
 
 const BRICK = "@bot_0b7c1d2e-1111-4222-8333-944455556666:chat.test";
@@ -12,6 +20,7 @@ const raw = {
     name: "Google Calendar",
     connectKind: "listed",
     state: "new",
+    org: null,
     connectionId: null,
     ask: "Connect your calendar?",
     asked: false,
@@ -42,6 +51,27 @@ describe("a Brick's offer to connect an App, as the chat reads it", () => {
         delete older.connectKind;
         expect(readAppOffer(BRICK, content(older))?.connectKind).toBe("listed");
         expect(readAppOffer(BRICK, content({ ...raw, connectKind: "something else" }))?.connectKind).toBe("listed");
+    });
+
+    it("reads the organization on the card for one that has not allowed Universe, and falls back to the plain card without it", () => {
+        const org = {
+            ...raw,
+            app: "github",
+            name: "GitHub",
+            state: "org",
+            org: "acme-corp",
+            connectionId: "c1",
+            other: null,
+        };
+        expect(readAppOffer(BRICK, content(org))).toMatchObject({ state: "org", org: "acme-corp", connectionId: "c1" });
+        expect(readAppOffer(BRICK, content({ ...org, org: undefined }))).toMatchObject({ state: "new", org: null });
+        // A name GitHub would not accept is no organization
+        expect(readAppOffer(BRICK, content({ ...org, org: "acme corp/../x" }))).toMatchObject({
+            state: "new",
+            org: null,
+        });
+        // An offer from before it existed is read as before
+        expect(readAppOffer(BRICK, content({ ...raw, state: "new" }))).toMatchObject({ state: "new", org: null });
     });
 
     it("drops a second choice that cannot be used, and a 'let it use' that names no connection", () => {
@@ -94,6 +124,24 @@ describe("the card", () => {
             label: "Let it use Gmail",
             line: "You connected it already",
         });
+    });
+
+    it("asks 'Get acme-corp's OK?' with the two ways forward and 'Not now', as in the 14 Nov mock (Part 3)", () => {
+        const card = brickAppCard(
+            offer({ app: "github", name: "GitHub", state: "org", org: "acme-corp", ask: "", other: null }),
+            LL()
+        );
+        expect(card.id).toBe(BRICK_APP_CARD);
+        expect(card.title).toBe("Get acme-corp's OK?");
+        expect(card.question?.choices).toEqual([
+            { id: APP_ASK_OWNER, label: "Ask the owner", line: "GitHub sends them your request" },
+            { id: APP_OWN_KEY, label: "Use my own GitHub key", line: "Works right away. Paste it once." },
+            { id: APP_NOT_NOW, label: "Not now", line: "Nothing changes" },
+        ]);
+        // The Brick's own question wins when it gave one
+        expect(
+            brickAppCard(offer({ state: "org", org: "acme-corp", ask: "Pedir permiso a acme-corp?" }), LL()).title
+        ).toBe("Pedir permiso a acme-corp?");
     });
 
     it("never calls an App a tool, a server or a connector", () => {

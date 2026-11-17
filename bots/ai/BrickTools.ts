@@ -55,8 +55,14 @@ export interface AppOfferNote {
     name: string;
     /** Which call connects it: "listed" (Orbit's list, and GitHub) or "readyMade". (`kind` above says this is an App offer.) */
     connectKind: 'listed' | 'readyMade';
-    /** "new": nothing is connected yet. "connected": they already connected it, and this Brick may not use it yet. */
-    state: 'new' | 'connected';
+    /**
+     * "new": nothing is connected yet. "connected": they already connected it, and this Brick may not use it yet. "org": it is
+     * connected and this Brick may use it, but an organization has not allowed Universe's GitHub app (see `org`): the card asks
+     * that organization's owner, or takes a key of the person's own.
+     */
+    state: 'new' | 'connected' | 'org';
+    /** With state "org": the organization, as GitHub names it. */
+    org?: string;
     /** Their connection when they have one, so the card lets this Brick use it instead of signing in again. */
     connectionId: string | null;
     /** The card's question ("Connect your calendar?"); empty for one they asked for by name ("Connect Notion?"). */

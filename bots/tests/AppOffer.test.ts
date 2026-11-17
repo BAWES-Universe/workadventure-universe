@@ -16,7 +16,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { AdminApiService } from '../server/AdminApiService';
 import { APP_CONNECTED_EVENT, APP_CONNECTED_KEY, APP_OFFER_KEY, MatrixDmBridge, appConnectedLine, connectedAppOf } from '../matrix/MatrixDmBridge';
-import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool, topicOf } from '../ai/AppTools';
+import { OFFER_APP_TOOL, OFFER_GITHUB_OWNER_OK_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool, runGitHubOwnerOkTool, topicOf } from '../ai/AppTools';
 import type { BrickNote } from '../ai/BrickTools';
 import type { MatrixEvent } from '../matrix/MatrixAppServiceRouter';
 
@@ -61,6 +61,69 @@ describe('What the bot server asks Orbit about Apps', () => {
     });
 });
 
+describe('The offer_github_owner_ok tool (an organization that has not allowed Universe)', () => {
+    const admin = (apps = [CALENDAR, GITHUB], topics: string[] = []) => ({
+        appsOfferableFor: vi.fn(async () => apps),
+        brickOffersFor: vi.fn(async () => ({ after: 3, topics })),
+    });
+    const run = (args: Record<string, unknown>, a = admin(), notes: BrickNote[] = []) =>
+        runGitHubOwnerOkTool(args, { admin: a, botId: BRICK, userId: 'uuid-alice', notes }).then((result) => ({ result, notes }));
+
+    beforeEach(() => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    it('puts a card with the organization on it, for the GitHub this Brick works through', async () => {
+        const { result, notes } = await run({ org: 'acme-corp', ask: "Get acme-corp's OK?" });
+
+        expect(result).toMatchObject({ shown: true });
+        expect(notes).toEqual([
+            {
+                kind: 'app', topic: 'app github acme corp', app: 'github', name: 'GitHub', connectKind: 'listed', state: 'org', org: 'acme-corp', connectionId: 'conn-gh',
+                ask: "Get acme-corp's OK?", asked: false, other: null,
+            },
+        ]);
+    });
+
+    it('asks in words of its own when the Brick gives none', async () => {
+        const { notes } = await run({ org: 'acme-corp' });
+        expect(notes[0]).toMatchObject({ ask: "Get acme-corp's OK?" });
+    });
+
+    it('offers nothing for a name that is not an organization, and only one card in a reply', async () => {
+        expect((await run({ org: 'not a name!' })).result).toMatchObject({ shown: false, error: expect.any(String) });
+        expect((await run({ org: '' })).notes).toEqual([]);
+        const first = await run({ org: 'acme-corp' });
+        const second = await run({ org: 'other-org' }, admin(), first.notes);
+        expect(second.result).toMatchObject({ shown: false });
+        expect(first.notes).toHaveLength(1);
+    });
+
+    it('sends the Brick to the plain GitHub card when GitHub is not connected or not usable by it, and offers nothing when GitHub is not set up', async () => {
+        const unusable = await run({ org: 'acme-corp' }, admin([{ ...GITHUB, usable: false }]));
+        expect(unusable.notes).toEqual([]);
+        expect(unusable.result).toMatchObject({ shown: false, note: expect.stringContaining('offer_app') });
+        const none = await run({ org: 'acme-corp' }, admin([CALENDAR]));
+        expect(none.notes).toEqual([]);
+        expect(none.result).toMatchObject({ shown: false });
+    });
+
+    it('never offers an organization again after "not now", whatever the case', async () => {
+        const { result, notes } = await run({ org: 'Acme-Corp' }, admin(undefined, ['app github acme corp']));
+        expect(result).toMatchObject({ shown: false, note: expect.stringContaining('Never offer it again') });
+        expect(notes).toEqual([]);
+        // Another organization is another card
+        expect((await run({ org: 'other-org' }, admin(undefined, ['app github acme corp']))).result).toMatchObject({ shown: true });
+    });
+
+    it('offers nothing when Orbit cannot be reached', async () => {
+        const broken = { appsOfferableFor: vi.fn(async () => { throw new Error('down'); }), brickOffersFor: vi.fn(async () => ({ after: 0, topics: [] })) };
+        const { result, notes } = await run({ org: 'acme-corp' }, broken as never);
+        expect(result).toMatchObject({ shown: false });
+        expect(notes).toEqual([]);
+    });
+});
+
 describe('Which call connects an App', () => {
     const tokenBefore = process.env.BOT_SERVICE_TOKEN;
     beforeEach(() => {
@@ -89,9 +152,10 @@ describe('The offer_app tool', () => {
     });
     const run = (args: Record<string, unknown>, a = admin(), notes: BrickNote[] = []) => runAppTool(args, { admin: a, botId: BRICK, userId: 'uuid-alice', notes }).then((result) => ({ result, notes }));
 
-    it('is one tool, named offer_app', () => {
-        expect(appToolDefinitions().map((tool) => tool.function.name)).toEqual([OFFER_APP_TOOL]);
+    it('is two tools: offer_app, and the card for an organization that has not allowed Universe', () => {
+        expect(appToolDefinitions().map((tool) => tool.function.name)).toEqual([OFFER_APP_TOOL, OFFER_GITHUB_OWNER_OK_TOOL]);
         expect(isAppTool(OFFER_APP_TOOL)).toBe(true);
+        expect(isAppTool(OFFER_GITHUB_OWNER_OK_TOOL)).toBe(true);
         expect(isAppTool('make_brick')).toBe(false);
     });
 
@@ -262,6 +326,17 @@ describe('An App offer in a Brick\'s chat', () => {
         const { kind: _kind, ...card } = gmail;
         expect(client.sendMessage.mock.calls[0][2]).toEqual({ msgtype: 'm.text', body: 'Connect your calendar?', [APP_OFFER_KEY]: card });
         expect(client.sendMessage.mock.calls[0][2][APP_OFFER_KEY].connectKind).toBe('readyMade');
+    });
+
+    it('puts the organization on the card for one that has not allowed Universe, so the game asks the owner', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const orgCard = { ...offer, topic: 'app github acme corp', app: 'github', name: 'GitHub', state: 'org', org: 'acme-corp', connectionId: 'conn-gh', ask: "Get acme-corp's OK?", other: null };
+        deps.reply.mockResolvedValue({ text: "I can't reach acme-corp/website yet.", media: [], bricks: [orgCard], claimApp: vi.fn(async () => 'app github acme corp') });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('Fix the typo on the acme-corp website.'));
+        const { kind: _kind, ...card } = orgCard;
+        expect(client.sendMessage.mock.calls[0][2]).toEqual({ msgtype: 'm.text', body: "Get acme-corp's OK?", [APP_OFFER_KEY]: card });
+        expect(client.sendMessage.mock.calls[0][2][APP_OFFER_KEY]).toMatchObject({ state: 'org', org: 'acme-corp' });
     });
 
     it('sends no card when Orbit says it was shown before, or when the answer has no words', async () => {
