@@ -97,6 +97,9 @@ describe('use_computer (#2000)', () => {
         expect(paused).toMatch(/paused for a while/);
         expect(paused).toMatch(/nothing is lost/i);
         expect(paused).toMatch(/Do not offer a price or a reason/);
+        // No message is sent when computers are back, so the note must not promise one
+        expect(paused).not.toMatch(/you'll tell them/);
+        expect(paused).toMatch(/Do not promise to tell them/);
         const down = { startComputerJob: vi.fn().mockRejectedValue(new Error('offline')) };
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         expect(await run(down)).toMatchObject({ started: false });
