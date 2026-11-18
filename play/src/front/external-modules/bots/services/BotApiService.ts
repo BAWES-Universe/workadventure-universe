@@ -1742,9 +1742,27 @@ export class BotApiService {
         });
     }
 
-    /** A Brick's files for its owner (game #2003): what it made, what they sent it, and what is on its computer. */
+    /**
+     * A Brick's files for its owner (game #2003): the first look at what it made, what they sent it, and what is on its
+     * computer, with every file counted.
+     */
     async getBrickFiles(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files`, {});
+    }
+
+    /**
+     * One page of a Brick's files, newest first: the files it made or the files they sent, from the `cursor` a page
+     * before gave (none: the newest), keeping only those with the words of `search` in their name. The list goes on by
+     * cursor however many files there are, and a file deleted meanwhile moves nothing else.
+     */
+    async getBrickFilesPage(
+        brickId: string,
+        page: { section: "made" | "sent"; cursor?: string | null; search?: string }
+    ): Promise<unknown> {
+        const query = new URLSearchParams({ section: page.section });
+        if (page.cursor) query.set("cursor", page.cursor);
+        if (page.search) query.set("q", page.search);
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files?${query.toString()}`, {});
     }
 
     /** Deletes a file the owner sent their Brick: the one change the files list allows. */
