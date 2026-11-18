@@ -342,6 +342,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private purging = new Set<string>();
     /** Bricks whose purge has begun in this process: nothing is written for them again (a profile, a waiting message, a goodbye). A purged Brick never comes back. */
     private purgedBots = new Set<string>();
+    /** Rooms being cleared right now per Brick (a chat closed for a gone Brick is cleared without its purge having begun): it says nothing meanwhile. */
+    private clearingRooms = new Map<string, number>();
     /** Profile writes started for a Brick and not finished yet, so a purge can wait for them before it clears the profile. */
     private profileWork = new Map<string, Set<Promise<unknown>>>();
     /** Where a room's history was last read to by a purge that ran out of pages, so the next try goes on from there. */
@@ -1075,6 +1077,18 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     private async purgeRoomOnce(botId: string, userId: string, roomId: string): Promise<void> {
+        // From here to the end nothing new is sent as the Brick (the wait below covers what is already under way), whichever way the room came to be cleared
+        this.clearingRooms.set(botId, (this.clearingRooms.get(botId) ?? 0) + 1);
+        try {
+            await this.clearRoom(botId, userId, roomId);
+        } finally {
+            const left = (this.clearingRooms.get(botId) ?? 1) - 1;
+            if (left > 0) this.clearingRooms.set(botId, left);
+            else this.clearingRooms.delete(botId);
+        }
+    }
+
+    private async clearRoom(botId: string, userId: string, roomId: string): Promise<void> {
         // Every way into a room's clearing (the purge, a chat closed for a gone bot, a person leaving) waits for what the Brick is sending or writing right now,
         // so nothing it says can land after the history was read and before it leaves
         await Promise.all([...(this.profileWork.get(botId) ?? [])]);
@@ -1167,14 +1181,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * the purge (before it reads any room), so no message can land after the history was read and be left behind.
      */
     private say<T>(botId: string, send: () => Promise<T>): Promise<T | undefined> {
-        if (this.purgedBots.has(botId)) return Promise.resolve(undefined);
+        if (this.saysNothing(botId)) return Promise.resolve(undefined);
         return this.profileWriting(botId, send);
+    }
+
+    /** True once the Brick's purge has begun, or while any room of it is being cleared: nothing new is sent, so nothing lands after the history was read. */
+    private saysNothing(botId: string): boolean {
+        return this.purgedBots.has(botId) || this.clearingRooms.has(botId);
     }
 
     /** For what the bot server sends as the Brick outside this class (the cards of its approvals): refused for a Brick being purged, waited for by its purge. */
     async sendAsBrick<T>(botId: string, send: () => Promise<T>): Promise<T> {
         const sent = await this.say(botId, send);
-        if (this.purgedBots.has(botId) && sent === undefined) throw new Error('This Brick is being deleted, so it says nothing more');
+        if (this.saysNothing(botId) && sent === undefined) throw new Error('This Brick is being deleted, so it says nothing more');
         return sent as T;
     }
 
@@ -1791,7 +1810,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             for (const item of reply.media ?? []) {
                 const sent = await this.say(botId, () => this.sendMedia(botUserId, event.room_id, item)).then(
                     // Nothing was sent once a purge has begun
-                    (copy) => (this.purgedBots.has(botId) ? null : { copy }),
+                    (copy) => (this.saysNothing(botId) ? null : { copy }),
                     (error) => {
                         console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error);
                         return null;

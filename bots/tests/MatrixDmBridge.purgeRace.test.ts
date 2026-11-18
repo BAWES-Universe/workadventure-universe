@@ -230,6 +230,24 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         }
     });
 
+    it('a chat closed for a gone Brick (its purge not begun) takes no new send from the Brick once the clearing has begun', async () => {
+        expect(bridge.purgedBots.has(BOT)).toBe(false);
+        let lateSend: Promise<unknown> | undefined;
+        const send = vi.fn(async () => '$late');
+        // A send that starts after the history was read, while the room is still being cleared
+        client.getMessagesPage.mockImplementation(async () => {
+            lateSend = bridge.sendAsBrick(BOT, send).catch((error: Error) => error);
+            return { events: [], end: undefined };
+        });
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(send).not.toHaveBeenCalled();
+        expect(((await lateSend) as Error).message).toContain('being deleted');
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+        // Once the run is over (a room that failed to clear stays joined) the Brick is not muted for ever
+        expect(bridge.clearingRooms.has(BOT)).toBe(false);
+        expect(await bridge.sendAsBrick(BOT, send)).toBe('$late');
+    });
+
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
         bridge.purgedBots.add(BOT);
         await bridge.closeChat(BOT, ROOM, 'en');
