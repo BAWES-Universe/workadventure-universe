@@ -669,6 +669,23 @@ describe('seeing and changing what is kept', () => {
         expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'snooze' }, context)).toMatchObject({ snoozed: true, then_regular: expect.any(String) });
     });
 
+    it('says "then the regular one" only for a repeating item whose regular time is after the snoozed run, as the line on the screen does', async () => {
+        const snoozed = { nextDueAt: '2026-11-15T13:10:00.000Z', snoozedUntil: '2026-11-15T13:10:00.000Z' };
+        const repeating = { cadence: { type: 'every', minutes: 60 } } as const;
+        const { context } = setUp({
+            items: [
+                item({ id: 'ok', ...repeating, ...snoozed, nextRegularAt: '2026-11-15T14:00:00.000Z' }),
+                item({ id: 'once', cadence: { type: 'once', at: '2026-11-15T13:10:00.000Z' }, ...snoozed, nextRegularAt: '2026-11-15T14:00:00.000Z' }),
+                item({ id: 'not-after', ...repeating, ...snoozed, nextRegularAt: '2026-11-15T13:10:00.000Z' }),
+                item({ id: 'before', ...repeating, ...snoozed, nextRegularAt: '2026-11-15T13:05:00.000Z' }),
+            ],
+        });
+        const listed = (await runTaskTool(MY_TASKS_TOOL, {}, context)) as { items: Array<Record<string, unknown>> };
+        const byId = (id: string) => listed.items.find((one) => one.id === id)!;
+        expect(byId('ok')).toMatchObject({ snoozed: true, then_regular: expect.any(String) });
+        for (const id of ['once', 'not-after', 'before']) expect(byId(id).then_regular).toBeUndefined();
+    });
+
     it('answers the question a goal asked: close it is done, keep going is keep, and my_tasks shows which goal asked', async () => {
         const goal = item({ kind: 'goal', words: 'Get my visa', state: 'on', nextDueAt: '2026-11-15T13:00:00.000Z', asking: 'unsure' });
         const { admin, context } = setUp({ items: [goal, item({ id: 'item-2', kind: 'goal', asking: 'date_passed' }), item({ id: 'item-3', kind: 'goal' })] });

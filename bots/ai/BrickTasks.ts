@@ -393,7 +393,10 @@ function view(item: BrickItemView, now: number, workdays: number[] | null, zone:
         state: item.state,
         ...(item.nextDueAt ? { next: sayMoment(item.nextDueAt, zone, now) } : {}),
         // A snoozed run moves that one run only: the schedule goes on at its own time after it
-        ...(item.snoozedUntil && item.nextRegularAt && item.nextRegularAt !== item.nextDueAt ? { snoozed: true, then_regular: sayMoment(item.nextRegularAt, zone, now) } : {}),
+        // (a one-off has no schedule after it, and a regular time that is not after the snooze is no "then": the same rule as the line on the screen)
+        ...(item.snoozedUntil && item.cadence.type !== 'once' && item.nextRegularAt && Date.parse(item.nextRegularAt) > Date.parse(item.snoozedUntil)
+            ? { snoozed: true, then_regular: sayMoment(item.nextRegularAt, zone, now) }
+            : {}),
         ...(repeats ? { repeats } : {}),
         ...(item.lastRunAt ? { went_off: sayMoment(item.lastRunAt, zone, now) } : {}),
         ...(item.asking ? { asking: item.asking === 'date_passed' ? 'it asked them what to do now that its date passed' : 'it asked them whether it is done, because it could not tell' } : {}),
