@@ -163,35 +163,44 @@
         class="flex items-center gap-2 rounded px-2 py-2 transition-colors hover:bg-white/10"
         class:friend-highlight={highlighted}
     >
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div
-            class="shrink-0"
+        <!-- A friend who is here: their Woka and name are a real button (keyboard and screen readers too) that shows
+             them on the map with their visit card. The Woka is the same action for a pointer only, so it skips the
+             tab order; the name is the one tab stop. Everyone else's Woka and name are plain, with nothing to open. -->
+        <svelte:element
+            this={canWalk ? "button" : "div"}
+            type={canWalk ? "button" : undefined}
+            tabindex={canWalk ? -1 : undefined}
+            aria-hidden={canWalk ? "true" : undefined}
+            class="m-0 shrink-0 border-0 bg-transparent p-0"
             class:cursor-pointer={canWalk}
             on:click|stopPropagation={open}
             data-testid={`friend-avatar-${friend.name}`}
         >
             <FriendAvatar {picture} {color} dim={!online} />
-        </div>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div
-            class="ms-1 flex min-w-0 flex-auto flex-col"
-            class:opacity-60={!online}
-            class:cursor-pointer={canWalk}
-            on:click|stopPropagation={open}
-        >
-            <span class="truncate text-sm font-bold" title={friend.name}>{friend.name}</span>
-            <span class="flex min-w-0 items-center gap-1 text-xs text-white/70">
-                {#if online}
-                    <span
-                        class="h-1.5 w-1.5 shrink-0 rounded-full"
-                        style="background:{getColorHexOfStatus(entry.status)}"
-                        aria-hidden="true"
-                    />
-                {/if}
-                <span class="truncate">{line}</span>
-            </span>
+        </svelte:element>
+        <div class="ms-1 flex min-w-0 flex-auto flex-col" class:opacity-60={!online}>
+            <svelte:element
+                this={canWalk ? "button" : "div"}
+                type={canWalk ? "button" : undefined}
+                aria-label={canWalk ? $LL.chat.userList.locateUser({ userName: friend.name }) : undefined}
+                class="m-0 flex min-w-0 flex-col border-0 bg-transparent p-0 text-start text-inherit {canWalk
+                    ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary'
+                    : ''}"
+                on:click|stopPropagation={open}
+                data-testid={`friend-name-${friend.name}`}
+            >
+                <span class="truncate text-sm font-bold" title={friend.name}>{friend.name}</span>
+                <span class="flex min-w-0 items-center gap-1 text-xs text-white/70">
+                    {#if online}
+                        <span
+                            class="h-1.5 w-1.5 shrink-0 rounded-full"
+                            style="background:{getColorHexOfStatus(entry.status)}"
+                            aria-hidden="true"
+                        />
+                    {/if}
+                    <span class="truncate">{line}</span>
+                </span>
+            </svelte:element>
             {#if otherSessions.length > 0}
                 <button
                     type="button"
