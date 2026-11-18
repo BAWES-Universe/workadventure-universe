@@ -1068,7 +1068,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         // Written down before the leave: once left, the homeserver no longer lists the room, so this record is the only thing that still owes the forget.
         // Strict: a record that cannot be written keeps the room joined for the next try.
-        await this.deps.rooms?.rememberPendingForget?.(userId, roomId);
+        const remember = this.deps.rooms?.rememberPendingForget;
+        if (!remember) throw new Error('Nowhere to write down the forget this room is owed, so the Brick does not leave it');
+        await remember.call(this.deps.rooms, userId, roomId);
         this.pendingForgets.add(`${userId}|${roomId}`);
         await this.client.leaveRoom(userId, roomId, 'Brick deleted');
         await this.client.forgetRoom(userId, roomId);

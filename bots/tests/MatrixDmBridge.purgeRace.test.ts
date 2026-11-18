@@ -53,6 +53,16 @@ function makeDeps(): any {
             getDmRoomBot: vi.fn(async (r: string) => rooms.get(r) ?? null),
             forgetDmRoom: vi.fn(async (r: string) => void rooms.delete(r)),
             forgetDmRoomOf: vi.fn(async () => undefined),
+            // The owed-forget record the purge writes before it leaves a room (R29): an in-memory copy of the shared store's
+            ...(() => {
+                const owed = new Set<string>();
+                return {
+                    rememberPendingForget: vi.fn(async (u: string, r: string) => void owed.add(`${u}|${r}`)),
+                    pendingForgetsOf: vi.fn(async (u: string) => [...owed].filter((k) => k.startsWith(`${u}|`)).map((k) => k.slice(u.length + 1))),
+                    allPendingForgets: vi.fn(async () => [...owed].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) }))),
+                    clearPendingForget: vi.fn(async (u: string, r: string) => void owed.delete(`${u}|${r}`)),
+                };
+            })(),
         },
         waiting: {
             hasSharedStore: () => true,
@@ -223,6 +233,17 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         const later = vi.fn(async () => '$no');
         await expect(bridge.sendAsBrick(BOT, later)).rejects.toThrow('being deleted');
         expect(later).not.toHaveBeenCalled();
+    });
+
+    it('does not leave a room when there is nowhere to write down the forget it is owed', async () => {
+        for (const missing of ['rememberPendingForget', 'rooms'] as const) {
+            const bare = makeDeps();
+            if (missing === 'rooms') delete bare.rooms;
+            else delete bare.rooms.rememberPendingForget;
+            const bareBridge = new MatrixDmBridge(config, client as never, bare) as any;
+            await expect(bareBridge.purgeRoom(BOT, BOT_USER, ROOM)).rejects.toThrow('Nowhere to write down');
+        }
+        expect(client.leaveRoom).not.toHaveBeenCalled();
     });
 
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {

@@ -55,6 +55,16 @@ function makeDeps() {
                 getDmRoomBot: vi.fn(async (r: string) => rooms.get(r) ?? null),
                 forgetDmRoom: vi.fn(async (r: string) => void rooms.delete(r)),
                 forgetDmRoomOf: vi.fn(async (b: string, u: string) => void roomsOf.delete(`${b}|${u}`)),
+                // The owed-forget record the purge writes before it leaves a room (R29): an in-memory copy of the shared store's
+                ...(() => {
+                    const owed = new Set<string>();
+                    return {
+                        rememberPendingForget: vi.fn(async (u: string, r: string) => void owed.add(`${u}|${r}`)),
+                        pendingForgetsOf: vi.fn(async (u: string) => [...owed].filter((k) => k.startsWith(`${u}|`)).map((k) => k.slice(u.length + 1))),
+                        allPendingForgets: vi.fn(async () => [...owed].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) }))),
+                        clearPendingForget: vi.fn(async (u: string, r: string) => void owed.delete(`${u}|${r}`)),
+                    };
+                })(),
             },
             waiting: {
                 hasSharedStore: () => true,
