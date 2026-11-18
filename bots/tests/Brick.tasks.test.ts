@@ -619,10 +619,36 @@ describe('seeing and changing what is kept', () => {
         expect(admin.setBrickItem).toHaveBeenCalledTimes(2);
     });
 
+    it('a retried run_now after an answer that never came carries the same key, so Orbit starts one run; a later, deliberate one is a new ask', async () => {
+        const { admin, context } = setUp();
+        const keys = () => admin.changeBrickItem.mock.calls.map((call) => (call as unknown as [string, string, { key?: string }])[2].key);
+        // The first ask times out: nothing came back, though Orbit may have started the run
+        admin.changeBrickItem.mockRejectedValueOnce(new Error('timeout of 10000ms exceeded'));
+        const failed = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(String(failed.error)).toContain('could not be done');
+        // The retry is the same ask: the same key
+        expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context)).toMatchObject({ started: true });
+        const [first, retry] = keys();
+        expect(first).toEqual(expect.any(String));
+        expect(retry).toBe(first);
+        // Orbit has answered it: asking again on purpose is a new ask with a new key
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(keys()[2]).toEqual(expect.any(String));
+        expect(keys()[2]).not.toBe(first);
+        // A refusal is an answer too: the ask after it is new
+        admin.changeBrickItem.mockResolvedValueOnce({ ok: false, status: 409, code: 'busy', error: 'no' } as never);
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(keys()[4]).not.toBe(keys()[3]);
+        // Only a run carries a key
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'snooze' }, context);
+        expect(keys()[5]).toBeUndefined();
+    });
+
     it('runs one now when they ask: an extra run, nothing else about it is said to move, and the reasons it would not run are said plainly', async () => {
         const { admin, context } = setUp();
         const answer = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
-        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'run' });
+        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'run', key: expect.any(String) });
         expect(answer).toMatchObject({ started: true, id: 'item-1' });
         expect(String(answer.note)).toContain('Its own schedule is as it was');
         for (const [code, words] of [

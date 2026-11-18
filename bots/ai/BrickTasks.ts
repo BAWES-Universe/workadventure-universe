@@ -8,6 +8,7 @@
  * and a Brick that Orbit refuses for the person it is talking to simply has none of these tools. Nothing here runs a reminder (the
  * runner does that, from Orbit's due list), and nothing here is set unless the person asked.
  */
+import { randomUUID } from 'crypto';
 import type { AdminApiService, BrickItemView, ItemAnswer, ItemRefused } from '../server/AdminApiService';
 import { isTimeZone, localToInstant, sayMoment, sayNow, timeOfDayOf } from './BrickTime';
 
@@ -235,6 +236,7 @@ export function forgetTaskSettings(botId?: string, userId?: string): void {
     }
     kept.clear();
     owners.clear();
+    runKeys.clear();
 }
 
 /**
@@ -402,6 +404,14 @@ function view(item: BrickItemView, now: number, workdays: number[] | null, zone:
 /** The reminders just set, for a second identical call (a model that calls twice in one reply gets the first back, set once). */
 const justSet = new Map<string, { at: number; result: Record<string, unknown> }>();
 const JUST_SET_MS = 60_000;
+
+/**
+ * The idempotency key of a "run it now" ask whose answer never came (a timeout, a 5xx): the retry of that same ask carries the same key, so
+ * Orbit finds the run the first try may already have made and starts no second one. It is forgotten the moment Orbit answers, in any way, so
+ * a later, deliberate "run it again" is a new ask with a new key.
+ */
+const runKeys = new Map<string, { key: string; at: number }>();
+const RUN_KEY_MS = 120_000;
 
 /** Runs one of the four tools. Never throws: the model is told in plain words what happened. */
 export async function runTaskTool(name: string, args: Record<string, unknown>, context: TaskToolContext): Promise<Record<string, unknown>> {
@@ -595,7 +605,7 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
             body = { ...base, action };
             break;
         case 'run_now':
-            // An extra run, asked for by the owner: Orbit holds one at a time and refuses a second while it runs or waits
+            // An extra run, asked for by the owner: Orbit holds one at a time and refuses a second while it runs or waits; its key is added below
             body = { ...base, action: 'run' };
             break;
         case 'cancel':
@@ -635,7 +645,21 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
         default:
             return { error: 'The action is snooze, run_now, pause, resume, cancel, change, close or keep_going.' };
     }
+    // An extra run is asked with a key that stays the same for a retry of an ask Orbit never answered
+    const askedRun = action === 'run_now' ? `${context.botId}|${context.userId}|${id}` : null;
+    if (askedRun) {
+        const held = runKeys.get(askedRun);
+        const fresh = held !== undefined && now - held.at < RUN_KEY_MS;
+        const key = fresh ? held.key : randomUUID();
+        if (!fresh) {
+            runKeys.set(askedRun, { key, at: now });
+            if (runKeys.size > 200) runKeys.delete(runKeys.keys().next().value!);
+        }
+        body = { ...body, key };
+    }
     const answer = await context.admin.changeBrickItem(context.botId, id, body);
+    // Orbit answered (whatever it said): this ask is over. A call that threw never gets here, so its key is kept for the retry.
+    if (askedRun) runKeys.delete(askedRun);
     if (refused(answer)) return refusal(answer);
     const item = answer.item;
     // Whatever was just set under this id is no longer what a repeat of the same ask would find. An extra run leaves the item exactly as it was,
