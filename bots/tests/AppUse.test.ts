@@ -48,6 +48,11 @@ describe('asking Orbit', () => {
         }
     });
 
+    it('hands back `paused` when the team paused Apps, so the bot can say so kindly rather than "gone"', async () => {
+        vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { allowed: false, reason: 'paused' } });
+        expect(await askOrbitAboutAppUse(() => SIDE)('b', 's', { callId: 'c' })).toEqual({ allowed: false, reason: 'paused' });
+    });
+
     it('takes a missing App (404) and a reason it does not know as no', async () => {
         vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 404, data: { allowed: false, reason: 'gone' } });
         expect(await askOrbitAboutAppUse(() => SIDE)('b', 's', { callId: 'c' })).toEqual({ allowed: false, reason: 'gone' });
@@ -70,6 +75,9 @@ describe('what the bot is told', () => {
             expect(line).toContain('App');
             expect(line).not.toMatch(/\btool\b|MCP|connector|\$/i);
         }
+        expect(appNotUsedLine('paused')).toContain('paused for a while');
+        expect(appNotUsedLine('paused')).toContain('Carry on without it');
+        expect(appNotUsedLine('paused')).not.toMatch(/\btool\b|MCP|connector|\$|any more/i);
         expect(appNotUsedLine('limit_reached')).toContain('today');
         expect(appNotUsedLine('limit_reached')).toContain('Carry on without it');
     });

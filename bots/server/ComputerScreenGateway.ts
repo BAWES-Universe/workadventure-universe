@@ -8,6 +8,10 @@
  *     on, so a modified viewer cannot send input; INPUT is only for a person who has taken over.
  *  4. Every few seconds Orbit is asked whether the socket may go on. A no (the job is over, the machine rests, the keyboard was handed
  *     back) or no answer from Orbit closes both sockets. A socket is never kept past the longest time Orbit allows.
+ *  5. An INPUT socket also has a deadline of its own, kept here and independent of Orbit: it is closed INPUT_YES_MS after the last
+ *     moment a "yes" was asked for (the open, or a check). A check that hangs, or an Orbit that does not answer, can therefore never
+ *     leave the person's keyboard open longer than Orbit's own input lease (8 s after a check, 10 s after an open), which is how long a
+ *     hand back waits before Brick resumes.
  *
  * Nothing the screen shows or the person types is logged or kept here. A machine that is not running has no link, so nothing here ever
  * wakes one.
@@ -177,6 +181,12 @@ export function upstreamSocketUrl(link: string): string | null {
 // ---------- The gateway ----------
 
 export const SCREEN_PATH = '/computer/screen';
+/**
+ * How long an input socket may stay open after the last "yes" was ASKED FOR (not when it came back: Orbit grants its lease when it
+ * handles the ask). Shorter than Orbit's input lease (8 s after a check, 10 s after an open, in Orbit's lib/computer-control.ts), so a
+ * hand back that waits out that lease finds every input socket already closed here.
+ */
+export const INPUT_YES_MS = 7000;
 /** Held back on the way from the machine when the viewer is slower than it: past this the socket is closed instead of piling up. */
 const BACKLOG_MAX = 16 * 1024 * 1024;
 /** The most a viewer may have waiting to be sent to the machine (before it is open, or while it takes it in): what the viewer sends is small. */
@@ -186,6 +196,8 @@ export interface ScreenGatewayOptions {
     orbit: ScreenOrbit;
     /** For tests: how the machine's socket is opened. */
     connect?: (url: string) => WebSocket;
+    /** For tests: how long an input socket stays open after the last "yes" was asked for. */
+    inputYesMs?: number;
     log?: Pick<Console, 'warn' | 'error'>;
 }
 
@@ -200,6 +212,7 @@ export interface ScreenGateway {
 export function createScreenGateway(options: ScreenGatewayOptions): ScreenGateway {
     const log = options.log ?? console;
     const connect = options.connect ?? ((url: string) => new WebSocket(url, 'binary', { handshakeTimeout: 15_000, maxPayload: 32 * 1024 * 1024 }));
+    const inputYesMs = options.inputYesMs ?? INPUT_YES_MS;
     const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024, handleProtocols: (protocols) => (protocols.has('binary') ? 'binary' : false) });
     const sockets = new Set<WebSocket>();
 
@@ -208,7 +221,7 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
         socket.destroy();
     };
 
-    const carry = (viewer: WebSocket, ticket: string, opened: Extract<Awaited<ReturnType<ScreenOrbit['open']>>, { ok: true }>) => {
+    const carry = (viewer: WebSocket, ticket: string, opened: Extract<Awaited<ReturnType<ScreenOrbit['open']>>, { ok: true }>, askedAt: number) => {
         const upstreamUrl = upstreamSocketUrl(opened.upstream);
         if (!upstreamUrl) {
             viewer.close(1011, 'The screen is not available');
@@ -221,12 +234,14 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
         let over = false;
         let timer: ReturnType<typeof setInterval> | null = null;
         let limit: ReturnType<typeof setTimeout> | null = null;
+        let yesDeadline: ReturnType<typeof setTimeout> | null = null;
         let checking = false;
         const end = (code: number, why: string) => {
             if (over) return;
             over = true;
             if (timer) clearInterval(timer);
             if (limit) clearTimeout(limit);
+            if (yesDeadline) clearTimeout(yesDeadline);
             for (const socket of [viewer, machine]) {
                 try {
                     if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close(code, why);
@@ -275,19 +290,42 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
         viewer.on('error', () => end(1011, 'Error'));
         machine.on('error', () => end(1011, 'The screen could not be reached'));
 
-        // Orbit is asked every few seconds; no answer from it is a no (a screen is never left open on a state nobody can vouch for)
-        timer = setInterval(() => {
+        // An input socket's own deadline, counted from when the last yes was asked for and moved only by a yes. It does not wait for Orbit:
+        // a check that never comes back leaves it running, and it closes the socket.
+        const grantedAt = (askedFor: number) => {
+            if (opened.mode !== 'input' || over) return;
+            if (yesDeadline) clearTimeout(yesDeadline);
+            yesDeadline = setTimeout(() => end(1011, 'The screen was not confirmed in time'), Math.max(0, askedFor + inputYesMs - Date.now()));
+        };
+        grantedAt(askedAt);
+
+        // Orbit is asked every few seconds; no answer from it is a no (a screen is never left open on a state nobody can vouch for).
+        // An input socket is asked often enough to be confirmed before its own deadline, whatever interval Orbit names: 60% of the deadline
+        // leaves the rest (2.8 s of 7) for the round trip of a check.
+        const everyMs = Math.max(1000, opened.mode === 'input' ? Math.min(opened.checkEveryMs, Math.round(inputYesMs * 0.6)) : opened.checkEveryMs);
+        const ask = () => {
             if (checking || over) return;
             checking = true;
+            const asked = Date.now();
             options.orbit
                 .check(ticket)
                 .then((answer) => {
                     // The mode a ticket was opened in never goes up: a viewer opened for watching stays watching
                     if (!answer.ok || (opened.mode === 'input' && answer.mode !== 'input')) end(1008, 'The screen is closed');
+                    else grantedAt(asked);
                 })
                 .catch(() => end(1011, 'The screen could not be checked'))
                 .finally(() => (checking = false));
-        }, Math.max(1000, opened.checkEveryMs));
+        };
+        // The first ask of an input socket counts from when the open was asked for, not from when Orbit answered it: an open that took
+        // a few seconds must still be confirmed before the deadline that began with it.
+        timer = setTimeout(
+            () => {
+                ask();
+                timer = setInterval(ask, everyMs);
+            },
+            opened.mode === 'input' ? Math.max(0, askedAt + everyMs - Date.now()) : everyMs,
+        );
         limit = setTimeout(() => end(1000, 'The screen was open too long'), Math.max(1000, opened.maxMs));
     };
 
@@ -310,6 +348,8 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
             // the socket): a reset in that gap would be an unhandled error and bring the bot server down
             const ignore = () => undefined;
             socket.on('error', ignore);
+            // Orbit's lease for this ticket starts when it handles the ask, so the input deadline counts from here, not from the answer
+            const askedAt = Date.now();
             options.orbit
                 .open(ticket)
                 .then((opened) => {
@@ -321,7 +361,7 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
                     wss.handleUpgrade(request, socket, head, (viewer) => {
                         socket.off('error', ignore);
                         sockets.add(viewer);
-                        carry(viewer, ticket, opened);
+                        carry(viewer, ticket, opened, askedAt);
                     });
                 })
                 .catch((error: unknown) => {

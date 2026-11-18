@@ -7,7 +7,8 @@
  * lent or team App (the bot server's id for this call, so "uses a day" counts a retry once) and a `heading` on a lent one
  * (what the lender allowed is held at every use). Without them Orbit answers `incomplete`: such a use never runs.
  *
- * An App is never refused to the person: the bot carries on without it and says so in plain words.
+ * An App is never refused to the person: the bot carries on without it and says so in plain words. `paused` is the team pausing Apps
+ * (Orbit, Universe AI > Pause): the same kind line, until they resume it.
  */
 import axios from 'axios';
 import type { ToolHeading } from './ToolCatalog';
@@ -23,6 +24,7 @@ export type AppUseRefusal =
     | 'not_lent'
     | 'limit_reached'
     | 'incomplete'
+    | 'paused'
     | 'unavailable'
     | 'not_shared'
     | 'busy'
@@ -89,7 +91,7 @@ export interface AppUseRequest {
 /** Asks Orbit. Never throws: when Orbit can't be asked the answer is `unavailable`. */
 export type AppUseCheck = (botId: string, serverId: string, request: AppUseRequest) => Promise<AppUseAnswer>;
 
-const REASONS: readonly AppUseRefusal[] = ['gone', 'off', 'not_owner', 'not_lent', 'limit_reached', 'incomplete', 'not_shared', 'busy', 'already_asked'];
+const REASONS: readonly AppUseRefusal[] = ['gone', 'off', 'not_owner', 'not_lent', 'limit_reached', 'incomplete', 'paused', 'not_shared', 'busy', 'already_asked'];
 const TIMEOUT_MS = 8_000;
 
 /** The body Orbit takes: only what it was given, so nothing is sent as "undefined". */
@@ -201,6 +203,9 @@ export function appNotUsedLine(reason: AppUseRefusal, context: AppUseContext = {
             return `That App is only for its owner, so it cannot be used for this request.${tail}`;
         case 'off':
             return `That App is switched off for this bot.${tail}`;
+        case 'paused':
+            // The team paused Apps for a while: nothing is lost, and it is back by itself when they resume it
+            return `Apps are paused for a while.${tail}`;
         case 'unavailable':
             return "I can't check that App right now. Try again soon. This was not done.";
         default:

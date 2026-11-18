@@ -1,0 +1,1 @@
+{"ok":true,"failures":[],"switchedOn":false,"reportingOff":true,"modelPath":"/app/speech-observer/silero_vad_v6.2.3.onnx","runtime":"/app/speech-observer/node_modules/onnxruntime-node","node":"v22.23.4","arch":"x64","nativeFiles":["linux/x64"],"silenceProbability":0.00167}
