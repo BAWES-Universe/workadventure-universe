@@ -126,6 +126,7 @@ describe("a Brick's files (#2003)", () => {
                 files: [expect.objectContaining({ id: "f9" })],
                 total: 70,
                 nextCursor: "x",
+                unreadable: 0,
             });
             expect(
                 parseBrickFilesPage({ section: "sent", files: [], total: 0, nextCursor: null }, "sent").nextCursor
@@ -651,6 +652,121 @@ describe("a Brick's files (#2003)", () => {
                     search: undefined,
                 });
                 expect(get(list.files).sent.files.map((one) => one.id)).toEqual(["s2", "s3", "s4"]);
+            });
+
+            it("keeps the search it began with for the whole export, whatever is searched for meanwhile", async () => {
+                orbit.getBrickFiles.mockResolvedValue(firstLook());
+                orbit.getBrickFilesPage.mockImplementation((_id, asked) =>
+                    Promise.resolve(
+                        asked.search === "tax" && asked.section === "made" && !asked.cursor
+                            ? page("made", [file({ id: "m1" })], 2, "m-next")
+                            : page(asked.section, [], 0, null)
+                    )
+                );
+                const list = brickFilesList(BRICK);
+                await list.load();
+                await list.find("tax");
+                orbit.getBrickFilesPage.mockClear();
+                const walking = list.everyFile();
+                await walking.next();
+                // The person clears the search while the zip is being put together
+                await list.find("");
+                for await (const files of walking) void files;
+                expect(orbit.getBrickFilesPage.mock.calls.map(([, asked]) => asked.search)).toEqual([
+                    "tax",
+                    "tax",
+                    "tax",
+                ]);
+            });
+
+            it("gives each file of an export once when pages overlap, and counts an entry that was not whole as missed", async () => {
+                orbit.getBrickFiles.mockResolvedValue(firstLook());
+                orbit.getBrickFilesPage.mockImplementation((_id, asked) => {
+                    if (asked.section === "made") return Promise.resolve(page("made", [], 0, null));
+                    return Promise.resolve(
+                        asked.cursor
+                            ? {
+                                  section: "sent",
+                                  files: [file({ id: "s2" }), file({ id: "s3" }), { id: "" }],
+                                  total: 3,
+                                  nextCursor: null,
+                              }
+                            : {
+                                  section: "sent",
+                                  files: [file({ id: "s1" }), file({ id: "s2" })],
+                                  total: 3,
+                                  nextCursor: "next",
+                              }
+                    );
+                });
+                const list = brickFilesList(BRICK);
+                await list.load();
+                const batches: unknown[][] = [];
+                for await (const files of list.everyFile()) batches.push(files);
+                const ids = batches.flat().map((one) => (one as { id: string }).id);
+                expect(ids.filter(Boolean)).toEqual(["s1", "s2", "s3"]);
+                // The entry that was not whole is in the export as a file with nowhere to read it from
+                expect(ids.filter((id) => id === "")).toHaveLength(1);
+                vi.stubGlobal("URL", { createObjectURL: () => "blob:zip", revokeObjectURL: vi.fn() });
+                const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+                const fetcher = vi.fn(() =>
+                    Promise.resolve({ ok: true, blob: () => Promise.resolve(new Blob(["x"])) } as Response)
+                );
+                const again = list.everyFile();
+                expect(await downloadEverything(again, "all.zip", fetcher as unknown as typeof fetch)).toEqual({
+                    added: 3,
+                    missed: 1,
+                    complete: true,
+                });
+                click.mockRestore();
+                vi.unstubAllGlobals();
+            });
+
+            it("does not bring back a file deleted while a page was on its way, nor the count from before", async () => {
+                orbit.getBrickFiles.mockResolvedValue(firstLook());
+                orbit.deleteBrickFile.mockResolvedValue({ deleted: true });
+                let answerPage: (value: unknown) => void = () => undefined;
+                orbit.getBrickFilesPage.mockImplementation(
+                    () =>
+                        new Promise((resolve) => {
+                            answerPage = resolve;
+                        })
+                );
+                const list = brickFilesList(BRICK);
+                await list.load();
+                const loading = list.more("sent");
+                expect(await list.deleteSent("s2")).toBe(true);
+                // Orbit read the page before the deletion: it still holds s2 and counts five
+                answerPage(page("sent", [sentFile(2), sentFile(3)], 5, null));
+                await loading;
+                expect(get(list.files).sent.files.map((one) => one.id)).toEqual(["s1", "s3"]);
+                expect(get(list.files).sent.total).toBe(4);
+            });
+
+            it("takes off the size of a file only a search loaded even if the search is cleared before Orbit answers", async () => {
+                orbit.getBrickFiles.mockResolvedValue(firstLook());
+                orbit.getBrickFilesPage.mockImplementation((_id, asked) =>
+                    Promise.resolve(
+                        asked.section === "sent"
+                            ? page("sent", [file({ id: "s300", name: "old.pdf", sizeBytes: 25 })], 1, null)
+                            : page("made", [], 0, null)
+                    )
+                );
+                let answerDelete: (value: unknown) => void = () => undefined;
+                orbit.deleteBrickFile.mockImplementation(
+                    () =>
+                        new Promise((resolve) => {
+                            answerDelete = resolve;
+                        })
+                );
+                const list = brickFilesList(BRICK);
+                await list.load();
+                await list.find("old");
+                const deleting = list.deleteSent("s300");
+                await list.find("");
+                answerDelete({ deleted: true });
+                expect(await deleting).toBe(true);
+                expect(get(list.files)).toMatchObject({ count: 8, bytes: 65 });
             });
 
             it("reads the first look again from the start, with no search and no old pages", async () => {

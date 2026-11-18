@@ -181,7 +181,7 @@
                         >
                     </p>
                 {/if}
-                {#if !searching || $files.made.files.length > 0}
+                {#if !searching || $files.made.files.length > 0 || madeLeft > 0}
                     <div class="bkg-cap">{$LL.chat.brick.files.made()}</div>
                     {#each $files.made.files as file (file.id)}
                         <div class="bkg-tap" data-testid="filesMadeRow">
@@ -215,14 +215,14 @@
                             </span>
                             <IconChevronRight class="bkg-go" font-size="18" />
                         </button>
-                    {:else if $files.made.files.length === 0}
+                    {:else if $files.made.files.length === 0 && !searching}
                         <p class="bkg-note" data-testid="filesNoneMade">
                             <span>{$LL.chat.brick.files.noneMade({ name })}</span>
                         </p>
                     {/if}
                 {/if}
 
-                {#if !searching || $files.sent.files.length > 0}
+                {#if !searching || $files.sent.files.length > 0 || sentLeft > 0}
                     <div class="bkg-cap gap">{$LL.chat.brick.files.sent()}</div>
                     {#each $files.sent.files as file (file.id)}
                         <div class="bkg-tap" data-testid="filesSentRow">
@@ -241,9 +241,11 @@
                             </span>
                         </div>
                     {:else}
-                        <p class="bkg-note" data-testid="filesNoneSent">
-                            <span>{$LL.chat.brick.files.noneSent({ name })}</span>
-                        </p>
+                        {#if !searching}
+                            <p class="bkg-note" data-testid="filesNoneSent">
+                                <span>{$LL.chat.brick.files.noneSent({ name })}</span>
+                            </p>
+                        {/if}
                     {/each}
                     {#if sentLeft > 0}
                         <div class="bkg-more" data-testid="filesMoreSent">

@@ -509,6 +509,26 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
                 expect(byId("filesMoreSent")).toBeNull();
             });
 
+            it("keeps a search list and its Show older files button when its loaded rows were deleted, without the none notes", async () => {
+                game.getBrickFiles.mockResolvedValue(longAnswer());
+                game.deleteBrickFile.mockResolvedValue({ deleted: true });
+                game.getBrickFilesPage.mockImplementation((_id, asked) =>
+                    Promise.resolve(
+                        asked.section === "made"
+                            ? { section: "made", files: [], total: 0, nextCursor: null }
+                            : { section: "sent", files: [sentFile(120)], total: 3, nextCursor: "found-next" }
+                    )
+                );
+                await openGroup();
+                await typeInSearch("sent-1");
+                all("filesDelete")[0].click();
+                await settle();
+                expect(all("filesSentRow")).toHaveLength(0);
+                expect(byId("filesMoreSentButton")).not.toBeNull();
+                expect(byId("filesNoneSent")).toBeNull();
+                expect(byId("filesNoneMade")).toBeNull();
+            });
+
             it("shows more of what it made without leaving the list, and keeps the artifacts one tap away apart", async () => {
                 game.getBrickFiles.mockResolvedValue(longAnswer());
                 await openGroup();
