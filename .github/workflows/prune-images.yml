@@ -130,7 +130,9 @@ jobs:
         run: |
           set -euo pipefail
           title="Image clean-up needs Admin access on $PACKAGE"
-          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json title --jq '.[].title' | grep -qxF "$title"; then
+          # Read the whole list first: grep -q on a pipe can stop gh early (SIGPIPE), which pipefail would count as no match.
+          open_titles=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json title --jq '.[].title')
+          if grep -qxF "$title" <<<"$open_titles"; then
             echo "An open issue already reports this: $title"
             exit 0
           fi
