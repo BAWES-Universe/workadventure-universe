@@ -2118,6 +2118,7 @@ const chat: BaseTranslation = {
         friends: "Friends",
         requests: "Requests",
         requestsWaiting: "{count} friend requests waiting",
+        friendsOnline: "{count} friends online",
         friendBadge: "Friend",
         inOtherWorlds: "Friends in other worlds",
         seeAll: "All",

@@ -4,16 +4,17 @@
     import { peopleViewStore } from "../../Stores/ChatStore";
 
     /**
-     * Everyone | Friends | Requests above the People list. Requests only shows while a request is open either way,
-     * with a gold count of the ones waiting for you.
+     * Everyone | Friends | Requests above the People list. Friends carries the count of friends online right now
+     * (nothing at zero, like Requests), and Requests only shows while a request is open either way, with a gold count
+     * of the ones waiting for you.
      */
-    export let friendsCount: number;
+    export let onlineFriendsCount: number;
     export let incomingCount: number;
     export let showRequests: boolean;
 
     $: chips = [
         { view: "everyone" as PeopleView, label: $LL.chat.friends.everyone(), count: undefined },
-        { view: "friends" as PeopleView, label: $LL.chat.friends.friends(), count: friendsCount || undefined },
+        { view: "friends" as PeopleView, label: $LL.chat.friends.friends(), count: onlineFriendsCount || undefined },
         ...(showRequests
             ? [
                   {
@@ -51,7 +52,13 @@
                         aria-label={$LL.chat.friends.requestsWaiting({ count: chip.count })}>{chip.count}</span
                     >
                 {:else}
-                    <span class="u-count">{chip.count}</span>
+                    <span
+                        class="u-count"
+                        aria-label={chip.view === "friends"
+                            ? $LL.chat.friends.friendsOnline({ count: chip.count })
+                            : undefined}
+                        data-testid={`peopleChipCount-${chip.view}`}>{chip.count}</span
+                    >
                 {/if}
             {/if}
         </button>
