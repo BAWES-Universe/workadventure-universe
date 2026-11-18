@@ -645,6 +645,34 @@ describe('seeing and changing what is kept', () => {
         expect(keys()[5]).toBeUndefined();
     });
 
+    it('a retry that finds the run its lost first try already made says what became of it, and is not told as started now', async () => {
+        const { admin, context } = setUp();
+        const found = (state: string) =>
+            ({ ok: true, item: item({ nextDueAt: '2026-11-15T14:00:00.000Z' }), run: { runId: 'r1', state, replay: true } }) as never;
+        admin.changeBrickItem.mockRejectedValueOnce(new Error('timeout of 10000ms exceeded'));
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        // The first try had run and finished: the retry is told so, not "started"
+        admin.changeBrickItem.mockResolvedValueOnce(found('done'));
+        const again = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(again).toMatchObject({ started: false, already: 'done' });
+        expect(String(again.note)).toContain('nothing new was started');
+        // One that is still running or waiting is "running now", as it is said for any run
+        admin.changeBrickItem.mockRejectedValueOnce(new Error('timeout'));
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        admin.changeBrickItem.mockResolvedValueOnce(found('claimed'));
+        expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context)).toMatchObject({ started: true });
+        // And the ask after an answer is new: it carries a new key
+        const keys = admin.changeBrickItem.mock.calls.map((call) => (call as unknown as [string, string, { key?: string }])[2].key);
+        expect(keys[2]).not.toBe(keys[0]);
+        // A dropped one never ran
+        admin.changeBrickItem.mockRejectedValueOnce(new Error('timeout'));
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        admin.changeBrickItem.mockResolvedValueOnce(found('dropped'));
+        const dropped = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(dropped).toMatchObject({ started: false, already: 'dropped' });
+        expect(String(dropped.note)).toContain('did not run');
+    });
+
     it('runs one now when they ask: an extra run, nothing else about it is said to move, and the reasons it would not run are said plainly', async () => {
         const { admin, context } = setUp();
         const answer = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);

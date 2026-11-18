@@ -671,6 +671,16 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
     const done =
         action === 'cancel' ? 'cancelled' : action === 'snooze' ? 'snoozed' : action === 'run_now' ? 'started' : action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'close' ? 'closed' : action === 'keep_going' ? 'kept_going' : 'changed';
     if (action === 'run_now') {
+        // The retry of an ask whose answer was lost finds the run the first try made. When that run has already ended it is not "running now": say
+        // what became of it, and a further ask (a new key from here on) is a new run if they want one more.
+        const earlier = answer.run?.replay === true && ['done', 'failed', 'dropped'].includes(answer.run.state) ? answer.run.state : null;
+        if (earlier) {
+            const note =
+                earlier === 'dropped'
+                    ? 'The run they asked for a moment ago was never taken up in time, so it did not run. Say so plainly and offer to run it again.'
+                    : `The run they asked for a moment ago already ${earlier === 'done' ? 'ran' : 'failed'}: this was the same ask again, so nothing new was started. Say so plainly, and offer to run it once more if they want another.`;
+            return { started: false, already: earlier, ...view(item, now, settings.workdays, readOn), note };
+        }
         return { [done]: true, ...view(item, now, settings.workdays, readOn), note: 'Tell them it is running now and the result comes here in this chat. Its own schedule is as it was.' };
     }
     return { [done]: true, ...view(item, now, settings.workdays, readOn), note: item.nextDueAt ? 'Tell them plainly what you did, and when it comes next.' : 'Tell them plainly what you did.' };

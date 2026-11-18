@@ -1203,7 +1203,7 @@ export class AdminApiService {
         return this.itemCall('get', `api/bots/${encodeURIComponent(brickId)}/brick-items`, undefined, { userId });
     }
 
-    changeBrickItem(brickId: string, itemId: string, body: Record<string, unknown>): Promise<ItemAnswer<{ item: BrickItemView }>> {
+    changeBrickItem(brickId: string, itemId: string, body: Record<string, unknown>): Promise<ItemAnswer<{ item: BrickItemView; run?: { runId: string; state: string; replay: boolean } }>> {
         return this.itemCall('patch', `api/bots/${encodeURIComponent(brickId)}/brick-items/${encodeURIComponent(itemId)}`, body);
     }
 
