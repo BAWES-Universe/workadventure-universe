@@ -1056,6 +1056,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     private async purgeRoomOnce(botId: string, userId: string, roomId: string): Promise<void> {
+        // Every way into a room's clearing (the purge, a chat closed for a gone bot, a person leaving) waits for what the Brick is sending or writing right now,
+        // so nothing it says can land after the history was read and before it leaves
+        await Promise.all([...(this.profileWork.get(botId) ?? [])]);
         // Not swallowed: without the members the links to this room in the shared store could not be dropped, and the room is gone from the Brick's joined list after the leave
         const members = await this.client.getJoinedMembers(userId, roomId);
         let from: string | undefined = this.purgeCursors.get(roomId);

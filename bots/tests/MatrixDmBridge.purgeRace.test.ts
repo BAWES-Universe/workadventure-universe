@@ -182,6 +182,27 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(client.forgetRoom).not.toHaveBeenCalled();
     });
 
+    it('every way into a room\'s clearing waits for a send under way: a person leaving a Brick being purged, and a chat closed for a gone bot', async () => {
+        for (const entry of ['person leaves', 'closeChat'] as const) {
+            client.getMessagesPage.mockClear();
+            client.leaveRoom.mockClear();
+            let release!: () => void;
+            const sending = bridge.sendAsBrick(BOT, () => new Promise<string>((resolve) => { release = () => resolve('$late'); }));
+            const clearing = entry === 'closeChat' ? bridge.closeChat(BOT, ROOM, 'en') : (bridge.purgedBots.add(BOT), bridge.onEvent(personLeaves()));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            // The history is not read, and the Brick has not left, until the send is done
+            expect(client.getMessagesPage).not.toHaveBeenCalled();
+            expect(client.leaveRoom).not.toHaveBeenCalled();
+            release();
+            await sending;
+            await clearing;
+            expect(client.getMessagesPage).toHaveBeenCalled();
+            expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+            bridge.purgedBots.delete(BOT);
+            bridge.roomMembers.set(ROOM, new Set([ALICE, BOT_USER]));
+        }
+    });
+
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
         bridge.purgedBots.add(BOT);
         await bridge.closeChat(BOT, ROOM, 'en');
