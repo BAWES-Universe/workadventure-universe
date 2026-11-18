@@ -690,16 +690,17 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledTimes(1);
     });
 
-    it('leaves and forgets the room when the person leaves', async () => {
+    it('closes the chat for the person when they leave, and stays in the room until the bot is deleted', async () => {
         await bridge.onEvent(invite());
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        // The chat is closed for the person, but the bot stays in the room: a bot that has left cannot redact what it said, so it leaves only when deleted (R29)
+        expect(client.leaveRoom).not.toHaveBeenCalled();
         expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         await bridge.onEvent(message('hello?'));
         expect(deps.reply).not.toHaveBeenCalled();
     });
 
-    it('stays when someone other than the person leaves, then leaves with the person', async () => {
+    it('stays when someone other than the person leaves, then closes the chat with the person', async () => {
         await bridge.onEvent(invite());
         await bridge.onEvent(message('hi'));
         const carol = '@carol:matrix.test';
@@ -712,10 +713,12 @@ describe('MatrixDmBridge', () => {
         await bridge.onEvent(message('still here'));
         expect(deps.reply).toHaveBeenCalledTimes(2);
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        // The person leaving closes the chat for them (the bot stays in the room until it is deleted)
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
     });
 
-    it('after a restart, reads who is left before leaving', async () => {
+    it('after a restart, reads who is left before closing the chat', async () => {
         await bridge.onEvent(invite());
         const restarted = new MatrixDmBridge(config, client as never, deps);
         const carol = '@carol:matrix.test';
@@ -724,7 +727,8 @@ describe('MatrixDmBridge', () => {
         client.getJoinedMembers.mockRejectedValueOnce(new Error('down'));
         const again = new MatrixDmBridge(config, client as never, deps);
         await again.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
     });
 
     const noteStates = () =>
@@ -1146,12 +1150,12 @@ describe('MatrixDmBridge', () => {
         expect(noteStates()).toEqual(['resting']);
     });
 
-    it('leaves with the person even when the bot is resting, and drops what was waiting', async () => {
+    it('closes the chat with the person even when the bot is resting, and drops what was waiting', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue(resting as never);
         await bridge.onEvent(message('left while resting'));
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
         deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
         await bridge.checkWaiting();
         expect(deps.reply).not.toHaveBeenCalled();

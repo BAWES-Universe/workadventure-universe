@@ -1263,21 +1263,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
 
-        // The person left the direct chat: the bot leaves too, so nothing lingers on the homeserver. Someone else
-        // leaving (a third person the person invited, or one who declined) leaves the chat as it was.
+        // The person left the direct chat: the chat is closed for them (the shared store's links to it are dropped, so their next chat with the bot starts a
+        // new room), but the bot STAYS in the room. A bot that has left can no longer redact what it said there, so it leaves only when it is deleted: its purge
+        // (or the clearing of a chat whose bot is gone) redacts what it said and then leaves and forgets the room (R29). Someone else leaving (a third person the
+        // person invited, or one who declined) leaves the chat as it was.
         if (membership === 'leave' || membership === 'ban') {
             const roomBot = await this.botForRoom(event.room_id);
             if (roomBot && !(await this.someoneStays(roomBot, event.room_id, event.state_key!))) {
-                // A Brick being purged (or a room already being cleared) never leaves on its own here: leaving before its messages are redacted
-                // would take the room out of its joined list with the redactions unfinished. The room is cleared through the one per-room run instead.
+                // A Brick being purged (or a room already being cleared) clears this room through the one per-room run, now that nobody is left in it
                 if (this.purgedBots.has(roomBot) || this.roomPurges.has(event.room_id)) {
                     await this.purgeRoom(roomBot, this.botUserId(roomBot), event.room_id).catch((error) =>
                         console.warn(`[MatrixDmBridge] Could not clear ${event.room_id} after the person left, it stays joined for the next try:`, error?.message ?? error)
                     );
                     return;
                 }
-                // Tracked like a send: a leave already under way is waited for by a purge before it reads its list of rooms
-                await this.say(roomBot, () => this.client.leaveRoom(this.botUserId(roomBot), event.room_id)).catch(() => undefined);
                 await this.forgetRoom(event.room_id);
             }
         }
