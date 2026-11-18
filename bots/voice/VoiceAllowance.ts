@@ -180,16 +180,15 @@ export class OrbitTurnGate implements TurnGate {
         }
         const refusal = answer.allowed ? undefined : (answer as AllowanceRefusal);
         // What is left is the person's own allowance: a stop that is Universe's (budget, provider) or a wait (hold, capacity) says nothing about it
-        this.rememberLeft(
-            turn.turnId,
-            refusal
-                ? refusal.stoppedBy === undefined || refusal.stoppedBy === 'person'
-                    ? { count: 0, resetsAt: refusal.resetsAt }
-                    : undefined
-                : typeof (answer as AllowanceYes).left === 'number'
-                  ? { count: (answer as AllowanceYes).left, resetsAt: (answer as AllowanceYes).resetsAt }
-                  : undefined
-        );
+        const yesLeft = answer.allowed ? (answer as AllowanceYes).left : undefined;
+        const yesResetsAt = answer.allowed ? (answer as AllowanceYes).resetsAt : undefined;
+        let left: RepliesLeft | undefined;
+        if (refusal) {
+            if (refusal.stoppedBy === undefined || refusal.stoppedBy === 'person') left = { count: 0, resetsAt: refusal.resetsAt };
+        } else if (typeof yesLeft === 'number') {
+            left = { count: yesLeft, resetsAt: yesResetsAt };
+        }
+        this.rememberLeft(turn.turnId, left);
         if (refusal) {
             // An Orbit from before names no reason: its only stop was the person's own allowance
             this.stopByTurn.set(turn.turnId, {
