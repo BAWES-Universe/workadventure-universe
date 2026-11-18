@@ -135,6 +135,20 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(client.redactEvent).not.toHaveBeenCalled();
     });
 
+    it('still retries its own owed forgets while the shared store is down, and says so once', async () => {
+        deps.rooms.allPendingForgets = vi.fn(async () => { throw new Error('The shared store is down'); });
+        bridge.pendingForgets.add(`${BOT_USER}|${ROOM}`);
+        client.getJoinedRooms.mockResolvedValue([]);
+        await bridge.retryOwedForgets();
+        expect(client.forgetRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(bridge.pendingForgets.size).toBe(0);
+        // A second check while the store is still down adds no second warning
+        const warned = (console.warn as any).mock.calls.filter((call: any[]) => String(call[0]).includes('shared store')).length;
+        await bridge.retryOwedForgets();
+        expect((console.warn as any).mock.calls.filter((call: any[]) => String(call[0]).includes('shared store')).length).toBe(warned);
+        expect(warned).toBe(1);
+    });
+
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
         bridge.purgedBots.add(BOT);
         await bridge.closeChat(BOT, ROOM, 'en');

@@ -348,6 +348,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private pendingForgets = new Set<string>();
     /** Rooms being cleared of a deleted Brick right now, so a chat closing and a purge never run on one room at once. */
     private roomPurges = new Map<string, Promise<void>>();
+    /** Whether the last read of the rooms owed a forget failed, so an outage is logged once. */
+    private owedStoreDown = false;
     /** Messages a drain has taken but not started on yet, per bot: on shutdown they go back in line. */
     private drainQueues = new Map<string, MatrixEvent[]>();
     /** Drains running now, per bot: on shutdown the message each is answering gets time to land. */
@@ -963,7 +965,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private async retryOwedForgets(): Promise<void> {
         try {
             const owed = new Map<string, { userId: string; roomId: string }>();
-            for (const { matrixUserId, roomId } of (await this.deps.rooms?.allPendingForgets?.()) ?? []) owed.set(`${matrixUserId}|${roomId}`, { userId: matrixUserId, roomId });
+            // The shared store being down only hides the rooms kept there: this process's own list is still retried, and the outage is said once, not at every check
+            try {
+                for (const { matrixUserId, roomId } of (await this.deps.rooms?.allPendingForgets?.()) ?? []) owed.set(`${matrixUserId}|${roomId}`, { userId: matrixUserId, roomId });
+                this.owedStoreDown = false;
+            } catch (error: any) {
+                if (!this.owedStoreDown) console.warn('[MatrixDmBridge] Could not read the rooms owed a forget from the shared store (this process\'s own are still retried):', error?.message ?? error);
+                this.owedStoreDown = true;
+            }
             for (const key of this.pendingForgets) {
                 const cut = key.indexOf('|');
                 owed.set(key, { userId: key.slice(0, cut), roomId: key.slice(cut + 1) });
