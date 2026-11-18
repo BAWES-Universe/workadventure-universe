@@ -100,23 +100,58 @@ export class MatrixAppServiceClient {
         );
     }
 
-    /** Forget a room that was left, so the homeserver drops its history for this user. A room it no longer knows counts as forgotten. */
+    /**
+     * Forget a room that was left, so the homeserver drops its history for this user. A room it no longer knows counts as forgotten. Waits out
+     * the homeserver's own "slow down" a few times, like a redaction.
+     */
     async forgetRoom(userId: string, roomId: string): Promise<void> {
-        const response = await this.http.post(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/forget`, {}, { params: { user_id: userId }, validateStatus: () => true });
-        if (response.status !== 200 && response.status !== 404 && response.data?.errcode !== 'M_NOT_FOUND') {
+        for (let attempt = 0; ; attempt++) {
+            const response = await this.http.post(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/forget`, {}, { params: { user_id: userId }, validateStatus: () => true });
+            if (response.status === 200 || response.status === 404 || response.data?.errcode === 'M_NOT_FOUND') return;
+            if (response.status === 429 && attempt < 5) {
+                await this.waitOut(response.data?.retry_after_ms);
+                continue;
+            }
             throw new Error(`Matrix forget ${roomId} failed: ${response.status} ${response.data?.errcode ?? ''}`);
         }
     }
 
+    private async waitOut(retryAfterMs: unknown): Promise<void> {
+        const wait = Number(retryAfterMs);
+        await new Promise((resolve) => setTimeout(resolve, Math.min(Number.isFinite(wait) && wait > 0 ? wait : 1000, 30_000)));
+    }
+
     /**
-     * The rooms this user has joined, or null when the user has no account on the homeserver (it was never made, so there is nothing to
-     * purge). Synapse answers 403 M_EXCLUSIVE for an application service acting as a user it has not registered. Throws on anything else.
+     * The rooms this user has joined, or null when the user has no account on the homeserver (it was never made, so there is nothing to purge).
+     * A refusal (403) is told apart by asking whether the account exists at all: Synapse's code for "the application service has not registered
+     * this user" differs by version, and an out-of-namespace refusal carries the same code, so the code alone proves nothing. An answer that is
+     * not a list of rooms is a failure, never an empty list. Throws on anything else.
      */
     async getJoinedRooms(userId: string): Promise<string[] | null> {
         const response = await this.http.get('/_matrix/client/v3/joined_rooms', { params: { user_id: userId }, validateStatus: () => true });
-        if (response.status === 200) return Array.isArray(response.data?.joined_rooms) ? response.data.joined_rooms.filter((id: unknown) => typeof id === 'string') : [];
-        if (response.status === 403 && response.data?.errcode === 'M_EXCLUSIVE') return null;
+        if (response.status === 200) {
+            const rooms = response.data?.joined_rooms;
+            if (!Array.isArray(rooms) || !rooms.every((id: unknown) => typeof id === 'string')) throw new Error(`Matrix joined rooms of ${userId}: the answer is not a list of rooms`);
+            return rooms;
+        }
+        if (response.status === 403 && (await this.accountExists(userId)) === false) return null;
         throw new Error(`Matrix joined rooms of ${userId}: ${response.status} ${response.data?.errcode ?? ''}`);
+    }
+
+    /** Whether the homeserver has an account for this user (its profile is there). Throws when it cannot say. */
+    async accountExists(userId: string): Promise<boolean> {
+        const response = await this.http.get(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}`, { validateStatus: () => true });
+        if (response.status === 200) return true;
+        if (response.status === 404) return false;
+        throw new Error(`Matrix profile of ${userId}: ${response.status} ${response.data?.errcode ?? ''}`);
+    }
+
+    /** The user's name and picture as the homeserver shows them, each null when there is none. Throws when the homeserver cannot say. */
+    async getProfile(userId: string): Promise<{ displayName: string | null; avatarUrl: string | null }> {
+        const response = await this.http.get(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}`, { validateStatus: () => true });
+        if (response.status !== 200) throw new Error(`Matrix profile of ${userId}: ${response.status} ${response.data?.errcode ?? ''}`);
+        const text = (value: unknown) => (typeof value === 'string' && value ? value : null);
+        return { displayName: text(response.data?.displayname), avatarUrl: text(response.data?.avatar_url) };
     }
 
     /**
@@ -143,8 +178,7 @@ export class MatrixAppServiceClient {
             );
             if (response.status === 200) return;
             if (response.status === 429 && attempt < 5) {
-                const wait = Number(response.data?.retry_after_ms);
-                await new Promise((resolve) => setTimeout(resolve, Math.min(Number.isFinite(wait) && wait > 0 ? wait : 1000, 30_000)));
+                await this.waitOut(response.data?.retry_after_ms);
                 continue;
             }
             throw new Error(`Matrix redact in ${roomId} failed: ${response.status} ${response.data?.errcode ?? ''}`);

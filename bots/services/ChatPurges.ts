@@ -25,6 +25,10 @@ const PAGES_PER_ROUND = 200;
 export class ChatPurgeSweeper {
     private timer: ReturnType<typeof setInterval> | null = null;
     private running = false;
+    /** Set at shutdown: no further Brick or page is started. */
+    private stopped = false;
+    /** The round under way, so shutdown can wait for it. */
+    private active: Promise<number> | null = null;
 
     constructor(private readonly config: ChatPurgeSweeperConfig) {}
 
@@ -34,31 +38,51 @@ export class ChatPurgeSweeper {
     }
 
     start(): void {
-        if (this.timer || !this.isConfigured()) return;
+        if (this.timer || this.stopped || !this.isConfigured()) return;
         this.timer = setInterval(() => void this.sweep(), this.config.everyMs ?? 60_000);
         this.timer.unref?.();
     }
 
-    stop(): void {
+    /**
+     * Stops asking for more and waits, at most `graceMs`, for the Brick being cleared right now. Whatever does not finish is not confirmed, so
+     * Orbit lists it again for the next bot server.
+     */
+    async stop(graceMs = 0): Promise<void> {
+        this.stopped = true;
         if (this.timer) clearInterval(this.timer);
         this.timer = null;
+        const active = this.active;
+        if (!active) return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([active.catch(() => undefined), new Promise<void>((resolve) => (timer = setTimeout(resolve, graceMs)))]);
+        if (timer) clearTimeout(timer);
     }
 
-    /** One round. Returns how many Bricks were cleared and confirmed. Never throws. */
-    async sweep(): Promise<number> {
-        if (!this.isConfigured() || this.running) return 0;
+    /** One round. Returns how many Bricks were cleared and confirmed (the ones Orbit acknowledged). Never throws. */
+    sweep(): Promise<number> {
+        if (!this.isConfigured() || this.running || this.stopped) return Promise.resolve(0);
         this.running = true;
+        const round = this.round().finally(() => {
+            this.running = false;
+            this.active = null;
+        });
+        this.active = round;
+        return round;
+    }
+
+    private async round(): Promise<number> {
+        let cleared = 0;
         try {
             const headers = { Authorization: `Bearer ${this.config.botServiceToken}` };
             let after: string | undefined;
-            let cleared = 0;
-            for (let page = 0; page < PAGES_PER_ROUND; page++) {
+            for (let page = 0; page < PAGES_PER_ROUND && !this.stopped; page++) {
                 const listed = await axios.get(`${this.config.adminApiUrl}/api/brick-chat-purges`, { headers, params: after ? { after } : undefined, timeout: 10_000 });
                 const botIds: string[] = Array.isArray(listed.data?.purges)
                     ? listed.data.purges.map((one: { botId?: unknown }) => one?.botId).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
                     : [];
                 const done: string[] = [];
                 for (const botId of botIds) {
+                    if (this.stopped) break;
                     if (await this.config.purge(botId).catch(() => false)) done.push(botId);
                 }
                 // Confirmed page by page, so what was cleared is never cleared twice if a later page fails
@@ -78,9 +102,8 @@ export class ChatPurgeSweeper {
             if (status !== 404 && status !== 405) {
                 console.warn(`[ChatPurges] Could not clear a deleted Brick's chats: ${axios.isAxiosError(error) ? (status ?? error.code ?? 'no answer') : 'failed'}`);
             }
-            return 0;
-        } finally {
-            this.running = false;
+            // What Orbit already acknowledged before the failure is still cleared
+            return cleared;
         }
     }
 }

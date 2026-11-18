@@ -23,13 +23,37 @@ describe('MatrixAppServiceClient: calls for purging a deleted Brick\'s chats', (
         expect(http.get).toHaveBeenCalledWith('/_matrix/client/v3/joined_rooms', expect.objectContaining({ params: { user_id: USER } }));
     });
 
-    it('reads "the application service has not registered this user" as no account, and any other refusal as a failure', async () => {
-        http.get.mockResolvedValue({ status: 403, data: { errcode: 'M_EXCLUSIVE' } });
+    it('reads a refusal as "no account" only when the homeserver confirms the account does not exist', async () => {
+        http.get.mockImplementation(async (url: string) => (url.includes('/profile/') ? { status: 404, data: { errcode: 'M_NOT_FOUND' } } : { status: 403, data: { errcode: 'M_FORBIDDEN' } }));
         expect(await client.getJoinedRooms(USER)).toBeNull();
-        http.get.mockResolvedValue({ status: 403, data: { errcode: 'M_FORBIDDEN' } });
+        // The same refusal for an account that exists is a failure, whatever its code says
+        http.get.mockImplementation(async (url: string) => (url.includes('/profile/') ? { status: 200, data: {} } : { status: 403, data: { errcode: 'M_EXCLUSIVE' } }));
         await expect(client.getJoinedRooms(USER)).rejects.toThrow('403');
-        http.get.mockResolvedValue({ status: 502, data: {} });
+        // And when the homeserver cannot say whether it exists
+        http.get.mockImplementation(async (url: string) => (url.includes('/profile/') ? { status: 502, data: {} } : { status: 403, data: {} }));
         await expect(client.getJoinedRooms(USER)).rejects.toThrow('502');
+        http.get.mockReset().mockResolvedValue({ status: 502, data: {} });
+        await expect(client.getJoinedRooms(USER)).rejects.toThrow('502');
+    });
+
+    it('never reads an answer that is not a list of rooms as "no rooms"', async () => {
+        http.get.mockResolvedValue({ status: 200, data: {} });
+        await expect(client.getJoinedRooms(USER)).rejects.toThrow('not a list');
+        http.get.mockResolvedValue({ status: 200, data: { joined_rooms: [ROOM, 7] } });
+        await expect(client.getJoinedRooms(USER)).rejects.toThrow('not a list');
+        http.get.mockResolvedValue({ status: 200, data: { joined_rooms: [] } });
+        expect(await client.getJoinedRooms(USER)).toEqual([]);
+    });
+
+    it('reads the profile as the homeserver shows it, and fails when it cannot', async () => {
+        http.get.mockResolvedValue({ status: 200, data: { displayname: 'Nora', avatar_url: 'mxc://x/y' } });
+        expect(await client.getProfile(USER)).toEqual({ displayName: 'Nora', avatarUrl: 'mxc://x/y' });
+        http.get.mockResolvedValue({ status: 200, data: { displayname: '' } });
+        expect(await client.getProfile(USER)).toEqual({ displayName: null, avatarUrl: null });
+        http.get.mockResolvedValue({ status: 502, data: {} });
+        await expect(client.getProfile(USER)).rejects.toThrow('502');
+        http.get.mockResolvedValue({ status: 404, data: {} });
+        await expect(client.getProfile(USER)).rejects.toThrow('404');
     });
 
     it('reads a page of history newest first, from where the last page ended', async () => {
@@ -67,6 +91,21 @@ describe('MatrixAppServiceClient: calls for purging a deleted Brick\'s chats', (
         await client.forgetRoom(USER, ROOM);
         http.post.mockResolvedValue({ status: 500, data: {} });
         await expect(client.forgetRoom(USER, ROOM)).rejects.toThrow('500');
+    });
+
+    it('waits out a "slow down" on a forget, and gives up after a few', async () => {
+        vi.useFakeTimers();
+        http.post.mockReset().mockResolvedValueOnce({ status: 429, data: { retry_after_ms: 10 } }).mockResolvedValueOnce({ status: 200, data: {} });
+        const slow = client.forgetRoom(USER, ROOM);
+        await vi.advanceTimersByTimeAsync(20);
+        await slow;
+        expect(http.post).toHaveBeenCalledTimes(2);
+        http.post.mockReset().mockResolvedValue({ status: 429, data: { retry_after_ms: 1 } });
+        const never = client.forgetRoom(USER, ROOM);
+        const failed = expect(never).rejects.toThrow('429');
+        await vi.advanceTimersByTimeAsync(100);
+        await failed;
+        vi.useRealTimers();
     });
 
     it('takes the name and the picture off with empty values', async () => {

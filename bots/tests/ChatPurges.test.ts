@@ -97,4 +97,42 @@ describe('ChatPurgeSweeper', () => {
         release();
         expect(await first).toBe(1);
     });
+
+    it('returns what Orbit already acknowledged when a later page fails', async () => {
+        hoisted.axios.get
+            .mockResolvedValueOnce({ data: { purges: [{ botId: 'a' }, { botId: 'b' }], next: 'b' } })
+            .mockRejectedValueOnce({ isAxiosError: true, response: { status: 500 } });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        expect(await new ChatPurgeSweeper({ ...base, purge: async () => true }).sweep()).toBe(2);
+    });
+
+    it('stops starting Bricks at shutdown, waits for the one under way, and confirms only what finished', async () => {
+        hoisted.axios.get.mockResolvedValue({ data: { purges: [{ botId: 'a' }, { botId: 'b' }, { botId: 'c' }] } });
+        let finishA!: () => void;
+        const purge = vi.fn((id: string) => (id === 'a' ? new Promise<boolean>((resolve) => (finishA = () => resolve(true))) : Promise.resolve(true)));
+        const sweeper = new ChatPurgeSweeper({ ...base, purge });
+        const round = sweeper.sweep();
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const stopping = sweeper.stop(1000);
+        finishA();
+        await stopping;
+        expect(await round).toBe(1);
+        // b and c were never started, and nothing new begins after the stop
+        expect(purge.mock.calls.map((call) => call[0])).toEqual(['a']);
+        expect(hoisted.axios.post).toHaveBeenCalledWith('http://orbit.local/api/brick-chat-purges', { botIds: ['a'] }, expect.anything());
+        expect(await sweeper.sweep()).toBe(0);
+        sweeper.start();
+        expect(hoisted.axios.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not wait past its grace for a Brick that is slow to clear', async () => {
+        hoisted.axios.get.mockResolvedValue({ data: { purges: [{ botId: 'a' }] } });
+        const sweeper = new ChatPurgeSweeper({ ...base, purge: () => new Promise<boolean>(() => undefined) });
+        void sweeper.sweep();
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const started = Date.now();
+        await sweeper.stop(30);
+        expect(Date.now() - started).toBeLessThan(500);
+        expect(hoisted.axios.post).not.toHaveBeenCalled();
+    });
 });

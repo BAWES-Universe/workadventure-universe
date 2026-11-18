@@ -25,8 +25,7 @@ function makeClient(history: Record<string, MatrixEvent[]>, joined: string[] | n
         redacted,
         getJoinedRooms: vi.fn(async () => (joined === null ? null : [...joined])),
         clearProfile: vi.fn(async () => undefined),
-        getDisplayName: vi.fn(async (): Promise<string | null> => null),
-        getAvatarUrl: vi.fn(async (): Promise<string | null> => null),
+        getProfile: vi.fn(async (): Promise<{ displayName: string | null; avatarUrl: string | null }> => ({ displayName: null, avatarUrl: null })),
         getJoinedMembers: vi.fn(async (_u: string, room: string) => (room === ROOM_A ? [ALICE, BOT_USER] : [BOB, BOT_USER])),
         getMessagesPage: vi.fn(async (_u: string, room: string, from?: string) => {
             const all = (history[room] ?? []).filter((event) => !redacted.includes(event.event_id));
@@ -182,13 +181,118 @@ describe('MatrixDmBridge: purging a deleted Brick\'s chats (R29)', () => {
         expect(await bridge.purgeChats(BOT)).toBe(false);
         expect(client.leaveRoom).not.toHaveBeenCalled();
 
-        client.getDisplayName.mockResolvedValue('Nora');
+        client.getProfile.mockResolvedValue({ displayName: 'Nora', avatarUrl: null });
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+
+        // A picture that stays counts the same as a name that stays
+        client.getProfile.mockResolvedValue({ displayName: null, avatarUrl: 'mxc://x/y' });
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+
+        // A profile that cannot be read is not blank
+        client.getProfile.mockRejectedValue(new Error('Matrix profile: 502'));
         expect(await bridge.purgeChats(BOT)).toBe(false);
         expect(client.leaveRoom).not.toHaveBeenCalled();
 
         // An account that answers with its own ID holds nothing of the Brick
-        client.getDisplayName.mockResolvedValue(BOT_USER);
+        client.getProfile.mockResolvedValue({ displayName: BOT_USER, avatarUrl: null });
         expect(await bridge.purgeChats(BOT)).toBe(true);
+    });
+
+    it('is asked again when the shared store cannot drop a link to a room, and the room stays joined until it can', async () => {
+        const client = makeClient(history());
+        stores.deps.rooms.forgetDmRoom.mockRejectedValueOnce(new Error('The shared store is down'));
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        // The room whose link could not be dropped was not left; the other was
+        expect(client.leaveRoom.mock.calls.map((call: any[]) => call[1])).toEqual([ROOM_B]);
+        client.getJoinedRooms.mockResolvedValue([ROOM_A]);
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(stores.rooms.size).toBe(0);
+        expect(stores.roomsOf.size).toBe(0);
+    });
+
+    it('finishes forgetting a room it left when the forget failed, even though the homeserver no longer lists the room', async () => {
+        const client = makeClient(history());
+        client.forgetRoom.mockImplementation(async (_u: string, room: string) => {
+            if (room === ROOM_A) throw new Error('Matrix forget: 502');
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        client.forgetRoom.mockClear();
+        client.forgetRoom.mockImplementation(async () => undefined);
+        // The left room is not in the joined list any more, yet its forget is still finished
+        client.getJoinedRooms.mockResolvedValue([]);
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(client.forgetRoom.mock.calls.map((call: any[]) => call[1])).toEqual([ROOM_A]);
+        // And it is not asked again once it went through
+        client.forgetRoom.mockClear();
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+    });
+
+    it('goes on from the page it reached when a history is longer than one try, and redacts nothing twice in a row', async () => {
+        const events = Array.from({ length: 6 }, (_, i) => said(`$e${6 - i}`, BOT_USER, ROOM_A));
+        const client = makeClient({ [ROOM_A]: events });
+        let failAt: string | undefined = '2';
+        const page = client.getMessagesPage.getMockImplementation()!;
+        client.getMessagesPage.mockImplementation(async (u: string, room: string, from?: string) => {
+            if (from && from === failAt) throw new Error('Matrix messages: 502');
+            return page(u, room, from);
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(client.redacted).toEqual(['$e6', '$e5']);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        failAt = undefined;
+        client.getMessagesPage.mockClear();
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        // The next try starts at the saved page, not at the newest message
+        expect(client.getMessagesPage.mock.calls[0][2]).toBe('2');
+        expect(client.redacted).toEqual(['$e6', '$e5', '$e4', '$e3', '$e2', '$e1']);
+    });
+
+    it('fails a room whose history read does not move on, rather than looping on it', async () => {
+        const client = makeClient({ [ROOM_A]: [said('$only', BOT_USER, ROOM_A)] });
+        client.getMessagesPage.mockImplementation(async () => ({ events: [], end: 'same' }));
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        // One page forward is allowed to move; a repeat of the same token is the stall
+        expect(client.getMessagesPage.mock.calls.length).toBeLessThanOrEqual(3);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing for a Brick once its purge has begun: no profile, no waiting message, no goodbye', async () => {
+        const client = makeClient(history());
+        client.ensureRegistered = vi.fn(async () => undefined);
+        client.setDisplayName = vi.fn(async () => undefined);
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps) as any;
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        await bridge.ensureBotAccount(BOT, { name: 'Nora' });
+        expect(client.ensureRegistered).not.toHaveBeenCalled();
+        expect(client.setDisplayName).not.toHaveBeenCalled();
+        await bridge.rememberWaiting(BOT, said('$w1', ALICE, ROOM_A));
+        expect(bridge.localWaiting.has(BOT)).toBe(false);
+        expect(stores.deps.waiting.rememberWaitingDm).not.toHaveBeenCalled();
+    });
+
+    it('waits for a profile write already under way, so it cannot put the name back after the clear', async () => {
+        const client = makeClient(history());
+        let release!: () => void;
+        client.ensureRegistered = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+        client.setDisplayName = vi.fn(async () => undefined);
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps) as any;
+        const writing = bridge.ensureBotAccount(BOT, { name: 'Nora' });
+        const purging = bridge.purgeChats(BOT);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(client.clearProfile).not.toHaveBeenCalled();
+        release();
+        await writing;
+        expect(await purging).toBe(true);
+        // The write that was under way noticed the purge and left the name unset
+        expect(client.setDisplayName).not.toHaveBeenCalled();
+        expect(client.clearProfile).toHaveBeenCalledTimes(1);
     });
 
     it('is asked again when the homeserver cannot say which rooms the Brick is in, and when the shared store cannot drop what waits', async () => {

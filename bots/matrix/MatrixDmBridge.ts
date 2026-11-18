@@ -329,6 +329,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private draining = new Set<string>();
     /** Bricks whose chats are being purged right now. */
     private purging = new Set<string>();
+    /** Bricks whose purge has begun in this process: nothing is written for them again (a profile, a waiting message, a goodbye). A purged Brick never comes back. */
+    private purgedBots = new Set<string>();
+    /** Profile writes started for a Brick and not finished yet, so a purge can wait for them before it clears the profile. */
+    private profileWork = new Map<string, Set<Promise<unknown>>>();
+    /** Where a room's history was last read to by a purge that ran out of pages, so the next try goes on from there. */
+    private purgeCursors = new Map<string, string>();
+    /** Rooms the Brick left whose forget did not get through yet (`user|room`), finished before a purge counts as done. */
+    private pendingForgets = new Set<string>();
     /** Messages a drain has taken but not started on yet, per bot: on shutdown they go back in line. */
     private drainQueues = new Map<string, MatrixEvent[]>();
     /** Drains running now, per bot: on shutdown the message each is answering gets time to land. */
@@ -895,12 +903,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /**
      * A deleted Brick whose days are over keeps nothing in chat (Khalid, 17 Nov; register R29). In every room it is in: its name and picture
      * come off its profile, everything it said is redacted (its messages, reactions, stickers and the older name and picture in its own
-     * join events), then it leaves and forgets the room. What people said stays with them: only the Brick's own events are touched.
-     * Messages left with it while it rested, and what it kept for people in nearby chat, are dropped too.
+     * join events), the links the shared store holds to the room are dropped, then it leaves and forgets the room. What people said stays with
+     * them: only the Brick's own events are touched. Messages left with it while it rested, and what it kept for people in nearby chat, are dropped too.
      *
-     * Safe to run again: it only ever redacts what is not redacted yet, a room it already left is not in its joined list, and a
-     * redaction retried keeps its own transaction id. True when nothing is left (also when the Brick never had a chat account), false
-     * when anything failed, so the caller asks again. Never throws.
+     * From the first moment nothing is written for the Brick again in this process (a profile, a waiting message, a goodbye), and writes already
+     * under way are waited for before the profile is cleared. Safe to run again: it only ever redacts what is not redacted yet, a room it
+     * already left is not in its joined list, each redaction keeps its own transaction id, a history too long for one try goes on from where it
+     * stopped, and a room left but not yet forgotten is finished first. True when nothing is left (also when the Brick never had a chat
+     * account), false when anything failed, so the caller asks again. Never throws.
      */
     async purgeChats(botId: string): Promise<boolean> {
         const userId = botMatrixId(this.config.domain, botId);
@@ -908,15 +918,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!userId) return true;
         if (this.purging.has(botId)) return false;
         this.purging.add(botId);
+        this.purgedBots.add(botId);
         try {
+            // What was already writing this Brick's profile finishes first, so it cannot put the name back after it is cleared
+            await Promise.all([...(this.profileWork.get(botId) ?? [])]);
             const rooms = await this.client.getJoinedRooms(userId);
-            // Dropped first: nothing kept in memory or in the shared store may answer for this Brick again
+            // Dropped before anything else is read: nothing kept in memory or in the shared store may answer for this Brick again
             this.dropKeptFor(botId);
             await this.deps.waiting?.takeWaitingDms(botId);
-            if (rooms === null) return true;
+            // Rooms left by an earlier try whose forget did not get through
+            let allDone = await this.finishForgets(userId);
+            if (rooms === null) return allDone;
             await this.client.clearProfile(userId);
             if (!(await this.profileIsBlank(userId))) throw new Error('The profile still shows a name or a picture');
-            let allDone = true;
             for (const roomId of rooms) {
                 try {
                     await this.purgeRoom(botId, userId, roomId);
@@ -934,11 +948,32 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    /** Redacts what the Brick said in one room, then leaves and forgets it. Nothing is left before the redactions are all in. */
+    /** Forgets the rooms the Brick already left whose forget failed earlier. False while any is still not forgotten. */
+    private async finishForgets(userId: string): Promise<boolean> {
+        let all = true;
+        for (const key of [...this.pendingForgets]) {
+            const cut = key.indexOf('|');
+            if (key.slice(0, cut) !== userId) continue;
+            try {
+                await this.client.forgetRoom(userId, key.slice(cut + 1));
+                this.pendingForgets.delete(key);
+            } catch (error: any) {
+                all = false;
+                console.warn(`[MatrixDmBridge] Could not forget a room a purged Brick left:`, error?.message ?? error);
+            }
+        }
+        return all;
+    }
+
+    /**
+     * Redacts what the Brick said in one room, drops the shared store's links to it, then leaves and forgets it. Nothing is left before the
+     * redactions are all in, and a link that cannot be dropped keeps the room joined so the next try finds it again.
+     */
     private async purgeRoom(botId: string, userId: string, roomId: string): Promise<void> {
         // Not swallowed: without the members the links to this room in the shared store could not be dropped, and the room is gone from the Brick's joined list after the leave
         const members = await this.client.getJoinedMembers(userId, roomId);
-        let from: string | undefined;
+        let from: string | undefined = this.purgeCursors.get(roomId);
+        let finished = false;
         for (let page = 0; page < PURGE_PAGES_MAX; page++) {
             const { events, end } = await this.client.getMessagesPage(userId, roomId, from, PURGE_PAGE_SIZE);
             for (const event of events) {
@@ -946,25 +981,39 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 if (!ownEventToRedact(event, userId)) continue;
                 await this.client.redactEvent(userId, roomId, event.event_id, `purge-${event.event_id}`, 'Brick deleted');
             }
-            if (!end || events.length === 0 || end === from) {
-                from = undefined;
+            // No `end` is the oldest page. An empty page with an `end` that moves on is not the end; one that does not move on is a read that stalled
+            if (!end) {
+                finished = true;
                 break;
             }
+            if (end === from) throw new Error('The room history did not move on');
             from = end;
+            // Everything up to here is redacted: a try that runs out of pages goes on from this point next time
+            this.purgeCursors.set(roomId, end);
         }
-        if (from !== undefined) throw new Error('The room history is longer than one purge reads');
+        if (!finished) throw new Error('The room history is longer than one purge reads: it goes on next time');
+        this.purgeCursors.delete(roomId);
+        // Strict: a link that stays would outlive the Brick, so the purge is not done and the room stays joined for the next try
+        await this.deps.rooms?.forgetDmRoom(roomId);
+        this.roomBots.delete(roomId);
+        this.unkeptRoomBots.delete(roomId);
+        this.roomMembers.delete(roomId);
+        for (const member of members) {
+            this.directRooms.delete(`${botId}|${member}`);
+            await this.deps.rooms?.forgetDmRoomOf?.(botId, member);
+        }
         await this.client.leaveRoom(userId, roomId, 'Brick deleted');
+        this.pendingForgets.add(`${userId}|${roomId}`);
         await this.client.forgetRoom(userId, roomId);
-        await this.forgetRoom(roomId);
-        for (const member of members) await this.deps.rooms?.forgetDmRoomOf?.(botId, member).catch(() => undefined);
+        this.pendingForgets.delete(`${userId}|${roomId}`);
     }
 
-    /** True when the homeserver shows the Brick with no name of its own and no picture. */
+    /** True when the homeserver shows the Brick with no name of its own and no picture. A profile it cannot read is not blank: that throws. */
     private async profileIsBlank(userId: string): Promise<boolean> {
-        const name = await this.client.getDisplayName(userId);
+        const { displayName, avatarUrl } = await this.client.getProfile(userId);
         // Matrix may answer with the account's own ID once the name is removed; that holds nothing of the Brick
-        if (name && name !== userId && name !== userId.slice(1, userId.indexOf(':'))) return false;
-        return (await this.client.getAvatarUrl(userId)) === null;
+        if (displayName && displayName !== userId && displayName !== userId.slice(1, userId.indexOf(':'))) return false;
+        return avatarUrl === null;
     }
 
     /** What this process keeps about a Brick, dropped: its name, answers kept for people, waiting messages, the access it cached. */
@@ -982,17 +1031,37 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     private async ensureBotAccount(botId: string, config: BotConfiguration): Promise<void> {
-        await this.client.ensureRegistered(`${BOT_LOCALPART_PREFIX}${botId}`);
-        // In the background: the picture never holds up an answer, and a failure is tried again next time.
-        void this.avatars?.update(this.botUserId(botId), config);
-        const name = config.name;
-        if (name && this.botNames.get(botId) !== name) {
-            // Only a name that got through is remembered, so a failed one is tried again next time.
-            await this.client.setDisplayName(this.botUserId(botId), name).then(
-                () => this.botNames.set(botId, name),
-                (error) => console.warn(`[MatrixDmBridge] Could not set the display name of bot ${botId}:`, error?.message ?? error)
-            );
-        }
+        // A Brick being purged gets no profile written for it any more: the purge clears it and checks it stays clear
+        if (this.purgedBots.has(botId)) return;
+        const work = this.profileWriting(botId, async () => {
+            await this.client.ensureRegistered(`${BOT_LOCALPART_PREFIX}${botId}`);
+            if (this.purgedBots.has(botId)) return;
+            // In the background: the picture never holds up an answer, and a failure is tried again next time.
+            if (this.avatars) void this.profileWriting(botId, () => (this.purgedBots.has(botId) ? Promise.resolve() : this.avatars!.update(this.botUserId(botId), config)));
+            const name = config.name;
+            if (name && this.botNames.get(botId) !== name) {
+                // Only a name that got through is remembered, so a failed one is tried again next time.
+                await this.client.setDisplayName(this.botUserId(botId), name).then(
+                    () => this.botNames.set(botId, name),
+                    (error) => console.warn(`[MatrixDmBridge] Could not set the display name of bot ${botId}:`, error?.message ?? error)
+                );
+            }
+        });
+        await work;
+    }
+
+    /** Runs a write to a Brick's chat profile, remembered while it runs so a purge can wait for it. */
+    private profileWriting<T>(botId: string, write: () => Promise<T>): Promise<T> {
+        const running = write();
+        const set = this.profileWork.get(botId) ?? new Set<Promise<unknown>>();
+        this.profileWork.set(botId, set);
+        const tracked = running.catch(() => undefined);
+        set.add(tracked);
+        void tracked.then(() => {
+            set.delete(tracked);
+            if (set.size === 0 && this.profileWork.get(botId) === set) this.profileWork.delete(botId);
+        });
+        return running;
     }
 
     /** The bot's name for a note, even once Orbit no longer has it: its Matrix display name is still there. */
@@ -1634,6 +1703,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** The bot was deleted: one goodbye note, then it leaves so the chat reads as closed. */
     private async closeChat(botId: string, roomId: string, language: NoteLanguage): Promise<void> {
+        // A purge is clearing this Brick's rooms and is the one that leaves them, once everything it said is redacted
+        if (this.purgedBots.has(botId)) return;
         await this.sendNote(botId, roomId, 'gone', language);
         await this.client.leaveRoom(this.botUserId(botId), roomId).catch(() => undefined);
         await this.forgetRoom(roomId);
@@ -1661,6 +1732,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** Keep the latest message in this chat for the bot to answer once it is back on. `attempts` counts failed answers. */
     private async rememberWaiting(botId: string, event: MatrixEvent, attempts = 0): Promise<void> {
+        // Nothing is kept for a Brick being purged, also by an answer that was already under way when the purge began
+        if (this.purgedBots.has(botId)) return;
         const content = event.content ?? {};
         const kept: Record<string, unknown> = { msgtype: content.msgtype, body: String(content.body ?? '').slice(0, WAITING_BODY_MAX) };
         if (typeof content.url === 'string') kept.url = content.url;
@@ -1720,6 +1793,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (rooms.size === 0) this.localWaiting.delete(botId);
         }
         for (const botId of await this.waitingBots()) {
+            if (this.purgedBots.has(botId)) continue;
             const config = await this.deps.getBotConfig(botId, true).catch(() => undefined);
             if (config === undefined) continue;
             if (config === null && !this.confirmedGone(botId)) continue;
@@ -1771,7 +1845,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** Answer the messages left while the bot rested, oldest first, if they are less than a day old. */
     private async drain(botId: string): Promise<void> {
-        if (this.stopping || this.draining.has(botId)) return;
+        if (this.stopping || this.purgedBots.has(botId) || this.draining.has(botId)) return;
         this.draining.add(botId);
         const run = this.runDrain(botId);
         this.drains.set(botId, run);

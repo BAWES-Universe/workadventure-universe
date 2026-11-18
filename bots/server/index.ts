@@ -23,7 +23,7 @@ import { DmReplyService, instructionsFor, type DmRoomLink } from './DmReplyServi
 import { ModelTaskRunner } from './BrickTaskModel';
 import { TaskApps } from './BrickTaskApps';
 import { readWebPageForTool } from '../ai/AIService';
-import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
+import { botMatrixId, matrixIntentionallyOff, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
 import { askOrbitAboutAppUse } from '../mcp/AppUse';
 import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
@@ -333,6 +333,8 @@ async function shutdown(signal: string) {
     try {
         // Stop game loop
         stopGameLoop();
+        // No new Brick's chats are cleared, and the one being cleared gets the same grace as the direct messages (it is asked for again if it does not finish)
+        await chatPurges?.stop(DM_SHUTDOWN_GRACE_MS);
         // No more tries at hearing Brick changes, even when the game loop never started
         stopBrickListening?.();
         brickRunner?.stop();
@@ -375,11 +377,12 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
-        // A Brick purged for good keeps nothing in chat: its rooms are cleared from Orbit's list. With no chat server set up there is none to clear.
+        // A Brick purged for good keeps nothing in chat: its rooms are cleared from Orbit's list. With no chat server on purpose (none of its settings set)
+        // there is none to clear; with settings half set, or a chat server this process could not verify at start, the purge waits (a verified one needs a restart to be reached).
         chatPurges = new ChatPurgeSweeper({
             adminApiUrl: ADMIN_API_URL,
             botServiceToken: process.env.BOT_SERVICE_TOKEN,
-            purge: async (botId) => (matrixBridge ? matrixBridge.purgeChats(botId) : !readMatrixConfig()),
+            purge: async (botId) => (matrixBridge ? matrixBridge.purgeChats(botId) : matrixIntentionallyOff()),
         });
         chatPurges.start();
         botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, carryGuestChat, carryBrick, noteHearing: noteHearing ?? undefined });
@@ -529,7 +532,6 @@ function stopGameLoop(): void {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
         if (computerSweepInterval) clearInterval(computerSweepInterval);
-        chatPurges?.stop();
         computerRunner?.stop();
         screenGateway?.close();
         gameLoopInterval = null;
