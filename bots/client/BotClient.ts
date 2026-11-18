@@ -246,10 +246,21 @@ export class BotClient {
 
     /** The person with this player number in the bot's own room, or null while who they are isn't known. */
     private talkerInOwnRoom(playerId: number): { userId: string; isGuest: boolean } | null {
-        const mine = this.spaces.values().next().value;
-        const at = mine?.lastIndexOf('_') ?? -1;
-        if (!mine || at === -1) return null;
-        return this.voiceWho.get(`${mine.substring(0, at + 1)}${playerId}`) ?? null;
+        const prefix = this.ownRoomPrefix();
+        return prefix === null ? null : (this.voiceWho.get(`${prefix}${playerId}`) ?? null);
+    }
+
+    /**
+     * What every space user id of the bot's own room starts with ("roomID_"). A call-only connection has no room, so its own id (a random
+     * "call_…") says nothing: the room is the one its caller is in.
+     */
+    private ownRoomPrefix(): string | null {
+        for (const [spaceName, mine] of this.spaces) {
+            const own = mine.startsWith(CALL_ONLY_SPACE_USER_PREFIX) ? this.callerIds.get(spaceName) : mine;
+            const at = own?.lastIndexOf('_') ?? -1;
+            if (own && at !== -1) return own.substring(0, at + 1);
+        }
+        return null;
     }
 
     /**
