@@ -332,8 +332,12 @@ export class Recognition {
         for (const [participantId, person] of [...this.people]) if (!heard(participantId)) this.interrupt(participantId, person.epoch, 'cleared');
     }
 
-    /** The session is over: recognizers are closed and nothing more is said. */
+    /**
+     * The session is over: what is still being said is ended first, as `cleared` with the audio it took (the hearing provider took
+     * that audio whatever came of the words, so it is still booked), then recognizers are closed and nothing more is said.
+     */
     dispose(): void {
+        if (!this.disposed) this.interruptAll('cleared', 'stopped');
         this.disposed = true;
         for (const person of this.people.values()) {
             for (const turn of person.open) {

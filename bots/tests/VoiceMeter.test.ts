@@ -162,6 +162,25 @@ describe('the meter: sending', () => {
         expect(sent).toHaveLength(131);
     });
 
+    it('still sends what gathered while the one request of the switch-off was out, even when exactly as many gathered as were sent', async () => {
+        const sent: string[] = [];
+        let answer!: (ok: boolean) => void;
+        const gate = new Promise<boolean>((resolve) => (answer = resolve));
+        const recordMeterEvents = vi.fn(async (events: SpeechEvent[]) => {
+            const first = sent.length === 0;
+            sent.push(...events.map((e) => e.eventId));
+            return first ? gate : true;
+        });
+        const m = new VoiceMeter('sam', { recordMeterEvents }, undefined, 'r1');
+        m.add(use('first'));
+        const done = m.shutdown();
+        // One was sent and one gathered meanwhile: the waiting list is as long as before, but Orbit did take a request
+        m.add(use('added'));
+        answer(true);
+        await done;
+        expect(sent).toEqual(['speech:call:sam:r1:hearing:first', 'speech:call:sam:r1:hearing:added']);
+    });
+
     it('sends what is left when the bot is switched off, and books nothing after', async () => {
         const o = orbit();
         const m = new VoiceMeter('sam', o.fake, undefined, 'r1');
@@ -392,6 +411,43 @@ describe('a live call is booked in Orbit', () => {
         const done = b.calls.shutdown();
         await vi.advanceTimersByTimeAsync(60_000);
         await done;
+        expect(b.link.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('shutting down keeps the link open for a worker that answers session.end, even with no reply playing, and books the stretch of speech it still had open', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        b.workerSays({ type: 'session.start', bubbleId: 'bubble-1', mode: 'listen', features: ['say.onlyFor', 'session.ended'] });
+        let over = false;
+        const done = b.calls.shutdown().then(() => (over = true));
+        await vi.advanceTimersByTimeAsync(200);
+        expect(b.sent.some((m) => m.type === 'session.end')).toBe(true);
+        expect(b.link.close).not.toHaveBeenCalled();
+        expect(over).toBe(false);
+        // What the worker was still hearing when the session ended comes first, then its answer
+        b.workerSays({ type: 'user.turn', turnId: '1-9', outcome: 'cleared', audioMs: 2100 });
+        expect(b.link.close).not.toHaveBeenCalled();
+        b.workerSays({ type: 'session.ended' });
+        await done;
+        expect(b.link.close).toHaveBeenCalledTimes(1);
+        expect(b.requests.flat().map((e) => [e.detail.part, e.quantity, e.userId])).toEqual([['hearing', 3, 'uuid-room_7']]);
+    });
+
+    it('shutting down does not wait for ever for a worker that said it would answer session.end and does not', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        b.workerSays({ type: 'session.start', bubbleId: 'bubble-1', mode: 'listen', features: ['session.ended'] });
+        const done = b.calls.shutdown();
+        await vi.advanceTimersByTimeAsync(60_000);
+        await done;
+        expect(b.link.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('shutting down closes the link at once for a worker that does not answer session.end', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        b.workerSays({ type: 'session.start', bubbleId: 'bubble-1', mode: 'listen', features: ['say.onlyFor'] });
+        await b.calls.shutdown();
         expect(b.link.close).toHaveBeenCalledTimes(1);
     });
 

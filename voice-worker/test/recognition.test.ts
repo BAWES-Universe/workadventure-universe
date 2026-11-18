@@ -316,11 +316,24 @@ describe('words nobody asked to keep', () => {
     it('say nothing at all once the session is over', () => {
         const r = rig(['one two three']);
         r.speak(700);
-        const before = r.sent.length;
         r.recognition.dispose();
+        const before = r.sent.length;
         r.speak(400);
         expect(r.sent).toHaveLength(before);
         expect(r.ears.closed).toBe(1);
+    });
+
+    it('report the audio of a stretch still open when the session ends, as cleared, so what the provider took is still booked', () => {
+        const r = rig(['one two three']);
+        r.speak(700);
+        expect(r.turns()).toHaveLength(0);
+        r.recognition.dispose();
+        expect(r.turns()).toMatchObject([{ outcome: 'cleared', audioMs: expect.any(Number) }]);
+        expect(r.turns()[0].audioMs).toBeGreaterThanOrEqual(600);
+        expect(r.turns()[0].text).toBeUndefined();
+        // Once, and not again for the same stretch
+        r.recognition.dispose();
+        expect(r.turns()).toHaveLength(1);
     });
 });
 

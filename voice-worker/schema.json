@@ -100,12 +100,16 @@
       "title": "bot server -> worker: close the session and every connection in it",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type"], "properties": { "type": { "const": "session.end" } } }]
     },
+    "session.ended": {
+      "title": "worker -> bot server: the answer to session.end, sent last. Every stretch of speech still open has been reported (user.turn, with the audio it took) and every reply still playing has been reported (playback.progress); nothing more comes for the session. Only from a worker that named session.ended in session.start.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type"], "properties": { "type": { "const": "session.ended" } } }]
+    },
     "session.start": {
       "title": "worker -> bot server: the session was accepted",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "bubbleId", "mode", "engine"],
         "properties": { "type": { "const": "session.start" }, "bubbleId": { "$ref": "#/$defs/id" }, "mode": { "$ref": "#/$defs/mode" },
           "engine": { "type": "object", "required": ["id", "kind"], "properties": { "id": { "type": "string" }, "kind": { "const": "ts" } } },
-          "features": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 64 }, "description": "What this worker can do beyond the first version of the bridge. say.onlyFor: bot.say may name the one person a reply is for." } } }]
+          "features": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 64 }, "description": "What this worker can do beyond the first version of the bridge. say.onlyFor: bot.say may name the one person a reply is for. session.ended: session.end is answered with session.ended once everything the session still had to report has been sent." } } }]
     },
     "participant.join": {
       "title": "worker -> bot server: this person's audio is connected both ways",

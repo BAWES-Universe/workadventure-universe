@@ -50,6 +50,13 @@ export interface SpeechConfig { adapter: string; model: string; voiceId: string;
  */
 export const SAY_ONLY_FOR = 'say.onlyFor';
 
+/**
+ * Named by a worker in `session.start` when it answers `session.end` with `session.ended`, sent last: every stretch of speech still open
+ * has been reported (`user.turn`, with the audio it took) and every reply still playing has been reported (`playback.progress`). A bot
+ * server that is switching off keeps the link open for it. A worker from before does not send it, so none is waited for.
+ */
+export const SESSION_ENDED = 'session.ended';
+
 export type ToWorker =
     | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: VoiceExpression; turnSeconds?: number }
     | { type: 'lane.open'; sessionId: string; participantId: string; epoch: number; mode?: VoiceMode }
@@ -83,6 +90,8 @@ export interface VoiceDraft {
 export type FromWorker =
     /** `features`: what the worker can do beyond the first version of the bridge (`SAY_ONLY_FOR`). Left out by an older worker. */
     | { type: 'session.start'; sessionId: string; bubbleId: string; mode: VoiceMode; features?: string[] }
+    /** The answer to `session.end`, sent last (see `SESSION_ENDED`). */
+    | { type: 'session.ended'; sessionId: string }
     | { type: 'participant.join'; sessionId: string; participantId: string; epoch: number }
     | { type: 'participant.leave'; sessionId: string; participantId: string; epoch: number; reason: LeaveReason }
     | { type: 'lane.signal'; sessionId: string; participantId: string; epoch: number; signal: VoiceSignal }

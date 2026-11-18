@@ -71,6 +71,8 @@ export class VoiceMeter {
     private retryAt = 0;
     private retryMs = RETRY_FIRST_MS;
     private dropped = 0;
+    /** How many events Orbit has taken, in all: the switch-off tells whether a request got anywhere by this, not by how long the list is. */
+    private delivered = 0;
     private closed = false;
 
     constructor(
@@ -135,10 +137,11 @@ export class VoiceMeter {
         // Everything that gathered goes, a request at a time, including what gathered while one was out. It stops when Orbit does not take a
         // request (nothing more would be taken now) or when a request took nothing off the list, so it can never loop
         for (let round = 0; round <= Math.ceil(MAX_PENDING / MAX_PER_REQUEST) + 1 && this.pending.length > 0; round += 1) {
-            const before = this.pending.length;
+            // Progress is what Orbit took, counted by itself: the list's length also moves when new events gather while a request is out
+            const before = this.delivered;
             await this.flush().catch(() => undefined);
             // A request still out that started after this one (the list was long): it is awaited by the next round
-            if (this.pending.length >= before && !this.sending) break;
+            if (this.delivered === before && !this.sending) break;
         }
         if (this.sending) await this.sending.catch(() => undefined);
         this.closed = true;
@@ -170,6 +173,7 @@ export class VoiceMeter {
             // room, and a count would then take away events that were never sent
             const sent = new Set(batch);
             this.pending = this.pending.filter((event) => !sent.has(event));
+            this.delivered += batch.length;
             this.retryMs = RETRY_FIRST_MS;
             return;
         }

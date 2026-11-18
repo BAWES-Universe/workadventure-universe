@@ -23,7 +23,7 @@
  * again). Nothing else changes: the chat, the bubble and everyone else's voice carry on.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
-import { SAY_ONLY_FOR } from './protocol';
+import { SAY_ONLY_FOR, SESSION_ENDED } from './protocol';
 import type { FromWorker, LeaveReason, ListenInfo, ListenReason, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { RepliesLeft, TurnGate } from './VoiceAllowance';
@@ -253,6 +253,10 @@ export class VoiceCalls {
     private readonly sessions = new Map<string, Record<ProviderPart, PartProvider>>();
     /** Replies sent to the worker whose last report has not come yet (segment -> session). Oldest first out. */
     private readonly unreported = new Map<string, string>();
+    /** Sessions whose worker named `session.ended`: it answers their `session.end` last, after the speech and the replies it still had to report. */
+    private readonly answersEnd = new Set<string>();
+    /** Sessions a shutdown has ended and whose answer has not come yet. */
+    private readonly ending = new Set<string>();
     /** Set while a shutdown waits for the last reports: told whenever one comes. */
     private reportArrived?: () => void;
     private shuttingDown = false;
@@ -1110,7 +1114,10 @@ export class VoiceCalls {
         // for it. Only a shutdown, which closes the link, has to hold on for it
         if (!this.shuttingDown) for (const [segmentId, owner] of [...this.unreported]) if (owner === sessionId) this.unreported.delete(segmentId);
         // A session that was never opened has nothing to end on the worker
-        if (!this.opening.delete(sessionId)) this.link.send({ type: 'session.end', sessionId });
+        if (this.opening.delete(sessionId)) return;
+        // A worker that answers (`session.ended`) says its last word on the session after the stretches of speech it had open and the replies
+        // it was playing: a shutdown waits for that
+        if (this.link.send({ type: 'session.end', sessionId }) && this.shuttingDown && this.answersEnd.has(sessionId)) this.ending.add(sessionId);
     }
 
     private refuse(spaceName: string, personId: string): void {
@@ -1223,6 +1230,16 @@ export class VoiceCalls {
             // What this session's worker can do: from here on a reply for one person alone can be said, to them only
             const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
             if (bubble) bubble.keepsToOne = message.features?.includes(SAY_ONLY_FOR) === true;
+            if (message.features?.includes(SESSION_ENDED) === true) this.answersEnd.add(message.sessionId);
+            for (const oldest of this.answersEnd) {
+                if (this.answersEnd.size <= MAX_SESSIONS) break;
+                this.answersEnd.delete(oldest);
+            }
+        } else if (message.type === 'session.ended') {
+            // The worker has said everything it had for that session: the last of its hearing and its playback is in
+            this.ending.delete(message.sessionId);
+            this.answersEnd.delete(message.sessionId);
+            this.reportArrived?.();
         } else if (message.type === 'user.speech_started' || message.type === 'user.partial' || message.type === 'user.turn') {
             this.handleSpeech(message);
         } else if (message.type === 'playback.progress') {
@@ -1509,8 +1526,10 @@ export class VoiceCalls {
 
     /** The worker went away: it holds none of this any more. People are told, so nobody waits on a silent call. */
     linkDown(): void {
-        // Everything the worker held is gone: no last report will come for any reply
+        // Everything the worker held is gone: no last report will come for any reply, and no session will be answered
         this.unreported.clear();
+        this.ending.clear();
+        this.answersEnd.clear();
         this.reportArrived?.();
         // Whoever was mid-sentence gets their words back to decide on: nothing is sent for them
         for (const { spaceName, personId, turnId, text } of [...this.live.values()]) {
@@ -1841,7 +1860,7 @@ export class VoiceCalls {
     }
 
     private waitsForReports(): boolean {
-        return this.link.isUp() && this.unreported.size > 0;
+        return this.link.isUp() && (this.unreported.size > 0 || this.ending.size > 0);
     }
 
     /** Answers when the worker has reported on every reply it was playing, or when it cannot (link down) or does not within a short wait. */
@@ -1854,7 +1873,7 @@ export class VoiceCalls {
             };
             const timer = setTimeout(finish, LAST_REPORT_WAIT_MS);
             this.reportArrived = () => {
-                if (this.unreported.size === 0 || !this.link.isUp()) finish();
+                if ((this.unreported.size === 0 && this.ending.size === 0) || !this.link.isUp()) finish();
             };
         });
     }

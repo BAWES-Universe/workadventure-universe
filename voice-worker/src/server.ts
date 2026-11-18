@@ -682,6 +682,8 @@ class BridgeConnection {
             case 'session.end':
                 this.sessions.delete(msg.sessionId);
                 await session.close();
+                // Last for this session: what it still had to report is out (the open stretches of speech, the replies that were playing)
+                this.send(msg.sessionId, { type: 'session.ended' });
                 break;
         }
     }

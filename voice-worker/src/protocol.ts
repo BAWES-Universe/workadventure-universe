@@ -27,9 +27,11 @@ export type PlaybackReason = 'completed' | 'voice_stop' | 'retract' | 'mode' | '
  * What this worker can do beyond the first version of the bridge, named in `session.start`. A bot server relies on one
  * only after it has seen its name: an older worker ignores the fields it does not know.
  *   say.onlyFor: `bot.say` may name the one person a reply is for, and its audio reaches nobody else (game #1993).
+ *   session.ended: `session.end` is answered with `session.ended` once everything the session still had to report has been sent.
  */
 export const SAY_ONLY_FOR = 'say.onlyFor';
-export const FEATURES: readonly string[] = [SAY_ONLY_FOR];
+export const SESSION_ENDED = 'session.ended';
+export const FEATURES: readonly string[] = [SAY_ONLY_FOR, SESSION_ENDED];
 
 /** How much feeling the voice puts in. Handed to the speech connector, which maps it to what its provider offers. */
 export type Expression = 'restrained' | 'natural' | 'expressive';
@@ -107,6 +109,12 @@ export interface EngineStatus extends Base {
  * their own connection (`lane`), the bubble's LiveKit room when they are named in it (`room`), or nothing yet (`none`, the mode applies
  * when a path opens: `lane.open` and `room.people` carry it).
  */
+/**
+ * The answer to `session.end`, sent last: every stretch of speech still open has been reported (`user.turn`, with the audio it took) and
+ * every reply still playing has been reported (`playback.progress`). Nothing more comes for that session. Only from a worker that named
+ * `session.ended` in `session.start`.
+ */
+export interface SessionEnded extends Base { type: 'session.ended' }
 export interface ModeAck extends Base { type: 'mode.ack'; participantId: string; requestId: string; mode: Mode; path: 'lane' | 'room' | 'none'; epoch?: number }
 export interface RoomState extends Base { type: 'room.state'; epoch: number; state: 'connected' | 'closed' | 'failed' }
 /** A person started speaking to the bot. */
@@ -132,5 +140,5 @@ export interface ErrorMsg extends Base { type: 'error'; code: string; message: s
 
 export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd | RoomJoin | RoomLeave | RoomPeople | RecognitionTerms;
 export type WorkerToBot =
-    | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | ModeAck | RoomState | UserSpeechStarted | UserPartial | UserTurn | ProviderOk | ProviderFailed | ErrorMsg;
+    | SessionStart | SessionEnded | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | ModeAck | RoomState | UserSpeechStarted | UserPartial | UserTurn | ProviderOk | ProviderFailed | ErrorMsg;
 
