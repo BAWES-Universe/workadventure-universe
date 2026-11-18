@@ -11,6 +11,9 @@ name: Prune old images
 #           PR is closed (a branch that still has an open PR keeps its newest 3), and untagged versions no kept
 #           image uses.
 #
+# The two-day grace period applies to the weekly sweep. When a PR closes, its own branch's images go at once, whatever
+# their age (unless another open PR still uses that branch).
+#
 # The plan is printed before anything is deleted, and the weekly dry runs of the first version of this clean-up
 # already listed it. prune-images-check.yml prints the same plan as a dry run on any pull request that changes
 # the clean-up, so a change shows what it would delete before it merges.
@@ -86,6 +89,7 @@ jobs:
             uploader-universe ${{ vars.DEV_COOLIFY_UPLOADER_UUID }}
             bot-server-universe ${{ vars.DEV_COOLIFY_BOT_SERVER_UUID }}
             play-universe ${{ vars.DEV_COOLIFY_PLAY_UUID }}
+            # an unset voice-worker uuid means it is not deployed there: build-universe-images.yml and dev-server-switch.yml skip it the same way
             voice-worker-universe ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID || 'none' }}
           PROD_COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
           PROD_COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
