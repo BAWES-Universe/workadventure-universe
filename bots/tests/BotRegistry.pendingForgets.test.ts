@@ -46,3 +46,23 @@ describe('BotRegistry: rooms a purged Brick still has to forget', () => {
         await expect(registry.allPendingForgets()).rejects.toThrow('shared store is down');
     });
 });
+
+describe('BotRegistry: every chat link of a purged bot', () => {
+    it('drops the links of every person for that bot only, including people no room holds any more', async () => {
+        const links = new Map<string, string>([['bot1|@a:hs', '!1'], ['bot1|@b:hs', '!2'], ['bot10|@a:hs', '!3'], ['bot2|@a:hs', '!4']]);
+        const redis = {
+            isOpen: true,
+            hDel: async (_k: string, f: string) => void links.delete(f),
+            hScanIterator: async function* () { for (const [field, value] of [...links]) yield { field, value }; },
+        };
+        await registryWith(redis).forgetDmRoomsOfBot('bot1');
+        expect([...links.keys()].sort()).toEqual(['bot10|@a:hs', 'bot2|@a:hs']);
+    });
+
+    it('throws while a store that was in use is down, and does nothing with no store', async () => {
+        const registry = registryWith(undefined);
+        await expect(registry.forgetDmRoomsOfBot('bot1')).resolves.toBeUndefined();
+        registry.sharedStoreSeen = true;
+        await expect(registry.forgetDmRoomsOfBot('bot1')).rejects.toThrow('shared store is down');
+    });
+});

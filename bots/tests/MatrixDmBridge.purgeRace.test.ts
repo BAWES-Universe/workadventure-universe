@@ -129,6 +129,33 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(client.leaveRoom).not.toHaveBeenCalled();
     });
 
+    it('does not ask the shared store anything for a Brick that never had a chat account', async () => {
+        client.getJoinedRooms.mockResolvedValue(null);
+        deps.rooms.pendingForgetsOf.mockRejectedValue(new Error('The shared store is down'));
+        deps.rooms.forgetDmRoomsOfBot = vi.fn(async () => { throw new Error('The shared store is down'); });
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(deps.rooms.pendingForgetsOf).not.toHaveBeenCalled();
+        expect(deps.rooms.forgetDmRoomsOfBot).not.toHaveBeenCalled();
+    });
+
+    it('still clears the profile and the rooms while the shared store is down, and says the try is not done', async () => {
+        deps.rooms.pendingForgetsOf.mockRejectedValue(new Error('The shared store is down'));
+        deps.rooms.forgetDmRoomsOfBot = vi.fn(async () => { throw new Error('The shared store is down'); });
+        client.sent.push({ type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$said', content: { msgtype: 'm.text', body: 'hi' } });
+        // The room cannot be left without the owed record, which needs the store too: the room stays joined for the next try
+        deps.rooms.rememberPendingForget.mockRejectedValue(new Error('The shared store is down'));
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(client.clearProfile).toHaveBeenCalledTimes(1);
+        expect(client.redactEvent).toHaveBeenCalledTimes(1);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+    });
+
+    it('drops every link the shared store keeps for the Brick, found from the Brick and not from the people still in a room', async () => {
+        deps.rooms.forgetDmRoomsOfBot = vi.fn(async () => undefined);
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(deps.rooms.forgetDmRoomsOfBot).toHaveBeenCalledWith(BOT);
+    });
+
     it('clears the room (redact, then leave) when the person leaves and the Brick is being purged', async () => {
         bridge.purgedBots.add(BOT);
         client.sent.push({ type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$said', content: { msgtype: 'm.text', body: 'hi' } });

@@ -164,6 +164,8 @@ export interface MatrixDmBridgeDeps {
         rememberDmRoomOf?(botId: string, matrixUserId: string, roomId: string): Promise<void>;
         getDmRoomOf?(botId: string, matrixUserId: string): Promise<string | null>;
         forgetDmRoomOf?(botId: string, matrixUserId: string): Promise<void>;
+        /** Every link of this bot to a person's chat, whoever they are (a purged Brick keeps none, also for people who left before a restart). Throws while the store is down. */
+        forgetDmRoomsOfBot?(botId: string): Promise<void>;
         /**
          * Rooms a purged Brick is leaving whose forget is still owed (R29): written down before the leave, read on every try, cleared once forgotten.
          * They survive a restart, because after the leave the homeserver no longer lists the room for the Brick.
@@ -939,9 +941,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // Dropped before anything else is read: nothing kept in memory or in the shared store may answer for this Brick again
             this.dropKeptFor(botId);
             await this.deps.waiting?.takeWaitingDms(botId);
+            // A Brick that never had a chat account has nothing joined, nothing left and nothing owed: the shared store is not asked
+            if (rooms === null) return true;
+            // The shared store being down holds back only what needs it (the links, the rooms owed a forget): the profile and the rooms still go, and the try is not done
+            let allDone = true;
+            try {
+                // Every link kept for this Brick, including those of people who left before a restart or on another server
+                await this.deps.rooms?.forgetDmRoomsOfBot?.(botId);
+            } catch (error: any) {
+                allDone = false;
+                console.warn("[MatrixDmBridge] Could not drop a deleted Brick's chat links from the shared store (tried again later):", error?.message ?? error);
+            }
             // Rooms left by an earlier try whose forget did not get through
-            let allDone = await this.finishForgets(userId, rooms ?? []);
-            if (rooms === null) return allDone;
+            if (!(await this.finishForgets(userId, rooms))) allDone = false;
             await this.client.clearProfile(userId);
             if (!(await this.profileIsBlank(userId))) throw new Error('The profile still shows a name or a picture');
             for (const roomId of rooms) {
@@ -1021,12 +1033,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** Forgets the rooms the Brick already left whose forget is still owed (kept in the shared store, so a restart keeps them). False while any is still not forgotten. */
     private async finishForgets(userId: string, stillJoined: string[]): Promise<boolean> {
-        const owed = new Set<string>(await this.owedStore().of(userId));
+        const owed = new Set<string>();
+        let all = true;
+        // The store being down hides only the rooms kept there: this process's own list is still finished, and the try is not done
+        try {
+            for (const roomId of await this.owedStore().of(userId)) owed.add(roomId);
+        } catch (error: any) {
+            all = false;
+            console.warn('[MatrixDmBridge] Could not read the rooms a purged Brick still has to forget:', error?.message ?? error);
+        }
         for (const key of this.pendingForgets) {
             const cut = key.indexOf('|');
             if (key.slice(0, cut) === userId) owed.add(key.slice(cut + 1));
         }
-        let all = true;
         for (const roomId of owed) {
             // Recorded before the leave: a room the Brick is still in (the leave failed) is not owed yet, and the room's own clearing leaves it
             if (stillJoined.includes(roomId)) continue;
