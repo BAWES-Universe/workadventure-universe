@@ -292,12 +292,7 @@
 
             {#if appUse}
                 <div class="sec" data-testid="usageSecAppUse">{text.appUse()}</div>
-                <UsageAllowance
-                    kind="apps"
-                    allowance={appUse}
-                    asking={asking === "apps"}
-                    onAsk={() => onAsk("apps")}
-                />
+                <UsageAllowance kind="apps" allowance={appUse} asking={asking === "apps"} onAsk={() => onAsk("apps")} />
             {/if}
 
             {#if usage.credit.length > 0}
