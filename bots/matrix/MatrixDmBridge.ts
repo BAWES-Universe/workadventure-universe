@@ -938,7 +938,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             this.dropKeptFor(botId);
             await this.deps.waiting?.takeWaitingDms(botId);
             // Rooms left by an earlier try whose forget did not get through
-            let allDone = await this.finishForgets(userId);
+            let allDone = await this.finishForgets(userId, rooms ?? []);
             if (rooms === null) return allDone;
             await this.client.clearProfile(userId);
             if (!(await this.profileIsBlank(userId))) throw new Error('The profile still shows a name or a picture');
@@ -968,10 +968,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 const cut = key.indexOf('|');
                 owed.set(key, { userId: key.slice(0, cut), roomId: key.slice(cut + 1) });
             }
+            // The rooms each Brick is still in: one whose leave failed is not owed a forget yet
+            const joined = new Map<string, string[] | null>();
             for (const [key, { userId, roomId }] of owed) {
                 // A room being cleared right now is not owed yet: its own run does the forget
                 if (this.roomPurges.has(roomId)) continue;
                 try {
+                    if (!joined.has(userId)) joined.set(userId, await this.client.getJoinedRooms(userId));
+                    if (joined.get(userId)?.includes(roomId)) continue;
                     await this.client.forgetRoom(userId, roomId);
                     await this.deps.rooms?.clearPendingForget?.(userId, roomId);
                     this.pendingForgets.delete(key);
@@ -985,7 +989,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** Forgets the rooms the Brick already left whose forget is still owed (kept in the shared store, so a restart keeps them). False while any is still not forgotten. */
-    private async finishForgets(userId: string): Promise<boolean> {
+    private async finishForgets(userId: string, stillJoined: string[]): Promise<boolean> {
         const owed = new Set<string>(await (this.deps.rooms?.pendingForgetsOf?.(userId) ?? Promise.resolve([])));
         for (const key of this.pendingForgets) {
             const cut = key.indexOf('|');
@@ -993,6 +997,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         let all = true;
         for (const roomId of owed) {
+            // Recorded before the leave: a room the Brick is still in (the leave failed) is not owed yet, and the room's own clearing leaves it
+            if (stillJoined.includes(roomId)) continue;
             try {
                 await this.client.forgetRoom(userId, roomId);
                 await this.deps.rooms?.clearPendingForget?.(userId, roomId);

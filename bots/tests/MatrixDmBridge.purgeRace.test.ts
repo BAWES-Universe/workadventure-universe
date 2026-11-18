@@ -231,6 +231,8 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         deps.rooms.clearPendingForget = vi.fn(async (u: string, r: string) => void store.delete(`${u}|${r}`));
         client.forgetRoom.mockRejectedValueOnce(new Error('Matrix forget: 502'));
         await bridge.closeChat(BOT, ROOM, 'en');
+        // Left: the homeserver no longer lists the room for the Brick
+        client.getJoinedRooms.mockResolvedValue([]);
         expect(client.leaveRoom).toHaveBeenCalledTimes(1);
         expect(store.size).toBe(1);
         // A fresh process, as after a restart: the record is in the shared store
@@ -245,6 +247,7 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
     });
 
     it('keeps a forget that still fails, and does not touch a room being cleared right now', async () => {
+        client.getJoinedRooms.mockResolvedValue([]);
         bridge.pendingForgets.add(`${BOT_USER}|${ROOM}`);
         bridge.roomPurges.set(ROOM, new Promise(() => undefined));
         await bridge.checkWaiting();
@@ -255,5 +258,26 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(bridge.pendingForgets.size).toBe(1);
         await bridge.checkWaiting();
         expect(bridge.pendingForgets.size).toBe(0);
+    });
+
+    it('does not try to forget a room it is still in because the leave failed: nothing is logged, the record waits, and the next clearing leaves and forgets it', async () => {
+        const store = new Set<string>();
+        deps.rooms.rememberPendingForget = vi.fn(async (u: string, r: string) => void store.add(`${u}|${r}`));
+        deps.rooms.pendingForgetsOf = vi.fn(async (u: string) => [...store].filter((k) => k.startsWith(`${u}|`)).map((k) => k.slice(u.length + 1)));
+        deps.rooms.allPendingForgets = vi.fn(async () => [...store].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) })));
+        deps.rooms.clearPendingForget = vi.fn(async (u: string, r: string) => void store.delete(`${u}|${r}`));
+        client.leaveRoom.mockRejectedValueOnce(new Error('Matrix leave: 502'));
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(store.size).toBe(1);
+        // The Brick is still in the room: the periodic retry leaves it alone
+        client.forgetRoom.mockClear();
+        await bridge.checkWaiting();
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+        expect(store.size).toBe(1);
+        // The next purge leaves it, forgets it, and clears the record
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(client.leaveRoom).toHaveBeenCalledTimes(2);
+        expect(client.forgetRoom).toHaveBeenCalledTimes(1);
+        expect(store.size).toBe(0);
     });
 });
