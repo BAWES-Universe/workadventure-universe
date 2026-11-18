@@ -4,7 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const orbit = vi.hoisted(() => ({
     getBrickItems: vi.fn<(brickId: string) => Promise<unknown>>(),
     getAllBrickItems: vi.fn<() => Promise<unknown>>(),
-    tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string) => Promise<unknown>>(),
+    tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string, key?: string) => Promise<unknown>>(),
     onIdentityChange: vi.fn<(listener: () => void) => () => void>(() => () => undefined),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: orbit }));
@@ -18,7 +18,9 @@ import {
     parseGoalItems,
     sayBrief,
     sayDone,
+    saySnoozed,
     sayStatus,
+    sayTapProblem,
     sayWhen,
     type GoalItem,
 } from "../BrickGoals";
@@ -189,6 +191,38 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
     });
 
     describe("what a row says", () => {
+        it("says a snoozed run and where the schedule goes on after it, and nothing when nothing is snoozed", () => {
+            const hourly = { type: "every", minutes: 60 };
+            const at = (hours: number, minutes: number) => new Date(2026, 10, 15, hours, minutes).toISOString();
+            const snoozed = item({
+                cadence: hourly,
+                nextDueAt: at(12, 10),
+                snoozedUntil: at(12, 10),
+                nextRegularAt: at(13, 0),
+            });
+            expect(snoozed.snoozedUntil).toBe(Date.parse(at(12, 10)));
+            expect(snoozed.nextRegularAt).toBe(Date.parse(at(13, 0)));
+            expect(plain(saySnoozed(snoozed, NOW, ll(), "en-US"))).toBe(
+                "Snoozed until today, 12:10 PM · Next regular run today, 1:00 PM"
+            );
+            // A one-off has no schedule after it: its row already says the new time
+            expect(
+                plain(
+                    saySnoozed(
+                        item({ nextDueAt: at(12, 10), snoozedUntil: at(12, 10), nextRegularAt: at(12, 10) }),
+                        NOW,
+                        ll(),
+                        "en-US"
+                    )
+                )
+            ).toBe("Snoozed until today, 12:10 PM");
+            // Nothing snoozed: nothing said, and a row from an Orbit that does not send it reads as before
+            expect(saySnoozed(item({ cadence: hourly }), NOW, ll(), "en-US")).toBe("");
+            expect(item({ cadence: hourly, nextRegularAt: undefined }).nextRegularAt).toBe(
+                item({ cadence: hourly }).nextDueAt
+            );
+        });
+
         it("says when it runs", () => {
             const when = (cadence: unknown) => plain(sayWhen(item({ cadence }), NOW, ll(), "en-US", "Asia/Kuwait"));
             expect(when({ type: "daily", time: "08:00", days: [0, 1, 2, 3, 4, 5, 6] })).toBe("Daily, 8:00 AM");
@@ -325,6 +359,49 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             await vi.waitFor(() => expect(orbit.getAllBrickItems).toHaveBeenCalledTimes(1));
         });
 
+        it("sends Run now with its own key, tells the person it started, and sends no key for any other tap", async () => {
+            orbit.getBrickItems.mockResolvedValue({ items: [row()] });
+            const list = brickGoalsList(BRICK);
+            await list.load();
+            orbit.tapBrickItem.mockResolvedValue({ item: row(), run: { runId: "r1", state: "queued", replay: false } });
+            expect(await list.tap("i1", "run")).toBe("started");
+            expect(await list.tap("i1", "run")).toBe("started");
+            const keys = orbit.tapBrickItem.mock.calls.filter((call) => call[2] === "run").map((call) => call[3]);
+            expect(keys).toHaveLength(2);
+            // Each tap has a key of its own, one Orbit can hold: a retry of the same tap carries the same one
+            expect(keys.every((key) => typeof key === "string" && key.length >= 8 && key.length <= 64)).toBe(true);
+            expect(keys[0]).not.toBe(keys[1]);
+            await list.tap("i1", "pause");
+            expect(orbit.tapBrickItem).toHaveBeenLastCalledWith(BRICK, "i1", "pause");
+        });
+
+        it("says why Orbit would not start a run, from what it answers, and a plain refusal for anything else", async () => {
+            orbit.getBrickItems.mockResolvedValue({ items: [row()] });
+            const list = brickGoalsList(BRICK);
+            await list.load();
+            const refuse = (code: string | undefined) =>
+                orbit.tapBrickItem.mockRejectedValueOnce(Object.assign(new Error("no"), code ? { code } : {}));
+            refuse("busy");
+            expect(await list.tap("i1", "run")).toBe("busy");
+            refuse("no_room");
+            expect(await list.tap("i1", "run")).toBe("no_room");
+            refuse("runs_a_day");
+            expect(await list.tap("i1", "run")).toBe("runs_a_day");
+            refuse("off");
+            expect(await list.tap("i1", "run")).toBe("refused");
+            refuse(undefined);
+            expect(await list.tap("i1", "run")).toBe("refused");
+            // Only Run now reads those codes: another tap with the same code is just refused
+            refuse("busy");
+            expect(await list.tap("i1", "pause")).toBe("refused");
+            expect(sayTapProblem("busy", ll())).toBe("It's running right now.");
+            expect(sayTapProblem("no_room", ll())).toMatch(/^Your usage for goals and tasks is used up/);
+            expect(sayTapProblem("runs_a_day", ll())).toBe("That's the most runs for today.");
+            expect(sayTapProblem("refused", ll())).toBe("Couldn't do that. Try again.");
+            expect(sayTapProblem("started", ll())).toBeNull();
+            expect(sayTapProblem("taken", ll())).toBeNull();
+        });
+
         it("keeps the list it has, and says it is stale, when the read after a tap fails", async () => {
             orbit.getBrickItems.mockResolvedValueOnce({ items: [row()] });
             const list = brickGoalsList(BRICK);
@@ -333,6 +410,16 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             orbit.getBrickItems.mockRejectedValueOnce(new Error("offline"));
             expect(await list.tap("i1", "snooze")).toBe("stale");
             expect(get(list.state)).toBe("ready");
+            expect(get(list.items)).toHaveLength(1);
+        });
+
+        it("says Run now started when Orbit took it, even if the read after it fails: the row does not change, so nothing is stale", async () => {
+            orbit.getBrickItems.mockResolvedValueOnce({ items: [row()] });
+            const list = brickGoalsList(BRICK);
+            await list.load();
+            orbit.tapBrickItem.mockResolvedValueOnce({});
+            orbit.getBrickItems.mockRejectedValueOnce(new Error("offline"));
+            expect(await list.tap("i1", "run")).toBe("started");
             expect(get(list.items)).toHaveLength(1);
         });
     });

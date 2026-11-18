@@ -291,6 +291,10 @@ export interface BrickItemView {
     cadence: { type: 'once'; at: string } | { type: 'daily'; time: string; days: number[] } | { type: 'every'; minutes: number } | { type: 'none' };
     timeZone: string;
     nextDueAt: string | null;
+    /** Where the schedule itself comes next: a snooze moves one run and never this. */
+    nextRegularAt?: string | null;
+    /** The snoozed run that is still to come (it is `nextDueAt`), or null/absent when nothing is snoozed. */
+    snoozedUntil?: string | null;
     state: 'on' | 'paused' | 'done' | 'deleted';
     setBy: 'you' | 'brick';
     lastRunAt: string | null;
@@ -1199,7 +1203,7 @@ export class AdminApiService {
         return this.itemCall('get', `api/bots/${encodeURIComponent(brickId)}/brick-items`, undefined, { userId });
     }
 
-    changeBrickItem(brickId: string, itemId: string, body: Record<string, unknown>): Promise<ItemAnswer<{ item: BrickItemView }>> {
+    changeBrickItem(brickId: string, itemId: string, body: Record<string, unknown>): Promise<ItemAnswer<{ item: BrickItemView; run?: { runId: string; state: string; replay: boolean } }>> {
         return this.itemCall('patch', `api/bots/${encodeURIComponent(brickId)}/brick-items/${encodeURIComponent(itemId)}`, body);
     }
 

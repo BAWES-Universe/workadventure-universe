@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 const game = vi.hoisted(() => ({
     getBrickItems: vi.fn<(brickId: string) => Promise<unknown>>(),
-    tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string) => Promise<unknown>>(),
+    tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string, key?: string) => Promise<unknown>>(),
     openBrickChat: vi.fn<(brickId: string) => Promise<{ sendMessage: (text: string) => void } | undefined>>(),
     sendMessage: vi.fn<(text: string) => void>(),
     warn: vi.fn<(message: string) => void>(),
@@ -153,15 +153,15 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
         ]);
         expect(all("goalStep").map((step) => step.classList[0])).toEqual(["done", "now", "todo"]);
         expect(all("goalScheduled").map((one) => text(one))).toEqual([
-            expect.stringMatching(/^Pick up the car.*· by you Snooze$/),
-            expect.stringMatching(/^Morning briefingSun to Thu, 7:30.AM · by you Pause$/),
+            expect.stringMatching(/^Pick up the car.*· by you Run now Snooze$/),
+            expect.stringMatching(/^Morning briefingSun to Thu, 7:30.AM · by you Run now Pause$/),
         ]);
         expect(text(byId("goalDoneRow"))).toBe("Pick up the carDone 10 Nov · visa saved Reopen");
     });
 
     it("names the Brick on what the Brick set for itself", async () => {
         await show([row({ setBy: "brick", kind: "schedule", cadence: daily, words: "Check my visa status" })]);
-        expect(text(byId("goalScheduled"))).toMatch(/Daily, 8:00.AM · by Brick Pause$/);
+        expect(text(byId("goalScheduled"))).toMatch(/Daily, 8:00.AM · by Brick Run now Pause$/);
     });
 
     it("pauses a goal and then resumes it, marks it done, and reads the list again each time", async () => {
@@ -207,9 +207,9 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
             }),
         ]);
         expect(all("goalScheduled").map((one) => text(one))).toEqual([
-            expect.stringMatching(/Snooze$/),
-            expect.stringMatching(/Daily, 8:00.AM · by you Pause$/),
-            "Flight under KWD 90Paused · Every 6 hours · by you Resume",
+            expect.stringMatching(/Run now Snooze$/),
+            expect.stringMatching(/Daily, 8:00.AM · by you Run now Pause$/),
+            "Flight under KWD 90Paused · Every 6 hours · by you Run now Resume",
         ]);
         await press("goalSnooze");
         expect(game.tapBrickItem).toHaveBeenLastCalledWith(BOT, "r", "snooze");
@@ -234,6 +234,53 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
         target.innerHTML = "";
         await show([goal({ checks: [check({ state: "paused" })] })]);
         expect(byId("goalScheduled")?.querySelector('[data-testid="goalResume"]')).not.toBeNull();
+    });
+
+    it("runs a task or a goal now, with a key of its own, and says it started; the item's own time is not touched", async () => {
+        await show([goal(), row({ id: "b", kind: "schedule", cadence: daily, words: "Morning briefing" })]);
+        expect(all("goalRun")).toHaveLength(2);
+        expect(byId("goalCard")?.querySelector('[data-testid="goalRun"]')).not.toBeNull();
+        expect(byId("goalScheduled")?.querySelector('[data-testid="goalRun"]')).not.toBeNull();
+        await press("goalRun", 1);
+        expect(game.tapBrickItem).toHaveBeenLastCalledWith(BOT, "b", "run", expect.stringMatching(/^.{8,64}$/));
+        // It says so for a moment; the row still says its own next time
+        expect(text(all("goalRun")[1])).toBe("Started");
+        expect(all("goalRun")[1].hasAttribute("disabled")).toBe(true);
+        expect(text(byId("goalScheduled"))).toMatch(/Daily, 8:00.AM · by you/);
+        expect(game.warn).not.toHaveBeenCalled();
+        await press("goalRun", 0);
+        expect(game.tapBrickItem).toHaveBeenLastCalledWith(BOT, "g1", "run", expect.stringMatching(/^.{8,64}$/));
+    });
+
+    it("offers Run now on a paused one too, but not on a check that is paused with its goal", async () => {
+        const check = (over: Record<string, unknown> = {}) =>
+            row({ id: "k1", kind: "schedule", cadence: daily, words: "Check my visa status", parentId: "g1", ...over });
+        await show([goal({ state: "paused", checks: [check({ state: "paused" })] })]);
+        expect(byId("goalCard")?.querySelector('[data-testid="goalRun"]')).not.toBeNull();
+        expect(byId("goalScheduled")?.querySelector('[data-testid="goalRun"]')).toBeNull();
+        part?.$destroy();
+        target.innerHTML = "";
+        await show([goal({ checks: [check({ state: "paused" })] })]);
+        expect(byId("goalScheduled")?.querySelector('[data-testid="goalRun"]')).not.toBeNull();
+    });
+
+    it("says why a run would not start, and says a snoozed run with where the schedule goes on", async () => {
+        await show([
+            row({
+                id: "b",
+                kind: "schedule",
+                words: "Headlines",
+                cadence: { type: "every", minutes: 60 },
+                nextDueAt: "2099-11-15T13:10:00.000Z",
+                snoozedUntil: "2099-11-15T13:10:00.000Z",
+                nextRegularAt: "2099-11-15T14:00:00.000Z",
+            }),
+        ]);
+        expect(text(byId("goalScheduled"))).toMatch(/Every 1 hour · Snoozed until .* · Next regular run .* · by you/);
+        game.tapBrickItem.mockRejectedValueOnce(Object.assign(new Error("no"), { code: "busy" }));
+        await press("goalRun");
+        expect(game.warn).toHaveBeenCalledWith("It's running right now.");
+        expect(text(byId("goalRun"))).toBe("Run now");
     });
 
     it("tells the person when Orbit refuses a tap, and shows the list as it really stands", async () => {
