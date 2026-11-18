@@ -128,7 +128,7 @@ import {
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
-import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, reviewAppSteps, runComputerTool } from './ComputerTools';
+import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
@@ -1975,6 +1975,8 @@ export class AIService {
                         const stepRoom = new StepRoom((config.limits ?? BOT_LIMIT_DEFAULTS).roomChars);
                         // The steps each App took in this reply: at every 20 the Brick looks again at whether its computer is the better way for the rest
                         const appStepCounts = new Map<string, number>();
+                        // The Apps a review said the computer could do better for the rest: a use_computer that names one is Orbit's to weigh
+                        const reviewedApps = new Set<string>();
                         // What the model said, and its reasoning, in the call that asked for this round's tools
                         let roundContent = firstCallContent || '';
                         let roundReasoning = chunk.reasoning;
@@ -2009,8 +2011,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers);
-                            await this.reviewAppStepCount(toolResults, toolServerMap, appStepCounts, botId, playerId, adminApiService);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, reviewedApps);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
                             const sharedLineIds = sharedLineIdsOf(toolResults);
@@ -2075,11 +2076,20 @@ export class AIService {
                             // and send them inline. Non-media results pass through unchanged.
                             await this.autoSendMedia(toolResults, botClient, spaceName, iterationSentUrls, botId, playerId, priorPendingKeys, sentOnlyTo(options, playerId));
 
+                            // At every 20 steps an App took in this reply: a line for the model's copy of the App's last result, put first so that
+                            // cutting a long result never cuts it. What the person sees of the step is left as it was. The turn is already over when it was
+                            // stopped (above), and the media this round made is already queued.
+                            const appReview = await this.reviewAppStepCount(toolResults, toolServerMap, appStepCounts, computerOn && !botClient, botId, playerId, adminApiService, abortSignal);
+                            appReview.accepted.forEach((app) => reviewedApps.add(app));
                             const step = stepOf(
                                 followUpIterations,
                                 roundContent,
                                 pendingToolCalls,
-                                toolResults.map((r) => ({ id: r.id, name: r.name, text: this.formatToolResult(r, botId, toolServerMap.has(r.name)) })),
+                                toolResults.map((r) => {
+                                    const text = this.formatToolResult(r, botId, toolServerMap.has(r.name));
+                                    const note = appReview.notes.get(r.id);
+                                    return { id: r.id, name: r.name, text: withReviewNote(text, note) };
+                                }),
                                 roundReasoning
                             );
                             stepRoom.add(step);
@@ -3788,7 +3798,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
-    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; apps?: string[] }): Promise<Record<string, unknown>> {
+    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; apps?: string[]; reviewed?: ReadonlySet<string> }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
         const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
         if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
@@ -3798,6 +3808,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             botId,
             userId,
             apps: where.apps,
+            reviewed: where.reviewed,
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time
@@ -3806,30 +3817,39 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * Counts the steps the Apps took in this round of tool calls and, at every 20 in one reply, puts a line on the App's last result when
-     * Orbit says the steps so far already cost what the job would on the computer (advice, never a switch). Only a person's own Brick with a
-     * computer that is on has anything to look at; a failure adds nothing and never stops the reply.
+     * Counts the steps the Apps took in this round of tool calls and, at every 20 in one reply, asks Orbit whether the steps so far already cost
+     * what the job would on the computer; the answer is a line for the model (advice, never a switch). Orbit is asked only when a checkpoint is
+     * passed, only for a person's own Brick, and only when the computer is on and `use_computer` is among this reply's tools. A turn that was
+     * stopped is not waited for, and a failure adds nothing and never stops the reply.
      */
     private async reviewAppStepCount(
         results: Array<{ id: string; name: string; result: any }>,
         toolServerMap: Map<string, ToolServerEntry> | undefined,
         counts: Map<string, number>,
+        computerOffered: boolean,
         botId?: string,
         playerId?: number,
-        adminApiService?: AdminApiService
-    ): Promise<void> {
-        if (!toolServerMap?.size || !botId || playerId === undefined) return;
+        adminApiService?: AdminApiService,
+        abortSignal?: AbortSignal
+    ): Promise<AppStepReview> {
+        const none: AppStepReview = { notes: new Map(), accepted: new Set() };
+        if (!toolServerMap?.size || !botId || playerId === undefined || abortSignal?.aborted) return none;
         const appOf = (name: string): string | undefined => {
             const entry = toolServerMap.get(name);
             return entry && (entry.connectionId || entry.readyMade || entry.keyApp) ? entry.serverName : undefined;
         };
-        if (!results.some((result) => appOf(result.name))) return;
+        if (!results.some((result) => appOf(result.name))) return none;
         const admin = adminApiService ?? this.adminApiService;
         const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
         const mine = this.ownBricks.has(botId) && !!admin?.isConfigured?.() && !!userId;
-        const on = mine && (await this.computerOnFor(botId, playerId, adminApiService));
-        // Counted either way, so the count is right if the computer comes on while the reply goes on
-        await reviewAppSteps(results, appOf, counts, async (app, steps) => (on && admin && userId ? admin.reviewAppSteps(botId, userId, app, steps) : false));
+        // Counted either way; the computer is only looked at when a checkpoint is passed
+        const ask = async (app: string, steps: number): Promise<boolean> => {
+            if (!computerOffered || !mine || !admin || !userId || abortSignal?.aborted) return false;
+            if (!(await this.computerOnFor(botId, playerId, adminApiService))) return false;
+            const stopped = new Promise<boolean>((resolve) => abortSignal?.addEventListener('abort', () => resolve(false), { once: true }));
+            return Promise.race([admin.reviewAppSteps(botId, userId, app, steps), stopped]);
+        };
+        return reviewAppSteps(results, appOf, counts, ask, () => !!abortSignal?.aborted);
     }
 
     /** Whether this reply has the two Brick tools: a person's own first Brick, in a direct message, with Orbit to ask. */
@@ -4395,7 +4415,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** This reply was offered the reminder tools (#2002): a call to one of them from a reply that was not offered them is not run. */
         taskToolsOffered = false,
         /** The reply is for someone but the Brick's owner (#2005): a call to anything of the owner's is not run, whatever the model asks for. */
-        forOthers = false
+        forOthers = false,
+        /** The Apps a review in this reply said the computer could do better (the reply's own set, filled as it goes). */
+        reviewedApps?: ReadonlySet<string>
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -4797,7 +4819,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case COMPUTER_TOOL:
                         result = await this.runComputerToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { adminApiService, botId, playerId, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
+                            { adminApiService, botId, playerId, reviewed: reviewedApps, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
                         );
                         break;
 

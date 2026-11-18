@@ -290,6 +290,32 @@ describe("a Brick's screen connection", () => {
             expect(FakeRfb.all).toHaveLength(0);
         });
 
+        it("ignores an old ticket that arrives after the page was shown again and connected with a fresh one", async () => {
+            const tab = page();
+            deps.visibility = tab.visibility;
+            let resolve: (value: { ticket: string }) => void = () => undefined;
+            deps.ticket.mockImplementationOnce(
+                () =>
+                    new Promise((done) => {
+                        resolve = done;
+                    })
+            );
+            const session = createScreenSession(deps, target, () => undefined);
+            session.want("watch");
+            await flush();
+            tab.set(true);
+            tab.set(false);
+            await flush();
+            expect(FakeRfb.all).toHaveLength(1);
+            const fresh = FakeRfb.all[0];
+            resolve({ ticket: "stale" });
+            await flush();
+            // No second connection opened for the old ticket, and the fresh one is still the one that is up
+            expect(FakeRfb.all).toHaveLength(1);
+            expect(fresh.url).not.toContain("stale");
+            expect(fresh.disconnected).not.toBe(true);
+        });
+
         it("stops a retry that was waiting when the tab was hidden", async () => {
             const tab = page();
             deps.visibility = tab.visibility;
