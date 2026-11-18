@@ -15,6 +15,7 @@ import {
     type TurnOpened,
 } from '../server/ComputerRunner';
 import { readRunnerEvents, runnerEventOf } from '../server/ComputerTurnStream';
+import { createRefusalNotes } from '../server/ComputerRefusals';
 
 const JOB: RunnableJob = { jobId: 'job-1', botId: 'brick-1', title: 'Visa form', brief: 'Two people, Kuwait', writes: true, hasTurn: false };
 const RELAY = 'https://bot-server.example.test';
@@ -205,6 +206,45 @@ describe('a job that runs', () => {
         expect(finished(c.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
     });
 
+    it('keeps the refusal window of a turn across a reconnect that could not be made, with the real refusal notes', async () => {
+        let t = 0;
+        const clock = () => ++t;
+        const notes = createRefusalNotes(clock);
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        const { orbit, seen } = fakeOrbit([
+            // the turn is refused for the person's allowance, then its stream breaks
+            () => (notes.note(JOB.jobId), [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'stream_broke', message: 'broke' }]),
+            // the reconnect cannot be made, so the same turn is read again on the next look, and ends failed
+            { ok: false, reason: 'failed' },
+            failing(),
+            failing(),
+            failing(),
+        ]);
+        const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+        orbit.running = async () => [JOB];
+        await runner.tick();
+        await runner.idle();
+        expect(seen.turns).toHaveLength(3);
+        expect(seen.streams).toBe(2);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+    });
+
+    it('does not carry a refusal into the next turn: the window starts again with each turn', async () => {
+        let t = 0;
+        const clock = () => ++t;
+        const notes = createRefusalNotes(clock);
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        // an earlier turn was refused and said something, so the job went on; three failed turns after it are ours
+        const { orbit, seen } = fakeOrbit([() => (notes.note(JOB.jobId), done('Cannot do that, trying another way')), failing(), failing(), failing(), failing()]);
+        const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+        orbit.running = async () => [JOB];
+        await runner.tick();
+        await runner.idle();
+        // the refused turn is bad, then the streak of failures; it ends at the third bad turn with the refusal in it
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+    });
+
     it('reads a turn that is gone on its first open as a failed turn, not as the agent saying nothing', async () => {
         const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => ({ ok: false as const, reason: 'no_turn' })));
         await runJob(orbit);
@@ -392,6 +432,25 @@ describe('the person’s part', () => {
         await runJob(orbit);
         expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(RUNNER_GUARDS.maxBadTurns);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+    });
+
+    it('reads a handover for a job Orbit no longer has (404) as a no, but a request of ours that does not fit (400), a key it does not accept (401), its own failure (500) and an Orbit that is down as ours', async () => {
+        const run = async (error: Error) => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            const original = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'handover') throw error;
+                return original(botId, jobId, body);
+            };
+            await runJob(orbit);
+            return finished(seen);
+        };
+        const status = (code: number) => Object.assign(new Error(`status ${code}`), { response: { status: code } });
+        expect(await run(status(404))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        expect(await run(status(400))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(await run(status(401))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(await run(status(500))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(await run(new Error('connect ECONNREFUSED'))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
     });
 
     it('hands over with exactly what is ready to be put in, waits for the person, and carries on with a look at the page', async () => {

@@ -157,11 +157,23 @@ const realSleep = (ms: number, signal: AbortSignal) =>
         signal.addEventListener('abort', done, { once: true });
     });
 
+const statusOf = (error: unknown): number | undefined => {
+    const status = typeof error === 'object' && error !== null && 'response' in error ? (error as { response?: { status?: unknown } }).response?.status : undefined;
+    return typeof status === 'number' ? status : undefined;
+};
+
 /** An answer from Orbit that says no (a 4xx, other than "slow down" or "try again"), as opposed to an Orbit that could not be reached. */
 function refusedByOrbit(error: unknown): boolean {
-    const status = typeof error === 'object' && error !== null && 'response' in error ? (error as { response?: { status?: unknown } }).response?.status : undefined;
-    return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429;
+    const status = statusOf(error);
+    return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429;
 }
+
+/**
+ * An answer from Orbit that says no to what a job told it, as opposed to one that is ours to answer for. Orbit's job route (#981) answers
+ * 200 for everything it does, 404 when the job is gone, 400 when the request does not fit (a bug of ours), 401 when our own key is not
+ * accepted (ours) and 500 when it failed itself (ours). So only a 404, or another 4xx a later Orbit may give for a no, is a refusal.
+ */
+const orbitSaidNo = (error: unknown): boolean => refusedByOrbit(error) && statusOf(error) !== 400 && statusOf(error) !== 401 && statusOf(error) !== 403;
 
 type TurnResult =
     /** The turn ended and what the agent said is here (it may be empty). */
@@ -373,6 +385,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let bad = 0;
         // Whether any turn of the bad streak was not a failure of ours (the agent said nothing, or the person's allowance or a rule stopped it)
         let notOurs = false;
+        // Where the turn being read began. It is kept while the same turn is read again after a reconnect that could not be made (a refusal
+        // that came before it must still be seen), and starts again with the next turn or after the person had the machine
+        let turnStartedAt: number | null = null;
         for (;;) {
             if (signal.aborted) return;
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
@@ -385,6 +400,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (state.status !== 'running' || state.control !== 'brick') {
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;
+                turnStartedAt = null;
                 input = follow(RESUME_PROMPT);
                 continue;
             }
@@ -406,7 +422,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 return;
             }
 
-            const turnStartedAt = now();
+            turnStartedAt ??= now();
             const result = await oneTurn(job, input, signal, renewing, accepted);
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
@@ -416,6 +432,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 await sleep(timing.waitMs, signal);
                 continue;
             }
+
+            // The turn has ended: its refusal window is read once, and the next turn starts its own
+            const readFrom = turnStartedAt;
+            turnStartedAt = null;
 
             // Only what Orbit still says is Brick's is acted on: if the person took over meanwhile, their hands win and the words are dropped.
             // An Orbit that cannot be asked is not a yes: the words wait for it, and the agent is nudged on instead
@@ -471,6 +491,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                         })
                         .catch((error) => {
                             say('Could not hand over:', error);
+                            // A refusal Orbit gave as an error status is a no all the same; only an Orbit that could not be reached is ours
+                            if (orbitSaidNo(error)) refusedHandover = true;
                             return false;
                         });
                 }
@@ -489,7 +511,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // at all can be what the job asked for ("never reply in text"), so it is the agent's, and the streak is ours only when every
             // turn of it was ours
             const silent = !result.failed && result.words.trim() === '';
-            const refused = deps.refusals?.sawSince(job.jobId, turnStartedAt) ?? false;
+            const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
             if (result.failed || silent || refused) {
                 bad += 1;
                 if (silent || refused) notOurs = true;
