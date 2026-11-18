@@ -1241,6 +1241,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (membership === 'leave' || membership === 'ban') {
             const roomBot = await this.botForRoom(event.room_id);
             if (roomBot && !(await this.someoneStays(roomBot, event.room_id, event.state_key!))) {
+                // A Brick being purged (or a room already being cleared) never leaves on its own here: leaving before its messages are redacted
+                // would take the room out of its joined list with the redactions unfinished. The room is cleared through the one per-room run instead.
+                if (this.purgedBots.has(roomBot) || this.roomPurges.has(event.room_id)) {
+                    await this.purgeRoom(roomBot, this.botUserId(roomBot), event.room_id).catch((error) =>
+                        console.warn(`[MatrixDmBridge] Could not clear ${event.room_id} after the person left, it stays joined for the next try:`, error?.message ?? error)
+                    );
+                    return;
+                }
                 await this.client.leaveRoom(this.botUserId(roomBot), event.room_id).catch(() => undefined);
                 await this.forgetRoom(event.room_id);
             }

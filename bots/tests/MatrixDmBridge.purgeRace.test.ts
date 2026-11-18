@@ -106,6 +106,35 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(client.sendMessage).not.toHaveBeenCalled();
     });
 
+    const personLeaves = (): MatrixEvent => ({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
+
+    it('does not leave on its own when the person leaves while the room is being cleared: it waits for that run', async () => {
+        let finish!: () => void;
+        bridge.roomPurges.set(ROOM, new Promise<void>((resolve) => { finish = resolve; }));
+        const handled = bridge.onEvent(personLeaves());
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        finish();
+        await handled;
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+    });
+
+    it('clears the room (redact, then leave) when the person leaves and the Brick is being purged', async () => {
+        bridge.purgedBots.add(BOT);
+        client.sent.push({ type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$said', content: { msgtype: 'm.text', body: 'hi' } });
+        const order: string[] = [];
+        client.redactEvent.mockImplementation(async (_u: string, _r: string, id: string) => void (redacted.add(id), order.push(`redact ${id}`)));
+        client.leaveRoom.mockImplementation(async () => void order.push('leave'));
+        await bridge.onEvent(personLeaves());
+        expect(order).toEqual(['redact $said', 'leave']);
+    });
+
+    it('still leaves at once when the person leaves a chat of a Brick that is not being purged', async () => {
+        await bridge.onEvent(personLeaves());
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(client.redactEvent).not.toHaveBeenCalled();
+    });
+
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
         bridge.purgedBots.add(BOT);
         await bridge.closeChat(BOT, ROOM, 'en');
