@@ -35,6 +35,9 @@ export interface RunnableJob {
     hasTurn: boolean;
 }
 
+/** Whose fault a failed job is, as Orbit's finish call takes it: `ours` is given back to the person, `agent` is the person's. */
+export type FinishCause = 'ours' | 'agent';
+
 export type TurnOpened = { ok: true; events: AsyncIterable<RunnerEvent> } | { ok: false; reason: string; responseId?: string };
 
 export interface RunnerOrbit {
@@ -191,8 +194,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
     const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? error.message : '');
 
-    async function finish(job: RunnableJob, outcome: 'done' | 'failed') {
-        await orbit.action(job.botId, job.jobId, { action: 'finish', outcome }).catch((error) => say('Could not end a job:', error));
+    /**
+     * Ends the job at Orbit. A failure says whose it was: `ours` (no relay, a machine that would not get ready, turns that kept going wrong,
+     * a handover Orbit would not take) is given back to the person by Orbit; `agent` (the agent gave up in its own words, or the job used up
+     * every turn it may take) is not. Orbit reads a failure with no cause as the person's, so every failure here names one.
+     */
+    async function finish(job: RunnableJob, outcome: 'done'): Promise<void>;
+    async function finish(job: RunnableJob, outcome: 'failed', cause: FinishCause): Promise<void>;
+    async function finish(job: RunnableJob, outcome: 'done' | 'failed', cause?: FinishCause): Promise<void> {
+        await orbit.action(job.botId, job.jobId, { action: 'finish', outcome, ...(outcome === 'failed' && cause ? { cause } : {}) }).catch((error) => say('Could not end a job:', error));
     }
 
     /** Waits while the person has the machine or the job waits for them. 'back' when it is Brick's again, 'over' when it is not coming back. */
@@ -345,7 +355,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function work(job: RunnableJob, signal: AbortSignal): Promise<void> {
         if (!deps.relayUrl) {
             log.error('[ComputerRunner] A job cannot run: no address is set for the model relay (COMPUTER_RELAY_URL or BOT_SERVER_URL).');
-            await finish(job, 'failed');
+            await finish(job, 'failed', 'ours');
             return;
         }
         // The job's own first words stay the ones to send until the agent has taken a turn: a turn that could not be started, or a take-over
@@ -374,7 +384,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             }
             if (++turns > RUNNER_GUARDS.maxTurns) {
                 say('A job took more turns than allowed and was ended.');
-                await finish(job, 'failed');
+                await finish(job, 'failed', 'agent');
                 return;
             }
             const ready = await prepared(job, deps.relayUrl, signal);
@@ -386,7 +396,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             if (ready === 'failed') {
-                await finish(job, 'failed');
+                await finish(job, 'failed', 'ours');
                 return;
             }
 
@@ -428,7 +438,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
             const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
             if (ending.kind === 'done') return void (await finish(job, 'done'));
-            if (ending.kind === 'failed') return void (await finish(job, 'failed'));
+            if (ending.kind === 'failed') return void (await finish(job, 'failed', 'agent'));
             if (ending.kind === 'handover') {
                 bad = 0;
                 // The person is only told to come when Orbit took the handover: if it did not, waiting would take the job straight
@@ -451,7 +461,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                         });
                 }
                 if (!handed) {
-                    await finish(job, 'failed');
+                    await finish(job, 'failed', 'ours');
                     return;
                 }
                 const back = await waitForBrick(job, signal);
@@ -463,7 +473,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             bad = result.failed || result.words.trim() === '' ? bad + 1 : 0;
             if (bad >= RUNNER_GUARDS.maxBadTurns) {
                 say('A job kept failing to answer and was ended.');
-                await finish(job, 'failed');
+                await finish(job, 'failed', 'ours');
                 return;
             }
             input = follow(CONTINUE_PROMPT);

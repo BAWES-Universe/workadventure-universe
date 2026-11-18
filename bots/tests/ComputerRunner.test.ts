@@ -119,7 +119,7 @@ describe('a job that runs', () => {
     it('ends failed when the agent says it cannot go on', async () => {
         const { orbit, seen } = fakeOrbit([done('The site is down. [[failed]]')]);
         await runJob(orbit);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
     });
 
     it('reports a step for each tool that finished, with its label, and no more than what the agent gave', async () => {
@@ -156,12 +156,12 @@ describe('a job that runs', () => {
         const a = fakeOrbit([failing, failing, failing]);
         await runJob(a.orbit);
         expect(a.seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
 
         const b = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxTurns + 5 }, () => done('still on it')));
         await runJob(b.orbit);
         expect(b.seen.turns).toHaveLength(RUNNER_GUARDS.maxTurns);
-        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
     });
 
     it('does not count the time it waits for a machine as turns: a machine that is slow to come back never ends the job before it ran', async () => {
@@ -179,7 +179,7 @@ describe('a job that runs', () => {
         await runJob(orbit, JOB, null);
         expect(seen.prepares).toEqual([]);
         expect(seen.turns).toEqual([]);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
         expect(quiet.error).toHaveBeenCalledWith(expect.stringContaining('COMPUTER_RELAY_URL'));
     });
 
@@ -334,7 +334,7 @@ describe('the person’s part', () => {
         failHandovers(50);
         await runJob(orbit);
         expect(seen.turns).toHaveLength(1);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
     });
 
     it('hands over with exactly what is ready to be put in, waits for the person, and carries on with a look at the page', async () => {
@@ -383,6 +383,22 @@ describe('a turn that is lost, or room that is gone', () => {
         expect(seen.turns).toHaveLength(1);
         expect(seen.streams).toBe(1);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
+    it('ends as failed with our cause when the stream keeps breaking and cannot be read again, so the person is not charged for it', async () => {
+        const broke = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'stream_broke', message: 'broke' }];
+        // every turn breaks, and each of its two reconnects breaks too
+        const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns * 3 }, () => broke()));
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+    });
+
+    it('never sends a cause with a job that is done', async () => {
+        const { orbit, seen } = fakeOrbit([done('All set. [[done]]')]);
+        await runJob(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(finished(seen)[0]).not.toHaveProperty('cause');
     });
 
     it('reads the agent’s own turn when it says it is already working, instead of starting another', async () => {
@@ -447,7 +463,7 @@ describe('a turn that is lost, or room that is gone', () => {
         await runJob(a.orbit);
         expect(a.seen.prepares).toHaveLength(3);
         expect(a.seen.turns).toEqual([]);
-        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
 
         let looks = 0;
         const b = fakeOrbit([done('[[done]]')]);
