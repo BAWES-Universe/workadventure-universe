@@ -89,7 +89,11 @@ describe('use_computer (#2000)', () => {
     });
 
     it('tells a broken start, an off computer and a refusal each in one plain way, and never throws', async () => {
-        expect(String((await run(asking({ ok: false, reason: 'broken_start' }))).note)).toMatch(/isn't starting right now/);
+        const broken = String((await run(asking({ ok: false, reason: 'broken_start' }))).note);
+        expect(broken).toMatch(/isn't starting right now/);
+        // Nothing sends a message when the computer is back, so the note must not promise one
+        expect(broken).not.toMatch(/you'll tell them/);
+        expect(broken).toMatch(/Do not promise to tell them/);
         expect(String((await run(asking({ ok: false, reason: 'off' }))).note)).toMatch(/is off/);
         expect(String((await run(asking({ ok: false, reason: 'not_owner' }))).note)).toMatch(/can't be done/);
         // The team paused computers: said kindly, nothing is lost, and no price or reason is offered
