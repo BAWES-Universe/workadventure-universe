@@ -52,13 +52,12 @@
                         aria-label={$LL.chat.friends.requestsWaiting({ count: chip.count })}>{chip.count}</span
                     >
                 {:else}
-                    <span
-                        class="u-count"
-                        aria-label={chip.view === "friends"
-                            ? $LL.chat.friends.friendsOnline({ count: chip.count })
-                            : undefined}
-                        data-testid={`peopleChipCount-${chip.view}`}>{chip.count}</span
-                    >
+                    <span class="u-count">
+                        <span aria-hidden="true" data-testid={`peopleChipCount-${chip.view}`}>{chip.count}</span>
+                        <span class="sr-only" data-testid={`peopleChipCountText-${chip.view}`}
+                            >{$LL.chat.friends.friendsOnline({ count: chip.count })}</span
+                        >
+                    </span>
                 {/if}
             {/if}
         </button>

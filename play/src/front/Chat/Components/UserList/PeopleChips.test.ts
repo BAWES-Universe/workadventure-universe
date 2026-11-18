@@ -39,16 +39,20 @@ describe("the Friends chip", () => {
     }
 
     const count = (view: string) => target.querySelector(`[data-testid="peopleChipCount-${view}"]`);
+    const text = (view: string) => target.querySelector(`[data-testid="peopleChipCountText-${view}"]`);
 
     it("shows how many friends are online, not how many friends there are", async () => {
         await show({ onlineFriendsCount: 2 });
         expect(count("friends")?.textContent).toBe("2");
-        expect(count("friends")?.getAttribute("aria-label")).toBe("chat.friends.friendsOnline:2");
+        // The numeral is for the eyes; screen readers get the sentence as text
+        expect(count("friends")?.getAttribute("aria-hidden")).toBe("true");
+        expect(text("friends")?.textContent).toBe("chat.friends.friendsOnline:2");
     });
 
     it("hides only the badge when nobody is online: the Friends tab stays, and opens", async () => {
         await show({ onlineFriendsCount: 0 });
         expect(count("friends")).toBeNull();
+        expect(text("friends")).toBeNull();
         const tab = target.querySelector<HTMLElement>('[data-testid="peopleChip-friends"]');
         expect(tab).not.toBeNull();
         expect(tab?.textContent).toContain("chat.friends.friends");
