@@ -344,6 +344,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private purgeCursors = new Map<string, string>();
     /** Rooms the Brick left whose forget did not get through yet (`user|room`), finished before a purge counts as done. */
     private pendingForgets = new Set<string>();
+    /** Rooms being cleared of a deleted Brick right now, so a chat closing and a purge never run on one room at once. */
+    private roomPurges = new Map<string, Promise<void>>();
     /** Messages a drain has taken but not started on yet, per bot: on shutdown they go back in line. */
     private drainQueues = new Map<string, MatrixEvent[]>();
     /** Drains running now, per bot: on shutdown the message each is answering gets time to land. */
@@ -980,7 +982,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * Redacts what the Brick said in one room, drops the shared store's links to it, then leaves and forgets it. Nothing is left before the
      * redactions are all in, and a link that cannot be dropped keeps the room joined so the next try finds it again.
      */
-    private async purgeRoom(botId: string, userId: string, roomId: string): Promise<void> {
+    private purgeRoom(botId: string, userId: string, roomId: string): Promise<void> {
+        // One at a time per room: a chat being closed and a purge reaching the same room share the one run
+        const running = this.roomPurges.get(roomId);
+        if (running) return running;
+        const run = this.purgeRoomOnce(botId, userId, roomId).finally(() => this.roomPurges.delete(roomId));
+        this.roomPurges.set(roomId, run);
+        return run;
+    }
+
+    private async purgeRoomOnce(botId: string, userId: string, roomId: string): Promise<void> {
         // Not swallowed: without the members the links to this room in the shared store could not be dropped, and the room is gone from the Brick's joined list after the leave
         const members = await this.client.getJoinedMembers(userId, roomId);
         let from: string | undefined = this.purgeCursors.get(roomId);
@@ -1726,15 +1737,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /**
-     * The bot was deleted: one goodbye note, and the chat reads as closed. It does NOT leave the room here: a Brick that has left can no longer
-     * redact what it said (a redaction needs it in the room), and the purge only finds the rooms it is still in. The purge (R29) redacts the
-     * note and everything else the Brick said, then leaves and forgets the room.
+     * The bot was deleted: the chat is closed by clearing it. Everything the Brick said in it is redacted (the Brick's name is in what it said, and
+     * a goodbye note would carry it too, so none is sent), then it leaves and forgets the room: the same room purge a deleted Brick gets (R29), so
+     * a Brick deleted before its chat purge existed leaves nothing behind either. A room that cannot be cleared now stays joined and is tried again
+     * with the next message, or by the purge.
      */
-    private async closeChat(botId: string, roomId: string, language: NoteLanguage): Promise<void> {
-        // A purge is clearing this Brick's rooms: nothing more is written to them for it
+    private async closeChat(botId: string, roomId: string, _language: NoteLanguage): Promise<void> {
+        // A purge is clearing this Brick's rooms and clears this one too
         if (this.purgedBots.has(botId)) return;
-        await this.sendNote(botId, roomId, 'gone', language);
-        await this.forgetRoom(roomId);
+        try {
+            await this.purgeRoom(botId, this.botUserId(botId), roomId);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not close the chat ${roomId} of a deleted Brick (it is tried again):`, error?.message ?? error);
+        }
     }
 
     /** A resting bot says "not now" in its own voice now and then, and the plain note says why. */

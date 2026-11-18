@@ -120,15 +120,42 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(deps.waiting.rememberWaitingDm).not.toHaveBeenCalled();
     });
 
-    it('a chat closed because the Brick is gone stays joined, so the purge redacts the goodbye note and then leaves', async () => {
+    it('a Brick deleted before this change, whose chat closes on a message, has everything it said redacted (its earlier messages and the note) and leaves', async () => {
+        // What it said earlier in the room, newest first
+        const said = [
+            { type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$b2', content: { msgtype: 'm.text', body: 'a goodbye from an older version' } },
+            message('$a1'),
+            { type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$b1', content: { msgtype: 'm.text', body: 'hello' } },
+        ] as MatrixEvent[];
+        client.getMessagesPage.mockImplementation(async () => ({ events: said.filter((event) => !redacted.has(event.event_id)), end: undefined }));
         await bridge.closeChat(BOT, ROOM, 'en');
-        expect(client.sent).toHaveLength(1);
-        expect(client.leaveRoom).not.toHaveBeenCalled();
-        expect(await bridge.purgeChats(BOT)).toBe(true);
-        // The note held the Brick's name: it is redacted, and only then does the Brick leave
-        expect([...redacted]).toEqual(['$note0']);
-        expect(client.redactEvent.mock.invocationCallOrder[0]).toBeLessThan(client.leaveRoom.mock.invocationCallOrder[0]);
+        // Only what the Brick said, and before it leaves; no new note is written
+        expect([...redacted].sort()).toEqual(['$b1', '$b2']);
+        expect(client.sendMessage).not.toHaveBeenCalled();
+        expect(client.redactEvent.mock.invocationCallOrder.at(-1)).toBeLessThan(client.leaveRoom.mock.invocationCallOrder[0]);
         expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM, 'Brick deleted');
+        expect(client.forgetRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(deps.rooms.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+    });
+
+    it('a chat that cannot be cleared when it closes stays joined and is tried again, and a purge reaching the same room shares the one run', async () => {
+        client.redactEvent.mockRejectedValueOnce(new Error('Matrix redact failed: 500'));
+        client.getMessagesPage.mockResolvedValue({ events: [{ type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$b1', content: {} } as MatrixEvent], end: undefined });
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+        // A purge and a closing chat on one room at once clear it once
+        client.leaveRoom.mockClear();
+        client.redactEvent.mockClear();
+        let release!: () => void;
+        client.getJoinedMembers.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve([ALICE, BOT_USER]))));
+        const closing = bridge.closeChat(BOT, ROOM, 'en');
+        const purging = bridge.purgeChats(BOT);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        release();
+        await Promise.all([closing, purging]);
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
     });
 
     it('stops answering waiting messages the moment a purge begins, and drops the rest of the queue', async () => {
