@@ -961,13 +961,35 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    /**
+     * The record of rooms owed a forget (R29), all four calls or none: a bridge without every one of them cannot promise a forget survives a restart,
+     * so the purge fails (and no room is left) instead of going on without it.
+     */
+    private owedStore(): {
+        remember: (userId: string, roomId: string) => Promise<void>;
+        of: (userId: string) => Promise<string[]>;
+        all: () => Promise<Array<{ matrixUserId: string; roomId: string }>>;
+        clear: (userId: string, roomId: string) => Promise<void>;
+    } {
+        const rooms = this.deps.rooms;
+        if (!rooms?.rememberPendingForget || !rooms.pendingForgetsOf || !rooms.allPendingForgets || !rooms.clearPendingForget) {
+            throw new Error('Nowhere to write down the forget a room is owed (the record needs all four of its calls), so the Brick does not leave it');
+        }
+        return {
+            remember: rooms.rememberPendingForget.bind(rooms),
+            of: rooms.pendingForgetsOf.bind(rooms),
+            all: rooms.allPendingForgets.bind(rooms),
+            clear: rooms.clearPendingForget.bind(rooms),
+        };
+    }
+
     /** Tries again every forget still owed, for any Brick (kept in the shared store and in this process). Never throws. */
     private async retryOwedForgets(): Promise<void> {
         try {
             const owed = new Map<string, { userId: string; roomId: string }>();
             // The shared store being down only hides the rooms kept there: this process's own list is still retried, and the outage is said once, not at every check
             try {
-                for (const { matrixUserId, roomId } of (await this.deps.rooms?.allPendingForgets?.()) ?? []) owed.set(`${matrixUserId}|${roomId}`, { userId: matrixUserId, roomId });
+                for (const { matrixUserId, roomId } of await this.owedStore().all()) owed.set(`${matrixUserId}|${roomId}`, { userId: matrixUserId, roomId });
                 this.owedStoreDown = false;
             } catch (error: any) {
                 if (!this.owedStoreDown) console.warn('[MatrixDmBridge] Could not read the rooms owed a forget from the shared store (this process\'s own are still retried):', error?.message ?? error);
@@ -986,7 +1008,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     if (!joined.has(userId)) joined.set(userId, await this.client.getJoinedRooms(userId));
                     if (joined.get(userId)?.includes(roomId)) continue;
                     await this.client.forgetRoom(userId, roomId);
-                    await this.deps.rooms?.clearPendingForget?.(userId, roomId);
+                    await this.owedStore().clear(userId, roomId);
                     this.pendingForgets.delete(key);
                 } catch (error: any) {
                     console.warn('[MatrixDmBridge] Could not forget a room a deleted Brick left (tried again later):', error?.message ?? error);
@@ -999,7 +1021,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** Forgets the rooms the Brick already left whose forget is still owed (kept in the shared store, so a restart keeps them). False while any is still not forgotten. */
     private async finishForgets(userId: string, stillJoined: string[]): Promise<boolean> {
-        const owed = new Set<string>(await (this.deps.rooms?.pendingForgetsOf?.(userId) ?? Promise.resolve([])));
+        const owed = new Set<string>(await this.owedStore().of(userId));
         for (const key of this.pendingForgets) {
             const cut = key.indexOf('|');
             if (key.slice(0, cut) === userId) owed.add(key.slice(cut + 1));
@@ -1010,7 +1032,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (stillJoined.includes(roomId)) continue;
             try {
                 await this.client.forgetRoom(userId, roomId);
-                await this.deps.rooms?.clearPendingForget?.(userId, roomId);
+                await this.owedStore().clear(userId, roomId);
                 this.pendingForgets.delete(`${userId}|${roomId}`);
             } catch (error: any) {
                 all = false;
@@ -1068,13 +1090,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         // Written down before the leave: once left, the homeserver no longer lists the room, so this record is the only thing that still owes the forget.
         // Strict: a record that cannot be written keeps the room joined for the next try.
-        const remember = this.deps.rooms?.rememberPendingForget;
-        if (!remember) throw new Error('Nowhere to write down the forget this room is owed, so the Brick does not leave it');
-        await remember.call(this.deps.rooms, userId, roomId);
+        await this.owedStore().remember(userId, roomId);
         this.pendingForgets.add(`${userId}|${roomId}`);
         await this.client.leaveRoom(userId, roomId, 'Brick deleted');
         await this.client.forgetRoom(userId, roomId);
-        await this.deps.rooms?.clearPendingForget?.(userId, roomId);
+        await this.owedStore().clear(userId, roomId);
         this.pendingForgets.delete(`${userId}|${roomId}`);
     }
 

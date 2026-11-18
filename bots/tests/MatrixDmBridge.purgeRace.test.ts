@@ -168,6 +168,20 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(left).toEqual(['!a:matrix.test', '!c:matrix.test']);
     });
 
+    it('does not leave a room, and does not report a purge done, unless the record of owed forgets is complete (all four calls)', async () => {
+        for (const missing of ['rooms', 'rememberPendingForget', 'pendingForgetsOf', 'allPendingForgets', 'clearPendingForget'] as const) {
+            const bare = makeDeps();
+            if (missing === 'rooms') delete bare.rooms;
+            else delete bare.rooms[missing];
+            const bareBridge = new MatrixDmBridge(config, client as never, bare) as any;
+            // A restart after a leave whose forget failed: the next purge must fail, never report success without retrying the forget
+            expect(await bareBridge.purgeChats(BOT)).toBe(false);
+            await expect(bareBridge.purgeRoom(BOT, BOT_USER, ROOM)).rejects.toThrow('Nowhere to write down');
+        }
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+    });
+
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
         bridge.purgedBots.add(BOT);
         await bridge.closeChat(BOT, ROOM, 'en');
