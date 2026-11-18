@@ -139,6 +139,21 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(order).toEqual(['redact $said', 'leave']);
     });
 
+    it('a purge waits for an ordinary leave already under way before it reads the Brick\'s rooms', async () => {
+        let release!: () => void;
+        client.leaveRoom.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+        const leaving = bridge.onEvent(personLeaves());
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+        const purge = bridge.purgeChats(BOT);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(client.getJoinedRooms).not.toHaveBeenCalled();
+        release();
+        await leaving;
+        await purge;
+        expect(client.getJoinedRooms).toHaveBeenCalled();
+    });
+
     it('still leaves at once when the person leaves a chat of a Brick that is not being purged', async () => {
         await bridge.onEvent(personLeaves());
         expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);

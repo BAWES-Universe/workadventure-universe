@@ -1276,7 +1276,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     );
                     return;
                 }
-                await this.client.leaveRoom(this.botUserId(roomBot), event.room_id).catch(() => undefined);
+                // Tracked like a send: a leave already under way is waited for by a purge before it reads its list of rooms
+                await this.say(roomBot, () => this.client.leaveRoom(this.botUserId(roomBot), event.room_id)).catch(() => undefined);
                 await this.forgetRoom(event.room_id);
             }
         }
