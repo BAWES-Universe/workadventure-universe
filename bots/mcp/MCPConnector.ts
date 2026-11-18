@@ -1126,7 +1126,12 @@ export class MCPConnector {
             if (state && !this.health.isStale(botId, server.id, credentials)) this.markFailed(botId, server, state, orbit, failure.outcome?.status);
             return { read: false, reason: 'The server did not answer with a list of tools' };
         }
-        // It answers: any mark it had is gone, and Orbit is told (unless a mark made with newer credentials holds)
+        // Newer credentials were tried while this read was on its way: it says nothing about the server as it is now. It
+        // clears no mark, tells Orbit nothing of the server answering, keeps no list here and saves none to Orbit.
+        if (this.health.isStale(botId, server.id, credentials)) {
+            return { read: true, tools: read.tools.length, saved: { result: 'skipped', reason: 'Newer credentials were tried while this was read' } };
+        }
+        // It answers: any mark it had is gone, and Orbit is told
         const told =
             this.health.ok(botId, server.id, credentials) || server.signInLostAt || server.noAnswerAt
                 ? reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString())
@@ -1135,7 +1140,7 @@ export class MCPConnector {
         const { tools, titles } = this.toDefinitions(raw);
         const cacheKey = `${botId}:${server.id}`;
         const entry = { tools, titles, raw, cachedAt: Date.now(), serverId: server.id };
-        if (!this.health.isStale(botId, server.id, credentials)) toolListCache.set(cacheKey, entry);
+        toolListCache.set(cacheKey, entry);
         // Orbit did not hear it: the next read goes to the server again and tells Orbit again (this list only: one that replaced it stays)
         void told?.then((ok) => {
             if (!ok && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);

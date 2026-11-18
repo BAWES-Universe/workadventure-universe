@@ -362,6 +362,34 @@ describe('Test server and Connect (#1654)', () => {
         expect(reports.map((r) => r.body.state)).toEqual(['ok']);
     });
 
+    it('lets an older Test server read that answers late neither tell Orbit the server answers nor save its list over the newer one', async () => {
+        const lostAt = '2026-11-05T09:54:00.000Z';
+        servers = [{ ...base, authConfig: TOKEN_A, signInLostAt: lostAt }];
+        const answers: Array<(value: unknown) => void> = [];
+        listAnswer = () =>
+            new Promise((resolve) => {
+                answers.push(resolve);
+            });
+        const older = test();
+        await vi.waitFor(() => expect(answers).toHaveLength(1));
+        // A new sign-in is tested while the first read is still on its way, and answers first
+        servers = [{ ...base, authConfig: TOKEN_B, signInLostAt: lostAt }];
+        const newer = test();
+        await vi.waitFor(() => expect(answers).toHaveLength(2));
+        answers[1]({ data: { jsonrpc: '2.0', id: '1', result: { tools: [tool('new-search')] } } });
+        await newer;
+        await flush();
+        const catalogSaves = () => http.put.mock.calls.filter(([url]: any) => !String(url).endsWith('/sign-in')).length;
+        const reportedAfterNewer = reports.length;
+        const savedAfterNewer = catalogSaves();
+        expect(reportedAfterNewer).toBe(1);
+        answers[0]({ data: { jsonrpc: '2.0', id: '1', result: { tools: [tool('old-search')] } } });
+        expect(await older).toMatchObject({ read: true, saved: { result: 'skipped' } });
+        await flush();
+        expect(reports).toHaveLength(reportedAfterNewer);
+        expect(catalogSaves()).toBe(savedAfterNewer);
+    });
+
     it('says nothing to Orbit about a server that was never marked', async () => {
         expect(await test()).toMatchObject({ read: true });
         await flush();
