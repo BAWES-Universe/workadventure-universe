@@ -21,6 +21,7 @@
         type ExtraCredit,
         type Replies,
     } from "./Usage";
+    import UsageAllowance from "./UsageAllowance.svelte";
     import UsageMoney from "./UsageMoney.svelte";
     import { askMyUsageForMore, loadMyUsage, myUsageFailed, myUsageSettled, myUsageStore } from "./UsageStore";
     import { IconChevronDown } from "@wa-icons";
@@ -45,7 +46,9 @@
     $: replies = chat?.replies ?? null;
     $: apps = usage?.apps ?? null;
     $: computer = usage?.computer ?? null;
-    let asking: CreditCategory | undefined;
+    $: speech = usage?.speech ?? null;
+    $: appUse = usage?.appUse ?? null;
+    let asking: CreditCategory | "speech" | undefined;
     let openId: string | undefined = receiptId;
     let scrolledTo: string | undefined;
     let body: HTMLDivElement | undefined;
@@ -159,7 +162,7 @@
         return note ?? text.activityNothingTaken();
     }
 
-    async function onAsk(category: CreditCategory) {
+    async function onAsk(category: CreditCategory | "speech") {
         if (asking) return;
         asking = category;
         const sent = await askMyUsageForMore(category);
@@ -275,6 +278,21 @@
                         <PageNote>{text.computerNote()}</PageNote>
                     {/if}
                 {/if}
+            {/if}
+
+            {#if speech}
+                <div class="sec" data-testid="usageSecVoice">{text.voice()}</div>
+                <UsageAllowance
+                    kind="voice"
+                    allowance={speech}
+                    asking={asking === "speech"}
+                    onAsk={() => onAsk("speech")}
+                />
+            {/if}
+
+            {#if appUse}
+                <div class="sec" data-testid="usageSecAppUse">{text.appUse()}</div>
+                <UsageAllowance kind="apps" allowance={appUse} asking={asking === "apps"} onAsk={() => onAsk("apps")} />
             {/if}
 
             {#if usage.credit.length > 0}

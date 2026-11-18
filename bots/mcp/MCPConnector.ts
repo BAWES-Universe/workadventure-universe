@@ -10,6 +10,7 @@
  */
 
 import { keyAppTools, loadKeyApps, type KeyApp } from './KeyApps';
+import { appStopResult, readAppStop } from '../voice/StopLines';
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
@@ -1072,6 +1073,10 @@ export class MCPConnector {
 
         // A tool that ran but failed answers with isError and its reason as content: an error like the ones above
         if (response.result?.isError === true) {
+            // Orbit held the step back before it ran and says which of the five reasons it was (billing v2, P3): the person is told in that reason's words
+            // (read only from Orbit's own link: another server's words are never taken for Orbit's)
+            const stop = link ? readAppStop((response.result as { _meta?: unknown })._meta) : null;
+            if (stop) return appStopResult(stop);
             const content: any[] = Array.isArray(response.result.content) ? response.result.content : [];
             const why = content
                 .filter((item) => item?.type === 'text' && typeof item.text === 'string')

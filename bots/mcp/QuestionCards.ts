@@ -13,7 +13,7 @@
  * says the question can't be shown again.
  */
 import type { ParsedTap, Tap } from './ApprovalCard';
-import { answerText, askLine, buildQuestion, pickedChoices, questionEdit, questionNotice, type QuestionAnswer, type QuestionAsked, type QuestionField } from './QuestionCard';
+import { answerText, askLine, buildQuestion, pickedChoices, questionEdit, questionNotice, type QuestionAction, type QuestionAnswer, type QuestionAsked, type QuestionField } from './QuestionCard';
 import { nameForLine } from './NearbyWords';
 import type { Asker, CardSurface, NearbySurface } from './ToolApprovals';
 
@@ -48,6 +48,15 @@ export interface QuestionPicked {
     text: string;
 }
 
+/** A tap on a choice that does something by itself (a stop card): what to do, and for whom. */
+export interface QuestionActed {
+    botId: string;
+    roomId: string;
+    person: Asker;
+    nearby: boolean;
+    action: QuestionAction;
+}
+
 export interface QuestionDeps {
     /** A direct message's room: the notice carries the card. */
     cards: CardSurface;
@@ -57,6 +66,11 @@ export interface QuestionDeps {
     waitMinutes(botId: string): Promise<number>;
     /** The person picked: the bot carries on. False when the bot could not take it on (the person left the bubble): the card waits again. Never throws. */
     picked(picked: QuestionPicked): Promise<boolean | void>;
+    /**
+     * A choice with an action was tapped (the card of a stop, see voice/StopLines): the bot does that, and the pick is not handed on to the model as
+     * something the person said. Without this the pick goes on as it does for any choice.
+     */
+    acted?(acted: QuestionActed): Promise<void>;
     now?: () => number;
 }
 
@@ -282,6 +296,14 @@ export class QuestionCards {
         card.answer = ours;
         card.revision += 1;
         await this.redraw(id, card);
+        // A choice that does something by itself (Ask for more, Text is fine on a stop card): done here, and never put to the model as the person's words
+        const acting = this.deps.acted ? pickedChoices(field, ids).find((choice) => choice.action) : undefined;
+        if (acting?.action) {
+            await this.deps
+                .acted!({ botId: card.botId, roomId: card.roomId, person: card.person, nearby: card.nearby, action: acting.action })
+                .catch((error) => console.warn(`[QuestionCards] Could not do the action of ${id}:`, errorText(error)));
+            return;
+        }
         const taken = await this.deps
             .picked({ botId: card.botId, roomId: card.roomId, person: card.person, nearby: card.nearby, text: answerText(field, ids) })
             .catch((error) => console.warn(`[QuestionCards] Could not take the pick on ${id} on to the bot:`, errorText(error)));

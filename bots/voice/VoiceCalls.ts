@@ -26,8 +26,9 @@ import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messag
 import { SAY_ONLY_FOR, SESSION_ENDED } from './protocol';
 import type { FromWorker, LeaveReason, ListenInfo, ListenReason, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
-import type { RepliesLeft, TurnGate } from './VoiceAllowance';
-import type { VoiceMeter, VoiceWho } from './VoiceMeter';
+import type { RepliesLeft, SpeechStop, StoppedBy, TurnGate } from './VoiceAllowance';
+import type { HearingWindows } from './HearingWindows';
+import type { VoiceMeter, VoiceUse, VoiceWho } from './VoiceMeter';
 import type { VoiceLink } from './VoiceLink';
 import { hearingTerms } from './VoiceTerms';
 import type { ListeningBudget } from './VoiceListening';
@@ -113,6 +114,8 @@ export const LISTEN_CONFIRM_MS = 5000;
 /** How many times a stop that is not confirmed is sent again (one wait apart) before the relay only waits. */
 const STOP_RESENDS = 6;
 const NO_LISTEN: ListenInfo = { state: '', reason: '' };
+/** After Universe's budget or a provider stopped someone's hearing, the bot asks again after this many seconds (when Orbit named no wait): a raised budget needs no one to do anything. */
+const RECHECK_HEARING_SECONDS = 60;
 /**
  * A person's audio connection that the worker lost on its own (it never connected in time, or the network dropped it) is tried
  * again while they stay, after these waits, instead of leaving their voice paused until they walk out and back in. Once
@@ -136,6 +139,15 @@ interface ListenRequest {
 const modeTakesMic = (mode: VoiceMode): boolean => mode === 'talk' || mode === 'speak_and_read';
 /** The same mode without the microphone: talking becomes typing (the bot still speaks its answers), speaking and reading becomes text only. */
 const withoutMic = (mode: VoiceMode): VoiceMode => (mode === 'talk' ? 'type_and_listen' : mode === 'speak_and_read' ? 'off' : mode);
+
+/** Why voice stopped for someone, for the line they are told (see StopLines). */
+export interface VoiceStop {
+    by: StoppedBy;
+    what: 'reply' | 'hearing';
+    /** When the person's own allowance comes back, as an ISO time. Only with `by: 'person'`. */
+    resetsAt?: string;
+    playerId?: number;
+}
 
 export interface LinkHandlers {
     onMessage(message: FromWorker): void;
@@ -264,8 +276,34 @@ export class VoiceCalls {
     private readonly talkers = new Map<number, VoiceWho>();
     /** Only for a bot whose voice Orbit decides (see VoiceSettings): asked just before a reply is said. */
     readonly beforeSpeaking?: (spaceName: string, turn: SpeechTurn) => Promise<TurnDecision>;
-    /** Voice has just been paused for someone in this bubble (the allowance, or a key or provider that isn't working): say so, once. */
-    onPaused?: (spaceName: string) => void;
+    /**
+     * Voice has just been stopped for someone in this bubble: say so, once, in the words of the reason (see StopLines). `stop.by` is one of the five
+     * reasons Orbit gives (the person's own allowance, the platform's budget, a provider, a hold that passes, capacity); a key or provider of the
+     * bot's maker that isn't working is `provider`. `what` says whether a spoken reply or their hearing stopped; `playerId` is the person, when known.
+     */
+    onPaused?: (spaceName: string, stop: VoiceStop) => void;
+    /**
+     * The person asked the Universe team for more voice time (the Ask for more card), and the allowance of theirs that stopped them is back: said once,
+     * the next time voice speaks for them. Set by whoever makes the relay.
+     */
+    onGiven?: (spaceName: string, playerId: number | undefined) => void;
+    /** People who asked for more voice time, by player, with when the allowance that stopped them would have come back by itself (epoch ms, NaN when unknown). */
+    private readonly askedMore = new Map<number, number>();
+    /** When each person's own allowance was last said to come back, by player: what the ask above is measured against. */
+    private readonly lastPersonStop = new Map<number, number>();
+    /** Which reason each person was last told voice stopped for, by bubble and person: a different reason is said again, the same one only once. */
+    private readonly pausedBy = new Map<string, StoppedBy>();
+    /**
+     * Admits live hearing for Universe's account in windows renewed in the background (see HearingWindows). Not set (or an Orbit from before windows):
+     * hearing goes as it always did and what was heard is counted when its event arrives.
+     */
+    windows?: HearingWindows;
+    /** The reply a segment was, with the characters of it sent to the voice, for the receipt of that reply (see BotSpeech.turnOfSegment). */
+    turnOfSegment?: (segmentId: string) => { turnId: string; characters: number } | undefined;
+    /** The speaking model of the bot now, so its receipts say what spoke. */
+    private speechModel: string | undefined;
+    /** Sessions where the voice company refused for money, until the receipt of the reply it refused: that receipt says so. */
+    private readonly fundsGone = new Set<string>();
     /** Who is paused by the allowance or a key, by bubble and person: the line is said once, and the button is put back when voice speaks for them again. */
     private readonly pausedFor = new Set<string>();
     /**
@@ -411,6 +449,7 @@ export class VoiceCalls {
         this.sentModes.set(key, mode);
         this.stats.started++;
         this.tell(spaceName, person.spaceUserId, 'connecting');
+        this.syncHearing(spaceName);
     }
 
     /**
@@ -449,6 +488,7 @@ export class VoiceCalls {
         const room = this.rooms.get(spaceName);
         if (room) this.sendPeople(room);
         this.retell(spaceName, person.spaceUserId);
+        this.syncHearing(spaceName);
     }
 
     // ---- listening in a group (round 8) ----
@@ -707,6 +747,7 @@ export class VoiceCalls {
         }
         const room = this.rooms.get(spaceName);
         if (room) this.sendPeople(room);
+        this.syncHearing(spaceName);
     }
 
     /**
@@ -777,6 +818,86 @@ export class VoiceCalls {
         })();
     }
 
+    /**
+     * The person asked the Universe team for more voice time (they tapped Ask for more on the card the bot showed them). If voice then speaks for them
+     * again before their own allowance would have come back, they are told it was added (`onGiven`), once.
+     */
+    markAskedMore(playerId: number): void {
+        this.askedMore.set(playerId, this.lastPersonStop.get(playerId) ?? Number.NaN);
+        for (const oldest of this.askedMore.keys()) {
+            if (this.askedMore.size <= MAX_SPOKEN) break;
+            this.askedMore.delete(oldest);
+        }
+    }
+
+    // ---- live hearing in windows ----
+
+    /** Who a person is for Orbit's books, when hearing them is funded and they are known. */
+    private hearingWho(personId: string): VoiceWho | null {
+        const player = this.playerIdOf?.(personId) ?? 0;
+        return player ? this.talkerFor(player) : null;
+    }
+
+    /**
+     * Whether this person's hearing is on Universe's account right now: the bubble's hearing is Universe AI's (a person's own key, or the maker's, is
+     * paid by them and needs no window), they are on a call or in the room, and their mode takes their microphone. Null when not, or they are not known.
+     */
+    private hearingWanted(spaceName: string, personId: string): VoiceWho | null {
+        if (!this.windows?.active || this.shuttingDown) return null;
+        const bubble = this.bubbles.get(spaceName);
+        const providers = bubble ? this.sessions.get(bubble.sessionId) : undefined;
+        if (!bubble || !providers || providers.recognition.owner) return null;
+        const inCall = this.calls.has(callKey(spaceName, personId)) || (this.rooms.get(spaceName)?.connected === true && this.roster.get(spaceName)?.has(personId) === true);
+        if (!inCall || !modeTakesMic(this.modeOf(spaceName, personId))) return null;
+        return this.hearingWho(personId);
+    }
+
+    /**
+     * Starts or ends each person's window of hearing to match who is being heard on Universe's account now. Asked of Orbit in the background: nothing
+     * here waits for it, and an audio frame never comes here. Safe to call as often as anything changes.
+     */
+    private syncHearing(spaceName: string): void {
+        const windows = this.windows;
+        if (!windows) return;
+        const here = new Set(this.roster.get(spaceName)?.keys() ?? []);
+        for (const personId of here) {
+            const who = this.hearingWanted(spaceName, personId);
+            if (who) windows.start(callKey(spaceName, personId), who, this.speechModel);
+            else windows.stop(callKey(spaceName, personId));
+        }
+        for (const key of windows.keys()) if (key.startsWith(`${spaceName}\n`) && !here.has(key.slice(spaceName.length + 1))) windows.stop(key);
+    }
+
+    /**
+     * Orbit refused the next window of someone's hearing and the one they had is used up: their microphone is not taken for Universe's account any more,
+     * and they are told why, once (see `onPaused`). Their own allowance is back when it ends; for anything else the question is asked again after a
+     * short wait, so a raised budget or a settled hold lets the bot hear them again without anyone doing anything.
+     */
+    hearingRefused(key: string, stop: SpeechStop): void {
+        const at = key.indexOf('\n');
+        if (at < 0) return;
+        const spaceName = key.slice(0, at);
+        const personId = key.slice(at + 1);
+        const player = this.playerIdOf?.(personId) || undefined;
+        this.log(`voice: ${spaceName} stops hearing ${personId} on Universe's account (${stop.by})`);
+        // A hold or full capacity passes: they carry on, and are asked again after a moment
+        const retryMs = (stop.retryAfterSeconds ?? RECHECK_HEARING_SECONDS) * 1000;
+        const until = stop.by === 'person' && stop.resetsAt ? stop.resetsAt : new Date(Date.now() + retryMs).toISOString();
+        this.holdBack(spaceName, personId, until);
+        if (stop.by === 'hold') return;
+        this.said(spaceName, personId, player, { by: stop.by, what: 'hearing', ...(stop.by === 'person' && stop.resetsAt ? { resetsAt: stop.resetsAt } : {}) });
+    }
+
+    /** Says why voice stopped for this person, once for each reason until voice speaks for them again. Returns whether it was said. */
+    private said(spaceName: string, personId: string | undefined, playerId: number | undefined, stop: VoiceStop): boolean {
+        const key = personId ? callKey(spaceName, personId) : `${spaceName}\n?${playerId ?? ''}`;
+        if (this.pausedBy.get(key) === stop.by) return false;
+        this.pausedBy.set(key, stop.by);
+        if (stop.by === 'person' && playerId !== undefined && stop.resetsAt) this.lastPersonStop.set(playerId, Date.parse(stop.resetsAt));
+        this.onPaused?.(spaceName, { ...stop, ...(playerId !== undefined ? { playerId } : {}) });
+        return true;
+    }
+
     /** Whether another voice bot is in this space: two voice bots would talk over each other, so both answer in text (#1670). */
     crowded(spaceName: string): boolean {
         return (this.otherVoiceBots.get(spaceName)?.size ?? 0) > 0;
@@ -835,6 +956,7 @@ export class VoiceCalls {
         this.calls.delete(callKey(spaceName, personId));
         this.sentModes.delete(callKey(spaceName, personId));
         this.post({ type: 'lane.close', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, reason });
+        this.syncHearing(spaceName);
     }
 
     /** The bot left a space: its connections there end with it. */
@@ -849,6 +971,7 @@ export class VoiceCalls {
         this.rooms.delete(spaceName);
         this.invitations.delete(spaceName);
         this.roster.delete(spaceName);
+        this.syncHearing(spaceName);
         this.otherVoiceBots.delete(spaceName);
         for (const key of this.voiceBotNames.keys()) if (key.startsWith(`${spaceName}\n`)) this.voiceBotNames.delete(key);
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
@@ -1136,6 +1259,7 @@ export class VoiceCalls {
         }
         this.game.sendDisconnect(call.spaceName, call.participantId);
         this.tell(call.spaceName, call.participantId, 'paused');
+        this.syncHearing(call.spaceName);
     }
 
     /**
@@ -1217,6 +1341,7 @@ export class VoiceCalls {
             } else if (message.state === 'connected') {
                 this.stats.roomsConnected++;
                 room.connected = true;
+                this.syncHearing(room.spaceName);
                 this.tellEveryone(room.spaceName, 'on');
                 this.onAudience?.(room.spaceName);
             } else {
@@ -1261,6 +1386,14 @@ export class VoiceCalls {
     private handleProvider(message: Extract<FromWorker, { type: 'provider.ok' | 'provider.failed' }>): void {
         const provider = this.sessions.get(message.sessionId)?.[message.part];
         if (!this.settings || !provider) return;
+        // The voice company refused for money (402): the receipt of the reply it refused says so, and Orbit stops funded speech on that company
+        if (message.type === 'provider.failed' && message.part === 'speech' && message.status === 402 && !provider.owner) {
+            this.fundsGone.add(message.sessionId);
+            for (const oldest of this.fundsGone) {
+                if (this.fundsGone.size <= MAX_SESSIONS) break;
+                this.fundsGone.delete(oldest);
+            }
+        }
         if (message.type === 'provider.failed' && message.rejected) {
             const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
             if (bubble) bubble.stale = true;
@@ -1408,27 +1541,51 @@ export class VoiceCalls {
         const owner = this.sessions.get(message.sessionId)?.recognition.owner;
         if (!this.meter || owner === undefined) return;
         const player = this.playerIdOf?.(message.participantId) ?? 0;
+        // The window of hearing this was heard under (Orbit's contract: the event carries it, and settles what the window held)
+        const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
+        const windowId = !owner && bubble ? this.windows?.windowOf(callKey(bubble.spaceName, message.participantId)) : undefined;
         this.meter.add({
             part: 'hearing',
             key: `${message.sessionId}:${message.participantId}:${message.epoch}:${message.turnId}`,
             ms: message.audioMs,
             who: player ? this.talkerFor(player) : null,
             owner,
+            ...(windowId ? { windowId } : {}),
         });
     }
 
     /** The seconds of a reply that were played, booked for the person it was written for and whoever paid for the voice. */
     private bookSpoken(message: Extract<FromWorker, { type: 'playback.progress' }>): void {
         const owner = this.sessions.get(message.sessionId)?.speech.owner;
-        if (!this.meter || owner === undefined || !(message.playedMs > 0)) return;
+        if (!this.meter || owner === undefined) return;
+        // The receipt of a reply Orbit admitted (version 2): it carries the reply's turn id, so Orbit releases what it set aside for it. Even a real zero
+        // is booked then: admitted, and nothing heard
+        const turn = this.receiptOf(message.sessionId, message.segmentId);
+        if (!(message.playedMs > 0) && !turn) return;
         const player = this.playerOfSegment?.(message.segmentId);
         this.meter.add({
             part: 'speaking',
             key: `${message.sessionId}:${message.segmentId}`,
-            ms: message.playedMs,
+            ms: Math.max(0, message.playedMs),
             who: player ? this.talkerFor(player) : null,
             owner,
+            ...(turn ? { turn } : {}),
         });
+        if (turn) this.gate?.settled?.(turn.turnId);
+    }
+
+    /** What the receipt of this segment's reply carries, when Orbit admitted the reply in version 2: its turn id, what was admitted, what spoke. */
+    private receiptOf(sessionId: string, segmentId: string): NonNullable<VoiceUse['turn']> | undefined {
+        const turn = this.turnOfSegment?.(segmentId);
+        const admission = turn ? this.gate?.admissionOf?.(turn.turnId) : undefined;
+        if (!turn || !admission) return undefined;
+        return {
+            turnId: turn.turnId,
+            admission,
+            ...(this.speechModel ? { model: this.speechModel } : {}),
+            characters: turn.characters,
+            ...(this.fundsGone.delete(sessionId) ? { providerStatus: 'funds_unavailable' as const } : {}),
+        };
     }
 
     private draft(spaceName: string, personId: string, draft: VoiceDraft): void {
@@ -1676,10 +1833,13 @@ export class VoiceCalls {
         if (this.bubbles.get(spaceName) !== bubble) return { action: 'text' };
         if ('reason' in active) {
             this.log(`voice: ${spaceName} answers in text this time (${active.reason})`);
-            // The maker's key or a provider that isn't working is voice paused for the person; a bot that doesn't speak at all (off) is not
-            if (PAUSING_REASONS.has(active.reason)) this.pause(spaceName, turn);
+            // The maker's key or a provider that isn't working is voice paused for the person (nobody's allowance, no date); a bot that doesn't speak at all (off) is not
+            if (PAUSING_REASONS.has(active.reason)) this.pause(spaceName, turn, { by: 'provider' });
             return { action: 'text' };
         }
+        // The speaking model is told to Orbit with the question, so the reply is priced with it, and said on the receipt
+        this.speechModel = active.profile.speechModel;
+        if (this.gate) this.gate.model = active.profile.speechModel;
         if (active.followUpSeconds !== undefined) this.onFollowUpSeconds?.(active.followUpSeconds);
         // Universe AI pays for hearing or speaking: the reply comes out of the person's allowance, which also keeps some for text.
         // Asked before a session is opened again, so a reply that stays in text does not reconnect anyone
@@ -1696,11 +1856,10 @@ export class VoiceCalls {
             const who = this.spaceUserFor(spaceName, turn).personId;
             if (left && who) this.noteLeft(spaceName, who, left, verdict === 'yes');
             if (verdict !== 'yes') {
-                this.log(`voice: ${spaceName} answers in text this time (${verdict === 'no' ? 'the allowance for spoken replies is used' : 'the allowance could not be settled'})`);
-                if (verdict === 'no') {
-                    this.pause(spaceName, turn);
-                    if (who) this.holdBack(spaceName, who, left?.resetsAt);
-                }
+                // An Orbit from before names no reason: its only stop was the person's own allowance
+                const stop: SpeechStop | undefined = verdict === 'no' ? this.gate.stopOf?.(turn) ?? { by: 'person', ...(left?.resetsAt ? { resetsAt: left.resetsAt } : {}) } : undefined;
+                this.log(`voice: ${spaceName} answers in text this time (${stop ? `stopped: ${stop.by}` : 'the allowance could not be settled'})`);
+                if (stop) this.stopped(spaceName, turn, who, stop);
                 return { action: 'text' };
             }
         }
@@ -1709,7 +1868,30 @@ export class VoiceCalls {
             return { action: 'wait' };
         }
         this.resume(spaceName, turn);
-        return { action: 'speak', limits: active.replyLimits };
+        // What Orbit admitted is the most this reply may run: the voice is stopped there (see BotSpeech)
+        const cap = this.gate?.admissionOf?.(turn.turnId)?.maxSeconds;
+        return { action: 'speak', limits: active.replyLimits, ...(cap !== undefined ? { capSeconds: cap } : {}) };
+    }
+
+    /**
+     * Voice does not speak this reply, for the reason Orbit gave. A hold passes by itself: nothing is said and nothing changes. Capacity says one line and
+     * leaves the button alone (voice is not paused, only busy). The person's own allowance and Universe's budget or a provider pause the button and say
+     * one line in their own words; the person's own allowance also keeps their microphone untaken until it ends (see `holdBack`).
+     */
+    private stopped(spaceName: string, turn: SpeechTurn, who: string | undefined, stop: SpeechStop): void {
+        switch (stop.by) {
+            case 'hold':
+                return;
+            case 'capacity':
+                this.pause(spaceName, turn, stop, false);
+                return;
+            case 'person':
+                this.pause(spaceName, turn, stop, true);
+                if (who) this.holdBack(spaceName, who, stop.resetsAt);
+                return;
+            default:
+                this.pause(spaceName, turn, stop, true);
+        }
     }
 
     /** Whether the person this turn is for chose "Text only" (no bot voice for them). A turn for nobody the bot can name is not one. */
@@ -1744,13 +1926,20 @@ export class VoiceCalls {
     }
 
     /** Voice is paused for the person this turn is for: their button shows it, and one line says so, once until it speaks for them again. */
-    private pause(spaceName: string, turn: SpeechTurn): void {
+    private pause(spaceName: string, turn: SpeechTurn, stop: SpeechStop, button = true): void {
         const { key, personId } = this.spaceUserFor(spaceName, turn);
-        // The button is put to paused every time (a reconnect since may have set it to on; `tell` sends only a change), the line once
-        if (personId) this.tell(spaceName, personId, 'paused');
-        if (this.pausedFor.has(key)) return;
+        // The button is put to paused every time (a reconnect since may have set it to on; `tell` sends only a change), the line once for each reason
+        if (personId && button) this.tell(spaceName, personId, 'paused');
         this.pausedFor.add(key);
-        this.onPaused?.(spaceName);
+        if (this.pausedBy.get(key) === stop.by) return;
+        this.pausedBy.set(key, stop.by);
+        if (stop.by === 'person' && turn.playerId !== undefined && stop.resetsAt) this.lastPersonStop.set(turn.playerId, Date.parse(stop.resetsAt));
+        this.onPaused?.(spaceName, {
+            by: stop.by,
+            what: 'reply',
+            ...(stop.by === 'person' && stop.resetsAt ? { resetsAt: stop.resetsAt } : {}),
+            ...(turn.playerId !== undefined ? { playerId: turn.playerId } : {}),
+        });
     }
 
     /** Voice speaks for the person again (on a later turn, by itself): their button is put back. */
@@ -1759,6 +1948,13 @@ export class VoiceCalls {
         const { key, personId } = this.spaceUserFor(spaceName, turn);
         if (personId) this.releaseHold(spaceName, personId);
         if (!this.pausedFor.delete(key)) return;
+        this.pausedBy.delete(key);
+        // They asked for more voice time and speaks again before it was due back: the Universe team added it, and they are told so, once
+        const asked = turn.playerId === undefined ? undefined : this.askedMore.get(turn.playerId);
+        if (turn.playerId !== undefined && asked !== undefined) {
+            this.askedMore.delete(turn.playerId);
+            if (Number.isNaN(asked) || Date.now() < asked) this.onGiven?.(spaceName, turn.playerId);
+        }
         if (personId && (this.joined.has(key) || this.rooms.get(spaceName)?.connected)) this.tell(spaceName, personId, 'on');
     }
 
@@ -1783,6 +1979,7 @@ export class VoiceCalls {
         for (const call of people) {
             const key = callKey(spaceName, call.participantId);
             this.calls.delete(key);
+            this.windows?.stop(key);
             this.joined.delete(key);
             this.lost.set(key, { spaceName, personId: call.participantId });
             this.game.sendDisconnect(spaceName, call.participantId);
@@ -1833,6 +2030,10 @@ export class VoiceCalls {
         this.modes.clear();
         this.sentModes.clear();
         this.listening?.shutdown();
+        this.windows?.shutdown();
+        this.askedMore.clear();
+        this.lastPersonStop.clear();
+        this.pausedBy.clear();
         this.told.clear();
         this.left.clear();
         this.toldLeft.clear();

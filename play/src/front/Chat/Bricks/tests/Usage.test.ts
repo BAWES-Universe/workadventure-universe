@@ -32,6 +32,8 @@ describe("a person's usage as Orbit sends it (#1999)", () => {
             },
             apps: null,
             computer: null,
+            speech: null,
+            appUse: null,
             credit: [],
             bots: [],
             activity: [],
@@ -39,6 +41,51 @@ describe("a person's usage as Orbit sends it (#1999)", () => {
             storagePaidByUniverse: false,
             extraUntil: null,
         });
+    });
+
+    it("reads their own voice time and App use as plain words, with when they start again and whether they can ask for more", () => {
+        const usage = parseUsage(
+            answer({
+                speech: {
+                    scope: "speech",
+                    left: 0,
+                    words: "out",
+                    startsAgainAt: "2026-12-01T00:00:00.000Z",
+                    asked: false,
+                    canAskForMore: true,
+                    extra: null,
+                },
+                appUse: {
+                    scope: "apps",
+                    left: 0.4,
+                    words: "half",
+                    startsAgainAt: "2026-12-01T00:00:00.000Z",
+                    asked: true,
+                    canAskForMore: false,
+                    extra: null,
+                },
+            })
+        );
+        expect(usage?.speech).toEqual({
+            left: 0,
+            words: "out",
+            startsAgainAt: "2026-12-01T00:00:00.000Z",
+            asked: false,
+            canAskForMore: true,
+        });
+        expect(usage?.appUse).toEqual({
+            left: 0.4,
+            words: "half",
+            startsAgainAt: "2026-12-01T00:00:00.000Z",
+            asked: true,
+            canAskForMore: false,
+        });
+    });
+
+    it("shows nothing for an allowance Orbit does not send or sends without a day it starts again", () => {
+        expect(parseUsage(answer({ speech: null }))?.speech).toBeNull();
+        expect(parseUsage(answer({ speech: { left: 0.5, words: "half" } }))?.speech).toBeNull();
+        expect(parseUsage(answer({ appUse: "no" }))?.appUse).toBeNull();
     });
 
     it("reads computer time, what the Bricks keep and the day extra usage ends", () => {

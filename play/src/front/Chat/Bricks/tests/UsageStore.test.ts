@@ -139,6 +139,20 @@ describe("a person's usage in the game (#1999)", () => {
         expect(get(myUsageStore)?.computer?.money).toMatchObject({ asked: true, canAskForMore: false });
     });
 
+    it("asks for more voice time from a card in the chat, and leaves the page's own lines as they were", async () => {
+        api.getMyUsage.mockResolvedValue({ ...out, version: 6, apps: money() });
+        await loadMyUsage();
+        expect(await askMyUsageForMore("speech")).toBe(true);
+        expect(api.askForMoreUsage).toHaveBeenCalledWith("speech");
+        expect(get(myUsageStore)?.apps).toMatchObject({ asked: false, canAskForMore: true });
+        expect(get(myUsageStore)?.computer).toMatchObject({ asked: false, canAskForMore: true });
+    });
+
+    it("says nothing was sent when Orbit did not take the ask for more voice time", async () => {
+        api.askForMoreUsage.mockRejectedValueOnce(new Error("409"));
+        expect(await askMyUsageForMore("speech")).toBe(false);
+    });
+
     it("never lets an older answer replace a newer one", async () => {
         api.getMyUsage.mockResolvedValueOnce({ ...out, version: 20, storage: { bytes: 20 } });
         await loadMyUsage();

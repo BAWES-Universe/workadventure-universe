@@ -18,6 +18,8 @@
  * refuses them too. In the person's words these are "Instant Apps" or "Apps", never tools or connectors.
  */
 import { createHash, randomUUID } from 'crypto';
+import { stopLine } from '../voice/StopLines';
+import type { StoppedBy } from '../voice/VoiceAllowance';
 import type { AdminApiService, InstantListing, InstantToolInfo, InstantWho, TaskReceiptOpened, TaskReceiptState } from '../server/AdminApiService';
 
 /** The name each Instant tool has for the model: "EXA_SEARCH" is `instant_app_exa_search`. */
@@ -182,6 +184,19 @@ const NOT_ABOUT_CREDIT = new Set(['not_set', 'paused', 'exposure_full', 'provide
 
 const PLAIN_FALLBACK = 'That did not run.';
 
+/**
+ * Which of the five reasons (see voice/StopLines) a refusal that is about the platform is: the month's Apps money is spent or the room for runs is full
+ * (`budget`), the provider is off, out of money or cannot be asked (`provider`). Those are said in the words every Apps stop has, never blame and never a
+ * date. A refusal about the person's own credit, a rule or a setting keeps the words Orbit gave.
+ */
+const STOP_BY_REASON: Record<string, StoppedBy> = {
+    paused: 'budget',
+    exposure_full: 'budget',
+    provider_off: 'provider',
+    provider_empty: 'provider',
+    credit_unavailable: 'provider',
+};
+
 /** What a task that was stopped by a rule tells the model for every run it asks for after that. */
 export function ruleStopResult(words: string): Record<string, unknown> {
     return {
@@ -305,7 +320,8 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                 };
             }
             case 'refused': {
-                const words = answer.message || PLAIN_FALLBACK;
+                const stopBy = STOP_BY_REASON[answer.reason];
+                const words = (stopBy && stopLine({ by: stopBy, what: 'app' })) || answer.message || PLAIN_FALLBACK;
                 if (answer.reason === 'unclear' || answer.reason === 'already_checking') {
                     return unsure('The same request is still being checked. Say you are checking whether it worked and do not run it again.');
                 }

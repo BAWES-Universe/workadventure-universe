@@ -36,7 +36,16 @@ export interface BotAskChoice {
     id: string;
     label: string;
     line?: string;
+    /**
+     * The choice asks the Universe team for more of this (the card of a stop, "Ask for more"). The game does it itself when the choice is tapped,
+     * because only the game has the person's own session; the bot server then says one line.
+     */
+    askForMore?: BotAskMoreCategory;
 }
+
+/** What "Ask for more" can be for, as Orbit's route names them. */
+export type BotAskMoreCategory = "speech" | "apps" | "computer";
+const MORE_CATEGORIES: BotAskMoreCategory[] = ["speech", "apps", "computer"];
 
 /** How a card ended, as the bot server wrote it. A card that is still waiting has none. */
 export interface BotAskAnswer {
@@ -131,17 +140,40 @@ const CHOICES_MAX = 4;
 const CHOICE_LABEL_MAX = 60;
 const CHOICE_LINE_MAX = 100;
 
+/** The category a choice's action asks more for, or undefined when it is not an ask for more. */
+function readAskForMore(action: unknown): BotAskMoreCategory | undefined {
+    if (!action || typeof action !== "object") return undefined;
+    const { kind, category } = action as Record<string, unknown>;
+    return kind === "ask-for-more" && MORE_CATEGORIES.includes(category as BotAskMoreCategory)
+        ? (category as BotAskMoreCategory)
+        : undefined;
+}
+
+/**
+ * What a tap on a question card asks Orbit for before it is sent: the categories of the picked choices that ask the Universe team for more,
+ * without repeats. Empty for every other tap and for every card a model asked.
+ */
+export function moreAskedBy(ask: Pick<BotAsk, "question">, tap: BotAskTap): BotAskMoreCategory[] {
+    if (tap.action !== "pick" || !ask.question) return [];
+    const wanted = new Set<BotAskMoreCategory>();
+    for (const choice of ask.question.choices) {
+        if (choice.askForMore && tap.choices.includes(choice.id)) wanted.add(choice.askForMore);
+    }
+    return [...wanted];
+}
+
 function parseChoices(value: unknown): BotAskChoice[] {
     if (!Array.isArray(value)) return [];
     const choices: BotAskChoice[] = [];
     for (const raw of value.slice(0, CHOICES_MAX)) {
         if (!raw || typeof raw !== "object") continue;
-        const { id, label, line } = raw as Record<string, unknown>;
+        const { id, label, line, action } = raw as Record<string, unknown>;
         const name = clip(label, CHOICE_LABEL_MAX);
         const key = clip(id, 20);
         if (!key || !name || choices.some((choice) => choice.id === key)) continue;
         const text = clip(line, CHOICE_LINE_MAX);
-        choices.push(text ? { id: key, label: name, line: text } : { id: key, label: name });
+        const more = readAskForMore(action);
+        choices.push({ id: key, label: name, ...(text ? { line: text } : {}), ...(more ? { askForMore: more } : {}) });
     }
     return choices;
 }

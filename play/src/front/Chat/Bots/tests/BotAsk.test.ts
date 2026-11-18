@@ -9,6 +9,7 @@ import {
     closesSoon,
     endedAsk,
     isWaiting,
+    moreAskedBy,
     nextAskChange,
     readBotAsk,
     readNearbyBotAsk,
@@ -336,5 +337,98 @@ describe("a question card (#1661)", () => {
         const ask = readBotAsk(BOT_CHAT_ID, notice(QUESTION), 0)!;
         expect(isWaiting(ask, 1000)).toBe(true);
         expect(endedAsk(ask, 700_000).answer).toEqual({ expired: true });
+    });
+});
+
+describe("the card of a stop (voice or an App paused)", () => {
+    const STOP = {
+        v: 1,
+        kind: "question",
+        id: "q-9",
+        revision: 1,
+        title: "Voice time is used up",
+        choices: [
+            {
+                id: "c1",
+                label: "Ask for more",
+                line: "The Universe team gets your request",
+                action: { kind: "ask-for-more", category: "speech" },
+            },
+            {
+                id: "c2",
+                label: "Text is fine",
+                action: { kind: "dismiss", line: "Okay, I'll keep answering in text." },
+            },
+        ],
+        now: 1_000_000,
+        expiresAt: 1_000_000 + 600_000,
+        waitMinutes: 10,
+    };
+
+    it("knows which choice asks the Universe team for more, and which does not", () => {
+        const ask = readBotAsk(BOT_CHAT_ID, notice(STOP), 0)!;
+        expect(ask.question?.choices).toEqual([
+            {
+                id: "c1",
+                label: "Ask for more",
+                line: "The Universe team gets your request",
+                askForMore: "speech",
+            },
+            { id: "c2", label: "Text is fine" },
+        ]);
+    });
+
+    it("asks Orbit before the tap is sent, once per category, only for the choice that asks", () => {
+        const ask = readBotAsk(BOT_CHAT_ID, notice(STOP), 0)!;
+        expect(moreAskedBy(ask, { action: "pick", choices: ["c1"] })).toEqual(["speech"]);
+        expect(moreAskedBy(ask, { action: "pick", choices: ["c2"] })).toEqual([]);
+        expect(moreAskedBy(ask, { action: "close" })).toEqual([]);
+        expect(moreAskedBy(ask, { action: "moreTime" })).toEqual([]);
+    });
+
+    it("reads the same for a card shown in a bubble", () => {
+        const ask = readNearbyBotAsk(JSON.stringify(STOP), 0)!;
+        expect(moreAskedBy(ask, { action: "pick", choices: ["c1"] })).toEqual(["speech"]);
+    });
+
+    it("never asks for anything Orbit has no name for, and never for a card the model asked", () => {
+        const odd = {
+            ...STOP,
+            choices: [
+                { id: "c1", label: "Ask for more", action: { kind: "ask-for-more", category: "money" } },
+                { id: "c2", label: "Other", action: { kind: "dismiss", line: "x" } },
+            ],
+        };
+        const ask = readBotAsk(BOT_CHAT_ID, notice(odd), 0)!;
+        expect(moreAskedBy(ask, { action: "pick", choices: ["c1", "c2"] })).toEqual([]);
+        const plain = readBotAsk(
+            BOT_CHAT_ID,
+            notice({
+                ...STOP,
+                choices: [
+                    { id: "c1", label: "A" },
+                    { id: "c2", label: "B" },
+                ],
+            }),
+            0
+        )!;
+        expect(moreAskedBy(plain, { action: "pick", choices: ["c1", "c2"] })).toEqual([]);
+    });
+
+    it("asks for Apps or computer time the same way", () => {
+        for (const category of ["apps", "computer"] as const) {
+            const ask = readBotAsk(
+                BOT_CHAT_ID,
+                notice({
+                    ...STOP,
+                    choices: [
+                        { id: "c1", label: "Ask for more", action: { kind: "ask-for-more", category } },
+                        { id: "c2", label: "Wait" },
+                    ],
+                }),
+                0
+            )!;
+            expect(moreAskedBy(ask, { action: "pick", choices: ["c1"] })).toEqual([category]);
+        }
     });
 });

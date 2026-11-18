@@ -8,12 +8,21 @@
  */
 import { ASK_KEY } from './ApprovalCard';
 
+/**
+ * What a tap on a choice does by itself, apart from picking a direction. Only a card the bot server builds for a stop (see voice/StopLines) carries one; a
+ * card the model asks never does. `ask-for-more`: the person's own game asks the Universe team for more (it has their session; the bot server has none),
+ * then the bot says one line. `dismiss`: the bot says one line. Either way the pick is not handed on to the model as something the person said.
+ */
+export type QuestionAction = { kind: 'ask-for-more'; category: 'speech' | 'apps' | 'computer' } | { kind: 'dismiss'; line: string };
+
 export interface QuestionChoice {
     /** "c1".."c4": what a tap names, never the words. */
     id: string;
     label: string;
     /** One short line under the label ("3 tracks, about 3 minutes each"). */
     line?: string;
+    /** What a tap does by itself (see QuestionAction). */
+    action?: QuestionAction;
 }
 
 /** How a question card ended, as the game reads it. A card still waiting has none. */

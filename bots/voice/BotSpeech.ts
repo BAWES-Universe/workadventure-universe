@@ -59,6 +59,11 @@ export interface SpeechTurn {
 export interface TurnDecision {
     action: 'speak' | 'text' | 'wait';
     limits?: Partial<Pick<ReplyLimits, 'maxChars' | 'maxSeconds'>>;
+    /**
+     * The longest this reply may be, in seconds, as Orbit admitted it (speech contract version 2: `maxSeconds`). It is a ceiling on top of the
+     * limits above, never a longer one: the reply is cut at the smaller of the two.
+     */
+    capSeconds?: number;
 }
 
 /** `checking`: Orbit is being asked (see `beforeSpeaking`); what comes of it is not known yet. */
@@ -84,6 +89,11 @@ export class BotSpeech {
      * seconds it did play afterwards, and those seconds belong to the person it was for. Only the size cap forgets an entry.
      */
     private readonly players = new Map<string, number>();
+    /**
+     * Which reply each segment was and how many characters of it were sent to the voice, kept apart from `segments` for the same reason as `players`:
+     * the receipt of a reply is written when the worker's last report comes, after the segment may have been forgotten.
+     */
+    private readonly turns = new Map<string, { turnId: string; characters: number }>();
     /** Replies whose audio is not over yet, with the space each is in. */
     private readonly unfinished = new Map<string, string>();
     /** The segments people are hearing now (round 8): the reply shows Stop speaking until its audio is over, however it ends. */
@@ -180,6 +190,11 @@ export class BotSpeech {
     /** The person (their player id) the reply that was said as this segment was for, when it is still remembered. */
     playerOfSegment(segmentId: string): number | undefined {
         return this.players.get(segmentId);
+    }
+
+    /** The reply a segment was, and how many characters of it went to the voice, when it is still remembered (for the receipt of that reply). */
+    turnOfSegment(segmentId: string): { turnId: string; characters: number } | undefined {
+        return this.turns.get(segmentId);
     }
 
     /** Whether a reply for this person is being played now. */
@@ -424,6 +439,8 @@ export class BotSpeech {
             return;
         }
         this.limits = { ...this.baseLimits, ...decision.limits };
+        // What Orbit admitted is the most this reply may run: the voice is told to stop there, whatever the longer limit says
+        if (decision.capSeconds !== undefined && decision.capSeconds > 0) this.limits = { ...this.limits, maxSeconds: Math.min(this.limits.maxSeconds, decision.capSeconds) };
         this.say(spaceName, responseId, reply, onlyFor);
     }
 
@@ -450,6 +467,7 @@ export class BotSpeech {
             return 'unsaid';
         }
         this.segments.set(segmentId, { spaceName, responseId, heard: false });
+        remember(this.turns, segmentId, { turnId: responseId, characters: words.length });
         const player = playerOf(responseId);
         if (player !== undefined) {
             remember(this.players, segmentId, player);

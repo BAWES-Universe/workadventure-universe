@@ -167,6 +167,58 @@ describe("the Usage page (#1999)", () => {
         expect(text()).toContain("You'll see it here and in chat when it's added");
     });
 
+    it("shows their own voice time and App use only once Orbit sends them, with no number and no platform budget", async () => {
+        game.getMyUsage.mockResolvedValue(
+            usage({
+                speech: {
+                    left: 0.7,
+                    words: "plenty",
+                    startsAgainAt: "2026-12-01T12:00:00",
+                    asked: false,
+                    canAskForMore: false,
+                },
+                appUse: {
+                    left: 0.3,
+                    words: "low",
+                    startsAgainAt: "2026-12-01T12:00:00",
+                    asked: false,
+                    canAskForMore: false,
+                },
+            })
+        );
+        await open();
+        expect(byId("usageSecVoice")).not.toBeNull();
+        expect(byId("usageSecAppUse")).not.toBeNull();
+        expect(text()).toContain("Almost used up this month");
+        expect(text()).not.toMatch(/budget|\$/i);
+    });
+
+    it("has no voice or App use lines until Orbit sends them", async () => {
+        await open();
+        expect(byId("usageSecVoice")).toBeNull();
+        expect(byId("usageSecAppUse")).toBeNull();
+    });
+
+    it("asks for more voice time from the page when it is used up, and says it asked", async () => {
+        game.getMyUsage.mockResolvedValue(
+            usage({
+                speech: {
+                    left: 0,
+                    words: "out",
+                    startsAgainAt: "2026-12-01T12:00:00",
+                    asked: false,
+                    canAskForMore: true,
+                },
+            })
+        );
+        await open();
+        byId("usageAskForMoreVoice")?.click();
+        await settle();
+        expect(game.askForMoreUsage).toHaveBeenCalledWith("speech");
+        expect(byId("usageAskForMoreVoice")).toBeNull();
+        expect(text()).toContain("You asked for more");
+    });
+
     it("shows a request already waiting, without the button", async () => {
         game.getMyUsage.mockResolvedValue(
             usage({ computer: computer({ left: 0, words: "out", asked: true, canAskForMore: false }) })

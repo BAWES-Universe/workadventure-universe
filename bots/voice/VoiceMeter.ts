@@ -13,6 +13,8 @@
  * Universe AI reply allowance and the bot's listening limit (see VoiceAllowance, VoiceListening).
  */
 
+import type { Admission } from './VoiceAllowance';
+
 /** Who a stretch of hearing or a spoken reply was for, as Orbit counts people. */
 export interface VoiceWho {
     userId: string;
@@ -29,6 +31,21 @@ export interface VoiceUse {
     who: VoiceWho | null;
     /** A person's own key paid for this part (true), or Universe AI did (false). */
     owner: boolean;
+    /**
+     * The receipt of an utterance Orbit admitted (speech contract version 2): the reply's turn id, which Orbit releases what it set aside on, with what
+     * was admitted echoed back. With it a use of 0 seconds is booked too: it is a real zero (admitted, and nothing was heard), and it settles the hold.
+     */
+    turn?: {
+        turnId: string;
+        admission: Admission;
+        model?: string;
+        /** Characters sent to the voice company, when it bills by them. */
+        characters?: number;
+        /** The voice company refused for money: Orbit stops new funded speech on that company. */
+        providerStatus?: 'ok' | 'funds_unavailable';
+    };
+    /** The window of live hearing this stretch was heard under, when Orbit admitted one (see HearingWindows). */
+    windowId?: string;
 }
 
 /** One event as Orbit's POST /api/meter/events takes it. */
@@ -47,6 +64,15 @@ export interface SpeechEvent {
     costMicros: null;
     basis: 'paid_by_other' | 'unknown';
     detail: { part: 'hearing' | 'speaking'; source: 'call'; ms: number };
+    /** Speech contract version 2, all optional: an Orbit from before ignores them, and they are only sent for a reply it admitted in version 2. */
+    contract?: 2;
+    turnId?: string;
+    admission?: { rateVersion: number; admittedSeconds: number; admittedMicros: number };
+    provider?: string;
+    model?: string;
+    characters?: number;
+    providerStatus?: 'ok' | 'funds_unavailable';
+    windowId?: string;
 }
 
 /** What the bot server asks of Orbit. `AdminApiService` is the real one; tests give a fake. True: Orbit answered, so nothing is kept to send again. */
@@ -89,7 +115,8 @@ export class VoiceMeter {
 
     /** Books one use. Never throws, never waits. */
     add(use: VoiceUse): void {
-        if (this.closed || !Number.isFinite(use.ms) || use.ms <= 0) return;
+        // An admitted reply books even a real zero: that receipt is what lets Orbit release what it set aside
+        if (this.closed || !Number.isFinite(use.ms) || use.ms < 0 || (use.ms === 0 && !use.turn)) return;
         const seconds = Math.ceil(use.ms / 1000);
         this.pending.push({
             eventId: `speech:call:${this.botId}:${this.run}:${use.part}:${use.key}`.slice(0, 255),
@@ -105,6 +132,18 @@ export class VoiceMeter {
             costMicros: null,
             basis: use.owner ? 'paid_by_other' : 'unknown',
             detail: { part: use.part, source: 'call', ms: Math.round(use.ms) },
+            ...(use.turn
+                ? {
+                      contract: 2 as const,
+                      turnId: use.turn.turnId,
+                      admission: { rateVersion: use.turn.admission.rateVersion, admittedSeconds: use.turn.admission.admittedSeconds, admittedMicros: use.turn.admission.admittedMicros },
+                      ...(use.turn.admission.provider ? { provider: use.turn.admission.provider } : {}),
+                      ...(use.turn.model ? { model: use.turn.model } : {}),
+                      ...(use.turn.characters !== undefined ? { characters: use.turn.characters } : {}),
+                      ...(use.turn.providerStatus ? { providerStatus: use.turn.providerStatus } : {}),
+                  }
+                : {}),
+            ...(use.windowId ? { windowId: use.windowId } : {}),
         });
         if (this.pending.length > MAX_PENDING) {
             this.dropped += this.pending.length - MAX_PENDING;
