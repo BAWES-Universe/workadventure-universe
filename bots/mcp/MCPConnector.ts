@@ -388,7 +388,7 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
                 mcpSessionInitCache.delete(key);
                 // Only "the link does not know this session" is answered by opening another; any other refusal (its key, an
                 // outage) means the call cannot go out now, and nothing was asked of the App
-                if (![400, 404, 410].includes(check.status)) return NOT_SENT;
+                if (![400, 404, 410].includes(check.status)) return { ...NOT_SENT, status: check.status };
                 cached = undefined;
             }
         }
@@ -399,11 +399,12 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
                 { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'workadventure-mcp-bot', version: '1.0.0', player_id: link.requesterKey || null } } },
                 undefined
             );
-            // The link refused to open a session (its key expired, say): nothing was asked of the App, so nothing is kept or sent
-            if (typeof opened.status === 'number' && opened.status >= 400) return NOT_SENT;
+            // The link refused to open a session (its key expired, say): nothing was asked of the App, so nothing is kept or sent. Its status
+            // goes with the answer, so a refused sign-in is told from an outage (#1819)
+            if (typeof opened.status === 'number' && opened.status >= 400) return { ...NOT_SENT, status: opened.status };
             sessionId = opened.sessionId || undefined;
             const told = await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId);
-            if (typeof told.status === 'number' && told.status >= 400) return NOT_SENT;
+            if (typeof told.status === 'number' && told.status >= 400) return { ...NOT_SENT, status: told.status };
             mcpSessionInitCache.set(key, { sessionId, initializedAt: Date.now(), usedAt: Date.now() });
         }
         const requestId = method === 'tools/list' ? '1' : '2';
@@ -414,7 +415,7 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
             mcpSessionInitCache.delete(key);
             // Not tried again: Orbit already counted this call id, and a second send would be refused as already made.
             // A session that went idle is caught before the call (see LINK_SESSION_IDLE_CHECK_MS), so this is only a race.
-            return { data: null, neverRan: answer.status === 404 && sessionId !== undefined, retryable: false };
+            return { data: null, neverRan: answer.status === 404 && sessionId !== undefined, retryable: false, status: answer.status };
         }
         const kept = mcpSessionInitCache.get(key);
         if (kept) kept.usedAt = Date.now();

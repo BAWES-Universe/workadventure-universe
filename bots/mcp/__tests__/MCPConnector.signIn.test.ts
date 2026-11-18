@@ -355,3 +355,25 @@ describe('the tool server list cannot be read (#1819)', () => {
         expect(names(found).some((n) => n.includes('find_people'))).toBe(true);
     });
 });
+
+describe('a ready-made App whose link refuses the sign-in (#1819)', () => {
+    const gmail = { id: 'srv-rm', botId: 'bot-1', name: 'Gmail', serverUrl: 'https://stored.link/mcp', authType: 'none', enabled: true, readyMade: true, connectionId: 'conn-gmail' };
+
+    it.each([
+        ['opening the session', 401, 'initialize'],
+        ['telling it the session is open', 403, 'notifications/initialized'],
+        ['asking for the tools', 401, 'tools/list'],
+    ])('lists it as expired when the link answers %s with %i', async (_when, status, method) => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        servers = [gmail];
+        http.post.mockImplementation(async (_url: string, body: { message: { method: string } }) => {
+            const sent = body.message.method;
+            const refused = sent === method;
+            return { data: { status: refused ? status : 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify({ jsonrpc: '2.0', id: '1', result: { tools: [tool('send_email')] } }) : '{}' } };
+        });
+        const found = await discover();
+        expect(found.issues).toHaveLength(1);
+        expect(found.issues?.[0]).toMatchObject({ serverId: 'srv-rm', state: 'expired' });
+        vi.unstubAllEnvs();
+    });
+});
