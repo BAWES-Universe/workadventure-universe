@@ -9,8 +9,8 @@
 # By default the "on" run is followed by the "off" run on one port. To run them side by side, as the kept results were,
 # start it twice into the same out dir:  RUNS=on PORT=8830 ...  and  RUNS=off PORT=8831 ...
 # The image is used as built. What is added from outside: the measuring entry file (src/worker-under-load.ts, which
-# starts the image's own worker code with scripted speech-to-text), and the one switch, VOICE_SPEECH_OBSERVER=1, for the
-# "on" run. Needs Docker, the image (IMAGE), and a livekit-server on 127.0.0.1:7880 with the worker's test keys.
+# starts the image's own worker code with scripted speech-to-text), and, for the "off" run, the engineers' off switch,
+# VOICE_SPEECH_OBSERVER=0 (the image is on by default). Needs Docker, the image (IMAGE), and a livekit-server on 127.0.0.1:7880 with the worker's test keys.
 set -eu
 DATA=$1; OUT=$2; MEASURED=${3:-1800}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -62,5 +62,5 @@ run() { # name, the switch (or nothing)
 }
 cd "$REPO/voice-vad-eval"
 for which in $RUNS; do
-  if [ "$which" = on ]; then run soak-on -e VOICE_SPEECH_OBSERVER=1; else run soak-off; fi
+  if [ "$which" = on ]; then run soak-on -e VOICE_SPEECH_OBSERVER=1; else run soak-off -e VOICE_SPEECH_OBSERVER=0; fi
 done

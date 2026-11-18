@@ -1435,17 +1435,34 @@ const chat: BaseTranslation = {
             delete: "Delete",
             deleteFailed: "Couldn't delete the file. Try again.",
             downloadFailed: "Couldn't download that. Try again.",
-            allMade: "All {count:number} things it made",
+            artifactsMade: "{count:number} {{artifact|artifacts}} it made",
             opensArtifacts: "Opens Your artifacts",
             onlyYouAndBrick: "only {name} and you",
             inNearbyChat: "sent in a nearby chat",
             noneMade: "Nothing made for you yet. Ask {name} for something and it shows up here.",
             noneSent: "Files you send {name} show up here.",
-            everything: "Download everything",
+            // More than the first look shows: older files in the same lists, and a search over all of them
+            showMore: "Show older files",
+            showMoreLine: "{count:number} more",
+            moreFailed: "Couldn't read more files. Try again.",
+            search: "Search files by name",
+            searching: "Looking for “{words}”…",
+            found: "{count:number} {{file|files}} named like “{words}”",
+            nothingFound: "No file is named like “{words}”.",
+            searchFailed: "Couldn't search. Try again.",
+            // The download covers every file in both lists, not only the ones shown
+            everything: "Download all {count:number} {{file|files}}",
+            everythingFound: "Download the {count:number} found",
             everythingLine:
-                "One file with all of the above. What a Brick keeps counts on your Usage page, in plain sizes.",
+                "One zip with every file {name} made for you and every file you sent it, not only the ones shown. Your artifacts are separate. What a Brick keeps counts on your Usage page, in plain sizes.",
+            // The same, once it has a computer: its files are kept apart too
+            everythingLineComputer:
+                "One zip with every file {name} made for you and every file you sent it, not only the ones shown. Your artifacts and the files on its computer are separate. What a Brick keeps counts on your Usage page, in plain sizes.",
+            everythingFoundLine: "One zip with only the files found by this search.",
             everythingFailed: "Couldn't put the files together. Try again.",
             everythingPartial: "Some files couldn't be added to the download. Try again to get them.",
+            everythingListCut:
+                "Couldn't read the whole list of files, so the download is missing some. Try again to get all of them.",
             loadFailed: "Couldn't read the files. Try again.",
             // What is on its computer (only once it has one)
             onItsComputer: "On its computer",

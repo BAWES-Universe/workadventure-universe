@@ -33,6 +33,8 @@ export interface BrickComputerFiles {
     savedAt: number | null;
 }
 
+export type FileSection = "made" | "sent";
+
 /** Whether the chat took a file its computer made: "waiting" while it is still being sent, "not_delivered" once the chat did not (and will not) take it. */
 export type ResultDelivery = "delivered" | "waiting" | "not_delivered";
 
@@ -51,19 +53,34 @@ export interface BrickResult {
 }
 
 export interface BrickFiles {
-    made: { files: BrickFile[]; total: number; artifacts: number };
+    /**
+     * `files` are the ones loaded so far, newest first. `total` counts every file it made and every artifact it made,
+     * `fileTotal` only the files (the ones found, while a search is shown). `nextCursor` asks for the older ones: null
+     * when `files` has them all.
+     */
+    made: { files: BrickFile[]; total: number; artifacts: number; fileTotal: number; nextCursor: string | null };
     /** What its computer made, newest first. */
     results: BrickResult[];
-    sent: { files: BrickFile[]; total: number };
+    sent: { files: BrickFile[]; total: number; nextCursor: string | null };
     computer: BrickComputerFiles | null;
+    /** Every file made and sent, and their size, whatever is loaded or searched for. */
     count: number;
     bytes: number;
 }
 
+/** One page of one list, as Orbit answers it. */
+export interface BrickFilesPage {
+    files: BrickFile[];
+    total: number;
+    nextCursor: string | null;
+    /** Entries in the page that were not whole and are left out of `files`. */
+    unreadable: number;
+}
+
 const EMPTY: BrickFiles = {
-    made: { files: [], total: 0, artifacts: 0 },
+    made: { files: [], total: 0, artifacts: 0, fileTotal: 0, nextCursor: null },
     results: [],
-    sent: { files: [], total: 0 },
+    sent: { files: [], total: 0, nextCursor: null },
     computer: null,
     count: 0,
     bytes: 0,
@@ -135,11 +152,32 @@ export function nextDeletedBrickResultsPage(value: unknown): string | null {
 /** The most pages of results of deleted Bricks read in one go (a hundred a time): far more than a person has, and a stop for an answer that never ends. */
 const DELETED_RESULTS_PAGES_MAX = 50;
 
+/** Where the next page starts: Orbit's own text, or none when there is no next page. */
+const cursorOf = (value: unknown): string | null =>
+    typeof value === "string" && value.length > 0 && value.length <= 400 ? value : null;
+
+/**
+ * Orbit's answer for one page of one list. Throws when it is not a page (an Orbit that does not page answers with the
+ * first look again): a page that was not read is never taken for an empty or a last one.
+ */
+export function parseBrickFilesPage(value: unknown, section: FileSection): BrickFilesPage {
+    const answer = (value ?? {}) as { section?: unknown; files?: unknown; total?: unknown; nextCursor?: unknown };
+    if (typeof answer !== "object" || answer.section !== section || !Array.isArray(answer.files))
+        throw new Error("Not a page of files");
+    const files = parseFiles(answer.files);
+    return {
+        files,
+        total: Math.max(num(answer.total), files.length),
+        nextCursor: cursorOf(answer.nextCursor),
+        unreadable: answer.files.length - files.length,
+    };
+}
+
 /** Orbit's answer for a Brick's files. Anything that is not whole is left out. */
 export function parseBrickFiles(value: unknown): BrickFiles {
     const answer = (value ?? {}) as {
-        made?: { files?: unknown; total?: unknown; artifacts?: unknown };
-        sent?: { files?: unknown; total?: unknown };
+        made?: { files?: unknown; total?: unknown; artifacts?: unknown; fileTotal?: unknown; nextCursor?: unknown };
+        sent?: { files?: unknown; total?: unknown; nextCursor?: unknown };
         results?: unknown;
         computer?: Record<string, unknown> | null;
         count?: unknown;
@@ -155,8 +193,14 @@ export function parseBrickFiles(value: unknown): BrickFiles {
             files: made,
             total: Math.max(num(answer.made.total), made.length),
             artifacts: num(answer.made.artifacts),
+            fileTotal: Math.max(num(answer.made.fileTotal, made.length), made.length),
+            nextCursor: cursorOf(answer.made.nextCursor),
         },
-        sent: { files: sent, total: Math.max(num(answer.sent.total), sent.length) },
+        sent: {
+            files: sent,
+            total: Math.max(num(answer.sent.total), sent.length),
+            nextCursor: cursorOf(answer.sent.nextCursor),
+        },
         computer:
             computer && (computer.state === "on" || computer.state === "resting" || computer.state === "off")
                 ? {
@@ -234,11 +278,16 @@ function saveBlob(name: string, blob: Blob, document: Document = globalThis.docu
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-/** One name for each file in the zip: the same name twice becomes "name (2).ext". */
-export function zipNames(names: string[]): string[] {
-    // Every name given out is kept, so "a.pdf" twice beside a file really called "a (2).pdf" never gives one name to two files
+/** What goes in a zip: a file with its own link, or a result of a computer, opened with the person's own sign-in. */
+type ZipEntry = Pick<BrickFile, "name" | "store"> | { name: string; load: () => Promise<Blob> };
+
+/**
+ * Gives each file in a zip a name of its own, one at a time: the same name twice becomes "name (2).ext". Every name given
+ * out is kept, so "a.pdf" twice beside a file really called "a (2).pdf" never gives one name to two files.
+ */
+export function zipNamer(): (name: string) => string {
     const taken = new Set<string>();
-    return names.map((name) => {
+    return (name) => {
         const clean = name.replace(/[\\/:*?"<>|]+/g, "-").trim() || "file";
         let candidate = clean;
         const dot = clean.lastIndexOf(".");
@@ -247,43 +296,71 @@ export function zipNames(names: string[]): string[] {
         }
         taken.add(candidate.toLowerCase());
         return candidate;
-    });
+    };
+}
+
+/** One name for each file in the zip: the same name twice becomes "name (2).ext". */
+export function zipNames(names: string[]): string[] {
+    const give = zipNamer();
+    return names.map(give);
+}
+
+/** What an export put in the zip. */
+export interface EverythingResult {
+    /** Files in the zip. */
+    added: number;
+    /** Files that could not be read, so they are not in it. */
+    missed: number;
+    /** False when the list itself stopped coming part of the way (a page could not be read): files after that are not in it. */
+    complete: boolean;
 }
 
 /**
- * One zip with all the files the page lists, put together in the browser from the files' own links. Files that cannot
- * be read are left out of it, and said: the caller gets how many went in and how many did not. Nothing is changed.
+ * One zip with files, put together in the browser from the files' own links. `files` is a list, or the pages of a list
+ * as they come (a page that cannot be read ends the walk, and the zip says it is not whole). Files that cannot be read
+ * are left out of it, and said: the caller gets how many went in, how many did not, and whether the whole list was
+ * read. Nothing is changed.
  */
 export async function downloadEverything(
-    files: ({ name: string; store: FileStore } | { name: string; load: () => Promise<Blob> })[],
+    files: ZipEntry[] | AsyncIterable<ZipEntry[]>,
     zipName: string,
     fetcher: typeof fetch = (...args) => fetch(...args)
-): Promise<{ added: number; missed: number } | undefined> {
+): Promise<EverythingResult | undefined> {
     const { default: JSZip } = await import("jszip");
     const zip = new JSZip();
-    const names = zipNames(files.map((file) => file.name));
+    const nameOf = zipNamer();
     let added = 0;
     let missed = 0;
-    for (const [index, file] of files.entries()) {
-        try {
-            if ("load" in file) {
-                // A result of its computer: opened with the person's own sign-in, not from a link
-                // eslint-disable-next-line no-await-in-loop
-                zip.file(names[index], await file.load());
-                added++;
-                continue;
+    let complete = true;
+    const pages: Iterable<ZipEntry[]> | AsyncIterable<ZipEntry[]> = Array.isArray(files) ? [files] : files;
+    try {
+        for await (const page of pages) {
+            for (const file of page) {
+                const name = nameOf(file.name);
+                try {
+                    if ("load" in file) {
+                        // A result of its computer: opened with the person's own sign-in, not from a link
+                        // eslint-disable-next-line no-await-in-loop
+                        zip.file(name, await file.load());
+                        added++;
+                        continue;
+                    }
+                    const href = fileLink(file.store);
+                    if (!href) throw new Error("no link");
+                    // eslint-disable-next-line no-await-in-loop
+                    const response = await fetcher(href);
+                    if (!response.ok) throw new Error(`status ${response.status}`);
+                    // eslint-disable-next-line no-await-in-loop
+                    zip.file(name, await response.blob());
+                    added++;
+                } catch {
+                    missed++;
+                }
             }
-            const href = fileLink(file.store);
-            if (!href) throw new Error("no link");
-            // eslint-disable-next-line no-await-in-loop
-            const response = await fetcher(href);
-            if (!response.ok) throw new Error(`status ${response.status}`);
-            // eslint-disable-next-line no-await-in-loop
-            zip.file(names[index], await response.blob());
-            added++;
-        } catch {
-            missed++;
         }
+    } catch (error) {
+        console.warn("Could not read the whole list of files", error);
+        complete = false;
     }
     if (added === 0) return undefined;
     const blob = await zip.generateAsync({ type: "blob" });
@@ -295,15 +372,31 @@ export async function downloadEverything(
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    return { added, missed };
+    return { added, missed, complete };
 }
 
 export type FilesState = "loading" | "ready" | "failed";
+export type SearchState = "idle" | "searching" | "failed";
 
 export interface BrickFilesList {
+    /** What the page shows: the files loaded so far, or the files found while a search is shown. */
     files: Readable<BrickFiles>;
     state: Readable<FilesState>;
+    /** The words being searched for ("" when none), once Orbit has answered for them. */
+    query: Readable<string>;
+    search: Readable<SearchState>;
+    /** The lists that are loading their next page right now. */
+    loadingMore: Readable<ReadonlySet<FileSection>>;
     load(): Promise<void>;
+    /** Looks for these words in the names of every file, made and sent (none: back to the newest). True when it was read. */
+    find(words: string): Promise<boolean>;
+    /** Loads the next page of a list, below the files already shown. True when it was read (or there is no more). */
+    more(section: FileSection): Promise<boolean>;
+    /**
+     * Every file of both lists, a page at a time as the person's own export reads them: the files found while a search
+     * is shown, all of them otherwise. A page that cannot be read ends it with an error.
+     */
+    everyFile(): AsyncGenerator<BrickFile[]>;
     /** Deletes a file the person sent. It goes at once and comes back if Orbit refuses. True when it is gone. */
     deleteSent(fileId: string): Promise<boolean>;
     /** The bytes of a file its computer made, opened with the person's own sign-in. Throws when it cannot be read. */
@@ -314,49 +407,238 @@ export interface BrickFilesList {
     deleteResult(fileId: string): Promise<boolean>;
 }
 
+/** What an entry that was not whole stands for in an export: a file with nowhere to read it from, counted as missed. */
+const unreadableFile = (): BrickFile => ({
+    id: "",
+    name: "file",
+    kind: "file",
+    sizeBytes: null,
+    at: 0,
+    audience: "you",
+    store: { url: "" },
+});
+
+/** Files of a list after the ones already there, each once. */
+const appended = (have: BrickFile[], page: BrickFile[]): BrickFile[] => {
+    const seen = new Set(have.map((file) => file.id));
+    return [...have, ...page.filter((file) => !seen.has(file.id))];
+};
+
 /** One Brick's files for its owner. A read that fails says so; it never shows files it did not read. */
 export function brickFilesList(brickId: string): BrickFilesList {
     const files = writable<BrickFiles>(EMPTY);
     const state = writable<FilesState>("loading");
-    // What Orbit last said, and the files the person has asked to delete that Orbit has not answered yet. What is shown
-    // is the first without the second, so a Delete that fails brings back only its own file, whatever else is in flight.
+    const query = writable("");
+    const search = writable<SearchState>("idle");
+    const loadingMore = writable<ReadonlySet<FileSection>>(new Set());
+    // What Orbit last said (the first look and the pages after it), what it said for the words being searched for, and
+    // the files the person has asked to delete that Orbit has not answered yet. What is shown is the search or else the
+    // first look, without the third, so a Delete that fails brings back only its own file, whatever else is in flight.
     let known = EMPTY;
+    let found: BrickFiles | undefined;
+    let words = "";
+    // Counts each search and each load: an answer that belongs to an older one says nothing about the current one
+    let turn = 0;
+    const going = new Set<FileSection>();
     const pending = new Set<string>();
+    // The files Orbit has deleted since the files were last read, and how many: a page that was on its way when one was
+    // deleted must not bring it back or take back the count
+    const removed = new Set<string>();
+    let deletions = 0;
     const without = (from: BrickFiles, ids: ReadonlySet<string>): BrickFiles => {
-        const going = from.sent.files.filter((file) => ids.has(file.id));
-        const goingResults = from.results.filter((result) => ids.has(result.id));
-        if (going.length === 0 && goingResults.length === 0) return from;
+        const gone = from.sent.files.filter((file) => ids.has(file.id));
+        const goneResults = from.results.filter((result) => ids.has(result.id));
+        if (gone.length === 0 && goneResults.length === 0) return from;
         return {
             ...from,
             sent: {
+                ...from.sent,
                 files: from.sent.files.filter((file) => !ids.has(file.id)),
-                total: Math.max(0, from.sent.total - going.length),
+                total: Math.max(0, from.sent.total - gone.length),
             },
             results: from.results.filter((result) => !ids.has(result.id)),
-            count: Math.max(0, from.count - going.length - goingResults.length),
+            count: Math.max(0, from.count - gone.length - goneResults.length),
             bytes: Math.max(
                 0,
                 from.bytes -
-                    going.reduce((total, file) => total + (file.sizeBytes ?? 0), 0) -
-                    goingResults.reduce((total, result) => total + result.sizeBytes, 0)
+                    gone.reduce((total, file) => total + (file.sizeBytes ?? 0), 0) -
+                    goneResults.reduce((total, result) => total + result.sizeBytes, 0)
             ),
         };
     };
-    const show = () => files.set(without(known, pending));
+    // A file Orbit has deleted, taken out of a list and out of every count, whether or not it was loaded there
+    const deleted = (from: BrickFiles, id: string, size: number): BrickFiles => ({
+        ...from,
+        sent: {
+            ...from.sent,
+            files: from.sent.files.filter((file) => file.id !== id),
+            total: Math.max(0, from.sent.total - 1),
+        },
+        count: Math.max(0, from.count - 1),
+        bytes: Math.max(0, from.bytes - size),
+    });
+    // A result Orbit has deleted, taken out of the list and out of the counts
+    const resultGone = (from: BrickFiles, id: string): BrickFiles => without(from, new Set([id]));
+    const show = () => files.set(without(found ?? known, pending));
+    const flag = () => loadingMore.set(new Set(going));
 
     return {
         files: { subscribe: files.subscribe },
         state: { subscribe: state.subscribe },
+        query: { subscribe: query.subscribe },
+        search: { subscribe: search.subscribe },
+        loadingMore: { subscribe: loadingMore.subscribe },
         async load() {
+            const mine = ++turn;
             state.set("loading");
             try {
-                known = parseBrickFiles(await botApiService.getBrickFiles(brickId));
+                const read = parseBrickFiles(await botApiService.getBrickFiles(brickId));
+                if (mine !== turn) return;
+                known = read;
+                found = undefined;
+                removed.clear();
+                words = "";
+                query.set("");
+                search.set("idle");
                 show();
                 state.set("ready");
             } catch (error) {
                 console.warn("Could not read a Brick's files", error);
-                state.set("failed");
+                if (mine === turn) state.set("failed");
             }
+        },
+        async find(text) {
+            const asked = text.trim();
+            const mine = ++turn;
+            if (asked === "") {
+                // Back to the newest, as loaded before
+                found = undefined;
+                words = "";
+                query.set("");
+                search.set("idle");
+                show();
+                return true;
+            }
+            search.set("searching");
+            try {
+                const [made, sent] = await Promise.all([
+                    botApiService.getBrickFilesPage(brickId, { section: "made", search: asked }),
+                    botApiService.getBrickFilesPage(brickId, { section: "sent", search: asked }),
+                ]);
+                if (mine !== turn) return true;
+                const madePage = parseBrickFilesPage(made, "made");
+                const sentPage = parseBrickFilesPage(sent, "sent");
+                const sentFiles = sentPage.files.filter((file) => !removed.has(file.id));
+                found = {
+                    ...known,
+                    made: {
+                        files: madePage.files,
+                        total: known.made.total,
+                        artifacts: known.made.artifacts,
+                        fileTotal: madePage.total,
+                        nextCursor: madePage.nextCursor,
+                    },
+                    sent: {
+                        files: sentFiles,
+                        // A file deleted while this was on its way may be in the answer and counted in it
+                        total: Math.max(0, sentPage.total - (sentPage.files.length - sentFiles.length)),
+                        nextCursor: sentPage.nextCursor,
+                    },
+                };
+                words = asked;
+                query.set(asked);
+                search.set("idle");
+                show();
+                return true;
+            } catch (error) {
+                console.warn("Could not search a Brick's files", error);
+                if (mine === turn) {
+                    // Files of another search are never shown under these words
+                    found = undefined;
+                    words = asked;
+                    query.set(asked);
+                    search.set("failed");
+                    show();
+                }
+                return false;
+            }
+        },
+        async more(section) {
+            const shown = found ?? known;
+            const cursor = shown[section].nextCursor;
+            if (!cursor) return true;
+            if (going.has(section)) return true;
+            const mine = turn;
+            const before = deletions;
+            going.add(section);
+            flag();
+            try {
+                const page = parseBrickFilesPage(
+                    await botApiService.getBrickFilesPage(brickId, { section, cursor, search: words || undefined }),
+                    section
+                );
+                // The person searched, or the files were read again, while this page was on its way
+                if (mine !== turn) return true;
+                // A file deleted while this page was on its way is not brought back, and the page's count, which may be from
+                // before that, is not taken over the count the deletion already lowered
+                const changed = deletions !== before;
+                const fresh = changed ? page.files.filter((file) => !removed.has(file.id)) : page.files;
+                const add = <T extends { files: BrickFile[]; nextCursor: string | null }>(list: T): T => ({
+                    ...list,
+                    files: appended(list.files, fresh),
+                    nextCursor: page.nextCursor,
+                });
+                const place = found ?? known;
+                const next: BrickFiles =
+                    section === "made"
+                        ? {
+                              ...place,
+                              made: {
+                                  ...add(place.made),
+                                  fileTotal: changed ? place.made.fileTotal : page.total,
+                              },
+                          }
+                        : { ...place, sent: { ...add(place.sent), total: changed ? place.sent.total : page.total } };
+                // Read again after the answer came, and only if no other search or read has begun since (`turn`)
+                if (found) found = next;
+                // eslint-disable-next-line require-atomic-updates
+                else known = next;
+                show();
+                return true;
+            } catch (error) {
+                console.warn("Could not read more files", error);
+                return false;
+            } finally {
+                going.delete(section);
+                flag();
+            }
+        },
+        everyFile() {
+            // The words and the lists as they are when the export starts: searching or deleting meanwhile changes
+            // nothing about what is exported
+            const search = words || undefined;
+            return (async function* (): AsyncGenerator<BrickFile[]> {
+                for (const section of ["made", "sent"] as const) {
+                    let cursor: string | null = null;
+                    const seen = new Set<string>();
+                    do {
+                        const page: BrickFilesPage = parseBrickFilesPage(
+                            // eslint-disable-next-line no-await-in-loop
+                            await botApiService.getBrickFilesPage(brickId, { section, cursor, search }),
+                            section
+                        );
+                        // Each file once, whatever pages overlap
+                        const files = page.files.filter((file) => !seen.has(file.id));
+                        for (const file of files) seen.add(file.id);
+                        // An entry that was not whole is a file the zip is missing: it is counted as one that could not be read
+                        yield [...files, ...Array.from({ length: page.unreadable }, unreadableFile)];
+                        // A list that sends the same place twice would never end
+                        if (page.nextCursor !== null && page.nextCursor === cursor)
+                            throw new Error("The list did not go on");
+                        cursor = page.nextCursor;
+                    } while (cursor);
+                }
+            })();
         },
         async openResult(fileId) {
             return await botApiService.getBrickResult(brickId, fileId);
@@ -375,7 +657,8 @@ export function brickFilesList(brickId: string): BrickFilesList {
             show();
             try {
                 await botApiService.deleteBrickResult(brickId, fileId);
-                known = without(known, new Set([fileId]));
+                known = resultGone(known, fileId);
+                if (found) found = resultGone(found, fileId);
                 return true;
             } catch (error) {
                 console.warn("Could not delete a result", error);
@@ -386,11 +669,19 @@ export function brickFilesList(brickId: string): BrickFilesList {
             }
         },
         async deleteSent(fileId) {
+            // The file's size, taken before the answer: by then the person may have cleared the search that loaded it
+            const size = [...(found?.sent.files ?? []), ...known.sent.files].find(
+                (file) => file.id === fileId
+            )?.sizeBytes;
             pending.add(fileId);
             show();
             try {
                 await botApiService.deleteBrickFile(brickId, fileId);
-                known = without(known, new Set([fileId]));
+                removed.add(fileId);
+                deletions++;
+                // The search shows only the files it found: the first look still counts the file if the search never loaded it
+                if (found?.sent.files.some((file) => file.id === fileId)) found = deleted(found, fileId, size ?? 0);
+                known = deleted(known, fileId, size ?? 0);
                 return true;
             } catch (error) {
                 console.warn("Could not delete a file", error);
