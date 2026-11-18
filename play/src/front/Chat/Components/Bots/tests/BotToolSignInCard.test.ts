@@ -227,6 +227,24 @@ describe("the Reconnect card for a tool whose sign-in expired (#1819)", () => {
         await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     });
 
+    it("does not close anything when Orbit's answer comes back after the card is gone", async () => {
+        let answer: (servers: unknown) => void = () => undefined;
+        getBotMcpServers.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        await show(card(TAVILY));
+        // Another card took its place while Orbit was being asked; the answer says nothing is lost any more
+        shown?.$destroy();
+        shown = undefined;
+        answer(lostOnOrbit());
+        await new Promise((resolve) => {
+            setTimeout(resolve, 20);
+        });
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
     it("shows the card as the bot sent it when Orbit can't be asked from here", async () => {
         getBotMcpServers.mockRejectedValue(new Error("not initialized"));
         await show(card(TAVILY));

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onDestroy } from "svelte";
     import type { BotToolSignIn, ToolSignInLost } from "../../Bots/BotToolSignIn";
     import { stillLost, toolSignInSince } from "../../Bots/BotToolSignIn";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
@@ -57,6 +58,12 @@
      */
     let asking = false;
     let askedAt = 0;
+    // A check that comes back after the card is gone (the chat showed another one) says nothing to anyone: it must not close
+    // what is shown now
+    let destroyed = false;
+    onDestroy(() => {
+        destroyed = true;
+    });
     async function recheck(): Promise<void> {
         if (asking) return;
         /* eslint-disable require-atomic-updates, svelte/infinite-reactive-loop */
@@ -64,7 +71,7 @@
         askedAt = Date.now();
         try {
             const servers = await check();
-            if (!servers) return;
+            if (!servers || destroyed) return;
             const lost = stillLost(signIn.lost, servers);
             rows = signIn.lost.filter(
                 (row) => lost.some((one) => one.serverId === row.serverId) || stateOf(states, row) !== "lost"
