@@ -40,7 +40,7 @@
     import FriendFaces from "./FriendFaces.svelte";
     import UniverseSearch from "./UniverseSearch.svelte";
     import type { ListedPerson, PlacedFriend, WorldSighting } from "./Friends";
-    import { chatIdsToAsk, otherWorldFaces, placeFriends, savedLook } from "./Friends";
+    import { chatIdsToAsk, onlineFriendsCount, otherWorldFaces, placeFriends, savedLook } from "./Friends";
     import { createLayerPictures } from "./LayerPictures";
     import { friendNoticeStore } from "./FriendActions";
     import { IconChevronDown, IconMapPin } from "@wa-icons";
@@ -340,7 +340,7 @@
 <div class="relative flex flex-col h-full">
     {#if $friendsEnabledStore}
         <PeopleChips
-            friendsCount={friendsList?.friends.length ?? 0}
+            onlineFriendsCount={onlineFriendsCount(placedFriends)}
             incomingCount={friendsList?.incoming.length ?? 0}
             {showRequests}
         />
