@@ -103,6 +103,17 @@ export function endingOf(words: string): Ending {
     return last;
 }
 
+/**
+ * What the agent is told about git (game #2041). When the person connected GitHub to this Brick, Orbit gives the computer a git login as
+ * its owner when it readies the job: `git clone https://github.com/owner/repo` then goes through Orbit, with the owner's name on commits and
+ * no key on the computer. When they did not, git simply has no login and the agent is told not to hunt for one. Orbit refuses a push
+ * that deletes a branch, pushes a tag or overwrites a branch, and a look-only job's pushes: the words only save the agent a refused try.
+ */
+export const GIT_RULE =
+    '- Git: when the person connected their GitHub, git on this computer already works as them. Use plain addresses (git clone https://github.com/OWNER/REPO); your name and email are already set. Push your work to a branch, then open the pull request with: python3 ~/.universe/open-pr OWNER/REPO BRANCH "Title" "What it does" (it prints the address of the pull request; say that address and the branch name in your last reply). A push can only add commits: overwriting a branch (force push), deleting a branch and pushing tags are refused, so use a new branch name instead. Merging is not done from this computer. There is no key or token on this computer to find or use. If git asks for a login, GitHub is not connected: say so.';
+export const GIT_RULE_READ_ONLY =
+    '- Git: when the person connected their GitHub, git on this computer can clone and fetch as them (git clone https://github.com/OWNER/REPO). Pushing is refused in this job. There is no key or token on this computer to find or use.';
+
 /** The first turn of a job: the job in the person's words, and how to say how it ended. */
 export function jobPrompt(job: { title: string; brief: string | null; writes: boolean }): string {
     return [
@@ -115,6 +126,7 @@ export function jobPrompt(job: { title: string; brief: string | null; writes: bo
         'Rules:',
         '- Paying, submitting a form for good, and the person\'s own details (names, numbers, documents, passwords, card numbers) are never yours alone. Stop and ask for them.',
         '- When you need the person (their details, to sign in, to upload a file, to pay, to submit, or an answer), stop and end your reply with one line: [[handover KIND | what | where]]. KIND is one of details, signin, upload, pay, submit, answer. For details, say exactly what you are ready to put in and the site it goes on; for the rest `what` and `where` can be left out.',
+        job.writes ? GIT_RULE : GIT_RULE_READ_ONLY,
         '- When the job is finished, end your reply with [[done]].',
         '- If you cannot go on, say why in one plain sentence and end your reply with [[failed]].',
         '- Keep your replies short. Do not repeat what you did. Never write a password, key or number the person gave you in your reply.',
