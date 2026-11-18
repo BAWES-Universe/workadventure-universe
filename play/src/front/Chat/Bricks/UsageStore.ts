@@ -85,7 +85,7 @@ export function refreshMyUsage(): Promise<void> {
  * "Ask for more": a request to the Universe team, never a debt. The page says so at once when Orbit took it. False when
  * Orbit refused or could not be reached: nothing was sent. Without a category it is the computer's, as it always was.
  */
-export async function askMyUsageForMore(category: CreditCategory = "computer"): Promise<boolean> {
+export async function askMyUsageForMore(category: CreditCategory | "speech" = "computer"): Promise<boolean> {
     try {
         await botApiService.askForMoreUsage(category);
     } catch (error) {
@@ -100,6 +100,7 @@ export async function askMyUsageForMore(category: CreditCategory = "computer"): 
             asked: true,
             canAskForMore: false,
         });
+        if (category === "speech") return current;
         if (category === "apps") return current.apps ? { ...current, apps: asked(current.apps) } : current;
         if (!current.computer) return current;
         const { money } = current.computer;

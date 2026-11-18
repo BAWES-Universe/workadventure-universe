@@ -47,7 +47,10 @@ import { MeetingPresence, type MeetingArea } from '../voice/MeetingAreas';
 import { voiceOrbitSettings, voiceReplyLimits, voiceWorkerSettings } from '../voice/settings';
 import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
-import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
+import { OrbitTurnGate } from '../voice/VoiceAllowance';
+import { HearingWindows } from '../voice/HearingWindows';
+import { ASKED_LINE, GIVEN_LINE, askMoreCard, stopLine, type StopCard, type StopNotice } from '../voice/StopLines';
+import type { QuestionAction } from '../mcp/QuestionCard';
 import { ListeningBudget } from '../voice/VoiceListening';
 import { VoiceMeter } from '../voice/VoiceMeter';
 import { sharedNoteHearing } from '../voice/NoteHearingWiring';
@@ -2609,6 +2612,36 @@ export class BotClient {
         return true;
     }
 
+    /** Shows the question card of a stop (set once by the bot server, which holds the question cards). Never throws. */
+    static showStopCard?: (input: { botId: string; roomId: string; person: { uuid: string; name?: string | null; playerId: number }; card: StopCard }) => Promise<void>;
+
+    /**
+     * Says why voice stopped (see StopLines), to the person it stopped for when they are known and to the bubble otherwise. Someone who is not signed in
+     * is only told the neutral line (a visitor has no allowance of their own to be told about, and no one to ask), and the card is for signed-in people.
+     */
+    private tellStop(spaceName: string, stop: { by: StopNotice['by']; what: 'reply' | 'hearing'; resetsAt?: string; playerId?: number }): void {
+        const person = stop.playerId !== undefined ? this.getPersonForArtifacts(stop.playerId) : undefined;
+        const signedIn = !!person?.signedIn && !!person.identifier;
+        // A visitor never hears about an allowance: the neutral line of a platform pause stands in for it
+        const by = stop.by === 'person' && !signedIn ? 'budget' : stop.by;
+        const line = stopLine({ by, what: stop.what, ...(by === 'person' && stop.resetsAt ? { resetsAt: stop.resetsAt } : {}) });
+        if (line) this.sendChatMessage(spaceName, line, stop.playerId);
+        const card = by === 'person' && signedIn ? askMoreCard({ by, what: stop.what, ...(stop.resetsAt ? { resetsAt: stop.resetsAt } : {}) }) : null;
+        if (!card || stop.playerId === undefined || !person?.identifier) return;
+        void BotClient.showStopCard?.({ botId: this.config.botId, roomId: spaceName, person: { uuid: person.identifier, name: person.name, playerId: stop.playerId }, card }).catch(
+            () => undefined
+        );
+    }
+
+    /**
+     * A tap on a stop card that does something by itself (see QuestionAction): the one line the card promised, said to that person alone. When they asked for
+     * more voice time it is also remembered, so that they are told once it was added.
+     */
+    cardActed(spaceName: string, playerId: number, action: QuestionAction): void {
+        if (action.kind === 'ask-for-more' && action.category === 'speech') this.voice?.markAskedMore(playerId);
+        this.sendChatMessage(spaceName, action.kind === 'dismiss' ? action.line : ASKED_LINE, playerId);
+    }
+
     /** Whether this person is in a bubble the bot sees: a card is for people in one, and nobody else. */
     inBubble(playerId: number): boolean {
         return this.getBubbleUserIds(playerId) !== undefined;
@@ -3107,8 +3140,11 @@ export class BotClient {
         // In a group, the bot takes someone's microphone only after they ask it to keep listening (round 8); the confirmed ask counts as its name
         this.voice.groupGate = true;
         this.voice.onListenGranted = (spaceName, personId) => this.attention.listenGranted(spaceName, BotClient.playerIdOf(personId));
-        // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
-        this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
+        // Voice paused for someone: one line in the words of the reason (see StopLines), said to that person alone when they are known, and under it
+        // the card to ask the Universe team for more when it is their own allowance that ran out. A hold that passes says nothing.
+        this.voice.onPaused = (spaceName, stop) => this.tellStop(spaceName, stop);
+        // The Universe team added what they asked for: said once, to them
+        this.voice.onGiven = (spaceName, playerId) => this.sendChatMessage(spaceName, GIVEN_LINE, playerId);
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
@@ -3122,6 +3158,15 @@ export class BotClient {
             // worker's last report of a reply has come, and that report is still booked for the person it was for
             const speech = this.speech;
             this.voice.playerOfSegment = (segmentId) => speech.playerOfSegment(segmentId);
+            // The reply a segment was, for its receipt (the reply's turn id is the admission id, see VoiceMeter)
+            this.voice.turnOfSegment = (segmentId) => speech.turnOfSegment(segmentId);
+            // Live hearing on Universe's account is admitted in windows, renewed in the background (never per audio frame)
+            this.voice.windows = new HearingWindows(
+                this.config.botId,
+                adminApiService,
+                (key, stop) => this.voice?.hearingRefused(key, stop),
+                (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
+            );
         }
         // A reply for one person alone that others would have heard is not said, and that person is told why (#1993)
         this.voice.aloneWith = (spaceName, personId) => this.aloneWith(spaceName, BotClient.playerIdOf(personId));

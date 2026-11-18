@@ -70,7 +70,8 @@ describe('asking Orbit whether a reply may be spoken (#1669)', () => {
 
     it('asks with the service token, who the reply is for and its turn', async () => {
         expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toEqual({ allowed: true });
-        expect(asked).toEqual({ url: '/api/bots/bot-1/voice-allowance', auth: 'Bearer service-token', body: SPEAK });
+        // Version 2 of the speech contract: the game promises the receipt that carries the turn id
+        expect(asked).toEqual({ url: '/api/bots/bot-1/voice-allowance', auth: 'Bearer service-token', body: { ...SPEAK, contract: 2 } });
     });
 
     it("passes on Orbit's no with the end of the window", async () => {

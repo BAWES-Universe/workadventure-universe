@@ -5,7 +5,9 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BotSpeech } from '../voice/BotSpeech';
-import { OrbitTurnGate, pausedLine, type AllowanceOrbit } from '../voice/VoiceAllowance';
+import { VoiceMeter, type SpeechEvent } from '../voice/VoiceMeter';
+import { OrbitTurnGate, type AllowanceOrbit } from '../voice/VoiceAllowance';
+import { stopLine } from '../voice/StopLines';
 import { VoiceCalls, type GameSide, type LinkHandlers } from '../voice/VoiceCalls';
 import type { FromWorker, ToWorker } from '../voice/protocol';
 import type { VoiceLink } from '../voice/VoiceLink';
@@ -31,7 +33,7 @@ const speakingNow = (owners: { recognition: boolean; speech: boolean }): Speakin
 type Answer = Awaited<ReturnType<AllowanceOrbit['checkVoiceAllowance']>>;
 
 /** One voice bot whose voice Universe AI (or its maker) pays for, with Orbit's allowance answers scripted. */
-function bot(options: { owners?: { recognition: boolean; speech: boolean }; people?: Record<number, { userId: string; isGuest: boolean }> } = {}) {
+function bot(options: { owners?: { recognition: boolean; speech: boolean }; people?: Record<number, { userId: string; isGuest: boolean }>; meter?: boolean } = {}) {
     const owners = options.owners ?? { recognition: false, speech: false };
     const people = options.people ?? { 7: { userId: 'uuid-room_7', isGuest: false } };
     const sent: ToWorker[] = [];
@@ -77,16 +79,26 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
     const gate = new OrbitTurnGate('sam', orbit, (playerId) => people[playerId] ?? null, (m) => logs.push(m), async () => undefined);
     const calls = new VoiceCalls('sam', game, (h) => ((handlers = h), link), (m) => logs.push(m), settings, gate);
     calls.playerIdOf = (spaceUserId) => Number(spaceUserId.split('_')[1]) || 0;
-    calls.onPaused = (space) => lines.push(`${space}:${pausedLine('Sam')}`);
+    // What is recorded is the reason and what stopped; the words of each reason are tested in StopLines.test
+    calls.onPaused = (space, stop) => lines.push(`${space}:${stop.by}:${stop.what}`);
     const speech = new BotSpeech(calls, DEFAULT_REPLY_LIMITS);
     calls.onAudience = (space) => speech.audience(space);
     calls.onUnplayed = (space, segmentId) => speech.unplayed(space, segmentId);
     calls.onHeard = (space, segmentId) => speech.heard(space, segmentId);
     calls.onSessionEnded = (space) => speech.sessionEnded(space);
+    /** What Orbit's books were sent, when the bot books its use (a reply's receipt carries the id it was admitted under). */
+    const booked: SpeechEvent[] = [];
+    if (options.meter) {
+        calls.meter = new VoiceMeter('sam', { recordMeterEvents: async (events: SpeechEvent[]) => (booked.push(...events), true) }, undefined, 'r1');
+        calls.talkerOf = (playerId) => people[playerId] ?? null;
+        calls.playerOfSegment = (segmentId) => speech.playerOfSegment(segmentId);
+        calls.turnOfSegment = (segmentId) => speech.turnOfSegment(segmentId);
+        calls.onPlayed = (_space, segmentId) => speech.played(segmentId);
+    }
     /** Everyone who has connected, as the space lists them. */
     const present = new Set<string>();
     const t = {
-        sent, statuses, lefts, lines, logs, orbit, state, calls, speech,
+        sent, statuses, lefts, lines, logs, orbit, state, calls, speech, booked,
         says: () => (sent.filter((m) => m.type === 'bot.say') as Extract<ToWorker, { type: 'bot.say' }>[]).map((m) => m.text),
         async connect(who = 'room_7') {
             present.add(who);
@@ -126,7 +138,7 @@ describe('a reply that Universe AI pays for', () => {
         const b = bot();
         await b.connect();
         await b.say(reply(1), 'Hello there.');
-        expect(b.orbit.checkVoiceAllowance).toHaveBeenCalledWith('sam', { userId: 'uuid-room_7', isGuest: false, turnId: reply(1) });
+        expect(b.orbit.checkVoiceAllowance).toHaveBeenCalledWith('sam', { userId: 'uuid-room_7', isGuest: false, turnId: reply(1), model: 'tts' });
         expect(b.says()).toEqual(['Hello there.']);
         expect(b.lines).toEqual([]);
     });
@@ -138,9 +150,89 @@ describe('a reply that Universe AI pays for', () => {
         await b.say(reply(1));
         expect(b.says()).toEqual([]);
         expect(b.statuses).toContain('room_7:paused');
-        expect(b.lines).toEqual([`${SPACE}:Voice is paused for now. Keep typing: Sam still answers here.`]);
+        expect(b.lines).toEqual([`${SPACE}:person:reply`]);
         // The session was not touched: the person stays connected and the chat carries on
         expect(b.sent.filter((m) => m.type === 'session.end' || m.type === 'lane.close')).toEqual([]);
+    });
+
+    it('carries one funded reply from its admission to its receipt under the reply\'s own turn id, and the receipt gives back what was set aside', async () => {
+        const b = bot({ meter: true });
+        await b.connect();
+        b.state.fallback = { allowed: true, admission: { rateVersion: 4, admittedSeconds: 30, admittedMicros: 7_500, maxSeconds: 25, provider: 'voice-co' } };
+        await b.say(reply(1), 'Hello there.');
+        expect(b.says()).toEqual(['Hello there.']);
+        const said = b.sent.find((m) => m.type === 'bot.say') as Extract<ToWorker, { type: 'bot.say' }>;
+        // The worker reports what played, and the receipt goes to Orbit under the same turn id the admission was asked under
+        b.workerSays({ type: 'playback.progress', segmentId: said.segmentId, playedMs: 2100, totalMs: 2100, finished: true, interrupted: false });
+        await b.calls.meter!.flush();
+        expect(b.booked).toHaveLength(1);
+        expect(b.booked[0]).toMatchObject({
+            userId: 'uuid-room_7',
+            payerKind: 'universe',
+            quantity: 3,
+            contract: 2,
+            turnId: reply(1),
+            admission: { rateVersion: 4, admittedSeconds: 30, admittedMicros: 7_500 },
+            provider: 'voice-co',
+            model: 'tts',
+            characters: 'Hello there.'.length,
+        });
+        expect(b.booked[0].detail.part).toBe('speaking');
+    });
+
+    it('books a real zero for an admitted reply nobody heard, so what was set aside is released by the receipt, not by waiting', async () => {
+        const b = bot({ meter: true });
+        await b.connect();
+        b.state.fallback = { allowed: true, admission: { rateVersion: 4, admittedSeconds: 30, admittedMicros: 7_500 } };
+        await b.say(reply(1), 'Hello there.');
+        const said = b.sent.find((m) => m.type === 'bot.say') as Extract<ToWorker, { type: 'bot.say' }>;
+        b.workerSays({ type: 'playback.progress', segmentId: said.segmentId, playedMs: 0, totalMs: 2100, finished: true, interrupted: true, reason: 'barge_in' });
+        await b.calls.meter!.flush();
+        expect(b.booked.map((e) => [e.turnId, e.quantity])).toEqual([[reply(1), 0]]);
+    });
+
+    it('sends no admission fields for a reply Orbit counted the old way, and none for a reply a person\'s own key pays for', async () => {
+        const old = bot({ meter: true });
+        await old.connect();
+        old.state.fallback = { allowed: true };
+        await old.say(reply(1), 'Hello there.');
+        const said = old.sent.find((m) => m.type === 'bot.say') as Extract<ToWorker, { type: 'bot.say' }>;
+        old.workerSays({ type: 'playback.progress', segmentId: said.segmentId, playedMs: 2100, totalMs: 2100, finished: true, interrupted: false });
+        await old.calls.meter!.flush();
+        expect(old.booked[0].turnId).toBeUndefined();
+        expect(old.booked[0].contract).toBeUndefined();
+
+        const own = bot({ meter: true, owners: { recognition: true, speech: true } });
+        await own.connect();
+        await own.say(reply(1), 'Hello there.');
+        expect(own.orbit.checkVoiceAllowance).not.toHaveBeenCalled();
+    });
+
+    it('says why in the words of Orbit\'s reason: the person\'s own allowance, the platform, a provider, capacity, and nothing for a hold', async () => {
+        const said: Record<string, string | null> = {};
+        for (const by of ['person', 'budget', 'provider', 'capacity', 'hold'] as const) {
+            const b = bot();
+            await b.connect();
+            b.state.fallback = { allowed: false, stoppedBy: by, ...(by === 'person' ? { resetsAt: '2099-12-01T00:00:00.000Z' } : {}) };
+            await b.say(reply(1));
+            expect(b.says()).toEqual([]);
+            // A hold passes by itself: nothing is said and the button does not change. Capacity says its line and leaves the button alone.
+            expect(b.lines).toEqual(by === 'hold' ? [] : [`${SPACE}:${by}:reply`]);
+            expect(b.statuses.includes('room_7:paused')).toBe(by !== 'hold' && by !== 'capacity');
+            said[by] = stopLine({ by, what: 'reply', ...(by === 'person' ? { resetsAt: '2099-12-01T00:00:00.000Z' } : {}) });
+        }
+        expect(said.person).toContain('1 Dec');
+        expect(said.budget).toBe(said.provider);
+        expect(said.hold).toBeNull();
+    });
+
+    it('never gives a platform or provider stop a date, and says a different reason again when it changes', async () => {
+        const b = bot();
+        await b.connect();
+        b.state.answers = [{ allowed: false, stoppedBy: 'budget', resetsAt: '2099-12-01T00:00:00.000Z' }, { allowed: false, stoppedBy: 'capacity' }];
+        await b.say(reply(1));
+        await b.say(reply(2));
+        expect(b.lines).toEqual([`${SPACE}:budget:reply`, `${SPACE}:capacity:reply`]);
     });
 
     it('says the line once however many replies are turned down, and the button comes back when voice speaks again', async () => {

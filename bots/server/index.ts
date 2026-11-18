@@ -29,6 +29,8 @@ import { askOrbitAboutAppUse } from '../mcp/AppUse';
 import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
 import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
+import { ASKED_LINE, stopQuestion } from '../voice/StopLines';
+import { BotClient } from '../client/BotClient';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
@@ -136,6 +138,14 @@ const questions = new QuestionCards({
         }
         void matrixBridge?.carryOnWith(roomId, person, text);
     },
+    // A stop card (voice or an App paused, see voice/StopLines): the tap does what the card said and is never put to the model as the person's words
+    acted: async ({ botId, roomId, person, nearby, action }) => {
+        if (nearby) {
+            if (person.playerId !== undefined) botManager.getBot(botId)?.cardActed(roomId, person.playerId, action);
+            return;
+        }
+        await cardSurface.say(botId, roomId, action.kind === 'dismiss' ? action.line : ASKED_LINE);
+    },
 });
 const approvals = new ToolApprovals({
     orbit: orbitActions,
@@ -154,6 +164,10 @@ const approvals = new ToolApprovals({
     followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),
 });
 aiService.useApprovals(approvals);
+// The card of a stop (voice or an App paused): shown like any question card, to the person alone in a bubble
+BotClient.showStopCard = async ({ botId, roomId, person, card }) => {
+    await approvals.askQuestion({ botId, roomId, person, asked: stopQuestion(card) });
+};
 aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 let directChat: ((botId: string, chatId: string) => Promise<DirectChatAnswer>) | undefined;

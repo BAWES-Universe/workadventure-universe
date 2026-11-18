@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ParsedTap } from '../ApprovalCard';
-import { QuestionCards, type QuestionPicked } from '../QuestionCards';
+import { QuestionCards, type QuestionActed, type QuestionPicked } from '../QuestionCards';
 import type { QuestionField } from '../QuestionCard';
 import type { Asker } from '../ToolApprovals';
 
@@ -17,11 +17,12 @@ const asked = {
     before: 'make the music',
 };
 
-function setup(options: { cardFails?: boolean; nearbyMissing?: boolean; pickNotTaken?: boolean } = {}) {
+function setup(options: { cardFails?: boolean; nearbyMissing?: boolean; pickNotTaken?: boolean; acts?: boolean } = {}) {
     let clock = 1_000_000;
     const sent: Array<Record<string, any>> = [];
     const nearbyCards: Array<{ person: Asker; ask: QuestionField }> = [];
     const picks: QuestionPicked[] = [];
+    const acts: QuestionActed[] = [];
     const cards = new QuestionCards({
         cards: {
             send: async (_bot, _room, content) => {
@@ -45,6 +46,7 @@ function setup(options: { cardFails?: boolean; nearbyMissing?: boolean; pickNotT
                   },
               }),
         waitMinutes: async () => 10,
+        ...(options.acts ? { acted: async (acted: QuestionActed) => void acts.push(acted) } : {}),
         picked: async (picked) => {
             picks.push(picked);
             return options.pickNotTaken ? false : undefined;
@@ -53,7 +55,7 @@ function setup(options: { cardFails?: boolean; nearbyMissing?: boolean; pickNotT
     });
     const field = (n = sent.length - 1) => sent[n]['m.new_content']?.['universe.ask'] ?? sent[n]['universe.ask'];
     const tap = (ask: string, revision: number, tap: ParsedTap['tap']): ParsedTap => ({ ask, revision, tap });
-    return { cards, sent, nearbyCards, picks, field, tap, advance: (ms: number) => (clock += ms) };
+    return { cards, sent, nearbyCards, picks, acts, field, tap, advance: (ms: number) => (clock += ms) };
 }
 
 const show = async (s: ReturnType<typeof setup>, person: Asker = khalid) => {
@@ -321,5 +323,73 @@ describe('in nearby chat', () => {
         await s.cards.ask({ botId: 'b1', roomId: 'space1', person: bubble, asked });
         expect(s.sent).toHaveLength(1);
         expect(s.nearbyCards).toHaveLength(1);
+    });
+});
+
+describe('the card of a stop (a choice that does something by itself)', () => {
+    const stop = {
+        question: 'Voice time is used up',
+        choices: [
+            { id: 'c1', label: 'Ask for more', line: 'The Universe team gets your request', action: { kind: 'ask-for-more' as const, category: 'speech' as const } },
+            { id: 'c2', label: 'Text is fine', action: { kind: 'dismiss' as const, line: "Okay, I'll keep answering in text." } },
+        ],
+        multiple: false,
+    };
+    const showStop = (s: ReturnType<typeof setup>, person: Asker = khalid, room = '!dm') => s.cards.ask({ botId: 'b1', roomId: room, person, asked: stop });
+
+    it('carries the action on each choice for the game, which does the asking itself', async () => {
+        const s = setup({ acts: true });
+        await showStop(s);
+        expect(s.field().choices[0].action).toEqual({ kind: 'ask-for-more', category: 'speech' });
+    });
+
+    it('does the action on a tap and never hands the pick to the model as something the person said', async () => {
+        const s = setup({ acts: true });
+        await showStop(s);
+        const id = s.field().id;
+        expect(await s.cards.handleTap('b1', '!dm', khalid, s.tap(id, 1, { action: 'pick', choices: ['c1'] }))).toBe(true);
+        expect(s.field()).toMatchObject({ revision: 2, answer: { picked: ['c1'] } });
+        expect(s.acts).toHaveLength(1);
+        expect(s.acts[0]).toMatchObject({ botId: 'b1', roomId: '!dm', nearby: false, action: { kind: 'ask-for-more', category: 'speech' } });
+        expect(s.picks).toHaveLength(0);
+    });
+
+    it('does the dismiss line for the other choice, in a bubble for the person alone', async () => {
+        const s = setup({ acts: true });
+        const bubble: Asker = { ...khalid, playerId: 7 };
+        await showStop(s, bubble, 'space1');
+        const id = s.nearbyCards[0].ask.id;
+        await s.cards.handleTap('b1', 'space1', bubble, s.tap(id, 1, { action: 'pick', choices: ['c2'] }));
+        expect(s.acts[0]).toMatchObject({ nearby: true, action: { kind: 'dismiss', line: "Okay, I'll keep answering in text." } });
+        expect(s.acts[0].person.playerId).toBe(7);
+        expect(s.picks).toHaveLength(0);
+    });
+
+    it('is a plain pick for a card the model asked, which never carries an action', async () => {
+        const s = setup({ acts: true });
+        await show(s);
+        await s.cards.handleTap('b1', '!dm', khalid, s.tap(s.field().id, 1, { action: 'pick', choices: ['c1'] }));
+        expect(s.acts).toHaveLength(0);
+        expect(s.picks).toHaveLength(1);
+    });
+
+    it('a tap whose action fails is not a reason to hand the pick to the model', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const picks: QuestionPicked[] = [];
+        const sent: Array<Record<string, any>> = [];
+        const failing = new QuestionCards({
+            cards: { send: async (_b, _r, content) => (sent.push(content), '$e'), say: async () => undefined },
+            waitMinutes: async () => 10,
+            acted: async () => {
+                throw new Error('could not say it');
+            },
+            picked: async (picked) => void picks.push(picked),
+            now: () => 1_000_000,
+        });
+        await failing.ask({ botId: 'b1', roomId: '!dm', person: khalid, asked: stop });
+        const id = sent[0]['universe.ask'].id;
+        await failing.handleTap('b1', '!dm', khalid, { ask: id, revision: 1, tap: { action: 'pick', choices: ['c1'] } });
+        expect(picks).toHaveLength(0);
+        warn.mockRestore();
     });
 });

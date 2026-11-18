@@ -28,6 +28,7 @@ import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
+import { askMoreCard, stopQuestion } from '../voice/StopLines';
 import { appNotUsedLine, type AppUseAnswer, type AppUseCheck, type AppUseRequest } from '../mcp/AppUse';
 import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
@@ -4834,6 +4835,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             });
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
+                            // The step was held back because the person's own App use is used up: a card lets them ask the Universe team for more
+                            this.showAppStopCard(result, botId!, playerId, botClient, spaceName);
                         } else {
                             // Log unknown tool for debugging
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -4949,6 +4952,29 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         });
         // In a bubble the line everyone reads is the bot's whole reply (see the follow-up)
         return asked.kind === 'waiting' && asked.line ? { ...asked.result, [SHARED_LINE]: asked.line } : asked.result;
+    }
+
+    /**
+     * An App step Orbit held back for the person's own allowance (see appStopResult) shows the Ask for more card under the line the bot says, to the
+     * person alone in a bubble. Only a signed-in person gets one (a visitor has no allowance to ask for, and no one to ask), and only the person's own
+     * allowance has one: never a platform budget or a provider. Never throws and is never waited for.
+     */
+    private showAppStopCard(result: unknown, botId: string, playerId: number | undefined, botClient?: BotClient, spaceName?: string): void {
+        const stopped = (result as { stopped?: { by?: unknown; resetsAt?: unknown; canAskForMore?: unknown } } | null | undefined)?.stopped;
+        if (!stopped || stopped.by !== 'person' || stopped.canAskForMore !== true || !this.approvals || playerId === undefined) return;
+        const chat = this.chatCallFor(botId, playerId, botClient, spaceName);
+        if (!chat?.person.signedIn || !chat.person.identifier) return;
+        const card = askMoreCard({ by: 'person', what: 'app', ...(typeof stopped.resetsAt === 'string' ? { resetsAt: stopped.resetsAt } : {}) });
+        if (!card) return;
+        const nearby = chat.chat.kind === 'nearby';
+        void this.approvals
+            .askQuestion({
+                botId,
+                roomId: chat.chat.ref,
+                person: { uuid: chat.person.identifier, name: chat.person.name, ...(nearby ? { playerId } : {}) },
+                asked: stopQuestion(card),
+            })
+            .catch(() => undefined);
     }
 
     /**

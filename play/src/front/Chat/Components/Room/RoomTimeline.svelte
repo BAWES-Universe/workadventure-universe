@@ -46,11 +46,13 @@
         chatAsks,
         closesSoon,
         isWaiting,
+        moreAskedBy,
         nextAskChange,
         shownAskPosition,
         type BotAsk,
         type BotAskTap,
     } from "../../Bots/BotAsk";
+    import { askMyUsageForMore } from "../../Bricks/UsageStore";
     import { chatSheetLayoutStore, chatSheetSnapStore } from "../../ChatSheetStore";
     import { cardToShow } from "../../Bots/BotVoiceDraft";
     import {
@@ -568,6 +570,11 @@
     async function tapAsk(ask: BotAsk, tap: BotAskTap): Promise<boolean> {
         if (!room.answerBotAsk) return false;
         try {
+            // "Ask for more" on the card of a stop (voice or an App paused): the request to the Universe team is the person's own, so it goes from here.
+            // When Orbit did not take it, nothing is sent: the card waits and the person can tap again. The bot then says one line, and only after this.
+            for (const category of moreAskedBy(ask, tap)) {
+                if (!(await askMyUsageForMore(category))) return false;
+            }
             await room.answerBotAsk(ask, tap);
             return true;
         } catch (error) {

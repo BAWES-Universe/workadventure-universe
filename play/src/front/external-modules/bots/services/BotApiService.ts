@@ -1414,7 +1414,7 @@ export class BotApiService {
      * Orbit reads none as the computer's). Only a request to the Universe team: no debt. Throws when Orbit refuses or
      * can't be reached.
      */
-    async askForMoreUsage(category?: "apps" | "computer"): Promise<unknown> {
+    async askForMoreUsage(category?: "apps" | "computer" | "speech"): Promise<unknown> {
         const response = await this.fetch("/api/me/usage/ask-for-more", {
             method: "POST",
             ...(category

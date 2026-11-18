@@ -12,6 +12,8 @@ import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
 import type { SpeechEvent } from '../voice/VoiceMeter';
+import { parseAllowance, type AllowanceAnswer } from '../voice/VoiceAllowance';
+import { parseHearingWindow, type HearingWindowAnswer } from '../voice/HearingWindows';
 import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
@@ -1896,31 +1898,78 @@ export class AdminApiService {
      * is, under the reply's turn, so asking again never counts it twice. Null when Orbit can't be asked or doesn't know the
      * question: the caller keeps the reply in text, so nothing is spoken on Universe AI's account without an answer.
      */
-    async checkVoiceAllowance(
+    async checkVoiceAllowance(botId: string, input: { userId: string; isGuest: boolean; turnId: string; model?: string }): Promise<AllowanceAnswer | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        const send = (body: Record<string, unknown>) =>
+            axios.post(`${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-allowance`, body, {
+                headers: { Authorization: `Bearer ${botServiceToken}` },
+                timeout: 5000,
+                validateStatus: (status) => (status >= 200 && status < 300) || (status === 400 && !this.speechContractV1),
+            });
+        try {
+            const { model, ...v1 } = input;
+            // Version 2 (Orbit docs/speech-admission-contract.md): the game promises the receipt that carries the turn id. An Orbit that refuses the new
+            // fields (400) is an Orbit from before: the old question is asked at once, and from then on for this process
+            let response = this.speechContractV1 ? await send(v1) : await send({ ...v1, contract: 2, ...(model ? { model } : {}) });
+            if (response.status === 400) {
+                this.speechContractV1 = true;
+                response = await send(v1);
+            }
+            return parseAllowance(response.data);
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Voice allowance check failed, the reply stays in text: ${msg}`);
+            return null;
+        }
+    }
+
+    /** Set when Orbit refused the version 2 question: it is an Orbit from before, so only the old question is asked from then on. */
+    private speechContractV1 = false;
+
+    /**
+     * Asks for a window of live hearing for a funded call (Orbit docs/speech-admission-contract.md, section 4). Asked when a call starts to hear a person and
+     * again in the background before the window is used up: never per audio frame. `unsupported` is an Orbit from before (the route is not there): the
+     * caller hears as it always did. Null when Orbit can't be asked, which is not a refusal: the caller keeps hearing and asks again later.
+     */
+    async admitHearingWindow(
         botId: string,
-        input: { userId: string; isGuest: boolean; turnId: string }
-    ): Promise<{ allowed: true; left?: number; resetsAt?: string } | { allowed: false; resetsAt: string } | null> {
+        input: { userId: string; isGuest: boolean; windowId: string; model?: string }
+    ): Promise<HearingWindowAnswer | 'unsupported' | null> {
         if (!this.isConfigured()) return null;
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!botServiceToken) return null;
         try {
             const response = await axios.post(
-                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-allowance`,
-                input,
-                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-hearing-window`,
+                { ...input, contract: 2 },
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000, validateStatus: (status) => (status >= 200 && status < 300) || status === 404 || status === 405 }
             );
-            const body = response.data as Partial<{ allowed: boolean; resetsAt: string; left: number }>;
-            if (body?.allowed === true) {
-                // What is left comes with a yes from an Orbit that counts it; an Orbit from before sends only the yes
-                const left = typeof body.left === 'number' && Number.isInteger(body.left) && body.left >= 0 ? body.left : undefined;
-                const resetsAt = typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt)) ? body.resetsAt : undefined;
-                return left === undefined ? { allowed: true } : { allowed: true, left, resetsAt };
-            }
-            if (body?.allowed === false && typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt))) return { allowed: false, resetsAt: body.resetsAt };
-            return null;
+            if (response.status === 404 || response.status === 405) return 'unsupported';
+            return parseHearingWindow(response.data, input.windowId);
         } catch (error) {
             const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
-            console.warn(`[AdminApiService] Voice allowance check failed, the reply stays in text: ${msg}`);
+            console.warn(`[AdminApiService] Asking for a window of hearing failed, hearing carries on: ${msg}`);
+            return null;
+        }
+    }
+
+    /** Gives back what a window of hearing did not use (the call or the window ended). Safe to repeat. Null when it could not be done. */
+    async releaseHearingWindow(botId: string, input: { windowId: string }): Promise<boolean | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        try {
+            const response = await axios.post(`${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-hearing-window/release`, input, {
+                headers: { Authorization: `Bearer ${botServiceToken}` },
+                timeout: 5000,
+            });
+            const released = (response.data as Partial<{ released: boolean }>)?.released;
+            return typeof released === 'boolean' ? released : null;
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Giving back a window of hearing failed: ${msg}`);
             return null;
         }
     }
