@@ -548,14 +548,18 @@ describe('the file card: files a finished job made, in the chat after the messag
         expect(told).toHaveLength(1);
     });
 
-    it('gives up on a mark Orbit never takes after the same few rounds as a file that cannot go, and tells the report then, never retrying for good', async () => {
+    it('never gives up on a mark Orbit has not taken: the report is not told however many rounds pass, and is told the round the mark is taken, the log not filling up', async () => {
         const { runner, told, api, warn } = withFiles([report({ handed: handed('a.pdf') })], allIn);
-        (api.keepFileDelivered as ReturnType<typeof vi.fn>).mockImplementation(async () => false);
-        for (let round = 1; round < FILE_TRIES; round++) expect(await runner.tick()).toBe(0);
+        const keep = api.keepFileDelivered as ReturnType<typeof vi.fn>;
+        keep.mockImplementation(async () => false);
+        for (let round = 1; round <= FILE_TRIES * 3; round++) expect(await runner.tick()).toBe(0);
+        // Long past the rounds a file that cannot go is tried: still not told, so Files never keeps saying "not delivered" for a file that is in the chat
         expect(told).toEqual([]);
+        // One line on the first round and one on every FILE_TRIES-th, not one a round
+        expect(warn.mock.calls.filter((call) => String(call[0]).includes('did not keep that 1 file(s)'))).toHaveLength(1 + 3);
+        keep.mockImplementation(async () => true);
         expect(await runner.tick()).toBe(1);
         expect(told).toHaveLength(1);
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('telling the report anyway'));
     });
 
     it('says a file’s mark again when the report is done, in case Orbit missed it the first time', async () => {

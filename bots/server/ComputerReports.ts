@@ -396,14 +396,15 @@ export class ComputerReports {
             let unmarked = 0;
             for (const id of sent) if (!(await this.api.keepFileDelivered(report.jobId, id))) unmarked += 1;
             if (unmarked > 0) {
-                // A few rounds, as for a file that could not go: then the report is told anyway (the files are in the chat; only Files' own "in your chat" mark is missing), never retried for good
+                // Never told while a file in the chat still shows as not delivered: telling it would make Orbit stop offering the report, and Files would keep saying "not delivered"
+                // for good. Only the mark is made again, every round, until Orbit takes it (a file Orbit no longer holds counts as marked), and nothing is sent twice
                 const tries = (this.unmarkedRounds.get(report.key) ?? 0) + 1;
-                if (tries < FILE_TRIES) {
-                    this.unmarkedRounds.set(report.key, tries);
-                    this.log.warn(`[ComputerReports] Orbit did not keep that ${unmarked} file(s) of job ${report.jobId} reached the chat; the mark is made again next round, nothing is sent twice`);
-                    return false;
+                this.unmarkedRounds.set(report.key, tries);
+                // Said on the first round and then every FILE_TRIES rounds, so an Orbit that stays down does not fill the log
+                if (tries === 1 || tries % FILE_TRIES === 0) {
+                    this.log.warn(`[ComputerReports] Orbit did not keep that ${unmarked} file(s) of job ${report.jobId} reached the chat (round ${tries}); the mark is made again next round, nothing is sent twice`);
                 }
-                this.log.warn(`[ComputerReports] Orbit still did not keep that ${unmarked} file(s) of job ${report.jobId} reached the chat after ${tries} rounds; telling the report anyway`);
+                return false;
             }
             this.unmarkedRounds.delete(report.key);
             this.attached.delete(report.key);
