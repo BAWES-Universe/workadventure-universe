@@ -1,4 +1,5 @@
 import { get } from "svelte/store";
+import { APP_LINK, appLinkId, requestAppPage } from "./Apps/AppLink";
 import { APPS_LINK, openAppsPage } from "./Apps/OpenApps";
 import { keyFormLinkId, KEY_FORM_LINK, openKeyFormSheet } from "./Apps/KeyFormLink";
 import { openBrickChat } from "./BrickChat";
@@ -47,6 +48,17 @@ export function brickChatLinks(node: HTMLElement): { destroy: () => void } {
             // "[Apps](#apps)" in a Brick's words (#2001): the Apps page opens here
             event.preventDefault();
             openAppsPage();
+            return;
+        }
+        if (href?.startsWith(APP_LINK)) {
+            // "[Change the limit](#apps=<id>)" in the note a Brick leaves the owner (#2006): that App's page opens here.
+            // A broken one is never followed either.
+            event.preventDefault();
+            const appId = appLinkId(href);
+            if (appId) {
+                requestAppPage(appId);
+                openAppsPage();
+            }
             return;
         }
         if (href === GOALS_LINK) {
