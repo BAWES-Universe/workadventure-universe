@@ -182,6 +182,7 @@
             <svelte:element
                 this={canWalk ? "button" : "div"}
                 type={canWalk ? "button" : undefined}
+                role={canWalk ? "button" : "presentation"}
                 aria-label={canWalk ? $LL.chat.userList.locateUser({ userName: friend.name }) : undefined}
                 class="m-0 flex min-w-0 flex-col border-0 bg-transparent p-0 text-start text-inherit {canWalk
                     ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary'
