@@ -114,6 +114,19 @@ export interface ComputerUsage {
     money: Money | null;
 }
 
+/**
+ * The person's own monthly allowance for voice (hearing and speaking Universe AI paid for) or for connected Apps, in plain words. Only shown once they
+ * have used some or have extra running. Never a platform budget, a provider's limit or a number.
+ */
+export interface Entitlement {
+    left: number;
+    words: UsageWords;
+    startsAgainAt: string;
+    asked: boolean;
+    /** "Ask for more" is only offered once the allowance is used up. */
+    canAskForMore: boolean;
+}
+
 export interface MyUsage {
     /** Orbit's stamp: a bigger one is newer, and an older answer never replaces a newer one. null when it sent none. */
     version: number | null;
@@ -121,6 +134,10 @@ export interface MyUsage {
     /** Instant Apps; null when there is none to show */
     apps: Money | null;
     computer: ComputerUsage | null;
+    /** Their own voice time this month; null until they have used any (or from an Orbit from before) */
+    speech: Entitlement | null;
+    /** Their own allowance for connected Apps this month, the same way */
+    appUse: Entitlement | null;
     /** Extra credit, only while someone has it */
     credit: ExtraCredit[];
     bots: BotSpend[];
@@ -154,6 +171,20 @@ function fraction(value: unknown): number | undefined {
 
 function when(value: unknown): string | null {
     return typeof value === "string" && !Number.isNaN(new Date(value).getTime()) ? value : null;
+}
+
+function parseEntitlement(value: unknown): Entitlement | null {
+    if (!isRaw(value)) return null;
+    const left = fraction(value.left);
+    const startsAgainAt = when(value.startsAgainAt);
+    if (left === undefined || !startsAgainAt) return null;
+    return {
+        left,
+        words: words(value.words) ?? usageWordsOf(left),
+        startsAgainAt,
+        asked: value.asked === true,
+        canAskForMore: value.canAskForMore === true,
+    };
 }
 
 const count = (value: unknown): number | undefined =>
@@ -339,6 +370,8 @@ export function parseUsage(value: unknown): MyUsage | undefined {
         },
         apps: parseMoney(value.apps),
         computer: computerUsage,
+        speech: parseEntitlement(value.speech),
+        appUse: parseEntitlement(value.appUse),
         credit: parseCredit(value.credit),
         bots: parseBots(value.bots),
         activity: parseActivity(value.activity),

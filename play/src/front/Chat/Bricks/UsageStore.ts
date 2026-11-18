@@ -100,8 +100,15 @@ export async function askMyUsageForMore(category: CreditCategory | "speech" = "c
             asked: true,
             canAskForMore: false,
         });
-        if (category === "speech") return current;
-        if (category === "apps") return current.apps ? { ...current, apps: asked(current.apps) } : current;
+        if (category === "speech") return current.speech ? { ...current, speech: asked(current.speech) } : current;
+        if (category === "apps") {
+            // Apps is one word: the Instant Apps credit and the person's own allowance for connected Apps are asked for together
+            return {
+                ...current,
+                ...(current.apps ? { apps: asked(current.apps) } : {}),
+                ...(current.appUse ? { appUse: asked(current.appUse) } : {}),
+            };
+        }
         if (!current.computer) return current;
         const { money } = current.computer;
         return { ...current, computer: { ...asked(current.computer), money: money ? asked(money) : null } };
