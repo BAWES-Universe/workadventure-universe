@@ -1428,6 +1428,8 @@ const chat: BaseTranslation = {
             // Results whose Brick was deleted: they are still yours
             deletedBrickFiles: "Files from deleted Bricks",
             deletedBrickFilesNote: "These are yours. They stay for a while, or until you delete them.",
+            deletedBrickFilesLoadFailed: "Couldn't read the files from deleted Bricks.",
+            deletedBrickFilesRetry: "Try again",
             sent: "You sent it",
             download: "Download",
             delete: "Delete",

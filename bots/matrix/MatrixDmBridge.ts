@@ -825,10 +825,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     console.warn(`[MatrixDmBridge] Could not show the steps line in the direct chat of bot ${botId}:`, error?.message ?? error);
                 }
             }
+            // Asked again right before the message: someone may have joined while the line above was on its way, and then nothing goes there (the work's own chat is
+            // gone; for anything else the next try looks again)
+            if (!this.roomStillTheirs(botId, room.roomId, matrixUserId)) return { ok: false, reason: extra?.room ? 'origin_gone' : 'unsure' };
             const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text, [OWN_INITIATIVE_KEY]: true }, transactionId);
             if (!eventId) return { ok: false, reason: 'unsure' };
             // The files follow the message as file cards (the file card of a finished computer job). The message is out either way: what did not go is said back
-            const files = extra?.files && extra.files.length > 0 ? await this.sendComputerFiles(botId, room.roomId, transactionId, extra.files) : undefined;
+            const files = extra?.files && extra.files.length > 0 ? await this.sendComputerFiles(botId, room.roomId, matrixUserId, transactionId, extra.files) : undefined;
             return { ok: true, eventId, ...(files ? { files } : {}) };
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
@@ -843,7 +846,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * gone from Orbit, or the chat refusing it for what it is (too big, not allowed), will not; a chat or Orbit that did not answer may. Nothing here
      * says a file's name in a log.
      */
-    private async sendComputerFiles(botId: string, roomId: string, transactionId: string, files: AttachedFile[]): Promise<FilesAnswer> {
+    private async sendComputerFiles(botId: string, roomId: string, matrixUserId: string, transactionId: string, files: AttachedFile[]): Promise<FilesAnswer> {
         const botUserId = this.botUserId(botId);
         const attached: string[] = [];
         const missed: FilesAnswer['missed'] = [];
@@ -864,6 +867,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             try {
                 const mxc = await this.client.uploadMedia(botUserId, data, file.mime, file.name);
                 if (!mxc) throw new Error('The chat server gave no address for the file');
+                // Each file waited for its fetch and upload: someone may have joined the chat meanwhile, and then no file goes there, now or on any later try
+                if (!this.roomStillTheirs(botId, roomId, matrixUserId)) {
+                    missed.push({ id: file.id, name: file.name, again: false });
+                    continue;
+                }
                 const sent = await this.client.sendMessage(
                     botUserId,
                     roomId,
@@ -917,6 +925,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const theirs = await this.isOnlyTheTwoOf(botId, matrixUserId, expectedRoomId);
             if (theirs === null) return { ok: false, reason: 'unsure' };
             if (!theirs) return { ok: false, reason: 'origin_gone' };
+            // Both records come back: which bot the room belongs to (without it the next message in the chat is not known to be the bot's), and the chat of this person
+            await this.rememberRoom(expectedRoomId, botId);
             await this.noteDirectRoom(botId, matrixUserId, expectedRoomId);
             looked = { roomId: expectedRoomId, unsure: false };
         }

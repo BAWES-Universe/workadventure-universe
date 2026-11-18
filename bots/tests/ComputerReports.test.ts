@@ -57,6 +57,14 @@ describe('what Brick says when a computer job ends or waits', () => {
         expect(firstSentence(details)).toBe('Visa form needs you.');
         expect(details).toContain('I\'m ready to put in Your name and passport number at visa-portal.example, and nothing of yours has reached it yet.');
         expect(details).toContain('Tap Take over, then “Fill in my details”.');
+        // A step for details that went through, or may have, never says that nothing of theirs has reached the site (the record shows otherwise, or does not know)
+        for (const state of ['done', 'unknown'] as const) {
+            const touched = reportText(report({ kind: 'needs', seq: 1, waitingFor: 'details', ready: { what: 'Your name', where: 'visa-portal.example' }, effects: [{ kind: 'details', state, where: 'visa-portal.example' }] }));
+            expect(touched).not.toContain('nothing of yours has reached it yet');
+        }
+        expect(reportText(report({ kind: 'needs', seq: 1, waitingFor: 'details', ready: { what: 'Your name', where: 'visa-portal.example' }, effects: [{ kind: 'details', state: 'unknown', where: 'visa-portal.example' }] }))).toContain(
+            'not sure the'
+        );
         const pay = reportText(report({ kind: 'needs', seq: 1, waitingFor: 'pay' }));
         expect(pay).toContain('Nothing has been sent or paid yet.');
         expect(pay).toContain('paying, and that is always yours');
@@ -523,6 +531,21 @@ describe('the file card: files a finished job made, in the chat after the messag
         const { runner, delivered } = withFiles([report({ handed: handed('a.pdf', 'b.pdf') })], () => ({ attached: ['file-1'], missed: [{ id: 'file-2', name: 'b.pdf', again: false }] }));
         await runner.tick();
         expect(delivered).toEqual(['file-1']);
+    });
+
+    it('does not call the report told while a file in the chat is still not marked: the mark is made again next round, and nothing is sent twice', async () => {
+        const { runner, seen, told, api } = withFiles([report({ handed: handed('a.pdf', 'b.pdf') })], allIn);
+        const keep = api.keepFileDelivered as ReturnType<typeof vi.fn>;
+        // Orbit does not take the mark of the second file this round
+        keep.mockImplementation(async (_job: string, id: string) => id !== 'file-2');
+        expect(await runner.tick()).toBe(0);
+        expect(told).toEqual([]);
+        // Next round: the files already in the chat are not handed to the chat again, only the marks are made again, and then it is told
+        keep.mockImplementation(async () => true);
+        expect(await runner.tick()).toBe(1);
+        expect(seen[1].ids).toEqual([]);
+        expect(keep.mock.calls.filter((call) => call[1] === 'file-2').length).toBeGreaterThanOrEqual(2);
+        expect(told).toHaveLength(1);
     });
 
     it('says a file’s mark again when the report is done, in case Orbit missed it the first time', async () => {

@@ -405,7 +405,11 @@ export function brickFilesList(brickId: string): BrickFilesList {
 
 export interface DeletedBrickFilesList {
     results: Readable<BrickResult[]>;
+    /** True when the last read failed (not the same as nothing to show): the page says so and offers to read again. */
+    failed: Readable<boolean>;
     load(): Promise<void>;
+    /** Forgets everything shown and any read still on its way (the account or Orbit changed in place). */
+    reset(): void;
     /** Downloads one, read with the person's own sign-in. False when it could not be read. */
     downloadResult(result: Pick<BrickResult, "id" | "name">): Promise<boolean>;
     /** Deletes one: it goes at once and comes back if Orbit refuses. True when it is gone. */
@@ -418,12 +422,24 @@ export interface DeletedBrickFilesList {
  */
 export function deletedBrickFilesList(): DeletedBrickFilesList {
     const results = writable<BrickResult[]>([]);
+    const failed = writable(false);
     let known: BrickResult[] = [];
     const pending = new Set<string>();
+    // Only the latest read shows: a slow answer to an earlier one (or to one made for the account before) never covers what is there now
+    let reads = 0;
     const show = () => results.set(known.filter((result) => !pending.has(result.id)));
     return {
         results: { subscribe: results.subscribe },
+        failed: { subscribe: failed.subscribe },
+        reset() {
+            reads++;
+            known = [];
+            pending.clear();
+            failed.set(false);
+            show();
+        },
         async load() {
+            const mine = ++reads;
             try {
                 // Every page, so a person with many results from deleted Bricks sees them all (a hundred at a time from Orbit)
                 const all: BrickResult[] = [];
@@ -442,10 +458,13 @@ export function deletedBrickFilesList(): DeletedBrickFilesList {
                     cursor = nextDeletedBrickResultsPage(answer);
                     if (!cursor) break;
                 }
+                if (mine !== reads) return;
                 known = all;
+                failed.set(false);
                 show();
             } catch (error) {
                 console.warn("Could not read the files of deleted Bricks", error);
+                if (mine === reads) failed.set(true);
             }
         },
         async downloadResult(result) {

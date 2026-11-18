@@ -408,11 +408,42 @@ describe("a Brick's files (#2003)", () => {
             expect(get(list.results).map((one) => one.id)).toEqual(["g2"]);
         });
 
-        it("shows nothing it did not read when Orbit cannot be asked", async () => {
+        it("shows nothing it did not read when Orbit cannot be asked, and says it failed rather than that there is nothing, until a read works", async () => {
+            orbit.getDeletedBrickResults.mockReset();
             orbit.getDeletedBrickResults.mockRejectedValue(new Error("offline"));
             const list = deletedBrickFilesList();
+            expect(get(list.failed)).toBe(false);
             await list.load();
             expect(get(list.results)).toEqual([]);
+            expect(get(list.failed)).toBe(true);
+            // Read again: nothing to show is not a failure
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults.mockResolvedValue({ results: [] });
+            await list.load();
+            expect(get(list.failed)).toBe(false);
+            expect(get(list.results)).toEqual([]);
+        });
+
+        it("forgets what it showed when the account changes, and never shows a read that was started for the one before", async () => {
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults.mockResolvedValueOnce({ results: [gone({ id: "mine" })] });
+            const list = deletedBrickFilesList();
+            await list.load();
+            expect(get(list.results).map((one) => one.id)).toEqual(["mine"]);
+            // A read is on its way for the old account when the account changes
+            let release: (answer: unknown) => void = () => undefined;
+            orbit.getDeletedBrickResults.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+            const slow = list.load();
+            list.reset();
+            expect(get(list.results)).toEqual([]);
+            orbit.getDeletedBrickResults.mockResolvedValueOnce({ results: [gone({ id: "theirs" })] });
+            await list.load();
+            expect(get(list.results).map((one) => one.id)).toEqual(["theirs"]);
+            // The slow answer for the account before arrives last: it shows nothing, and does not mark a failure
+            release({ results: [gone({ id: "old" })] });
+            await slow;
+            expect(get(list.results).map((one) => one.id)).toEqual(["theirs"]);
+            expect(get(list.failed)).toBe(false);
         });
     });
 });

@@ -194,7 +194,7 @@ export function reportText(report: ComputerReport): string {
         case 'needs': {
             const next = NEEDS_NEXT[report.waitingFor ?? 'answer'];
             const ready =
-                report.waitingFor === 'details' && report.ready && !report.effects.some((effect) => effect.kind === 'details' && effect.state === 'done')
+                report.waitingFor === 'details' && report.ready && !report.effects.some((effect) => effect.kind === 'details' && (effect.state === 'done' || effect.state === 'unknown'))
                     ? ` I'm ready to put in ${report.ready.what.trim().replace(/[.!?]+$/, '')} at ${report.ready.where.trim().replace(/[.!?]+$/, '')}, and nothing of yours has reached it yet.`
                     : '';
             // Paying and submitting are the person's: they are told, from the record, that nothing has gone yet (or what has)
@@ -389,7 +389,14 @@ export class ComputerReports {
                 if (!('eventId' in noted) && noted.reason === 'unsure') return false;
             }
             // Orbit may have missed a file's own mark (it is said again, and is safe to say twice): Files must not show a file in the chat as not delivered
-            for (const id of sent) await this.api.keepFileDelivered(report.jobId, id);
+            // A mark Orbit did not take keeps the report open: the files already in the chat are remembered in `sent` and are not sent again, only the mark is made again next round,
+            // and the report is not "told" while a file in the chat still shows as not delivered
+            let unmarked = 0;
+            for (const id of sent) if (!(await this.api.keepFileDelivered(report.jobId, id))) unmarked += 1;
+            if (unmarked > 0) {
+                this.log.warn(`[ComputerReports] Orbit did not keep that ${unmarked} file(s) of job ${report.jobId} reached the chat; the mark is made again next round, nothing is sent twice`);
+                return false;
+            }
             this.attached.delete(report.key);
             this.failedRounds.delete(report.key);
             if (!(await this.api.keepTold(report))) this.log.warn(`[ComputerReports] Orbit did not keep that job ${report.jobId} (${report.kind}) was told; it goes out again as the same message`);

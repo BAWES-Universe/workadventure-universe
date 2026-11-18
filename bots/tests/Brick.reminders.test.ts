@@ -418,6 +418,8 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
             expect(await lost.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: true, eventId: '$said' });
             expect(lost.sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, expect.anything(), 't');
             expect(lost.deps.rooms.rememberDmRoomOf).toHaveBeenCalledWith(BRICK, SARA, ROOM);
+            // Both records come back: which bot the room belongs to too, or the person's next message in that chat is not known to be the Brick's
+            expect(lost.deps.rooms.rememberDmRoom).toHaveBeenCalledWith(ROOM, BRICK);
             // The record appears later: the same words are sent into the same chat, once the first try had to wait
             const later = bridgeWith({ room: null });
             later.client.getJoinedMembers.mockRejectedValueOnce(new Error('homeserver down'));
@@ -430,6 +432,40 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
             expect(strangers.sendMessage).not.toHaveBeenCalled();
             const left = bridgeWith({ room: null, members: [SARA] });
             expect(await left.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: false, reason: 'origin_gone' });
+        });
+
+        it('looks at the chat again right before the message and before each file: someone who joined while the line or an upload was on its way gets nothing', async () => {
+            const someone = '@someone:matrix.test';
+            const joins = (bridge: unknown) => (bridge as { roomMembers: Map<string, Set<string>> }).roomMembers.set(ROOM, new Set([SARA, BRICK_USER, someone]));
+            const field = { v: 1, state: 'done', line: 'Worked on its computer', startedAt: 1, steps: [] } as never;
+            const file = (id: string, name: string, mime: string, bytes: Buffer): AttachedFile => ({ id, name, mime, bytes: bytes.length, load: async () => bytes, delivered: async () => undefined });
+            // Someone joins while the "Worked on its computer" line goes out: the report text is not said
+            const line = bridgeWith({});
+            line.sendMessage.mockImplementationOnce(async () => {
+                joins(line.bridge);
+                return '$line';
+            });
+            expect(await line.bridge.speakInDirectChat(BRICK, SARA, 'Visa form is done.', 'k', { steps: { field, text: 'Worked on its computer' } } as never)).toEqual({ ok: false, reason: 'unsure' });
+            expect(line.sendMessage).toHaveBeenCalledTimes(1);
+            // The chat the work began in is gone for good for it
+            const began = bridgeWith({});
+            began.sendMessage.mockImplementationOnce(async () => {
+                joins(began.bridge);
+                return '$line';
+            });
+            expect(await began.bridge.speakInDirectChat(BRICK, SARA, 'x', 'k', { room: ROOM, steps: { field, text: 'Worked on its computer' } } as never)).toEqual({ ok: false, reason: 'origin_gone' });
+            // Someone joins while the first file uploads: that file and the next one do not go, and neither will be tried again
+            const upload = bridgeWith({});
+            upload.uploadMedia.mockImplementationOnce(async () => {
+                joins(upload.bridge);
+                return 'mxc://matrix.test/one';
+            });
+            const answer = await upload.bridge.speakInDirectChat(BRICK, SARA, 'done', 'computer-told:j:done', {
+                files: [file('f1', 'a.pdf', 'application/pdf', Buffer.from('a')), file('f2', 'b.pdf', 'application/pdf', Buffer.from('b'))],
+            });
+            expect(answer).toMatchObject({ ok: true, files: { attached: [], missed: [{ id: 'f1', again: false }, { id: 'f2', again: false }] } });
+            expect(upload.sendMessage).toHaveBeenCalledTimes(1);
+            expect(upload.sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, expect.objectContaining({ body: 'done' }), 'computer-told:j:done');
         });
 
         it('still says no_chat when there is no chat at all and nothing to say where it began, and keeps the goals’ own room check the same as it was', async () => {
