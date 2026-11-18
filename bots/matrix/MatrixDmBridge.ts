@@ -1808,9 +1808,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error));
             }
             for (const item of reply.media ?? []) {
-                const sent = await this.say(botId, () => this.sendMedia(botUserId, event.room_id, item)).then(
-                    // Nothing was sent once a purge has begun
-                    (copy) => (this.saysNothing(botId) ? null : { copy }),
+                // Whether the send was begun: a purge that starts while a file is on its way does not undo a file that got through (it is still recorded)
+                let began = false;
+                const sent = await this.say(botId, () => ((began = true), this.sendMedia(botUserId, event.room_id, item))).then(
+                    // Nothing was sent when the Brick was already silenced
+                    (copy) => (began ? { copy } : null),
                     (error) => {
                         console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error);
                         return null;

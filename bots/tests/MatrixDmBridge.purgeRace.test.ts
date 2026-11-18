@@ -230,6 +230,26 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         }
     });
 
+    it('records a file that got through even when the purge began while it was on its way, and records none that was never sent', async () => {
+        const song = { url: 'https://tools.example.com/song.mp3', mediaType: 'audio', mimeType: '', createdAt: 0, retryCount: 0 };
+        const mediaSent = vi.fn();
+        let finish!: () => void;
+        // The file is mid-send when the purge begins
+        vi.spyOn(bridge as any, 'sendMedia').mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+        deps.reply.mockResolvedValueOnce({ text: 'Here it is.', media: [song], mediaSent });
+        const handled = bridge.onEvent(message('$m1'));
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+        bridge.purgedBots.add(BOT);
+        finish();
+        await handled;
+        expect(mediaSent).toHaveBeenCalledWith(song);
+        // A file whose send never began (the Brick was already silenced) is not recorded
+        mediaSent.mockClear();
+        deps.reply.mockResolvedValueOnce({ text: 'Again.', media: [song], mediaSent });
+        await bridge.onEvent(message('$m2'));
+        expect(mediaSent).not.toHaveBeenCalled();
+    });
+
     it('a chat closed for a gone Brick (its purge not begun) takes no new send from the Brick once the clearing has begun', async () => {
         expect(bridge.purgedBots.has(BOT)).toBe(false);
         let lateSend: Promise<unknown> | undefined;
