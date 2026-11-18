@@ -1117,6 +1117,7 @@ export class MCPConnector {
         if (!server) return null;
         const failure: { outcome?: JsonRpcOutcome } = {};
         const credentials = credentialsKey(server);
+        this.health.use(botId, server);
         const read = await this.listAllTools(server, failure);
         const orbit = { adminApiUrl, adminApiToken };
         if (!read) {

@@ -117,6 +117,11 @@ export interface SeenServer {
 /** What the bot server knows about its tool servers, by bot and server. */
 export class ToolHealth {
     private readonly entries = new Map<string, Entry>();
+    /**
+     * The credentials the server was last used with, by bot and server. Kept apart from the marks: a mark is gone once
+     * the server answers, and a read made with older credentials that is still on its way must stay older than that.
+     */
+    private readonly newest = new Map<string, string>();
     private generations = 0;
     /** Reports to Orbit that are still on their way, by bot and server */
     private readonly pending = new Map<string, Promise<unknown>>();
@@ -137,6 +142,7 @@ export class ToolHealth {
      */
     shouldSkip(botId: string, server: SeenServer): boolean {
         const key = this.key(botId, server.id);
+        this.newest.set(key, credentialsKey(server));
         let entry = this.entries.get(key);
         if (!entry) {
             const lost = Date.parse(server.signInLostAt ?? '');
@@ -186,6 +192,7 @@ export class ToolHealth {
     /** The server was tried and failed this way. True when the state is new (Orbit is told once per change). */
     fail(botId: string, server: SeenServer, state: ToolIssueState): boolean {
         const key = this.key(botId, server.id);
+        this.newest.set(key, credentialsKey(server));
         const entry = this.entries.get(key);
         const now = this.now();
         if (entry && entry.state === state) {
@@ -262,10 +269,19 @@ export class ToolHealth {
         if (entry && (observation === undefined || entry.generation === observation)) entry.reported = true;
     }
 
-    /** The mark held now was made with other credentials than these: a read made with these is older than the mark. */
+    /** The server is about to be used with its credentials of now: a read begun with others is older than this one. */
+    use(botId: string, server: SeenServer): void {
+        this.newest.set(this.key(botId, server.id), credentialsKey(server));
+    }
+
+    /**
+     * A read made with these credentials is older than what the server is used with now: newer credentials were tried
+     * since it began, whether they failed (the mark) or answered (no mark left).
+     */
     isStale(botId: string, serverId: string, credentials: string): boolean {
-        const entry = this.entries.get(this.key(botId, serverId));
-        return entry !== undefined && entry.credentials !== credentials;
+        const key = this.key(botId, serverId);
+        const known = this.newest.get(key) ?? this.entries.get(key)?.credentials;
+        return known !== undefined && known !== credentials;
     }
 
     /** The server answered. True when it had a mark to clear (Orbit is told once). A read made with credentials older than the mark does not clear it. */

@@ -261,6 +261,20 @@ describe('reports and reads that finish after the server moved on', () => {
         expect(health.ok('bot', 'srv-1', credentialsKey(fresh))).toBe(true);
         expect(health.issuesFor('bot', new Set(['srv-1']))).toHaveLength(0);
     });
+
+    it('keeps a read made with older credentials older after a newer one answered and left no mark', () => {
+        const health = new ToolHealth();
+        const old = server();
+        const fresh = server({ authConfig: '{"accessToken":"b"}' });
+        // Two reads begin, one with each credentials; the newer one answers and clears whatever mark there was
+        health.shouldSkip('bot', old);
+        health.shouldSkip('bot', fresh);
+        expect(health.ok('bot', 'srv-1', credentialsKey(fresh))).toBe(false);
+        expect(health.isStale('bot', 'srv-1', credentialsKey(old))).toBe(true);
+        expect(health.isStale('bot', 'srv-1', credentialsKey(fresh))).toBe(false);
+        // A read of a server never used says nothing is older
+        expect(health.isStale('bot', 'srv-other', credentialsKey(old))).toBe(false);
+    });
 });
 
 describe('a failure that says nothing new, and reports on their way', () => {

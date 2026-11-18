@@ -176,6 +176,29 @@ describe('a refused sign-in', () => {
         expect(issues).toEqual([]);
     });
 
+    it('does not let an older read that answers late overwrite the list a newer sign-in already read', async () => {
+        const answers: Array<(value: unknown) => void> = [];
+        listAnswer = () =>
+            new Promise((resolve) => {
+                answers.push(resolve);
+            });
+        const older = discover();
+        await vi.waitFor(() => expect(answers).toHaveLength(1));
+        // The sign-in is made again while the first read is still on its way, and that read answers first
+        servers = [{ ...base, authConfig: TOKEN_B }];
+        const newer = discover();
+        await vi.waitFor(() => expect(answers).toHaveLength(2));
+        answers[1]({ data: { jsonrpc: '2.0', id: '1', result: { tools: [tool('new-search')] } } });
+        expect((await newer).tools.map((one) => one.function.name)).toEqual(['new-search']);
+        // The old read comes in after: it has its own list for its own reply, but the next reply gets the newer one
+        answers[0]({ data: { jsonrpc: '2.0', id: '1', result: { tools: [tool('old-search')] } } });
+        await older;
+        listAnswer = () => {
+            throw new Error('the list should come from the cache');
+        };
+        expect((await discover()).tools.map((one) => one.function.name)).toEqual(['new-search']);
+    });
+
     it('carries on from the mark Orbit holds after the bot server restarted, and tells Orbit when the server answers', async () => {
         servers = [{ ...base, authConfig: TOKEN_A, signInLostAt: '2026-11-05T09:54:00.000Z' }];
         const { tools, issues } = await discover();
