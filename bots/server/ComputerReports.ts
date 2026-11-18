@@ -304,6 +304,8 @@ export class ComputerReports {
     /** Files of a report already in the chat, and how many rounds a report's files have failed: only so a retry does the rest and gives up in the end. */
     private readonly attached = new Map<string, Set<string>>();
     private readonly failedRounds = new Map<string, number>();
+    /** Files of a report that were given up on and said so in the chat (they are in Files): never tried again on a later round, so a card never follows the words "I couldn't attach it". */
+    private readonly givenUp = new Map<string, Set<string>>();
     /** How many rounds Orbit did not take a file's "delivered" mark for a report: bounded, like the rounds of files that could not go. */
     private readonly unmarkedRounds = new Map<string, number>();
 
@@ -367,7 +369,7 @@ export class ComputerReports {
         const files: AttachedFile[] =
             report.kind === 'done'
                 ? report.handed
-                      .filter((file) => !sent.has(file.id))
+                      .filter((file) => !sent.has(file.id) && !this.givenUp.get(report.key)?.has(file.id))
                       .map((file) => ({ ...file, load: () => this.api.file(report.jobId, file.id), delivered: async () => void (await this.api.keepFileDelivered(report.jobId, file.id)) }))
                 : [];
         const spoke = await this.speaker.say(report.botId, report.matrixUserId, reportText(report), report.key, {
@@ -389,6 +391,10 @@ export class ComputerReports {
                 // Said once, as its own message, so nobody waits for a card that will not come: the file is in Files
                 const noted = await this.speaker.say(report.botId, report.matrixUserId, missedText(missed), `${report.key}:missed`, report.origin ? { room: report.origin.ref } : undefined);
                 if (!('eventId' in noted) && noted.reason === 'unsure') return false;
+                // It is said: these files are not tried again, even when the report stays open for a mark Orbit has not taken yet
+                const given = this.givenUp.get(report.key) ?? new Set<string>();
+                for (const file of missed) given.add(file.id);
+                this.givenUp.set(report.key, given);
             }
             // Orbit may have missed a file's own mark (it is said again, and is safe to say twice): Files must not show a file in the chat as not delivered
             // A mark Orbit did not take keeps the report open: the files already in the chat are remembered in `sent` and are not sent again, only the mark is made again next round,
@@ -409,6 +415,7 @@ export class ComputerReports {
             this.unmarkedRounds.delete(report.key);
             this.attached.delete(report.key);
             this.failedRounds.delete(report.key);
+            this.givenUp.delete(report.key);
             if (!(await this.api.keepTold(report))) this.log.warn(`[ComputerReports] Orbit did not keep that job ${report.jobId} (${report.kind}) was told; it goes out again as the same message`);
             return true;
         }
@@ -422,6 +429,7 @@ export class ComputerReports {
         await this.api.keepUndeliverable(report, why);
         this.attached.delete(report.key);
         this.failedRounds.delete(report.key);
+        this.givenUp.delete(report.key);
         this.unmarkedRounds.delete(report.key);
         return false;
     }

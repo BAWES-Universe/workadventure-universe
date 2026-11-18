@@ -562,6 +562,27 @@ describe('the file card: files a finished job made, in the chat after the messag
         expect(told).toHaveLength(1);
     });
 
+    it('never tries a file again after saying it could not be attached, even when the report stays open for a mark Orbit has not taken', async () => {
+        const { runner, seen, said, told, api } = withFiles([report({ handed: handed('a.pdf', 'b.pdf') })], (files) => ({
+            attached: files.filter((file) => file.id === 'file-1').map((file) => file.id),
+            missed: files.some((file) => file.id === 'file-2') ? [{ id: 'file-2', name: 'b.pdf', again: true }] : [],
+        }));
+        const keep = api.keepFileDelivered as ReturnType<typeof vi.fn>;
+        // The first file is in the chat, but Orbit does not take its mark
+        keep.mockImplementation(async () => false);
+        for (let round = 1; round <= FILE_TRIES; round++) expect(await runner.tick()).toBe(0);
+        const noted = said.filter((one) => one.text.includes("couldn't attach b.pdf"));
+        expect(noted).toHaveLength(1);
+        const offered = seen.length;
+        // Later rounds: b.pdf is never offered again, so no card can follow the words that it could not be attached
+        for (let round = 0; round < 3; round++) expect(await runner.tick()).toBe(0);
+        expect(seen.slice(offered).every((one) => !one.ids.includes('file-2'))).toBe(true);
+        expect(said.filter((one) => one.text.includes("couldn't attach b.pdf"))).toHaveLength(1);
+        keep.mockImplementation(async () => true);
+        expect(await runner.tick()).toBe(1);
+        expect(told).toHaveLength(1);
+    });
+
     it('says a file’s mark again when the report is done, in case Orbit missed it the first time', async () => {
         const { runner, delivered } = withFiles([report({ handed: handed('a.pdf') })], allIn);
         await runner.tick();
