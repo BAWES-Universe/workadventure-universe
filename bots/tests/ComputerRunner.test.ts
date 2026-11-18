@@ -193,10 +193,11 @@ describe('a job that runs', () => {
         expect(a.seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
         expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
 
-        // and a turn that said something but was cut by such a refusal still counts as a bad turn, not as a good one that ends nothing
-        const b = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => done('I cannot go on')));
+        // a turn that said something after a call was refused went on: it is no bad turn, so a job is not ended for refusals it got round
+        const b = fakeOrbit([done('One call was refused, so I used another way'), done('[[done]]')]);
         await runJob(b.orbit, JOB, RELAY, { sawSince: () => true });
-        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        expect(b.seen.turns).toHaveLength(2);
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
 
         // a refusal noted before the turn began belongs to an earlier turn: it is asked from the turn's own start
         const since: number[] = [];
@@ -229,20 +230,18 @@ describe('a job that runs', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
     });
 
-    it('does not carry a refusal into the next turn: the window starts again with each turn', async () => {
+    it('does not carry a refusal into the next turn: a turn that got round it is a good turn, and the failures after it are ours', async () => {
         let t = 0;
         const clock = () => ++t;
         const notes = createRefusalNotes(clock);
         const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
-        // an earlier turn was refused and said something, so the job went on; three failed turns after it are ours
-        const { orbit, seen } = fakeOrbit([() => (notes.note(JOB.jobId), done('Cannot do that, trying another way')), failing(), failing(), failing(), failing()]);
+        const { orbit, seen } = fakeOrbit([() => (notes.note(JOB.jobId), done('One call was refused, trying another way')), failing(), failing(), failing()]);
         const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
         orbit.running = async () => [JOB];
         await runner.tick();
         await runner.idle();
-        // the refused turn is bad, then the streak of failures; it ends at the third bad turn with the refusal in it
-        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        expect(seen.turns).toHaveLength(1 + RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
     });
 
     it('reads a turn that is gone on its first open as a failed turn, not as the agent saying nothing', async () => {

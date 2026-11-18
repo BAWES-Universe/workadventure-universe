@@ -509,10 +509,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A bad turn is one that failed or said nothing. It is Universe's failure only when the turn really failed (a model or transport
             // error, a stream that broke) and nothing of the person's (their allowance, a rule of theirs) stopped it: a turn with no words
             // at all can be what the job asked for ("never reply in text"), so it is the agent's, and the streak is ours only when every
-            // turn of it was ours
+            // turn of it was ours. A refusal only decides whose a bad turn is: a turn that went on and said something after one call was
+            // refused is no bad turn (the agent got round it), so a job is never ended for refusals it recovered from
             const silent = !result.failed && result.words.trim() === '';
-            const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
-            if (result.failed || silent || refused) {
+            if (result.failed || silent) {
+                const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
                 bad += 1;
                 if (silent || refused) notOurs = true;
             } else {
