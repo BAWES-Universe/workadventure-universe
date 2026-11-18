@@ -110,7 +110,10 @@
 <AppSheet
     title={words.sheetTitle({ app })}
     sub={words.sheetSub({ app, brick })}
-    {onClose}
+    onClose={() => {
+        // A save on its way is not walked away from: the sheet closes by itself when it is done
+        if (!busy) onClose();
+    }}
     stickyButtons
     testId="appShareSheet"
 >
@@ -219,7 +222,7 @@
     <p class="ss-note">{words.note()}</p>
     {#if failed}<p class="ss-bad" data-testid="appShareFailed">{refusal || text.workFailed()}</p>{/if}
     <svelte:fragment slot="buttons">
-        <PageButton tall testId="appShareCancel" on:click={onClose}>{text.cancel()}</PageButton>
+        <PageButton tall disabled={busy} testId="appShareCancel" on:click={onClose}>{text.cancel()}</PageButton>
         <PageButton tall go disabled={!canSend} testId="appShareConfirm" on:click={() => void send()}
             >{starting ? words.start() : text.save()}</PageButton
         >

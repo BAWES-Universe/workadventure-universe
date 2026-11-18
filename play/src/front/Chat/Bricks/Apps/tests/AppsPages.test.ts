@@ -776,9 +776,16 @@ describe("the Apps pages (#2001)", () => {
             expect(locked.every((one) => one.hasAttribute("disabled"))).toBe(true);
             expect(allById("appShareInput").every((one) => one.hasAttribute("disabled"))).toBe(true);
             expect(answer).toBeDefined();
+            // Nor does the sheet close under a save that is on its way: not by Cancel, Escape or a tap beside it
+            expect(byId("appShareCancel")?.hasAttribute("disabled")).toBe(true);
+            window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+            document.querySelector<HTMLElement>(".sh-scrim")?.click();
+            await settle();
+            expect(byId("appShareSheet")).not.toBeNull();
             vi.spyOn(console, "warn").mockImplementation(() => undefined);
             failSave(new Error("offline"));
             await settle();
+            expect(byId("appShareCancel")?.hasAttribute("disabled")).toBe(false);
             expect(allById("appShareJobPick").every((one) => !one.hasAttribute("disabled"))).toBe(true);
             expect(allById("appShareReturn").every((one) => !one.hasAttribute("disabled"))).toBe(true);
         });
