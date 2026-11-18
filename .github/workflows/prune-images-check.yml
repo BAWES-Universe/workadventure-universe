@@ -23,7 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          sparse-checkout: .github/scripts
+          # The workflow test reads the two workflow files next to the scripts.
+          sparse-checkout: |
+            .github/scripts
+            .github/workflows
       - uses: actions/setup-node@v6
         with:
           node-version: 22
