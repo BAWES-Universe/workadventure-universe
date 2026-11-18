@@ -467,6 +467,56 @@ describe('what holds for someone else even if Orbit or the model gets it wrong',
         await ask(ai, 'make_song', { style: 'rock' }, 'call-3');
         expect(execute).toHaveBeenCalledTimes(2);
     });
+
+    it('counts a repeat that only adds an input nobody picked as the same job', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue({ error: 'No answer. May have finished', outcome: 'uncertain', hint: 'x' } as never);
+        const check = vi.fn<AppUseCheck>(async () => ({ allowed: true, shared: { returns: null } }));
+        const memory: { sharedUncertain?: Set<string> } = {};
+        const ai = service(check);
+        ai['conversationMemory'] = { getMemory: () => memory } as never;
+        await ask(ai, 'make_song', { style: 'oud' }, 'call-1');
+        const [again] = await ask(ai, 'make_song', { style: 'oud', owner_token: 'x' }, 'call-2');
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(check).toHaveBeenCalledTimes(1);
+        expect(again.result.outcome).toBe('uncertain');
+    });
+
+    it('sends the same job and inputs asked twice in one round once, and gives the second the first one\'s answer', async () => {
+        let finish: (value: unknown) => void = () => undefined;
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockImplementation(() => new Promise((resolve) => (finish = resolve)) as never);
+        const check = vi.fn<AppUseCheck>(async () => ({ allowed: true, shared: { returns: null } }));
+        const memory: { sharedUncertain?: Set<string>; sharedInFlight?: Map<string, Promise<unknown>> } = {};
+        const ai = service(check);
+        ai['conversationMemory'] = { getMemory: () => memory } as never;
+        const round = ai['executeToolCalls'](
+            [
+                { id: 'call-1', name: 'make_song', arguments: JSON.stringify({ style: 'oud' }) },
+                { id: 'call-2', name: 'make_song', arguments: JSON.stringify({ style: 'oud', owner_token: 'x' }) },
+            ],
+            sara as never,
+            undefined,
+            SHARED,
+            undefined,
+            'room',
+            'b1',
+            7,
+            undefined,
+            undefined,
+            false,
+            undefined,
+            undefined,
+            undefined,
+            false,
+            true
+        );
+        await vi.waitFor(() => expect(execute).toHaveBeenCalled());
+        finish({ error: 'No answer. May have finished', outcome: 'uncertain', hint: 'x' });
+        const results = await round;
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(check).toHaveBeenCalledTimes(1);
+        expect(results.map((entry: { result: { outcome: string } }) => entry.result.outcome)).toEqual(['uncertain', 'uncertain']);
+        expect(memory.sharedInFlight?.size ?? 0).toBe(0);
+    });
 });
 
 describe('telling Orbit again when it did not take what a try came to', () => {

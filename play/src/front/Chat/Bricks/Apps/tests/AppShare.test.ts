@@ -98,6 +98,12 @@ describe("reading what Orbit says is shared (#2006)", () => {
         expect(startingChoice(plain)).toEqual({ tool: "search", inputs: [], returns: null });
     });
 
+    it("never reads a shared job's picked fields as the whole answer when its app stopped naming its fields", () => {
+        const job = parseShare(view())!.jobs[0];
+        const unnamed = { ...job, returns: { names: null, picked: ["title"] } };
+        expect(startingChoice(unnamed)).toEqual({ tool: "search", inputs: ["query"], returns: ["title"] });
+    });
+
     it("checks a choice has what the job needs and something coming back", () => {
         const job = parseShare(view())!.jobs[0];
         expect(choiceIsComplete(job, { tool: "search", inputs: ["query"], returns: ["title"] })).toBe(true);

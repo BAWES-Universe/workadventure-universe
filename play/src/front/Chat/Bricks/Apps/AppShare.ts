@@ -125,7 +125,9 @@ export function startingChoice(one: ShareJob): ShareJobChoice {
         ? one.inputs.filter((entry) => entry.picked || entry.required)
         : one.inputs.filter((entry) => entry.required);
     const all = one.returns.names;
-    const returns = all === null ? null : one.picked && one.returns.picked ? one.returns.picked : [...all];
+    // What the owner picked is kept even when the app no longer names its fields: it is never read as "the whole answer" (a wider share)
+    const kept = one.picked && one.returns.picked ? one.returns.picked : null;
+    const returns = all === null ? kept : kept ?? [...all];
     return { tool: one.tool, inputs: picked.map((entry) => entry.name), returns };
 }
 

@@ -1312,6 +1312,7 @@ export class AIService {
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
             memory?.sharedUncertain?.clear();
+            memory?.sharedInFlight?.clear();
             memory?.sentAgain?.clear();
             memory?.cardsAgain?.clear();
         }
@@ -4959,12 +4960,25 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // A job that may have run for someone else is not sent again in this reply, whatever the model asks (#2006): the same job with the
                             // same inputs gets the answer of the first try. Orbit never runs the same call twice either, but each ask here is a new call
                             const memory = forOthers && botId && playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : undefined;
-                            const repeatKey = `${toolCall.name}:${stableJson(parsedArgs)}`;
+                            // The key is of what would be sent, not of what the model wrote: an extra input nobody picked is dropped before the App is
+                            // called, so a repeat that differs only by it is the same job
+                            const sentArgs: Record<string, unknown> =
+                                forOthers && mcpServerConfig.sharedJob
+                                    ? Object.fromEntries(Object.entries(parsedArgs ?? {}).filter(([name]) => mcpServerConfig.sharedJob?.inputs.includes(name)))
+                                    : (parsedArgs ?? {});
+                            const repeatKey = `${toolCall.name}:${stableJson(sentArgs)}`;
                             if (memory?.sharedUncertain?.has(repeatKey)) {
                                 result = { error: alreadyAskedLine('unknown', this.appContextOf(mcpServerConfig, botId ?? '')), outcome: 'uncertain' };
                                 break;
                             }
-                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
+                            // The same job with the same inputs asked twice in one round (the calls of a round start together) is one try: the second
+                            // waits for the first and is given its answer, so it is neither counted nor sent a second time
+                            const alongside = memory?.sharedInFlight?.get(repeatKey);
+                            if (alongside) {
+                                result = await alongside;
+                                break;
+                            }
+                            const running = this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
                                 botId: botId!,
                                 callId: toolCall.id,
                                 ...(verdict.heading ? { heading: verdict.heading } : {}),
@@ -4977,6 +4991,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                       ? { requesterKey: `guest:${this.chatCallFor(botId!, playerId, botClient, spaceName)?.person.identifier || (playerUuid && !playerUuid.startsWith('temp-') ? playerUuid : playerId)}` }
                                       : {}),
                             });
+                            if (memory) (memory.sharedInFlight ??= new Map()).set(repeatKey, running);
+                            try {
+                                result = await running;
+                            } finally {
+                                if (memory?.sharedInFlight?.get(repeatKey) === running) memory.sharedInFlight.delete(repeatKey);
+                            }
                             if (memory && result && typeof result === 'object' && !Array.isArray(result) && (result as { outcome?: unknown }).outcome === 'uncertain') {
                                 (memory.sharedUncertain ??= new Set()).add(repeatKey);
                             }

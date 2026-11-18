@@ -1005,6 +1005,7 @@ export class PersistentMemory extends ConversationMemory {
             artifactCalls: undefined,
             instantCalls: undefined,
             sharedUncertain: undefined,
+            sharedInFlight: undefined,
             instantTurn: undefined,
             turnMedia: undefined,
             sentAgain: undefined,

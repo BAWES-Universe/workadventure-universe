@@ -555,8 +555,10 @@ export class BotApiService {
                 // If we have accessToken, try to fetch a new session token and retry (only for the Orbit and account the request started with)
                 if (this.accessToken && startedWith === this.timeZoneGeneration) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
-                    if (newToken) {
-                        const retryUrl = `${this.adminUrl}${endpoint}`;
+                    // Asking for the session took time too: the game may have moved on meanwhile, and the request goes back only to the Orbit it
+                    // started with (the url it was first sent to), never to the one the game is on now
+                    if (newToken && startedWith === this.timeZoneGeneration) {
+                        const retryUrl = url;
                         const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
 
                         const retryResponse = await fetch(retryUrl, {
