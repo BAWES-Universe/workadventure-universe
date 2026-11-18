@@ -1118,6 +1118,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         await work;
     }
 
+    /**
+     * Whatever a Brick says in a chat goes through here: nothing is sent once its purge has begun, and a send already under way is waited for by
+     * the purge (before it reads any room), so no message can land after the history was read and be left behind.
+     */
+    private say<T>(botId: string, send: () => Promise<T>): Promise<T | undefined> {
+        if (this.purgedBots.has(botId)) return Promise.resolve(undefined);
+        return this.profileWriting(botId, send);
+    }
+
     /** Runs a write for a Brick (its chat profile, or a message kept for it), remembered while it runs so a purge can wait for it. */
     private profileWriting<T>(botId: string, write: () => Promise<T>): Promise<T> {
         const running = write();
@@ -1154,7 +1163,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /** Returns whether the note reached the chat. */
     private async sendNote(botId: string, roomId: string, state: BotNoteState, language: NoteLanguage, config?: BotConfiguration | null): Promise<boolean> {
         const content = statusNoteContent(state, language, await this.botName(botId, config));
-        return this.client.sendMessage(this.botUserId(botId), roomId, content).then(
+        return this.say(botId, () => this.client.sendMessage(this.botUserId(botId), roomId, content)).then(
             () => true,
             (error) => {
                 console.warn(`[MatrixDmBridge] Could not send a ${state} note in ${roomId}:`, error?.message ?? error);
@@ -1432,6 +1441,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // A Brick whose chats are being purged answers nothing and writes nothing more
         if (this.purgedBots.has(botId)) return;
         const botUserId = this.botUserId(botId);
+        // Every send of this answer goes through `say`: nothing goes out once a purge has begun, and the purge waits for a send under way
+        const out = {
+            sendMessage: (user: string, room: string, content: Record<string, unknown>, txnId?: string) => this.say(botId, () => (txnId ? this.client.sendMessage(user, room, content, txnId) : this.client.sendMessage(user, room, content))),
+            sendText: (user: string, room: string, text: string) => this.say(botId, () => this.client.sendText(user, room, text)),
+        };
 
         const language = detectLanguage(String(content.body ?? ''));
         const couldNotAnswer = async (config?: BotConfiguration) => {
@@ -1536,7 +1550,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const refuseKey = async () => {
             if (catchUp) return;
             // Every paste gets the answer: the person is waiting on this message, like any other, and a dropped one would leave them guessing
-            await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).catch(() => undefined);
+            await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).catch(() => undefined);
         };
         if (holdsAKey(String(content.body ?? ''))) {
             await refuseKey();
@@ -1614,7 +1628,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
-                        await this.client.sendText(botUserId, event.room_id, interim);
+                        await out.sendText(botUserId, event.room_id, interim);
                     } catch (error: any) {
                         console.warn(`[MatrixDmBridge] Could not send an interim message in ${event.room_id}:`, error?.message ?? error);
                     }
@@ -1627,10 +1641,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
                         .then(async () => {
                             const content = { msgtype: 'm.notice', body: text, [STEPS_KEY]: field };
                             if (!stepsEventId) {
-                                stepsEventId = await this.client.sendMessage(botUserId, event.room_id, content);
+                                stepsEventId = await out.sendMessage(botUserId, event.room_id, content);
                                 return;
                             }
-                            await this.client.sendMessage(botUserId, event.room_id, {
+                            await out.sendMessage(botUserId, event.room_id, {
                                 msgtype: 'm.notice',
                                 body: `* ${text}`,
                                 'm.new_content': content,
@@ -1651,7 +1665,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             // A reply limit (#1159): the fixed card instead of an answer, and the message is not tried again
             if (reply?.replyLimit) {
-                await this.client.sendMessage(botUserId, event.room_id, replyLimitContent(reply.replyLimit, await this.botName(botId, config)));
+                await out.sendMessage(botUserId, event.room_id, replyLimitContent(reply.replyLimit, await this.botName(botId, config)));
                 answered = true;
                 return;
             }
@@ -1666,20 +1680,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             if (reply.roomLink && reply.text) {
                 // A reply that names the bot's room carries it, so the game shows a card to go there.
-                await this.client.sendMessage(botUserId, event.room_id, {
+                await out.sendMessage(botUserId, event.room_id, {
                     msgtype: 'm.text',
                     body: reply.text,
                     [ROOM_LINK_KEY]: reply.roomLink,
                 });
             } else if (reply.text && reply.ideas) {
                 // A Brick's fixed "what I can do": the game shows its ideas to tap with it (#1995)
-                await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true });
+                await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true });
             } else if (reply.text && reply.bricks?.some((note) => note.kind === 'made')) {
                 // The Bricks this reply made: the game shows a line for each, one tap from its chat (#1996)
                 const made = reply.bricks.filter((note) => note.kind === 'made').map(({ id, name, line, look, made: isNew }) => ({ id, name, line, look, made: isNew }));
-                await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made });
+                await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made });
             } else if (reply.text) {
-                await this.client.sendText(botUserId, event.room_id, reply.text);
+                await out.sendText(botUserId, event.room_id, reply.text);
             }
             reply.keep?.();
             // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
@@ -1694,7 +1708,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 const txnId = randomUUID();
                 await this.client
                     .sendMessage(botUserId, event.room_id, content, txnId)
-                    .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
+                    .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
             }
             // The offer to connect an App (game #2001), after the answer like the one above. Asked once, right before it is sent.
@@ -1706,7 +1720,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 const txnId = randomUUID();
                 await this.client
                     .sendMessage(botUserId, event.room_id, content, txnId)
-                    .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
+                    .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
             }
             // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
@@ -1724,8 +1738,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error));
             }
             for (const item of reply.media ?? []) {
-                const sent = await this.sendMedia(botUserId, event.room_id, item).then(
-                    (copy) => ({ copy }),
+                const sent = await this.say(botId, () => this.sendMedia(botUserId, event.room_id, item)).then(
+                    // Nothing was sent once a purge has begun
+                    (copy) => (this.purgedBots.has(botId) ? null : { copy }),
                     (error) => {
                         console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error);
                         return null;
@@ -1808,7 +1823,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (this.deps.restingLine && !this.recentlySent(this.lastRestingLine, roomId, RESTING_LINE_REPEAT_MS)) {
             const line = await this.deps.restingLine(config, String(event.content?.body ?? ''), asker).catch(() => '');
             const sent = line
-                ? await this.client.sendText(this.botUserId(botId), roomId, line).then(
+                ? await this.say(botId, () => this.client.sendText(this.botUserId(botId), roomId, line)).then(
                       () => true,
                       (error) => {
                           console.warn(`[MatrixDmBridge] Could not send a resting line in ${roomId}:`, error?.message ?? error);

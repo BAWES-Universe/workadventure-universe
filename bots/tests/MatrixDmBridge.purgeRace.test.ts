@@ -165,6 +165,34 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(deps.waiting.takeWaitingDms).toHaveBeenCalledWith(BOT);
     });
 
+    it('sends nothing of an answer already being made once the purge began, and the purge waits for a send under way', async () => {
+        // The purge begins while the model is still answering: nothing it returns is sent
+        deps.reply.mockImplementation(async () => {
+            bridge.purgedBots.add(BOT);
+            return { text: 'Late answer', media: [] };
+        });
+        await bridge.onEvent(message('$m1'));
+        expect(client.sendText).not.toHaveBeenCalled();
+        expect(client.sendMessage).not.toHaveBeenCalled();
+        bridge.purgedBots.delete(BOT);
+
+        // A send that is already under way when the purge starts is waited for before the purge reads any room
+        let release!: () => void;
+        client.sendText.mockImplementation(() => new Promise<string>((resolve) => { release = () => resolve('$late'); }));
+        deps.reply.mockResolvedValue({ text: 'On its way', media: [] });
+        bridge.handledEvents?.clear?.();
+        const handled = bridge.onEvent(message('$m2', 2));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(client.sendText).toHaveBeenCalledTimes(1);
+        const purge = bridge.purgeChats(BOT);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(client.getJoinedRooms).not.toHaveBeenCalled();
+        release();
+        await handled;
+        expect(await purge).toBe(true);
+        expect(client.getJoinedRooms).toHaveBeenCalled();
+    });
+
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
         bridge.purgedBots.add(BOT);
         await bridge.closeChat(BOT, ROOM, 'en');
