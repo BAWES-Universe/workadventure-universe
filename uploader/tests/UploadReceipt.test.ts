@@ -132,9 +132,9 @@ describe("upload receipts (voice notes for every bot, plan v3 section 5)", () =>
     let at = start;
     const clock = jest.spyOn(Date, "now").mockImplementation(() => at);
     try {
-      uploadFile.mockImplementation(async () => {
+      uploadFile.mockImplementation(() => {
         at = start + 5 * 60 * 1000;
-        return "stored.ogg";
+        return Promise.resolve("stored.ogg");
       });
       const expiresSoon = sessionToken({ identifier: guest, exp: Math.floor(start / 1000) + 60 });
       const response = await post({ Authorization: expiresSoon }, "guest-brick");
