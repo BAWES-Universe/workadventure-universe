@@ -11,6 +11,7 @@ on:
       - '.github/scripts/prune-images.mjs'
       - '.github/scripts/prune-images-cli.mjs'
       - '.github/scripts/prune-images.test.mjs'
+      - '.github/scripts/prune-images-workflows.test.mjs'
 
 permissions:
   contents: read
@@ -26,7 +27,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: node --test .github/scripts/prune-images.test.mjs
+      - run: node --test .github/scripts/prune-images.test.mjs .github/scripts/prune-images-workflows.test.mjs
 
   plan:
     # A PR from a fork, or from Dependabot, gets no package access or secrets.
