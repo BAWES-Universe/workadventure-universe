@@ -432,7 +432,11 @@ describe("a Brick's files (#2003)", () => {
             expect(get(list.results).map((one) => one.id)).toEqual(["mine"]);
             // A read is on its way for the old account when the account changes
             let release: (answer: unknown) => void = () => undefined;
-            orbit.getDeletedBrickResults.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+            orbit.getDeletedBrickResults.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+            );
             const slow = list.load();
             list.reset();
             expect(get(list.results)).toEqual([]);
