@@ -1215,11 +1215,9 @@ const mapEditor: BaseTranslation = {
                     // A tool server's own page after the bot found its sign-in lost (game #1819)
                     signInExpiredAt: "Sign-in expired at {time:string}",
                     signInExpiredSince: "Sign-in expired · since {time:string}",
-                    noAnswerAt:
-                        "Didn't answer at {time:string} · tried again when next used, after a few minutes",
+                    noAnswerAt: "Didn't answer at {time:string} · tried again when next used, after a few minutes",
                     noAnswerShort: "Didn't answer · {time:string}",
-                    reconnectedAt:
-                        "Connected · it can do {count:number} thing{{s}} · reconnected at {time:string}",
+                    reconnectedAt: "Connected · it can do {count:number} thing{{s}} · reconnected at {time:string}",
                     untilReconnected:
                         "Until it's reconnected, {bot:string} answers without {server:string} and tells people who ask for it.",
                     waitingFor: "Waiting for {server:string}…",

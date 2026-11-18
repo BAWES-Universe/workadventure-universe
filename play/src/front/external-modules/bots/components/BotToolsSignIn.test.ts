@@ -135,7 +135,9 @@ describe("a tool server the bot server found with a lost sign-in (#1819)", () =>
         await mountServer();
         byTestId("bot-reconnect")?.click();
         await settle();
-        expect(head()).toContain("Couldn't open the sign-in window. Allow pop-ups for this site, or try again in a moment.");
+        expect(head()).toContain(
+            "Couldn't open the sign-in window. Allow pop-ups for this site, or try again in a moment."
+        );
         expect(byTestId("bot-reconnect")).not.toBeNull();
         expect(mocks.testBotMcpServer).not.toHaveBeenCalled();
     });

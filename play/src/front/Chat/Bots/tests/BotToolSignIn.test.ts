@@ -103,7 +103,9 @@ describe("the card in a direct message", () => {
     });
 
     it("is nothing when the list has entries that cannot be read", () => {
-        expect(readBotToolSignIn(sender, notice({ [BOT_TOOL_SIGNIN_KEY]: { lost: [{ name: "x" }] } }), "Nora")).toBeUndefined();
+        expect(
+            readBotToolSignIn(sender, notice({ [BOT_TOOL_SIGNIN_KEY]: { lost: [{ name: "x" }] } }), "Nora")
+        ).toBeUndefined();
         expect(parseBotToolSignIn({ lost: [null, 3] }, BOT, "Nora")).toBeUndefined();
     });
 });

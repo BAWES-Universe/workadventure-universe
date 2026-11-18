@@ -788,7 +788,9 @@
                             on:click={() => handleReconnect(server)}
                             >{reconnectingServerId === server.id
                                 ? $LL.mapEditor.edit.bots.page.tools.waitingFor({ server: server.name })
-                                : $LL.mapEditor.edit.bots.page.tools.reconnectServer({ server: server.name })}</PageButton
+                                : $LL.mapEditor.edit.bots.page.tools.reconnectServer({
+                                      server: server.name,
+                                  })}</PageButton
                         >
                         <span class="mcp-hint"
                             >{reconnectingServerId === server.id

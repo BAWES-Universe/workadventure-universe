@@ -18,7 +18,9 @@ describe("reconnectBotServer (#1819)", () => {
             return popup;
         });
         vi.stubGlobal("open", open);
-        api.startOAuth.mockImplementation((_bot: string, serverId: string) => Promise.resolve(`https://provider.test/${serverId}`));
+        api.startOAuth.mockImplementation((_bot: string, serverId: string) =>
+            Promise.resolve(`https://provider.test/${serverId}`)
+        );
     });
 
     afterEach(() => {
@@ -42,7 +44,10 @@ describe("reconnectBotServer (#1819)", () => {
         const second = reconnectBotServer("b1", "s2");
         expect(new Set(open.mock.calls.map((call) => call[1])).size).toBe(2);
         await vi.waitFor(() => expect(windows.every((popup) => popup.location.href !== "")).toBe(true));
-        expect(windows.map((popup) => popup.location.href)).toEqual(["https://provider.test/s1", "https://provider.test/s2"]);
+        expect(windows.map((popup) => popup.location.href)).toEqual([
+            "https://provider.test/s1",
+            "https://provider.test/s2",
+        ]);
         tell("oauth-success", windows[0]);
         tell("oauth-failure", windows[1]);
         expect(await first).toBe("done");
