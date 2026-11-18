@@ -301,6 +301,16 @@ describe('a call refused while a reply runs', () => {
         expect(http.post.mock.calls.filter(([, b]: any) => b.method === 'tools/call')).toHaveLength(1);
     });
 
+    it('a 403 on one call is told as not run, but is not taken for the whole sign-in being gone', async () => {
+        http.post.mockImplementation(async (_url: string, body: { method: string }) => {
+            if (body.method === 'initialize') return { data: { jsonrpc: '2.0', id: 'init', result: {} }, headers: {} };
+            throw httpError(403);
+        });
+        const result = await MCPConnector.executeToolCall('srv-1', base.serverUrl, 'search', {}, 'oauth', TOKEN_A);
+        expect(result).toMatchObject({ error: 'Sign-in expired. Nothing ran', outcome: 'failed' });
+        expect(signInRefusalOf(result)).toBeUndefined();
+    });
+
     it('is marked and told to Orbit', async () => {
         MCPConnector.noteRefused({ botId: 'bot-1', serverId: 'srv-1', serverName: 'Tavily', authType: 'oauth', authConfig: TOKEN_A }, { adminApiUrl: ORBIT, adminApiToken: 'admin' }, 403);
         await flush();

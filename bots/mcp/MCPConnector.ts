@@ -1211,7 +1211,9 @@ export class MCPConnector {
         // The tool server turned the sign-in away (401 or 403): nothing ran, and trying again is no use (#1819)
         if (!response && isSignInRefusal(attempt.status)) {
             const refusal = { error: SIGN_IN_EXPIRED_ERROR, outcome: 'failed' satisfies ToolCallOutcome, hint: SIGN_IN_EXPIRED_HINT };
-            signInRefusals.set(refusal, attempt.status);
+            // Only a 401 says the whole sign-in is gone. A 403 on one call can be a permission for that one thing or a firewall:
+            // the call is told it did not run, but the server is not marked or kept from its other tools because of it.
+            if (attempt.status === 401) signInRefusals.set(refusal, 401);
             return refusal;
         }
 
