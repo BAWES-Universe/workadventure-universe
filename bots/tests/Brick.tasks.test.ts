@@ -603,6 +603,22 @@ describe('seeing and changing what is kept', () => {
         expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'delete' });
     });
 
+    it('an extra run leaves what was just set as it was: a repeated "set it" is still the one item, while a change makes it a new ask', async () => {
+        const { admin, context } = setUp();
+        const asked = { text: 'Pick up the car', when: '2026-11-15 16:00' };
+        const first = await runTaskTool(SET_REMINDER_TOOL, asked, context);
+        const id = String(first.id);
+        await runTaskTool(CHANGE_TASK_TOOL, { id, action: 'run_now' }, context);
+        const again = await runTaskTool(SET_REMINDER_TOOL, asked, context);
+        expect(again).toMatchObject({ set: true });
+        expect(String(again.note)).toContain('Already set a moment ago');
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(1);
+        // A change to it is a different thing: a repeat of the first ask is made again
+        await runTaskTool(CHANGE_TASK_TOOL, { id, action: 'cancel' }, context);
+        await runTaskTool(SET_REMINDER_TOOL, asked, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(2);
+    });
+
     it('runs one now when they ask: an extra run, nothing else about it is said to move, and the reasons it would not run are said plainly', async () => {
         const { admin, context } = setUp();
         const answer = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);

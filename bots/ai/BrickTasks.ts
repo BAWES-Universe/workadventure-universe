@@ -638,8 +638,9 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
     const answer = await context.admin.changeBrickItem(context.botId, id, body);
     if (refused(answer)) return refusal(answer);
     const item = answer.item;
-    // Whatever was just set under this id is no longer what a repeat of the same ask would find
-    for (const [key, kept] of justSet) if (kept.result.id === item.id) justSet.delete(key);
+    // Whatever was just set under this id is no longer what a repeat of the same ask would find. An extra run leaves the item exactly as it was,
+    // so what was just set is still what a repeat would find: a repeated "set it" is still answered with that one, never a second item.
+    if (action !== 'run_now') for (const [key, kept] of justSet) if (kept.result.id === item.id) justSet.delete(key);
     const done =
         action === 'cancel' ? 'cancelled' : action === 'snooze' ? 'snoozed' : action === 'run_now' ? 'started' : action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'close' ? 'closed' : action === 'keep_going' ? 'kept_going' : 'changed';
     if (action === 'run_now') {
