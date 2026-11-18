@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
-import { readable, writable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 
 // Which chip is on is all the chips need from the chat stores
 vi.mock("../../Stores/ChatStore", () => ({ peopleViewStore: writable("everyone") }));
@@ -16,6 +16,7 @@ vi.mock("../../../../i18n/i18n-svelte", () => {
     return { default: readable(text([])), LL: readable(text([])) };
 });
 
+import { peopleViewStore } from "../../Stores/ChatStore";
 import PeopleChips from "./PeopleChips.svelte";
 
 describe("the Friends chip", () => {
@@ -45,10 +46,15 @@ describe("the Friends chip", () => {
         expect(count("friends")?.getAttribute("aria-label")).toBe("chat.friends.friendsOnline:2");
     });
 
-    it("shows 0 when nobody is online, and the Friends chip stays", async () => {
+    it("hides only the badge when nobody is online: the Friends tab stays, and opens", async () => {
         await show({ onlineFriendsCount: 0 });
-        expect(count("friends")?.textContent).toBe("0");
-        expect(target.querySelector('[data-testid="peopleChip-friends"]')).not.toBeNull();
+        expect(count("friends")).toBeNull();
+        const tab = target.querySelector<HTMLElement>('[data-testid="peopleChip-friends"]');
+        expect(tab).not.toBeNull();
+        expect(tab?.textContent).toContain("chat.friends.friends");
+        tab?.click();
+        await tick();
+        expect(get(peopleViewStore)).toBe("friends");
     });
 
     it("moves as friends go on and offline", async () => {
@@ -59,7 +65,8 @@ describe("the Friends chip", () => {
         expect(count("friends")?.textContent).toBe("3");
         component?.$set({ onlineFriendsCount: 0 });
         await tick();
-        expect(count("friends")?.textContent).toBe("0");
+        expect(count("friends")).toBeNull();
+        expect(target.querySelector('[data-testid="peopleChip-friends"]')).not.toBeNull();
     });
 
     it("keeps the gold count of friend requests waiting", async () => {
