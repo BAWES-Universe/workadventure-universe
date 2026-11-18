@@ -45,9 +45,9 @@ describe("the Friends chip", () => {
         expect(count("friends")?.getAttribute("aria-label")).toBe("chat.friends.friendsOnline:2");
     });
 
-    it("shows no count when nobody is online, like Requests with nothing waiting", async () => {
+    it("shows 0 when nobody is online, and the Friends chip stays", async () => {
         await show({ onlineFriendsCount: 0 });
-        expect(count("friends")).toBeNull();
+        expect(count("friends")?.textContent).toBe("0");
         expect(target.querySelector('[data-testid="peopleChip-friends"]')).not.toBeNull();
     });
 
@@ -59,7 +59,7 @@ describe("the Friends chip", () => {
         expect(count("friends")?.textContent).toBe("3");
         component?.$set({ onlineFriendsCount: 0 });
         await tick();
-        expect(count("friends")).toBeNull();
+        expect(count("friends")?.textContent).toBe("0");
     });
 
     it("keeps the gold count of friend requests waiting", async () => {

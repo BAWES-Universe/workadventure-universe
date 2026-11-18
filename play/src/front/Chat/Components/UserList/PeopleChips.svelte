@@ -5,7 +5,7 @@
 
     /**
      * Everyone | Friends | Requests above the People list. Friends carries the count of friends online right now
-     * (nothing at zero, like Requests), and Requests only shows while a request is open either way, with a gold count
+     * (0 when nobody is), and Requests only shows while a request is open either way, with a gold count
      * of the ones waiting for you.
      */
     export let onlineFriendsCount: number;
@@ -14,7 +14,7 @@
 
     $: chips = [
         { view: "everyone" as PeopleView, label: $LL.chat.friends.everyone(), count: undefined },
-        { view: "friends" as PeopleView, label: $LL.chat.friends.friends(), count: onlineFriendsCount || undefined },
+        { view: "friends" as PeopleView, label: $LL.chat.friends.friends(), count: onlineFriendsCount },
         ...(showRequests
             ? [
                   {
