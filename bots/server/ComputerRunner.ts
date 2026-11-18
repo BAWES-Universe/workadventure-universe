@@ -16,6 +16,7 @@
  */
 
 import type { AdminApiService } from './AdminApiService';
+import type { RefusalNotes } from './ComputerRefusals';
 import { readRunnerEvents } from './ComputerTurnStream';
 
 export type RunnerEvent =
@@ -140,6 +141,8 @@ export interface RunnerDeps {
     sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
     now?: () => number;
     log?: Pick<Console, 'warn' | 'error' | 'info'>;
+    /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
+    refusals?: Pick<RefusalNotes, 'sawSince'>;
 }
 
 const realSleep = (ms: number, signal: AbortSignal) =>
@@ -304,7 +307,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // The agent is still on a turn of its own (we lost it, or Orbit restarted): read that one instead of starting another
             if ('reason' in opened && opened.reason === 'busy') opened = await orbit.stream(job.jobId, turnController.signal);
             if ('reason' in opened) {
-                if (opened.reason === 'no_turn') return { kind: 'ended', words: '', failed: false, fenced: false };
+                // A turn that is gone is no silence of the agent's: it counts as a failed turn, like one lost on a reconnect
+                if (opened.reason === 'no_turn') return { kind: 'ended', words: '', failed: true, fenced: false };
                 return opened.reason === 'failed' ? { kind: 'ended', words: '', failed: true, fenced: false } : { kind: 'look' };
             }
 
@@ -367,6 +371,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const accepted: Accepted = { turn: false };
         let turns = 0;
         let bad = 0;
+        // Whether any turn of the bad streak was not a failure of ours (the agent said nothing, or the person's allowance or a rule stopped it)
+        let notOurs = false;
         for (;;) {
             if (signal.aborted) return;
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
@@ -400,6 +406,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 return;
             }
 
+            const turnStartedAt = now();
             const result = await oneTurn(job, input, signal, renewing, accepted);
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
@@ -428,6 +435,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (back !== 'back') return;
                 input = follow(RESUME_PROMPT);
                 bad = 0;
+                notOurs = false;
                 continue;
             }
             if (result.fenced) {
@@ -441,9 +449,12 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (ending.kind === 'failed') return void (await finish(job, 'failed', 'agent'));
             if (ending.kind === 'handover') {
                 bad = 0;
+                notOurs = false;
                 // The person is only told to come when Orbit took the handover: if it did not, waiting would take the job straight
                 // back to Brick as if they had finished, so it is asked again, and a job that cannot be handed over is ended
                 let handed = false;
+                // Orbit answered no at least once: then it is not Orbit that could not be reached, and the failure is not ours to answer for
+                let refusedHandover = false;
                 for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && !handed; attempt++) {
                     if (signal.aborted) return;
                     if (attempt > 0) await sleep(timing.waitMs, signal);
@@ -454,14 +465,17 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                             ...(ending.waitingFor === 'details' && ending.what && ending.where ? { ready: { what: ending.what, where: ending.where } } : {}),
                         })
                         // An answer that says it was refused (ok false) is no handover
-                        .then((answer) => answer.ok !== false)
+                        .then((answer) => {
+                            if (answer.ok === false) refusedHandover = true;
+                            return answer.ok !== false;
+                        })
                         .catch((error) => {
                             say('Could not hand over:', error);
                             return false;
                         });
                 }
                 if (!handed) {
-                    await finish(job, 'failed', 'ours');
+                    await finish(job, 'failed', refusedHandover ? 'agent' : 'ours');
                     return;
                 }
                 const back = await waitForBrick(job, signal);
@@ -470,10 +484,22 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             // No ending said: carry on, but not for ever when turns keep going wrong
-            bad = result.failed || result.words.trim() === '' ? bad + 1 : 0;
+            // A bad turn is one that failed or said nothing. It is Universe's failure only when the turn really failed (a model or transport
+            // error, a stream that broke) and nothing of the person's (their allowance, a rule of theirs) stopped it: a turn with no words
+            // at all can be what the job asked for ("never reply in text"), so it is the agent's, and the streak is ours only when every
+            // turn of it was ours
+            const silent = !result.failed && result.words.trim() === '';
+            const refused = deps.refusals?.sawSince(job.jobId, turnStartedAt) ?? false;
+            if (result.failed || silent || refused) {
+                bad += 1;
+                if (silent || refused) notOurs = true;
+            } else {
+                bad = 0;
+                notOurs = false;
+            }
             if (bad >= RUNNER_GUARDS.maxBadTurns) {
                 say('A job kept failing to answer and was ended.');
-                await finish(job, 'failed', 'ours');
+                await finish(job, 'failed', notOurs ? 'agent' : 'ours');
                 return;
             }
             input = follow(CONTINUE_PROMPT);

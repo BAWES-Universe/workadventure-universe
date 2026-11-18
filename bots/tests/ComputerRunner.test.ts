@@ -69,8 +69,8 @@ function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) 
     return { orbit, seen, setRenew: (fn: typeof renewAnswer) => (renewAnswer = fn), setPrepare: (fn: typeof prepareAnswer) => (prepareAnswer = fn), failHandovers: (n: number) => (handoverFails = n) };
 }
 
-const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY) => {
-    const runner = createComputerRunner({ orbit, relayUrl, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY, refusals?: { sawSince(jobId: string, sinceMs: number): boolean }) => {
+    const runner = createComputerRunner({ orbit, relayUrl, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, ...(refusals ? { refusals } : {}) });
     orbit.running = async () => [job];
     await runner.tick();
     await runner.idle();
@@ -162,6 +162,54 @@ describe('a job that runs', () => {
         await runJob(b.orbit);
         expect(b.seen.turns).toHaveLength(RUNNER_GUARDS.maxTurns);
         expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+    });
+
+    it('ends as failed with the agent’s cause when its turns come back with no words, which is what a job can ask for', async () => {
+        // e.g. a brief that says never to reply in text: every turn completes, with nothing said
+        const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => done('')));
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+    });
+
+    it('is ours only when every bad turn really failed: one silent turn among failed ones makes it the agent’s', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        const mixed = fakeOrbit([failing(), done(''), failing()]);
+        await runJob(mixed.orbit);
+        expect(finished(mixed.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+
+        // a good turn in between starts the count again, and the streak that follows is judged on its own
+        const again = fakeOrbit([done(''), done('Working on it'), failing(), failing(), failing()]);
+        await runJob(again.orbit);
+        expect(finished(again.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+    });
+
+    it('never calls a turn ours when the relay refused a call of the job for the person’s allowance or a rule during it', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'insufficient_quota', message: 'no' }];
+        // the turn failed (Hermes only sees an error), but the relay says why
+        const a = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(a.orbit, JOB, RELAY, { sawSince: () => true });
+        expect(a.seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+
+        // and a turn that said something but was cut by such a refusal still counts as a bad turn, not as a good one that ends nothing
+        const b = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => done('I cannot go on')));
+        await runJob(b.orbit, JOB, RELAY, { sawSince: () => true });
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+
+        // a refusal noted before the turn began belongs to an earlier turn: it is asked from the turn's own start
+        const since: number[] = [];
+        const c = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(c.orbit, JOB, RELAY, { sawSince: (_job, at) => (since.push(at), false) });
+        expect(since).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(c.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+    });
+
+    it('reads a turn that is gone on its first open as a failed turn, not as the agent saying nothing', async () => {
+        const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => ({ ok: false as const, reason: 'no_turn' })));
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
     });
 
     it('does not count the time it waits for a machine as turns: a machine that is slow to come back never ends the job before it ran', async () => {
@@ -335,6 +383,15 @@ describe('the person’s part', () => {
         await runJob(orbit);
         expect(seen.turns).toHaveLength(1);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+    });
+
+    it('ends the job as the agent’s when Orbit answered the handover with a no every time, and as ours only when it could not be reached', async () => {
+        const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+        const original = orbit.action;
+        orbit.action = async (botId, jobId, body) => (body.action === 'handover' ? (await original(botId, jobId, body), { ok: false, reason: 'not_running' }) : original(botId, jobId, body));
+        await runJob(orbit);
+        expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
     });
 
     it('hands over with exactly what is ready to be put in, waits for the person, and carries on with a look at the page', async () => {

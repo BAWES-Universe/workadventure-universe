@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
+import { createRefusalNotes } from '../server/ComputerRefusals';
 import { createComputerModelRelay, estimateCallMicros, inputTokensOf, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
@@ -50,6 +51,8 @@ const listen = (app: express.Express) => new Promise<Server>((resolve) => { cons
 const urlOf = (server: Server) => `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 const messages = [{ role: 'user', content: 'Fill the form' }];
 
+const notes = createRefusalNotes();
+
 beforeAll(async () => {
     const up = express();
     up.use(express.json());
@@ -62,7 +65,7 @@ beforeAll(async () => {
 
     orbit = { identify: vi.fn(), authorize: vi.fn(), settle: vi.fn() } as never;
     const app = express();
-    app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1] }));
+    app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], refusals: notes }));
     relay = await listen(app);
     relayBase = urlOf(relay);
 });
@@ -116,6 +119,31 @@ describe('who may call', () => {
 });
 
 describe('room before the call', () => {
+    it('notes a refusal for the person’s allowance or a rule of theirs for the job, and no other refusal', async () => {
+        const before = Date.now() - 1;
+        for (const reason of ['pool', 'refused'] as const) {
+            orbit.authorize.mockResolvedValue({ ok: false, reason });
+            await ask({ messages });
+        }
+        expect(notes.sawSince(JOB, before)).toBe(false);
+
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'rule' });
+        const rule = await ask({ messages });
+        // a rule is said as a refusal for room, not as a wrong key, and the provider is never reached
+        expect(rule.status).toBe(429);
+        expect((await rule.json()).error.code).toBe('insufficient_quota');
+        expect(upstreamRequests).toHaveLength(0);
+        expect(notes.sawSince(JOB, before)).toBe(true);
+    });
+
+    it('notes an allowance refusal too', async () => {
+        const before = Date.now() - 1;
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
+        await ask({ messages });
+        expect(notes.sawSince(JOB, before)).toBe(true);
+        expect(notes.sawSince(JOB, Date.now() + 1000)).toBe(false);
+    });
+
     it('is asked of Orbit for this one call before anything is sent, and a refusal is said with its reason', async () => {
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
         const answer = await ask({ messages });
@@ -427,6 +455,7 @@ describe('the Orbit calls', () => {
         const input = { token: 't', callId: 'c', estimateMicros: 1, payer: 'universe' as const };
         expect(await relayOrbitFor(admin(200, { ok: true })).authorize(input)).toEqual({ ok: true });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'allowance' })).authorize(input)).toEqual({ ok: false, reason: 'allowance' });
+        expect(await relayOrbitFor(admin(200, { ok: false, reason: 'rule' })).authorize(input)).toEqual({ ok: false, reason: 'rule' });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'something new' })).authorize(input)).toEqual({ ok: false, reason: 'refused' });
         await expect(relayOrbitFor(admin(500, {})).authorize(input)).rejects.toThrow();
     });

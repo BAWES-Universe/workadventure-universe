@@ -33,6 +33,7 @@ import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
+import { createRefusalNotes } from './ComputerRefusals';
 import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
@@ -87,7 +88,9 @@ let dmCards: CardSurface | undefined;
 // has its cards with or without them.
 const aiService = botManager.getAIService();
 // The address a Brick's computer calls for its AI (OpenAI format, /v1): Orbit checks the key and the room, the provider's key stays here
-preRouters.push(createComputerModelRelay({ orbit: relayOrbitFor(adminApiService), routeFor: (botId) => aiService.relayRoute(botId) }));
+// The relay notes what it refused for a person's allowance or rules, and the runner of the same job reads it to tell whose failure a turn was
+const computerRefusals = createRefusalNotes();
+preRouters.push(createComputerModelRelay({ orbit: relayOrbitFor(adminApiService), routeFor: (botId) => aiService.relayRoute(botId), refusals: computerRefusals }));
 // Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
 // replies before it is heard, and what the hearing provider still holds is deleted until it confirms
 {
@@ -184,7 +187,7 @@ function startComputers(): void {
     const relayUrl = relayUrlFromEnv();
     // The host only: never a path, a token or anything after it
     console.log(`[BotServer] Computer model address for machines: ${relayUrl ? new URL(relayUrl).host : 'none (a job will end with a clear line)'}`);
-    computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl });
+    computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl, refusals: computerRefusals });
     computerRunner.start(COMPUTER_RUNNER_EVERY_MS);
 }
 

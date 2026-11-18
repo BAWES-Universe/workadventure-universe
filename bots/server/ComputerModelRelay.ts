@@ -24,11 +24,12 @@ import { isOpenAIHost, readUsageDetail, refusesStreamOptions } from '../ai/provi
 import { priceCall } from '../ai/pricing/costing';
 import { priceMetadata, type CallMetadata } from '../ai/pricing/ledger';
 import type { CallCost } from '../ai/pricing/types';
+import type { RefusalNotes } from './ComputerRefusals';
 
 /** What the relay needs of Orbit: the three calls of /api/computer/llm. */
 export interface RelayOrbit {
     identify(token: string): Promise<{ ok: true; jobId: string; botId: string } | { ok: false }>;
-    authorize(input: { token: string; callId: string; estimateMicros: number; payer: 'universe' | 'own-key' }): Promise<{ ok: true } | { ok: false; reason: 'refused' | 'allowance' | 'pool' }>;
+    authorize(input: { token: string; callId: string; estimateMicros: number; payer: 'universe' | 'own-key' }): Promise<{ ok: true } | { ok: false; reason: 'refused' | 'allowance' | 'pool' | 'rule' }>;
     settle(input: SettleInput): Promise<{ ok: boolean }>;
 }
 
@@ -45,7 +46,7 @@ export function relayOrbitFor(admin: { computerRelayCall(step: 'identify' | 'aut
             const { status, data } = await admin.computerRelayCall('authorize', input);
             if (status !== 200) throw unexpected('authorize', status);
             if (data.ok === true) return { ok: true };
-            return { ok: false, reason: data.reason === 'allowance' || data.reason === 'pool' ? data.reason : 'refused' };
+            return { ok: false, reason: data.reason === 'allowance' || data.reason === 'pool' || data.reason === 'rule' ? data.reason : 'refused' };
         },
         async settle(input) {
             const { status } = await admin.computerRelayCall('settle', { ...input });
@@ -80,6 +81,8 @@ export interface RelayDeps {
     fetchFor?: (config: AIProviderConfig) => typeof fetch;
     /** For tests: how long to wait between tries to settle. */
     settleDelaysMs?: number[];
+    /** Where a refusal for the person's allowance or a rule of theirs is noted, so the runner of the same job can tell such a turn from one that broke. */
+    refusals?: RefusalNotes;
 }
 
 /** Technical guards, in one place (none of these is a limit a person sees). */
@@ -311,7 +314,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             }
             if (!allowed.ok) {
                 const reason = 'reason' in allowed ? allowed.reason : 'refused';
+                if (reason === 'allowance' || reason === 'rule') deps.refusals?.note(jobId);
                 if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
+                if (reason === 'rule') return problem(res, 429, 'A spending rule stops this call.', 'insufficient_quota', 'insufficient_quota');
                 if (reason === 'pool') return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
             }
