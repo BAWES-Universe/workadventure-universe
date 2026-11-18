@@ -20,7 +20,7 @@
     import FriendAvatar from "./FriendAvatar.svelte";
     import FriendMenuButton from "./FriendMenuButton.svelte";
     import type { PlacedFriend } from "./Friends";
-    import { isOnline, lastSeenDay, profileTakesFirstSpot } from "./Friends";
+    import { canLocateOnThisMap, isOnline, lastSeenDay, profileTakesFirstSpot } from "./Friends";
     import { statusLabel } from "./PersonStatus";
     import { goToPersonRoom, walkToPerson } from "./PersonNavigation";
     import { runFriendAction } from "./FriendActions";
@@ -50,12 +50,14 @@
     /** Where friends are can't be checked right now. */
     export let presenceUnavailable = false;
     export let highlighted = false;
+    /** Tapping their Woka or name, for a friend who is here: show them on the map with their visit card. */
+    export let openCard: (entry: PlacedFriend) => void = () => undefined;
 
     $: friend = entry.friend;
     $: online = isOnline(entry.status);
     $: session = entry.session;
     $: canReach = online && !!session && !entry.locationUnknown;
-    $: canWalk = canReach && entry.group === "here";
+    $: canWalk = canReach && canLocateOnThisMap(entry);
     $: canGo = canReach && entry.group !== "here";
     $: canMessage = isMatrixChatEnabled && !!friend.chatId;
     $: canRing = online;
@@ -93,6 +95,10 @@
         const place = placeOf(session, entry.group);
         return [status, place].filter(Boolean).join(" · ") || $LL.chat.friends.online();
     })();
+
+    function open() {
+        if (canWalk) openCard(entry);
+    }
 
     function walk() {
         if (!session) return;
@@ -157,8 +163,24 @@
         class="flex items-center gap-2 rounded px-2 py-2 transition-colors hover:bg-white/10"
         class:friend-highlight={highlighted}
     >
-        <FriendAvatar {picture} {color} dim={!online} />
-        <div class="ms-1 flex min-w-0 flex-auto flex-col" class:opacity-60={!online}>
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div
+            class="shrink-0"
+            class:cursor-pointer={canWalk}
+            on:click|stopPropagation={open}
+            data-testid={`friend-avatar-${friend.name}`}
+        >
+            <FriendAvatar {picture} {color} dim={!online} />
+        </div>
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div
+            class="ms-1 flex min-w-0 flex-auto flex-col"
+            class:opacity-60={!online}
+            class:cursor-pointer={canWalk}
+            on:click|stopPropagation={open}
+        >
             <span class="truncate text-sm font-bold" title={friend.name}>{friend.name}</span>
             <span class="flex min-w-0 items-center gap-1 text-xs text-white/70">
                 {#if online}

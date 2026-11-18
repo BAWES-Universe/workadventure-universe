@@ -33,12 +33,13 @@
     import type { SelfIdentity } from "./PersonActions";
     import type { PersonGroup } from "./PersonSessions";
     import { groupSessions } from "./PersonSessions";
+    import { openPersonCard } from "./OpenPersonCard";
     import PeopleChips from "./PeopleChips.svelte";
     import FriendsList from "./FriendsList.svelte";
     import FriendRequests from "./FriendRequests.svelte";
     import FriendFaces from "./FriendFaces.svelte";
     import UniverseSearch from "./UniverseSearch.svelte";
-    import type { ListedPerson, WorldSighting } from "./Friends";
+    import type { ListedPerson, PlacedFriend, WorldSighting } from "./Friends";
     import { chatIdsToAsk, otherWorldFaces, placeFriends, savedLook } from "./Friends";
     import { createLayerPictures } from "./LayerPictures";
     import { friendNoticeStore } from "./FriendActions";
@@ -241,6 +242,20 @@
     );
     $: faces = otherWorldFaces(placedFriends);
 
+    // A friend who is here, tapped: the same as tapping their row in Everyone (their person there, with all their
+    // sessions), so both lists show them on the map with their visit card the same way. When the world's list doesn't
+    // have them yet, presence says where they are and the server is asked for their position.
+    function openFriendCard(entry: PlacedFriend, sightings: typeof worldSightings): void {
+        const person = sightings.get(entry.friend.uuid)?.person;
+        if (person) {
+            openPersonCard(person.primary, person.sessions, entry.friend.name);
+            return;
+        }
+        if (!entry.session) return;
+        const seen = { uuid: entry.friend.uuid, playUri: entry.session.playUri };
+        openPersonCard(seen, [seen], entry.friend.name);
+    }
+
     // Friends and requests the world isn't showing right now (offline, or in another world) keep their woka: the one
     // the world's member list saved, else the one Orbit draws for them, the same picture their direct chat shows. Its
     // background is from their name, as the game picks it online.
@@ -348,6 +363,7 @@
                 presenceUnavailable={$friendsPresenceUnavailableStore}
                 {highlightUuid}
                 {isMatrixChatEnabled}
+                openCard={(entry) => openFriendCard(entry, worldSightings)}
             />
         {:else if view === "requests"}
             <FriendRequests
