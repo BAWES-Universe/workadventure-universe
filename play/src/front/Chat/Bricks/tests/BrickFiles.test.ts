@@ -743,6 +743,29 @@ describe("a Brick's files (#2003)", () => {
                 expect(get(list.files).sent.total).toBe(4);
             });
 
+            it("does not show in a search a file deleted while the search was on its way, nor count it", async () => {
+                orbit.getBrickFiles.mockResolvedValue(firstLook());
+                orbit.deleteBrickFile.mockResolvedValue({ deleted: true });
+                let answerSearch: (value: unknown) => void = () => undefined;
+                const list = brickFilesList(BRICK);
+                await list.load();
+                orbit.getBrickFilesPage.mockImplementation((_id, asked) =>
+                    asked.section === "made"
+                        ? Promise.resolve(page("made", [], 0, null))
+                        : new Promise((resolve) => {
+                              answerSearch = resolve;
+                          })
+                );
+                const searching = list.find("sent");
+                await Promise.resolve();
+                expect(await list.deleteSent("s2")).toBe(true);
+                // Orbit read the search before the deletion: it still holds s2 and counts two
+                answerSearch(page("sent", [sentFile(2), sentFile(3)], 2, null));
+                await searching;
+                expect(get(list.files).sent.files.map((one) => one.id)).toEqual(["s3"]);
+                expect(get(list.files).sent.total).toBe(1);
+            });
+
             it("takes off the size of a file only a search loaded even if the search is cleared before Orbit answers", async () => {
                 orbit.getBrickFiles.mockResolvedValue(firstLook());
                 orbit.getBrickFilesPage.mockImplementation((_id, asked) =>

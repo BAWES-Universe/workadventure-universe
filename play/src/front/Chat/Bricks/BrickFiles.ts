@@ -436,6 +436,7 @@ export function brickFilesList(brickId: string): BrickFilesList {
                 if (mine !== turn) return true;
                 const madePage = parseBrickFilesPage(made, "made");
                 const sentPage = parseBrickFilesPage(sent, "sent");
+                const sentFiles = sentPage.files.filter((file) => !removed.has(file.id));
                 found = {
                     ...known,
                     made: {
@@ -445,7 +446,12 @@ export function brickFilesList(brickId: string): BrickFilesList {
                         fileTotal: madePage.total,
                         nextCursor: madePage.nextCursor,
                     },
-                    sent: { files: sentPage.files, total: sentPage.total, nextCursor: sentPage.nextCursor },
+                    sent: {
+                        files: sentFiles,
+                        // A file deleted while this was on its way may be in the answer and counted in it
+                        total: Math.max(0, sentPage.total - (sentPage.files.length - sentFiles.length)),
+                        nextCursor: sentPage.nextCursor,
+                    },
                 };
                 words = asked;
                 query.set(asked);
