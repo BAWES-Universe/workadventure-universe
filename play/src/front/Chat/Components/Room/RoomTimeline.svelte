@@ -572,9 +572,8 @@
         try {
             // "Ask for more" on the card of a stop (voice or an App paused): the request to the Universe team is the person's own, so it goes from here.
             // When Orbit did not take it, nothing is sent: the card waits and the person can tap again. The bot then says one line, and only after this.
-            for (const category of moreAskedBy(ask, tap)) {
-                if (!(await askMyUsageForMore(category))) return false;
-            }
+            const asked = await Promise.all(moreAskedBy(ask, tap).map((category) => askMyUsageForMore(category)));
+            if (asked.includes(false)) return false;
             await room.answerBotAsk(ask, tap);
             return true;
         } catch (error) {
