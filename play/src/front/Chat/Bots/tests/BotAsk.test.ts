@@ -401,7 +401,17 @@ describe("the card of a stop (voice or an App paused)", () => {
         };
         const ask = readBotAsk(BOT_CHAT_ID, notice(odd), 0)!;
         expect(moreAskedBy(ask, { action: "pick", choices: ["c1", "c2"] })).toEqual([]);
-        const plain = readBotAsk(BOT_CHAT_ID, notice({ ...STOP, choices: [{ id: "c1", label: "A" }, { id: "c2", label: "B" }] }), 0)!;
+        const plain = readBotAsk(
+            BOT_CHAT_ID,
+            notice({
+                ...STOP,
+                choices: [
+                    { id: "c1", label: "A" },
+                    { id: "c2", label: "B" },
+                ],
+            }),
+            0
+        )!;
         expect(moreAskedBy(plain, { action: "pick", choices: ["c1", "c2"] })).toEqual([]);
     });
 
@@ -409,7 +419,13 @@ describe("the card of a stop (voice or an App paused)", () => {
         for (const category of ["apps", "computer"] as const) {
             const ask = readBotAsk(
                 BOT_CHAT_ID,
-                notice({ ...STOP, choices: [{ id: "c1", label: "Ask for more", action: { kind: "ask-for-more", category } }, { id: "c2", label: "Wait" }] }),
+                notice({
+                    ...STOP,
+                    choices: [
+                        { id: "c1", label: "Ask for more", action: { kind: "ask-for-more", category } },
+                        { id: "c2", label: "Wait" },
+                    ],
+                }),
                 0
             )!;
             expect(moreAskedBy(ask, { action: "pick", choices: ["c1"] })).toEqual([category]);

@@ -1598,7 +1598,8 @@ const chat: BaseTranslation = {
             startsAgain: "Starts again on {day}",
             computerNote: "Only used when a Brick needs its computer for a job.",
             voice: "Voice",
-            voiceNote: "Your own voice time with Universe AI, hearing and speaking. A Brick on your own key doesn't use it.",
+            voiceNote:
+                "Your own voice time with Universe AI, hearing and speaking. A Brick on your own key doesn't use it.",
             appUse: "App use",
             appUseNote: "Your own use of the Apps you connected, when your Bricks use them on Universe's money.",
             askForMore: "Ask for more",

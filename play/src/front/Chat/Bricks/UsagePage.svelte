@@ -282,12 +282,22 @@
 
             {#if speech}
                 <div class="sec" data-testid="usageSecVoice">{text.voice()}</div>
-                <UsageAllowance kind="voice" allowance={speech} asking={asking === "speech"} onAsk={() => onAsk("speech")} />
+                <UsageAllowance
+                    kind="voice"
+                    allowance={speech}
+                    asking={asking === "speech"}
+                    onAsk={() => onAsk("speech")}
+                />
             {/if}
 
             {#if appUse}
                 <div class="sec" data-testid="usageSecAppUse">{text.appUse()}</div>
-                <UsageAllowance kind="apps" allowance={appUse} asking={asking === "apps"} onAsk={() => onAsk("apps")} />
+                <UsageAllowance
+                    kind="apps"
+                    allowance={appUse}
+                    asking={asking === "apps"}
+                    onAsk={() => onAsk("apps")}
+                />
             {/if}
 
             {#if usage.credit.length > 0}

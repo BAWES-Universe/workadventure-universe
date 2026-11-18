@@ -170,8 +170,20 @@ describe("the Usage page (#1999)", () => {
     it("shows their own voice time and App use only once Orbit sends them, with no number and no platform budget", async () => {
         game.getMyUsage.mockResolvedValue(
             usage({
-                speech: { left: 0.7, words: "plenty", startsAgainAt: "2026-12-01T12:00:00", asked: false, canAskForMore: false },
-                appUse: { left: 0.3, words: "low", startsAgainAt: "2026-12-01T12:00:00", asked: false, canAskForMore: false },
+                speech: {
+                    left: 0.7,
+                    words: "plenty",
+                    startsAgainAt: "2026-12-01T12:00:00",
+                    asked: false,
+                    canAskForMore: false,
+                },
+                appUse: {
+                    left: 0.3,
+                    words: "low",
+                    startsAgainAt: "2026-12-01T12:00:00",
+                    asked: false,
+                    canAskForMore: false,
+                },
             })
         );
         await open();
@@ -189,7 +201,15 @@ describe("the Usage page (#1999)", () => {
 
     it("asks for more voice time from the page when it is used up, and says it asked", async () => {
         game.getMyUsage.mockResolvedValue(
-            usage({ speech: { left: 0, words: "out", startsAgainAt: "2026-12-01T12:00:00", asked: false, canAskForMore: true } })
+            usage({
+                speech: {
+                    left: 0,
+                    words: "out",
+                    startsAgainAt: "2026-12-01T12:00:00",
+                    asked: false,
+                    canAskForMore: true,
+                },
+            })
         );
         await open();
         byId("usageAskForMoreVoice")?.click();
