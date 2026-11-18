@@ -25,7 +25,7 @@ import { TaskApps } from './BrickTaskApps';
 import { readWebPageForTool } from '../ai/AIService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
-import { askOrbitAboutAppUse, ownerNoteText, settleWithOrbit } from '../mcp/AppUse';
+import { askOrbitAboutAppUse, sayOwnerNote, settleWithOrbit } from '../mcp/AppUse';
 import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
 import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
@@ -125,9 +125,7 @@ aiService.useAppSettle(
         return ADMIN_API_URL && serviceToken ? { adminApiUrl: ADMIN_API_URL, serviceToken } : null;
     }),
     async (botId, note) => {
-        // One transaction id for the day, so the same note is never said twice
-        const day = new Date().toISOString().slice(0, 10);
-        await matrixBridge?.speakInDirectChat(botId, note.matrixUserId, ownerNoteText(note), `app-share-limit:${botId}:${note.connectionId}:${day}`);
+        if (matrixBridge) await sayOwnerNote((matrixUserId, text, transactionId) => matrixBridge.speakInDirectChat(botId, matrixUserId, text, transactionId), botId, note);
     }
 );
 const cardSurface: CardSurface = {

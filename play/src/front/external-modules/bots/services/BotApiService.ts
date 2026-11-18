@@ -513,6 +513,10 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing adminUrl.");
         }
 
+        // Which Orbit and account this request started with: when the game moves to another one while it is on its way, a 401 is not
+        // answered by asking the new one for a session and sending the same request there (#2006)
+        const startedWith = this.timeZoneGeneration;
+
         // Try to get Admin API session token first (async - may fetch new one if missing/expired). A keepalive
         // request goes out while the page closes, when renewing first would be cut off: it takes the session as it
         // is while that still works.
@@ -548,8 +552,8 @@ export class BotApiService {
                 sessionStorage.removeItem(SESSION_KEY);
                 sessionStorage.removeItem(SESSION_EXPIRES_KEY);
 
-                // If we have accessToken, try to fetch a new session token and retry
-                if (this.accessToken) {
+                // If we have accessToken, try to fetch a new session token and retry (only for the Orbit and account the request started with)
+                if (this.accessToken && startedWith === this.timeZoneGeneration) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
                     if (newToken) {
                         const retryUrl = `${this.adminUrl}${endpoint}`;
@@ -597,7 +601,8 @@ export class BotApiService {
 
     /**
      * Counts the times `initialize()` moved to another Orbit or account: an answer that belongs to an older count says
-     * nothing about the current one. A token renewed in the middle of a send does not change it.
+     * nothing about the current one. A token renewed in the middle of a send does not change it. A request that was on its way when
+     * the count changed is not sent again to the new Orbit with the new session.
      */
     private timeZoneGeneration = 0;
 

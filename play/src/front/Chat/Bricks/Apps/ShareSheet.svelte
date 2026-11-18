@@ -59,6 +59,7 @@
     $: canSend = !busy && choices.size > 0 && complete;
 
     function pick(tool: string) {
+        if (busy) return;
         const job = share.jobs.find((one) => one.tool === tool);
         if (!job) return;
         const next = new Map(choices);
@@ -73,6 +74,7 @@
     }
 
     function fill(tool: string, name: string) {
+        if (busy) return;
         const job = share.jobs.find((one) => one.tool === tool);
         const choice = choices.get(tool);
         if (!job || !choice) return;
@@ -81,6 +83,7 @@
     }
 
     function giveBack(tool: string, name: string) {
+        if (busy) return;
         const job = share.jobs.find((one) => one.tool === tool);
         const choice = choices.get(tool);
         if (!job || !choice || !job.returns.names) return;
@@ -120,6 +123,7 @@
                     type="button"
                     role="checkbox"
                     aria-checked={!!choice}
+                    disabled={busy}
                     class="ss-pick"
                     data-testid="appShareJobPick"
                     on:click={() => pick(job.tool)}
@@ -147,8 +151,8 @@
                                     type="button"
                                     role="checkbox"
                                     aria-checked={choice.inputs.includes(input.name)}
-                                    aria-disabled={input.required}
-                                    disabled={input.required}
+                                    aria-disabled={input.required || busy}
+                                    disabled={input.required || busy}
                                     class="ss-tick"
                                     data-testid="appShareInput"
                                     on:click={() => fill(job.tool, input.name)}
@@ -173,6 +177,7 @@
                                     type="button"
                                     role="checkbox"
                                     aria-checked={on}
+                                    disabled={busy}
                                     class="ss-tick"
                                     data-testid="appShareReturn"
                                     on:click={() => giveBack(job.tool, field)}
@@ -197,6 +202,7 @@
             label={words.usesEveryone()}
             options={everyoneChips}
             value={everyone}
+            disabled={busy}
             onPick={(value) => (everyone = value)}
         />
     </div>
@@ -206,6 +212,7 @@
             label={words.usesPerson()}
             options={personChips}
             value={person}
+            disabled={busy}
             onPick={(value) => (person = value)}
         />
     </div>
@@ -255,6 +262,9 @@
         color: #fff;
         text-align: start;
         cursor: pointer;
+    }
+    .ss-pick:disabled {
+        cursor: default;
     }
     .ss-pick:focus-visible,
     .ss-tick:focus-visible {

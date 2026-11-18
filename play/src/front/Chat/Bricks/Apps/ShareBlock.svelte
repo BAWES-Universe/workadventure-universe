@@ -91,21 +91,35 @@
         else sheet = "start";
     }
 
-    /** "Stop letting others use it": at once, with nothing to confirm; every later ask is refused, also in a chat already open. */
+    /**
+     * "Stop letting others use it": at once, with nothing to confirm; every later ask is refused, also in a chat already open. The row stays
+     * locked until what is shared has been read again. A refusal leaves sharing as it was; an answer that never came leaves it unknown, so
+     * it is read again too and nothing is said about it being unchanged.
+     */
     async function stop() {
         if (busy) return;
         busy = true;
         try {
-            await botApiService.stopAppShare(appId, botId);
-        } catch (error) {
-            console.warn("Sharing was not stopped", error);
-            warningMessageStore.addWarningMessage(text.workFailed());
-            return;
+            let refused = false;
+            try {
+                await botApiService.stopAppShare(appId, botId);
+            } catch (error) {
+                console.warn("Sharing was not stopped", error);
+                const status = error instanceof Error ? (error as Error & { status?: number }).status : undefined;
+                // Orbit said no (it answered with a refusal): nothing changed. Anything else (no answer, a server fault) may have gone through
+                refused = status !== undefined && status < 500;
+                warningMessageStore.addWarningMessage(refused ? text.workFailed() : words.stopUnsure());
+            }
+            if (refused) return;
+            // What was read before is no longer known to be so: if reading again fails, the row says so and offers to try again
+            share = undefined;
+            sheet = undefined;
+            loadFailed = false;
+            await load();
         } finally {
             // eslint-disable-next-line require-atomic-updates
             busy = false;
         }
-        await load();
     }
 
     onMount(() => {
@@ -146,10 +160,15 @@
             testId="appShareOn"
         >
             <BrickPicture slot="picture" {look} size={32} />
-            <PageButton disabled={busy} testId="appShareChange" on:click={() => (sheet = "change")}
-                >{text.change()}</PageButton
-            >
+            {#if share.reachable}
+                <PageButton disabled={busy} testId="appShareChange" on:click={() => (sheet = "change")}
+                    >{text.change()}</PageButton
+                >
+            {/if}
         </AppRow>
+        {#if !share.reachable}
+            <div data-testid="appShareUnreachable"><PageNote>{words.unreachable({ app: appName })}</PageNote></div>
+        {/if}
         <p class="sb-cn" data-testid="appShareLimits">
             {words.limits({ everyone: share.usesPerDayEveryone, person: share.usesPerDayPerson })}
         </p>

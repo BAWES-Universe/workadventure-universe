@@ -54,6 +54,8 @@ export interface OwnerNote {
     limit: number;
     /** The app, for the "Change the limit" link. */
     connectionId: string;
+    /** The day (UTC, YYYY-MM-DD) whose uses ran out, as Orbit decided it: the same note of the same day is one message to Matrix, even if it is told just after midnight. */
+    day?: string;
 }
 
 /** The four headings as Orbit names them. */
@@ -123,7 +125,8 @@ function ownerNoteOf(value: unknown): OwnerNote | undefined {
     const note = value as Record<string, unknown>;
     if (typeof note.matrixUserId !== 'string' || typeof note.appName !== 'string' || typeof note.botName !== 'string' || typeof note.connectionId !== 'string') return undefined;
     if (typeof note.limit !== 'number' || !Number.isFinite(note.limit)) return undefined;
-    return { matrixUserId: note.matrixUserId, appName: note.appName, botName: note.botName, limit: note.limit, connectionId: note.connectionId };
+    const day = typeof note.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(note.day) ? note.day : undefined;
+    return { matrixUserId: note.matrixUserId, appName: note.appName, botName: note.botName, limit: note.limit, connectionId: note.connectionId, ...(day ? { day } : {}) };
 }
 
 /** The question to Orbit, with BOT_SERVICE_TOKEN. A 404 is an answer (this bot has no such App: refused), a failure is `unavailable`. */
@@ -218,8 +221,11 @@ export function alreadyAskedLine(earlier: string | undefined, context: AppUseCon
             return `${app} is still working on this. It will not be run again. Tell the person in one line that it is on its way.`;
         case 'done':
             return `${app} already did this once, and it will not be run again. Tell the person in one line.`;
-        default:
+        case 'refunded':
             return `${app} could not do this the first time, and nothing was used up. This same request will not be run again; if the person still wants it, they can ask again as a new request.`;
+        default:
+            // Orbit did not say what the first try came to: nothing says it failed, so it may have worked
+            return `${app} was asked for this already and what came of it is not known, so it may have worked. It will not be run again. Tell the person in one line that it may have worked and to check before asking again.`;
     }
 }
 
@@ -309,13 +315,55 @@ export function narrowToReturns(result: unknown, returns: string[] | null): unkn
                 // Not JSON: withheld
             }
         }
+        // An App that wrote prose beside its data gave its fields in structuredContent: with no text item holding them, those are held to the picked fields
+        const structured = structuredOf(result);
+        if (items.length === 0 && structured !== undefined) items.push({ type: 'text', text: JSON.stringify(narrow(structured)) });
         return items;
     }
     if (result && typeof result === 'object') return narrow(result);
     return typeof result === 'string' ? [] : result;
 }
 
+/** The data an App gave in `structuredContent` beside its content, kept by the connector out of the content (see `withStructured`). Objects and lists only. */
+const STRUCTURED = Symbol.for('universe.structuredContent');
+export function withStructured<T extends unknown[]>(content: T, structured: unknown): T {
+    if (structured !== null && typeof structured === 'object') Object.defineProperty(content, STRUCTURED, { value: structured, enumerable: false });
+    return content;
+}
+function structuredOf(content: unknown[]): unknown {
+    return (content as unknown as Record<symbol, unknown>)[STRUCTURED];
+}
+
 /** The owner's one line when today's uses for other people ran out, in the Brick's own voice, with the way to the limit. */
 export function ownerNoteText(note: Pick<OwnerNote, 'appName' | 'limit' | 'connectionId'>): string {
     return `Heads up: your ${note.appName} has been used ${note.limit} times through me today, the most you allow for everyone. It opens again tomorrow. [Change the limit](#apps=${note.connectionId})`;
+}
+
+/** When a note to the owner that was not told for sure is told again. */
+export const OWNER_NOTE_RETRY_MS: readonly number[] = [5_000, 30_000, 120_000];
+
+/**
+ * Says the day's note in the owner's own chat with the Brick. The transaction id is made from the day Orbit says ran out, so the same
+ * note is one message to Matrix (also when told again, or just after midnight) and the next day's is another. A try that was not told for
+ * sure (Matrix or Orbit could not be reached) is made again a few times, with the same id. "No chat" and "not allowed" are certain: there is
+ * nobody to tell. Never throws.
+ */
+export async function sayOwnerNote(
+    speak: (matrixUserId: string, text: string, transactionId: string) => Promise<{ ok: boolean; reason?: string }>,
+    botId: string,
+    note: OwnerNote,
+    waitsMs: readonly number[] = OWNER_NOTE_RETRY_MS,
+    wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.())
+): Promise<void> {
+    const day = note.day ?? new Date().toISOString().slice(0, 10);
+    const transactionId = `app-share-limit:${botId}:${note.connectionId}:${day}`;
+    for (const waitMs of [0, ...waitsMs]) {
+        if (waitMs > 0) await wait(waitMs);
+        try {
+            const said = await speak(note.matrixUserId, ownerNoteText(note), transactionId);
+            if (said.ok || said.reason !== 'unsure') return;
+        } catch (error) {
+            console.warn('[AppUse] Could not tell the owner about the limit:', error instanceof Error ? error.message : error);
+        }
+    }
 }

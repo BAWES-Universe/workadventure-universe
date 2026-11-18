@@ -33,7 +33,8 @@ vi.mock("../ai/AIProviderRegistry", () => ({
     })),
 }));
 vi.mock("../client/BotClient", () => ({ BotClient: vi.fn() }));
-vi.mock("../mcp/MCPConnector", () => ({
+vi.mock("../mcp/MCPConnector", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../mcp/MCPConnector")>()),
     MCPConnector: {
         discoverToolsWithMapping: vi.fn(async () => ({
             tools: [
@@ -56,17 +57,6 @@ vi.mock("../mcp/MCPConnector", () => ({
         clearCache: vi.fn(),
     },
     toolTimeoutMs: vi.fn(() => 60_000),
-    narrowedToInputs: (tool: any, inputs: string[]) => ({
-        ...tool,
-        function: {
-            ...tool.function,
-            parameters: {
-                ...tool.function.parameters,
-                properties: Object.fromEntries(Object.entries(tool.function.parameters.properties ?? {}).filter(([name]) => inputs.includes(name))),
-                required: (tool.function.parameters.required ?? []).filter((name: string) => inputs.includes(name)),
-            },
-        },
-    }),
 }));
 
 const OWNER = "uuid-owner";
@@ -173,6 +163,46 @@ describe("someone else asking a Brick in a room: only the jobs its owner shared 
         expect(toolNamesSent()).toEqual(expect.arrayContaining(["generate_music", "delete_song"]));
         const job = toolsSent().find((tool) => tool.function.name === "generate_music");
         expect(Object.keys(job.function.parameters.properties)).toEqual(["style", "owner_token"]);
+    });
+
+    it("does not say there are shared jobs when the gate leaves none of them in the list", async () => {
+        const { admin, memory } = build(OTHER, () => served({ forOthers: true }));
+        const service = openToolGate(new AIService(memory, admin, "http://admin.local"));
+        service["toolGate"] = { decide: async () => ({ kind: "run" }), offers: async (call: { tool?: string; toolName?: string }) => (call.tool ?? call.toolName) !== "generate_music" } as never;
+        service.noteBrick("brick-1", ownersBrick);
+        await reply(service);
+        expect(toolNamesSent()).not.toContain("generate_music");
+        expect(promptSent()).toContain("NOT TO THIS PERSON");
+        expect(promptSent()).not.toContain("The one exception is the jobs in your list now");
+    });
+
+    it("offers the job another App shared when an App that shares nothing has a tool of the same name", async () => {
+        const { MCPConnector } = await import("../mcp/MCPConnector");
+        const own = { type: "function", function: { name: "generate_music", description: "Makes a song, the plain one", parameters: { type: "object", properties: { style: { type: "string" }, owner_token: { type: "string" } }, required: ["style", "owner_token"] } } };
+        const shared = { type: "function", function: { name: "generate_music", description: "Makes a song, the shared one", parameters: { type: "object", properties: { style: { type: "string" }, owner_token: { type: "string" } }, required: ["style"] } } };
+        (MCPConnector.discoverToolsWithMapping as any).mockResolvedValueOnce({
+            tools: [own],
+            toolServerMap: new Map([
+                [
+                    "generate_music",
+                    {
+                        serverId: "plain",
+                        serverUrl: "https://plain.test/mcp",
+                        authType: "none",
+                        connectionId: "conn-plain",
+                        sharedAlt: { tool: shared, entry: { serverId: "shared", serverUrl: "https://shared.test/mcp", authType: "none", connectionId: "conn-shared", sharedJob: { inputs: ["style"] } } },
+                    },
+                ],
+            ]),
+        });
+        const { admin, memory } = build(OTHER, () => served({ forOthers: true }));
+        const service = openToolGate(new AIService(memory, admin, "http://admin.local"));
+        service.noteBrick("brick-1", ownersBrick);
+        await reply(service);
+        const job = toolsSent().find((tool) => tool.function.name === "generate_music");
+        expect(job.function.description).toBe("Makes a song, the shared one");
+        expect(Object.keys(job.function.parameters.properties)).toEqual(["style"]);
+        expect(promptSent()).toContain("The one exception is the jobs in your list now");
     });
 
     it("a person this server cannot name is offered the same, and never more", async () => {

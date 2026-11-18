@@ -13,6 +13,8 @@ import {
     appNotUsedLine,
     askOrbitAboutAppUse,
     narrowToReturns, SHARED_FAILED_LINE,
+    sayOwnerNote,
+    withStructured,
     ownerNoteText,
     settleOutcomeOf,
     settleWithOrbit,
@@ -60,6 +62,14 @@ describe('what Orbit is sent when someone else asks', () => {
         }
         vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { allowed: false, reason: 'already_asked', earlier: 'unknown' } });
         expect(await askOrbitAboutAppUse(() => SIDE)('b', 's', { callId: 'c' })).toEqual({ allowed: false, reason: 'already_asked', earlier: 'unknown' });
+    });
+
+    it('reads the day Orbit says ran out, and nothing else as a day', async () => {
+        const base = { matrixUserId: '@u:m', appName: 'A', botName: 'B', limit: 5, connectionId: 'c' };
+        vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { allowed: true, shared: { returns: null }, ownerNote: { ...base, day: '2026-11-18' } } });
+        expect((await askOrbitAboutAppUse(() => SIDE)('b', 's', { callId: 'c' })).ownerNote).toEqual({ ...base, day: '2026-11-18' });
+        vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { allowed: true, shared: { returns: null }, ownerNote: { ...base, day: 'yesterday' } } });
+        expect((await askOrbitAboutAppUse(() => SIDE)('b', 's', { callId: 'c' })).ownerNote).toEqual(base);
     });
 
     it('does not take a missing word about what may come back as "everything"', async () => {
@@ -141,6 +151,25 @@ describe('holding what comes back to what the owner picked', () => {
         expect(narrowToReturns([{ type: 'text', text: JSON.stringify(['x', { title: 't', url: 'u' }, 3]) }], ['title'])).toEqual([{ type: 'text', text: JSON.stringify([{ title: 't' }]) }]);
     });
 
+    it('uses the data an App gave beside its prose, held to the picked fields', () => {
+        const prose = withStructured([{ type: 'text', text: 'Here is your song!' }], { audio_url: 'https://x/s.mp3', owner_email: 'o@x.com' });
+        expect(narrowToReturns(prose, ['audio_url'])).toEqual([{ type: 'text', text: JSON.stringify({ audio_url: 'https://x/s.mp3' }) }]);
+        // Prose alone, with no data kept aside, is still withheld
+        expect(narrowToReturns([{ type: 'text', text: 'Here is your song!' }], ['audio_url'])).toEqual([]);
+        // When a text item holds the fields, that is what is used
+        const both = withStructured([{ type: 'text', text: JSON.stringify({ audio_url: 'a', secret: 's' }) }], { audio_url: 'b', secret: 't' });
+        expect(narrowToReturns(both, ['audio_url'])).toEqual([{ type: 'text', text: JSON.stringify({ audio_url: 'a' }) }]);
+    });
+
+    it('says what came of a first try only when Orbit said so, and "may have worked" when it did not', () => {
+        expect(alreadyAskedLine('refunded', { app: 'ACE-Step' })).toContain('nothing was used up');
+        for (const earlier of [undefined, 'something new']) {
+            const line = alreadyAskedLine(earlier, { app: 'ACE-Step' });
+            expect(line).toContain('may have worked');
+            expect(line).not.toContain('nothing was used up');
+        }
+    });
+
     it('gives the whole answer when the App does not say what it gives back', () => {
         expect(narrowToReturns([song], null)).toEqual([song]);
     });
@@ -175,6 +204,28 @@ describe('only the jobs the owner picked are offered', () => {
         expect(narrow.function.name).toBe('make_song');
         // The original is untouched
         expect(Object.keys(tool.function.parameters.properties)).toHaveLength(3);
+    });
+
+    it('leaves no way to the inputs that were not picked: not in allOf, not through an open object', () => {
+        const tool = {
+            type: 'function' as const,
+            function: {
+                name: 'make_song',
+                description: 'Makes a song',
+                parameters: {
+                    type: 'object',
+                    properties: { style: { type: 'string' } },
+                    allOf: [{ properties: { account: { type: 'string' } }, required: ['account'] }],
+                    patternProperties: { '^x-': { type: 'string' } },
+                },
+            },
+        };
+        const narrow = narrowedToInputs(tool, ['style']);
+        expect(JSON.stringify(narrow.function.parameters)).not.toContain('account');
+        expect(narrow.function.parameters.allOf).toBeUndefined();
+        expect(narrow.function.parameters.patternProperties).toBeUndefined();
+        expect(narrow.function.parameters.additionalProperties).toBe(false);
+        expect(narrow.function.parameters.properties).toEqual({ style: { type: 'string' } });
     });
 });
 
@@ -319,16 +370,23 @@ describe('someone else asking a Brick for a job', () => {
         expect(notShared.result.error).toContain('was not shared');
     });
 
-    it('settles "unknown" when something breaks after the use was taken', async () => {
-        vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue([{ type: 'resource', resource: { uri: 'x', blob: 'AAAA' } }] as never);
-        const ai = service(async () => ({ allowed: true, shared: { returns: null } }), async () => true);
+    it('settles "unknown" and says it in the bot\'s words when the connector breaks after Orbit allowed the use', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockRejectedValue(new Error('socket hang up for owner@example.com'));
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
         const settle = vi.fn<AppUseSettle>(async () => true);
-        ai.useAppSettle(settle);
-        // The answer was told as done before the blob handling; make the settle itself throw instead to prove it never hides the result
-        settle.mockRejectedValueOnce(new Error('orbit down'));
+        const [result] = await ask(service(async () => ({ allowed: true, shared: { returns: null } }), settle), 'make_song', { style: 'oud' });
+        expect(settle).toHaveBeenCalledTimes(1);
+        expect(settle).toHaveBeenCalledWith('b1', 's1', 'call-1', 'unknown');
+        expect(result.result).toMatchObject({ error: SHARED_FAILED_LINE, outcome: 'uncertain' });
+        expect(JSON.stringify(result.result)).not.toContain('owner@example.com');
+    });
+
+    it('never hides the answer when Orbit cannot be told what the try came to', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue([{ type: 'text', text: JSON.stringify({ audio_url: 'https://x/s.mp3' }) }] as never);
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-        const [result] = await ask(ai, 'make_song', { style: 'oud' });
-        expect(result.result).toBeDefined();
+        const settle = vi.fn<AppUseSettle>().mockRejectedValue(new Error('orbit down'));
+        const [result] = await ask(service(async () => ({ allowed: true, shared: { returns: ['audio_url'] } }), settle), 'make_song', { style: 'oud' });
+        expect(result.result).toEqual([{ type: 'text', text: JSON.stringify({ audio_url: 'https://x/s.mp3' }) }]);
     });
 
     it('tells the owner once, in their own chat, when the day\'s uses ran out', async () => {
@@ -444,6 +502,74 @@ describe('telling Orbit again when it did not take what a try came to', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('when the owner is told the day\'s uses ran out', () => {
+    const note = { matrixUserId: '@u:matrix', appName: 'ACE-Step', botName: 'Music Brick', limit: 1, connectionId: 'conn-1', day: '2026-11-18' };
+    const lastUse = async () => ({ allowed: true as const, shared: { returns: null }, ownerNote: note });
+
+    it('waits until the use is known to stay taken: nothing is said for a use given back', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue({ error: "Couldn't reach it. Nothing ran", outcome: 'not_sent' } as never);
+        const tell = vi.fn(async () => undefined);
+        await ask(service(lastUse, async () => true, tell), 'make_song', { style: 'oud' });
+        expect(tell).not.toHaveBeenCalled();
+    });
+
+    it('says it once the try is settled as done', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('song' as never);
+        const order: string[] = [];
+        const tell = vi.fn(async () => {
+            order.push('told');
+        });
+        await ask(
+            service(lastUse, async () => {
+                order.push('settled');
+                return true;
+            }, tell),
+            'make_song',
+            { style: 'oud' }
+        );
+        expect(order).toEqual(['settled', 'told']);
+        expect(tell).toHaveBeenCalledWith('b1', note);
+    });
+
+    it('says it for a try that may have run, which stays counted', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue({ error: 'No answer. May have finished', outcome: 'uncertain', hint: 'x' } as never);
+        const tell = vi.fn(async () => undefined);
+        await ask(service(lastUse, async () => true, tell), 'make_song', { style: 'oud' });
+        expect(tell).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not hold it when someone was turned away: nothing was used', async () => {
+        const tell = vi.fn(async () => undefined);
+        await ask(service(async () => ({ allowed: false, reason: 'limit_reached', resetsAt: '2026-11-19T00:00:00.000Z', ownerNote: note }), async () => true, tell), 'make_song', { style: 'oud' });
+        expect(tell).toHaveBeenCalledTimes(1);
+    });
+
+    it('is said with one transaction id for the day Orbit named, and told again with it when Matrix could not be reached for sure', async () => {
+        const speak = vi.fn<(id: string, text: string, tx: string) => Promise<{ ok: boolean; reason?: string }>>()
+            .mockResolvedValueOnce({ ok: false, reason: 'unsure' })
+            .mockRejectedValueOnce(new Error('matrix down'))
+            .mockResolvedValueOnce({ ok: true });
+        const waits: number[] = [];
+        await sayOwnerNote(speak, 'b1', note, [1, 2, 3], async (ms) => void waits.push(ms));
+        expect(speak).toHaveBeenCalledTimes(3);
+        expect(new Set(speak.mock.calls.map((call) => call[2]))).toEqual(new Set(['app-share-limit:b1:conn-1:2026-11-18']));
+        expect(speak.mock.calls[0][0]).toBe('@u:matrix');
+        expect(waits).toEqual([1, 2]);
+    });
+
+    it('does not try again when it is certain there is nobody to tell, and gives up after a few tries', async () => {
+        const gone = vi.fn(async () => ({ ok: false, reason: 'no_chat' }));
+        await sayOwnerNote(gone, 'b1', note, [1, 2, 3], async () => undefined);
+        expect(gone).toHaveBeenCalledTimes(1);
+        const notAllowed = vi.fn(async () => ({ ok: false, reason: 'not_allowed' }));
+        await sayOwnerNote(notAllowed, 'b1', note, [1, 2, 3], async () => undefined);
+        expect(notAllowed).toHaveBeenCalledTimes(1);
+        const unsure = vi.fn(async () => ({ ok: false, reason: 'unsure' }));
+        await sayOwnerNote(unsure, 'b1', note, [1, 2, 3], async () => undefined);
+        expect(unsure).toHaveBeenCalledTimes(4);
     });
 });
 

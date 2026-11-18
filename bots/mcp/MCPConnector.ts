@@ -10,6 +10,7 @@
  */
 
 import { keyAppTools, loadKeyApps, type KeyApp } from './KeyApps';
+import { withStructured } from './AppUse';
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
@@ -69,13 +70,21 @@ function sharedJobOf(server: McpServerConfig, tool: string): { sharedJob: { inpu
     return { sharedJob: { inputs: job.inputs } };
 }
 
-/** A tool's definition held to the inputs its owner shared: nobody else is shown, or can fill in, any other. */
+/**
+ * A tool's definition held to the inputs its owner shared: nobody else is shown, or can fill in, any other. The schema is made again from
+ * the picked inputs alone and closed, so an input named in `allOf`, `anyOf` or a pattern, or one an open object would take, is not there.
+ */
 export function narrowedToInputs(tool: McpToolDefinition, inputs: readonly string[]): McpToolDefinition {
     const keep = new Set(inputs);
     const parameters = tool.function.parameters ?? {};
-    const properties = parameters.properties && typeof parameters.properties === 'object' ? Object.fromEntries(Object.entries(parameters.properties as Record<string, unknown>).filter(([name]) => keep.has(name))) : {};
-    const required = Array.isArray(parameters.required) ? (parameters.required as unknown[]).filter((name) => typeof name === 'string' && keep.has(name)) : undefined;
-    return { type: 'function', function: { ...tool.function, parameters: { ...parameters, type: 'object', properties, ...(required ? { required } : {}) } } };
+    const declared = parameters.properties && typeof parameters.properties === 'object' ? (parameters.properties as Record<string, unknown>) : {};
+    const properties: Record<string, unknown> = {};
+    for (const name of inputs) properties[name] = Object.prototype.hasOwnProperty.call(declared, name) ? declared[name] : {};
+    const required = Array.isArray(parameters.required) ? (parameters.required as unknown[]).filter((name): name is string => typeof name === 'string' && keep.has(name)) : [];
+    return {
+        type: 'function',
+        function: { ...tool.function, parameters: { type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false } },
+    };
 }
 
 export interface McpToolDefinition {
@@ -121,6 +130,8 @@ export interface ToolServerEntry {
     keyApp?: { definitionHash: string; operation: string };
     /** Set when its owner shared this tool as a job other people may ask for (#2006): the inputs people may fill in. Nobody but its owner is offered a tool without it. */
     sharedJob?: { inputs: string[] };
+    /** Another App's job of the same name that its owner shared, when this entry (the one the owner is offered) is not shared: it is what someone else is offered instead (#2006). */
+    sharedAlt?: { tool: McpToolDefinition; entry: ToolServerEntry };
 }
 
 // ---------------------------------------------------------------------------
@@ -874,26 +885,37 @@ export class MCPConnector {
         // Track seen tool names across all servers to avoid duplicates
         const seenToolNames = new Set<string>();
 
+        // The entry a tool of a server has in the map
+        function entryFor(tool: McpToolDefinition, server: McpServerConfig, title: string | undefined, raw: RawTool | undefined): ToolServerEntry {
+            return {
+                serverId: server.id,
+                serverUrl: server.serverUrl,
+                authType: server.authType,
+                authConfig: server.authConfig,
+                headers: server.headers,
+                serverName: server.name,
+                ...(server.connectionId ? { connectionId: server.connectionId } : {}),
+                ...(server.readyMade === true && server.orbitUrl ? { readyMade: true, orbitUrl: server.orbitUrl } : {}),
+                ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
+                ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
+                ...(title ? { title } : {}),
+                ...(sharedJobOf(server, tool.function.name) ?? {}),
+            };
+        }
+
         // Helper to push a tool def only if its name is unique
         function addUniqueTool(tool: McpToolDefinition, server: McpServerConfig, title: string | undefined, raw: RawTool | undefined) {
             if (!seenToolNames.has(tool.function.name)) {
                 seenToolNames.add(tool.function.name);
                 allTools.push(tool);
-                toolServerMap.set(tool.function.name, {
-                    serverId: server.id,
-                    serverUrl: server.serverUrl,
-                    authType: server.authType,
-                    authConfig: server.authConfig,
-                    headers: server.headers,
-                    serverName: server.name,
-                    ...(server.connectionId ? { connectionId: server.connectionId } : {}),
-                    ...(server.readyMade === true && server.orbitUrl ? { readyMade: true, orbitUrl: server.orbitUrl } : {}),
-                    ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
-                    ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
-                    ...(title ? { title } : {}),
-                    ...(sharedJobOf(server, tool.function.name) ?? {}),
-                });
+                toolServerMap.set(tool.function.name, entryFor(tool, server, title, raw));
+                return;
             }
+            // The name is taken by another App. The owner keeps the first, as always; but a job another App's owner shared under this name is kept
+            // aside, so someone else asking is still offered it and does not lose it to an App that shares nothing (#2006)
+            const first = toolServerMap.get(tool.function.name);
+            const shared = server.connectionId ? entryFor(tool, server, title, raw) : undefined;
+            if (first && !first.sharedJob && !first.sharedAlt && shared?.sharedJob) first.sharedAlt = { tool, entry: shared };
         }
 
         // Process all servers concurrently with a concurrency cap
@@ -1120,7 +1142,8 @@ export class MCPConnector {
             if (structured !== undefined && structured !== null && !hasText) {
                 return [...content, { type: 'text', text: typeof structured === 'string' ? structured : JSON.stringify(structured) }];
             }
-            return content;
+            // Prose beside the data: the bot reads the prose, as before; the data is kept aside for the one who may only be given chosen fields (#2006)
+            return withStructured(content, structured);
         }
 
         // A result with no list of content is the App's own data. It is handed over as content, so a field of it that happens to be called

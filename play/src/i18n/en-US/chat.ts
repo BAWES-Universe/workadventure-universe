@@ -1839,10 +1839,11 @@ const chat: BaseTranslation = {
                 getBackOne: "Pick at least one thing they get back.",
                 usesEveryone: "Uses a day, for everyone",
                 usesPerson: "Uses a day for each person",
-                note: "A use is one time someone else's request runs one of these. Your own chats never count, and a failed try gives the use back. When it runs out, the Brick says so kindly and tells you once.",
+                note: "A use is one time someone else's request runs one of these. Your own chats never count. A use comes back only when the try clearly didn't work; if the app gave no answer, it stays counted. When it runs out, the Brick says so kindly and tells you once.",
                 unreachable:
                     "{app:string} didn't answer just now, so what people can ask for can't be picked. Try again soon.",
                 loadFailed: "Couldn't read who can ask for this.",
+                stopUnsure: "We couldn't tell if sharing stopped. Checking now.",
                 nothing: "There is nothing in {app:string} yet that other people could ask for.",
             },
             github: {

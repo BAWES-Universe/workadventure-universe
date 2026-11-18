@@ -28,7 +28,7 @@ import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
-import { alreadyAskedLine, appNotUsedLine, narrowToReturns, SHARED_FAILED_LINE, ownerNoteText, settleOutcomeOf, type AppUseAnswer, type AppUseCheck, type AppUseContext, type AppUseRequest, type AppUseSettle, type OwnerNote } from '../mcp/AppUse';
+import { alreadyAskedLine, appNotUsedLine, narrowToReturns, SHARED_FAILED_LINE, ownerNoteText, settleOutcomeOf, type AppUseAnswer, type AppUseCheck, type AppUseContext, type AppUseRequest, type AppUseSettle, type OwnerNote, type SettleOutcome } from '../mcp/AppUse';
 import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
@@ -378,10 +378,10 @@ export class AIService {
      * little later and with the same call id and outcome (Orbit takes a repeat of it as the same word): the App is never called again for
      * it. A try nobody could tell Orbit about stays counted, which is the safe side.
      */
-    private async settleShared(use: { botId: string; callId: string }, serverId: string, result: unknown): Promise<void> {
-        const settle = this.appSettle;
-        if (!settle) return;
+    private async settleShared(use: { botId: string; callId: string }, serverId: string, result: unknown): Promise<SettleOutcome> {
         const outcome = settleOutcomeOf(result);
+        const settle = this.appSettle;
+        if (!settle) return outcome;
         const tell = async (): Promise<boolean> => {
             try {
                 return (await settle(use.botId, serverId, use.callId, outcome)) !== false;
@@ -390,7 +390,7 @@ export class AIService {
                 return false;
             }
         };
-        if (await tell()) return;
+        if (await tell()) return outcome;
         const later = (index: number): void => {
             if (index >= SETTLE_RETRY_MS.length) return;
             setTimeout(() => {
@@ -400,6 +400,7 @@ export class AIService {
             }, SETTLE_RETRY_MS[index]).unref?.();
         };
         later(0);
+        return outcome;
     }
 
     /** Who a line about a shared App is about: the App's name, and its owner when the Brick knows them. */
@@ -463,6 +464,8 @@ export class AIService {
         let shared: { returns: string[] | null } | undefined;
         // Someone else asks for the job: what is sent to the App is held to the inputs the owner picked, here, whatever Orbit says
         const visitor = use?.forOthers === true;
+        // The owner's note that this ask took the day's last use, held until the try is settled
+        let heldNote: OwnerNote | undefined;
         if (visitor && entry.connectionId) {
             if (!entry.sharedJob) return { error: appNotUsedLine('not_shared', this.appContextOf(entry, use?.botId ?? '')), outcome: 'not_sent' };
             args = Object.fromEntries(Object.entries(args ?? {}).filter(([name]) => entry.sharedJob?.inputs.includes(name)));
@@ -487,7 +490,11 @@ export class AIService {
             // the try came to is told to Orbit, which only gives the use back for a failure it can be sure of
             if (entry.connectionId) {
                 const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, { ...use, tool: toolName, argumentNames: Object.keys(args ?? {}) }) : { allowed: false, reason: 'unavailable' };
-                this.tellOwner(use?.botId ?? '', answer.ownerNote);
+                // A refused ask used nothing, so the owner is told at once. When this ask took the day's last use, the owner is told once it is known
+                // that the use stays taken: a use given back because the job never ran leaves the day open, and nothing is said then
+                if (!answer.allowed) this.tellOwner(use?.botId ?? '', answer.ownerNote);
+                else if (answer.shared && use) heldNote = answer.ownerNote;
+                else if (!visitor) this.tellOwner(use?.botId ?? '', answer.ownerNote);
                 if (!answer.allowed) {
                     const context = this.appContextOf(entry, use?.botId ?? '');
                     const reason = answer.reason ?? 'gone';
@@ -528,7 +535,8 @@ export class AIService {
                 // What the try came to is told to Orbit before anything else is done with it: a use is given back only for a failure that is sure
                 if (sharedTry && use) {
                     sharedTry = false;
-                    await this.settleShared(use, entry.serverId, rawResult);
+                    const settled = await this.settleShared(use, entry.serverId, rawResult);
+                    if (settled !== 'failed') this.tellOwner(use.botId, heldNote);
                 }
                 // Process MCP resource blobs (base64 binary data) by uploading to CDN
                 // and returning CDN URLs so the AI can use send_image/send_audio/etc.
@@ -540,7 +548,10 @@ export class AIService {
                 return narrowed;
             } catch (afterSend) {
                 // Something broke after the use was taken and before Orbit was told what it came to: it may have run, so the try stays counted
-                if (sharedTry && use) await this.settleShared(use, entry.serverId, { error: 'unknown' });
+                if (sharedTry && use) {
+                    await this.settleShared(use, entry.serverId, { error: 'unknown' });
+                    this.tellOwner(use.botId, heldNote);
+                }
                 throw afterSend;
             }
         } catch (mcpError: any) {
@@ -1591,6 +1602,16 @@ export class AIService {
             // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005), except a job from an App
             // its owner shared (#2006): only the jobs they picked, with only the inputs they picked. The rest of the App is not even listed.
             if (forOthers) {
+                // Another App's tool of the same name came first for its owner; the job that was shared is what someone else is offered instead
+                for (const [name, first] of [...toolServerMap]) {
+                    const alt = first.sharedAlt;
+                    if (first.sharedJob || !alt || !botId) continue;
+                    if (!(await this.toolGate.offers(this.gateCallFor(botId, name, alt.entry, this.gatePerson(botId, playerId, botClient, spaceName), botClient)))) continue;
+                    const at = tools.findIndex((tool) => tool?.function?.name === name);
+                    if (at >= 0) tools[at] = alt.tool;
+                    else tools.push(alt.tool);
+                    toolServerMap.set(name, alt.entry);
+                }
                 for (let at = tools.length - 1; at >= 0; at--) {
                     const name: string = tools[at]?.function?.name ?? '';
                     const sharedJob = toolServerMap.get(name)?.sharedJob;
@@ -1608,7 +1629,7 @@ export class AIService {
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers, forOthers && toolServerMap.size > 0) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers, forOthers && tools.some((tool) => !!toolServerMap.get(tool?.function?.name ?? '')?.sharedJob)) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools

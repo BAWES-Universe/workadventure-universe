@@ -70,9 +70,12 @@ function job(value: unknown): ShareJob | undefined {
         if (!parsed) return undefined;
         inputs.push(parsed);
     }
-    const returns = isRaw(value.returns) ? value.returns : {};
-    const all = names(returns.names);
-    const picked = names(returns.picked);
+    // What it gives back must be said on purpose: a list of fields, or null for the whole answer. Anything else is not read as "the whole
+    // answer", which would offer more than the owner may mean to
+    if (!isRaw(value.returns)) return undefined;
+    const all = names(value.returns.names);
+    const picked = names(value.returns.picked);
+    if (all === undefined || picked === undefined) return undefined;
     return {
         tool,
         title: words(value.title) ?? tool,
@@ -80,7 +83,7 @@ function job(value: unknown): ShareJob | undefined {
         picked: value.picked === true,
         needsPicking: value.needsPicking === true,
         inputs,
-        returns: { names: all === undefined ? null : all, picked: picked === undefined ? null : picked },
+        returns: { names: all, picked },
     };
 }
 

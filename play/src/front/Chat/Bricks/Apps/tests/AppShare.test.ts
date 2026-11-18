@@ -62,6 +62,29 @@ describe("reading what Orbit says is shared (#2006)", () => {
         expect(parseShare(view({ jobs: [{ tool: "x", inputs: [{ required: true }] }] }))).toBeUndefined();
     });
 
+    it("does not read a job whose answer is not said on purpose as one that gives its whole answer", () => {
+        const job = (returns: unknown) => view({ jobs: [{ ...view().jobs[0], returns }] });
+        // A list of fields, or null for the whole answer: both are said on purpose
+        expect(parseShare(job({ names: null, picked: null }))?.jobs[0].returns).toEqual({ names: null, picked: null });
+        expect(parseShare(job({ names: ["title"], picked: ["title"] }))?.jobs[0].returns).toEqual({
+            names: ["title"],
+            picked: ["title"],
+        });
+        // Anything else is not: it is not offered at all, so nothing more than the owner means can be shared
+        for (const bad of [
+            { names: {}, picked: ["title"] },
+            { names: "all", picked: null },
+            { names: ["title"], picked: "title" },
+            { names: ["title"] },
+            { picked: null },
+            {},
+            null,
+            "everything",
+        ]) {
+            expect(parseShare(job(bad))).toBeUndefined();
+        }
+    });
+
     it("starts a job not shared yet with what it cannot work without, and the whole answer", () => {
         const job = parseShare(view({ shared: false }))!.jobs[0];
         const unshared = { ...job, picked: false, returns: { names: ["title", "url"], picked: null } };

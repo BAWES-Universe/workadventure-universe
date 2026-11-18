@@ -684,13 +684,103 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("appShareOn")).toBeNull();
         });
 
-        it("keeps sharing shown and says so when stopping did not go through", async () => {
+        it("keeps sharing shown and says nothing changed when Orbit refused to stop it", async () => {
             game.getAppShare.mockResolvedValue(sharedView());
-            game.stopAppShare.mockRejectedValue(new Error("offline"));
+            game.stopAppShare.mockRejectedValue(Object.assign(new Error("refused"), { status: 409 }));
             await open();
             await click("appShareStop");
             expect(game.warn).toHaveBeenCalledWith("That didn't go through. Nothing changed.");
             expect(byId("appShareOn")).not.toBeNull();
+            // Only the first read: a refusal leaves sharing as it was
+            expect(game.getAppShare).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not say nothing changed when the answer to stopping never came: it reads what is shared again", async () => {
+            game.getAppShare.mockResolvedValueOnce(sharedView());
+            game.stopAppShare.mockRejectedValue(new Error("Orbit did not answer in time"));
+            await open();
+            // Orbit did stop it, only the answer was lost
+            game.getAppShare.mockResolvedValue(shareView());
+            await click("appShareStop");
+            expect(game.warn).toHaveBeenCalledWith("We couldn't tell if sharing stopped. Checking now.");
+            expect(game.warn).not.toHaveBeenCalledWith("That didn't go through. Nothing changed.");
+            expect(game.getAppShare).toHaveBeenCalledTimes(2);
+            expect(byId("appShareOff")).not.toBeNull();
+            expect(byId("appShareOn")).toBeNull();
+        });
+
+        it("does not show sharing as on when it stopped but reading what is shared again failed, and offers to try again", async () => {
+            game.getAppShare.mockResolvedValueOnce(sharedView());
+            await open();
+            game.getAppShare.mockRejectedValueOnce(new Error("down"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await click("appShareStop");
+            expect(game.stopAppShare).toHaveBeenCalledWith("tavily", "b1");
+            expect(byId("appShareOn")).toBeNull();
+            expect(byId("appShareLoadFailed")).not.toBeNull();
+            game.getAppShare.mockResolvedValue(shareView());
+            await click("appShareTryAgain");
+            warn.mockRestore();
+            expect(byId("appShareOff")).not.toBeNull();
+        });
+
+        it("keeps the row locked until what is shared has been read again after stopping", async () => {
+            game.getAppShare.mockResolvedValueOnce(sharedView());
+            await open();
+            let finishRead: (value: unknown) => void = () => undefined;
+            game.getAppShare.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        finishRead = resolve;
+                    })
+            );
+            await click("appShareStop");
+            // Reading again has not finished: the old row is gone, so Change cannot open an editor for sharing that has stopped
+            expect(byId("appShareChange")).toBeNull();
+            expect(byId("appShareSheet")).toBeNull();
+            finishRead(shareView());
+            await settle();
+            expect(byId("appShareOff")).not.toBeNull();
+        });
+
+        it("says so, and offers no way to change what is shared, when sharing is on but the app cannot be read", async () => {
+            game.getAppShare.mockResolvedValue(sharedView({ reachable: false }));
+            await open();
+            expect(byId("appShareUnreachable")).not.toBeNull();
+            expect(byId("appShareChange")).toBeNull();
+            // Stopping is always possible
+            expect(byId("appShareStop")).not.toBeNull();
+        });
+
+        it("keeps the sheet's choices from changing while it is saving, and lets them change again when saving failed", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 0);
+            let answer: (value: unknown) => void = () => undefined;
+            let failSave: (error: unknown) => void = () => undefined;
+            game.startAppShare.mockImplementation(
+                () =>
+                    new Promise((resolve, reject) => {
+                        answer = resolve;
+                        failSave = reject;
+                    })
+            );
+            await tapSheet("Let others use it");
+            const locked = [
+                ...allById("appShareJobPick"),
+                ...allById("appShareReturn"),
+                ...document.querySelectorAll<HTMLElement>('[data-testid="appShareSheet"] [role="radio"]'),
+            ];
+            expect(locked.length).toBeGreaterThan(4);
+            expect(locked.every((one) => one.hasAttribute("disabled"))).toBe(true);
+            expect(allById("appShareInput").every((one) => one.hasAttribute("disabled"))).toBe(true);
+            expect(answer).toBeDefined();
+            vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            failSave(new Error("offline"));
+            await settle();
+            expect(allById("appShareJobPick").every((one) => !one.hasAttribute("disabled"))).toBe(true);
+            expect(allById("appShareReturn").every((one) => !one.hasAttribute("disabled"))).toBe(true);
         });
 
         it("shows Orbit's own words in the sheet when it would not take a pick, and keeps the sheet open", async () => {
