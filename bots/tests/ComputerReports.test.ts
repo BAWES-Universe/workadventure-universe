@@ -548,6 +548,16 @@ describe('the file card: files a finished job made, in the chat after the messag
         expect(told).toHaveLength(1);
     });
 
+    it('gives up on a mark Orbit never takes after the same few rounds as a file that cannot go, and tells the report then, never retrying for good', async () => {
+        const { runner, told, api, warn } = withFiles([report({ handed: handed('a.pdf') })], allIn);
+        (api.keepFileDelivered as ReturnType<typeof vi.fn>).mockImplementation(async () => false);
+        for (let round = 1; round < FILE_TRIES; round++) expect(await runner.tick()).toBe(0);
+        expect(told).toEqual([]);
+        expect(await runner.tick()).toBe(1);
+        expect(told).toHaveLength(1);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('telling the report anyway'));
+    });
+
     it('says a file’s mark again when the report is done, in case Orbit missed it the first time', async () => {
         const { runner, delivered } = withFiles([report({ handed: handed('a.pdf') })], allIn);
         await runner.tick();

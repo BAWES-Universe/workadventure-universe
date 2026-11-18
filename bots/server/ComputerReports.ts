@@ -304,6 +304,8 @@ export class ComputerReports {
     /** Files of a report already in the chat, and how many rounds a report's files have failed: only so a retry does the rest and gives up in the end. */
     private readonly attached = new Map<string, Set<string>>();
     private readonly failedRounds = new Map<string, number>();
+    /** How many rounds Orbit did not take a file's "delivered" mark for a report: bounded, like the rounds of files that could not go. */
+    private readonly unmarkedRounds = new Map<string, number>();
 
     constructor(
         private readonly api: ComputerReportsApi,
@@ -394,9 +396,16 @@ export class ComputerReports {
             let unmarked = 0;
             for (const id of sent) if (!(await this.api.keepFileDelivered(report.jobId, id))) unmarked += 1;
             if (unmarked > 0) {
-                this.log.warn(`[ComputerReports] Orbit did not keep that ${unmarked} file(s) of job ${report.jobId} reached the chat; the mark is made again next round, nothing is sent twice`);
-                return false;
+                // A few rounds, as for a file that could not go: then the report is told anyway (the files are in the chat; only Files' own "in your chat" mark is missing), never retried for good
+                const tries = (this.unmarkedRounds.get(report.key) ?? 0) + 1;
+                if (tries < FILE_TRIES) {
+                    this.unmarkedRounds.set(report.key, tries);
+                    this.log.warn(`[ComputerReports] Orbit did not keep that ${unmarked} file(s) of job ${report.jobId} reached the chat; the mark is made again next round, nothing is sent twice`);
+                    return false;
+                }
+                this.log.warn(`[ComputerReports] Orbit still did not keep that ${unmarked} file(s) of job ${report.jobId} reached the chat after ${tries} rounds; telling the report anyway`);
             }
+            this.unmarkedRounds.delete(report.key);
             this.attached.delete(report.key);
             this.failedRounds.delete(report.key);
             if (!(await this.api.keepTold(report))) this.log.warn(`[ComputerReports] Orbit did not keep that job ${report.jobId} (${report.kind}) was told; it goes out again as the same message`);
@@ -412,6 +421,7 @@ export class ComputerReports {
         await this.api.keepUndeliverable(report, why);
         this.attached.delete(report.key);
         this.failedRounds.delete(report.key);
+        this.unmarkedRounds.delete(report.key);
         return false;
     }
 }
