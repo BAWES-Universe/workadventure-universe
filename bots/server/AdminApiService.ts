@@ -1517,13 +1517,16 @@ export class AdminApiService {
         return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown' };
     }
 
-    /** A job as it stands (#2000), or null when it is not there. */
-    /** The job as Orbit has it; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string } | null> {
+    /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number } | null> {
         try {
-            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
-            if (job && typeof job.id === 'string' && typeof job.status === 'string') return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' };
+            if (job && typeof job.id === 'string' && typeof job.status === 'string') {
+                // The control generation, when Orbit gives one (an Orbit that does not is not asked to fence)
+                const generation = typeof job.generation === 'number' && Number.isInteger(job.generation) && job.generation >= 0 ? job.generation : undefined;
+                return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick', ...(generation === undefined ? {} : { generation }) };
+            }
             throw new Error('Orbit gave no job');
         } catch (error) {
             if (axios.isAxiosError(error) && error.response?.status === 404) return null;

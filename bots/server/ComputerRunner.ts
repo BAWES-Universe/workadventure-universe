@@ -39,8 +39,11 @@ export type TurnOpened = { ok: true; events: AsyncIterable<RunnerEvent> } | { ok
 
 export interface RunnerOrbit {
     running(): Promise<RunnableJob[]>;
-    /** The job as Orbit has it, or null when it is gone. */
-    job(botId: string, jobId: string): Promise<{ status: string; control: string } | null>;
+    /**
+     * The job as Orbit has it, or null when it is gone. `generation` is the job's control generation: it moves when the person takes the machine
+     * or gives it back, and when the job pauses or resumes. Absent from an Orbit that does not give it (nothing is then sent or checked).
+     */
+    job(botId: string, jobId: string): Promise<{ status: string; control: string; generation?: number } | null>;
     action(botId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
     prepare(jobId: string, relay: string): Promise<{ ok: true } | { ok: false; reason: string }>;
     turn(jobId: string, input: string, signal: AbortSignal): Promise<TurnOpened>;
@@ -157,6 +160,18 @@ function refusedByOrbit(error: unknown): boolean {
     return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429;
 }
 
+/** An answer from Orbit that says the action came from an older turn than the job is on now (409 `stale`): the job changed hands or paused meanwhile. */
+function staleForOrbit(error: unknown): boolean {
+    if (typeof error !== 'object' || error === null || !('response' in error)) return false;
+    const response = (error as { response?: { status?: unknown; data?: { reason?: unknown } } }).response;
+    return response?.status === 409 && response.data?.reason === 'stale';
+}
+
+/** An action for Orbit, with the control generation the turn started on when Orbit gave one (so an action from an older turn changes nothing). */
+function fenced(body: Record<string, unknown>, generation: number | undefined): Record<string, unknown> {
+    return generation === undefined ? body : { ...body, generation };
+}
+
 type TurnResult =
     /** The turn ended and what the agent said is here (it may be empty). */
     | { kind: 'ended'; words: string; failed: boolean; fenced: boolean }
@@ -191,8 +206,14 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
     const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? error.message : '');
 
-    async function finish(job: RunnableJob, outcome: 'done' | 'failed') {
-        await orbit.action(job.botId, job.jobId, { action: 'finish', outcome }).catch((error) => say('Could not end a job:', error));
+    /** Ends the job. 'stale' when Orbit says the turn this comes from is an old one: nothing was ended, and the job is to be read again. */
+    async function finish(job: RunnableJob, outcome: 'done' | 'failed', generation?: number): Promise<'ended' | 'stale'> {
+        let stale = false;
+        await orbit.action(job.botId, job.jobId, fenced({ action: 'finish', outcome }, generation)).catch((error) => {
+            if (staleForOrbit(error)) stale = true;
+            else say('Could not end a job:', error);
+        });
+        return stale ? 'stale' : 'ended';
     }
 
     /** Waits while the person has the machine or the job waits for them. 'back' when it is Brick's again, 'over' when it is not coming back. */
@@ -232,7 +253,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     }
 
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
-    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted): Promise<TurnResult> {
+    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined): Promise<TurnResult> {
         // A stop that came while the machine was being made ready has already fired: its listener would never be told
         if (signal.aborted) return { kind: 'stopped' };
         const turnController = new AbortController();
@@ -243,7 +264,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const renew = async () => {
             if (turnController.signal.aborted) return;
             try {
-                const answer = await orbit.action(job.botId, job.jobId, { action: 'renew' });
+                const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'renew' }, generation));
                 // An answer that comes after its turn ended is not this turn's to use: a newer turn may hold a newer deadline by now
                 if (turnController.signal.aborted) return;
                 if (answer.ok === false) {
@@ -287,7 +308,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (stepDone === reported && !label) return;
                 lastReport = at;
                 reported = stepDone;
-                await orbit.action(job.botId, job.jobId, { action: 'progress', stepDone, label }).catch(() => undefined);
+                await orbit.action(job.botId, job.jobId, fenced({ action: 'progress', stepDone, label }, generation)).catch(async (error) => {
+                    // This turn is an old one (the job changed hands or paused): it stops being acted on, and the job is read again
+                    if (!staleForOrbit(error) || turnController.signal.aborted) return;
+                    lost = true;
+                    turnController.abort();
+                    await orbit.cancel(job.jobId).catch(() => undefined);
+                });
             };
 
             let opened: TurnOpened = input === null ? await orbit.stream(job.jobId, turnController.signal) : await orbit.turn(job.jobId, input, turnController.signal);
@@ -372,9 +399,19 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 input = follow(RESUME_PROMPT);
                 continue;
             }
+            // The control generation this turn starts on: every action it takes for the job carries it, so one from an older turn changes nothing
+            const generation = state.generation;
+            // An action refused as stale: the job changed hands or paused meanwhile. It is read again, and this turn's words are not acted on
+            const readAgain = async () => {
+                input = follow(RESUME_PROMPT);
+                await sleep(timing.waitMs, signal);
+            };
             if (++turns > RUNNER_GUARDS.maxTurns) {
                 say('A job took more turns than allowed and was ended.');
-                await finish(job, 'failed');
+                if ((await finish(job, 'failed', generation)) === 'stale') {
+                    await readAgain();
+                    continue;
+                }
                 return;
             }
             const ready = await prepared(job, deps.relayUrl, signal);
@@ -386,11 +423,14 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             if (ready === 'failed') {
-                await finish(job, 'failed');
+                if ((await finish(job, 'failed', generation)) === 'stale') {
+                    await readAgain();
+                    continue;
+                }
                 return;
             }
 
-            const result = await oneTurn(job, input, signal, renewing, accepted);
+            const result = await oneTurn(job, input, signal, renewing, accepted, generation);
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
             if (result.kind === 'look') {
@@ -420,6 +460,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 bad = 0;
                 continue;
             }
+            // The job changed hands or paused while the turn went on (even if it is Brick's again): the turn is an old one, so its words are
+            // not acted on, and the agent is told to look at where things stand
+            if (generation !== undefined && after.generation !== undefined && after.generation !== generation) {
+                input = follow(RESUME_PROMPT);
+                bad = 0;
+                continue;
+            }
             if (result.fenced) {
                 input = follow(RESUME_PROMPT);
                 continue;
@@ -427,31 +474,53 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
             // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
             const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
-            if (ending.kind === 'done') return void (await finish(job, 'done'));
-            if (ending.kind === 'failed') return void (await finish(job, 'failed'));
+            if (ending.kind === 'done' || ending.kind === 'failed') {
+                if ((await finish(job, ending.kind, generation)) === 'stale') {
+                    await readAgain();
+                    continue;
+                }
+                return;
+            }
             if (ending.kind === 'handover') {
                 bad = 0;
                 // The person is only told to come when Orbit took the handover: if it did not, waiting would take the job straight
                 // back to Brick as if they had finished, so it is asked again, and a job that cannot be handed over is ended
                 let handed = false;
-                for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && !handed; attempt++) {
+                let stale = false;
+                for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && !handed && !stale; attempt++) {
                     if (signal.aborted) return;
                     if (attempt > 0) await sleep(timing.waitMs, signal);
                     handed = await orbit
-                        .action(job.botId, job.jobId, {
-                            action: 'handover',
-                            waitingFor: ending.waitingFor,
-                            ...(ending.waitingFor === 'details' && ending.what && ending.where ? { ready: { what: ending.what, where: ending.where } } : {}),
-                        })
+                        .action(
+                            job.botId,
+                            job.jobId,
+                            fenced(
+                                {
+                                    action: 'handover',
+                                    waitingFor: ending.waitingFor,
+                                    ...(ending.waitingFor === 'details' && ending.what && ending.where ? { ready: { what: ending.what, where: ending.where } } : {}),
+                                },
+                                generation
+                            )
+                        )
                         // An answer that says it was refused (ok false) is no handover
                         .then((answer) => answer.ok !== false)
                         .catch((error) => {
-                            say('Could not hand over:', error);
+                            // An old turn's handover is no failure to hand over: the job is read again, and not ended
+                            if (staleForOrbit(error)) stale = true;
+                            else say('Could not hand over:', error);
                             return false;
                         });
                 }
+                if (stale) {
+                    await readAgain();
+                    continue;
+                }
                 if (!handed) {
-                    await finish(job, 'failed');
+                    if ((await finish(job, 'failed', generation)) === 'stale') {
+                        await readAgain();
+                        continue;
+                    }
                     return;
                 }
                 const back = await waitForBrick(job, signal);
@@ -463,7 +532,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             bad = result.failed || result.words.trim() === '' ? bad + 1 : 0;
             if (bad >= RUNNER_GUARDS.maxBadTurns) {
                 say('A job kept failing to answer and was ended.');
-                await finish(job, 'failed');
+                if ((await finish(job, 'failed', generation)) === 'stale') {
+                    await readAgain();
+                    continue;
+                }
                 return;
             }
             input = follow(CONTINUE_PROMPT);
@@ -527,7 +599,7 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
         running: () => admin.computerRunningJobs(),
         job: async (botId, jobId) => {
             const job = await admin.getComputerJob(botId, jobId);
-            return job ? { status: job.status, control: job.control } : null;
+            return job ? { status: job.status, control: job.control, ...(job.generation === undefined ? {} : { generation: job.generation }) } : null;
         },
         action: (botId, jobId, body) => admin.computerJobAction(botId, jobId, body),
         prepare: async (jobId, relay) => {
