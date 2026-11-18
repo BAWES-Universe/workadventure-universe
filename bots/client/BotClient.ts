@@ -49,6 +49,7 @@ import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
 import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
 import { ListeningBudget } from '../voice/VoiceListening';
+import { VoiceMeter } from '../voice/VoiceMeter';
 import { sharedNoteHearing } from '../voice/NoteHearingWiring';
 import { tidyTranscript } from '../voice/NoteHearing';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
@@ -154,6 +155,15 @@ export class BotClient {
     private readonly chatIds = new Map<number, string>();
     /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
     private voice: VoiceCalls | null = null;
+    /** What earlier stops of the voice are still sending to Orbit. */
+    private readonly draining = new Set<Promise<void>>();
+    /** The same for every bot: a bot that left its call is no longer held by anyone, but what its call used must still reach Orbit. */
+    private static readonly allDraining = new Set<Promise<void>>();
+
+    /** Answers when what every bot's calls used has been sent to Orbit. Asked by a server being switched off, last. */
+    static drained(): Promise<void> {
+        return Promise.all([...BotClient.allDraining]).then(() => undefined);
+    }
     /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
     private speech: BotSpeech | null = null;
     /** Which meeting room the bot stands in, for a voice bot only (see voice/MeetingAreas.ts). */
@@ -220,6 +230,37 @@ export class BotClient {
             (userId) => this.behavior?.isSummonedBy?.(userId) ?? false,
             (userId) => (this.behavior?.isBusyWith?.(userId) ?? false) || (this.speech?.isSpeakingTo(userId) ?? false)
         );
+    }
+
+    /**
+     * Who each person is for the books, by their whole space user id. Player numbers repeat from room to room and the world space holds
+     * every room's people, so a number alone can be somebody else's: what a call used is booked for the person with that number in the
+     * bot's own room.
+     */
+    private readonly voiceWho = new Map<string, { userId: string; isGuest: boolean }>();
+
+    private noteVoiceWho(user: { spaceUserId?: string; uuid?: string; isLogged?: boolean } | undefined): void {
+        if (!user?.spaceUserId || !user.uuid || !BotClient.playerIdOf(user.spaceUserId)) return;
+        this.voiceWho.set(user.spaceUserId, { userId: user.uuid, isGuest: user.isLogged !== true });
+    }
+
+    /** The person with this player number in the bot's own room, or null while who they are isn't known. */
+    private talkerInOwnRoom(playerId: number): { userId: string; isGuest: boolean } | null {
+        const prefix = this.ownRoomPrefix();
+        return prefix === null ? null : (this.voiceWho.get(`${prefix}${playerId}`) ?? null);
+    }
+
+    /**
+     * What every space user id of the bot's own room starts with ("roomID_"). A call-only connection has no room, so its own id (a random
+     * "call_…") says nothing: the room is the one its caller is in.
+     */
+    private ownRoomPrefix(): string | null {
+        for (const [spaceName, mine] of this.spaces) {
+            const own = mine.startsWith(CALL_ONLY_SPACE_USER_PREFIX) ? this.callerIds.get(spaceName) : mine;
+            const at = own?.lastIndexOf('_') ?? -1;
+            if (own && at !== -1) return own.substring(0, at + 1);
+        }
+        return null;
     }
 
     /**
@@ -374,7 +415,7 @@ export class BotClient {
                     this.onDisconnect?.();
                 }
                 this.connected = false;
-                this.stopVoice();
+                void this.stopVoice();
                 this.resetJoin();
             });
 
@@ -394,8 +435,8 @@ export class BotClient {
     /**
      * Disconnect from server
      */
-    disconnect(): void {
-        this.stopVoice();
+    disconnect(): Promise<void> {
+        const drained = this.stopVoice();
         // Gone from every space: who is in them is no longer known
         this.audience.reset();
         this.readers.reset();
@@ -419,6 +460,7 @@ export class BotClient {
             }
         }
         this.connected = false;
+        return drained;
     }
     
     /**
@@ -3046,7 +3088,7 @@ export class BotClient {
                 ? new OrbitTurnGate(
                       this.config.botId,
                       adminApiService,
-                      (playerId) => this.behavior?.getTalker(playerId) ?? null,
+                      (playerId) => this.talkerInOwnRoom(playerId),
                       (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
                   )
                 : undefined,
@@ -3072,6 +3114,15 @@ export class BotClient {
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
+        // What live calls use (the audio heard, the seconds spoken) is booked in Orbit, against the person and whoever paid (0.5.0 spend caps)
+        if (adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN) {
+            this.voice.meter = new VoiceMeter(this.config.botId, adminApiService, (message) => console.warn(`[Bot ${this.config.botId}] ${message}`));
+            this.voice.talkerOf = (playerId) => this.talkerInOwnRoom(playerId);
+            // This voice's own speech, not whatever `this.speech` is later: the voice is stopped (and `this.speech` cleared) before the
+            // worker's last report of a reply has come, and that report is still booked for the person it was for
+            const speech = this.speech;
+            this.voice.playerOfSegment = (segmentId) => speech.playerOfSegment(segmentId);
+        }
         // A reply for one person alone that others would have heard is not said, and that person is told why (#1993)
         this.voice.aloneWith = (spaceName, personId) => this.aloneWith(spaceName, BotClient.playerIdOf(personId));
         this.voice.onKeptQuiet = (spaceName, segmentId, heard) => {
@@ -3106,13 +3157,24 @@ export class BotClient {
         this.meeting.setAreas(this.meetingAreas.areas, this.meetingAreas.roomUrl);
     }
 
-    private stopVoice(): void {
+    /** Ends the voice. Answers when what the calls used has been sent to Orbit, so a server being switched off can wait for it. */
+    private stopVoice(): Promise<void> {
         this.speech?.shutdown();
-        this.voice?.shutdown();
+        const drain = this.voice?.shutdown();
+        if (drain) {
+            // Kept here, not on the voice that is about to be forgotten: the next stop (the server being switched off) waits for this one too
+            const pending: Promise<void> = drain.catch(() => undefined).finally(() => {
+                this.draining.delete(pending);
+                BotClient.allDraining.delete(pending);
+            });
+            this.draining.add(pending);
+            BotClient.allDraining.add(pending);
+        }
         this.voice = null;
         this.speech = null;
         this.meeting?.reset();
         this.meeting = null;
+        return Promise.all([...this.draining]).then(() => undefined);
     }
 
     /** The meeting rooms of the map (areas with a LiveKit room setting). Only a voice bot ever uses them. */
@@ -3662,6 +3724,7 @@ export class BotClient {
                 this.noteCallerIn(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 this.audience.seen(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 for (const user of message.initSpaceUsersMessage.users ?? []) this.noteChatId(message.initSpaceUsersMessage.spaceName, user, true);
+                for (const user of message.initSpaceUsersMessage.users ?? []) this.noteVoiceWho(user);
                 this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 if (this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
                     for (const user of message.initSpaceUsersMessage.users ?? []) this.rememberMeetingPerson(message.initSpaceUsersMessage.spaceName, user);
@@ -3719,6 +3782,7 @@ export class BotClient {
                 // First of all: from here on a reply in this space is read by them too (#1993)
                 if (message.addSpaceUserMessage.user) this.audience.joined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 this.noteChatId(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user, true);
+                this.noteVoiceWho(message.addSpaceUserMessage.user);
                 // And what the bot is saying out loud to someone who was alone with it stops: they would hear it
                 if (message.addSpaceUserMessage.user) this.hushRepliesForOne(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user.spaceUserId);
                 if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
@@ -3967,7 +4031,10 @@ export class BotClient {
             case 'removeSpaceUserMessage':
                 this.audience.left(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 // Gone from the world: their number may be given to someone else
-                if (message.removeSpaceUserMessage.spaceName === WORLD_SPACE) this.chatIds.delete(BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
+                if (message.removeSpaceUserMessage.spaceName === WORLD_SPACE) {
+                    this.chatIds.delete(BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
+                    this.voiceWho.delete(message.removeSpaceUserMessage.spaceUserId);
+                }
                 this.readers.personLeft(message.removeSpaceUserMessage.spaceName, BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 // A call has two members, the bot and the caller: the caller leaving is the call ending

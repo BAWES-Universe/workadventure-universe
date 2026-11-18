@@ -28,7 +28,7 @@ game made for the bot's identity), `room.people` (whose microphone the bot may s
 earlier list) and `room.leave`. `recognition.terms` replaces the names the hearing is asked to expect (see Providers).
 
 Worker to bot server: `session.start` (session accepted; `features` names what this worker can do beyond the first version of
-the bridge, see "A reply for one person alone"), `participant.join` (audio is connected both ways),
+the bridge, see "A reply for one person alone" and "Ending a session"), `participant.join` (audio is connected both ways),
 `participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room), `mode.ack`
 (a `mode.set` that carried a `requestId` is applied: the path that carries the person's audio, `lane`, `room` or `none` yet, and its epoch),
 `room.state` (`connected`, or `closed` / `failed` when the connection ended without being asked to), `user.speech_started`,
@@ -85,6 +85,15 @@ the person's `participantId`, the path's `epoch`, and a `turnId` that ties one s
 The longest stretch is `VOICE_MAX_UTTERANCE_SECONDS` (default 180) of audio. At it the worker stops, offers the words back and
 takes nothing more until the person pauses. A `final` that arrives for a path the bot server has since replaced is not sent either:
 it is offered back as `lost` with reason `path`. No audio is kept: it goes to the recognizer as it arrives and is dropped.
+
+## Ending a session
+
+`session.end` closes the session. What it still had to report goes out first, in this order: every stretch of speech that was
+open is ended as `user.turn` with outcome `cleared` and the `audioMs` it took (the hearing provider took that audio, so it is
+still booked), then every reply still playing ends with its `playback.progress`, then `session.ended`, which is the last message
+for that session. A worker that names `session.ended` in `session.start` `features` sends it; a bot server that is switching
+off keeps the link open until it has come (or a short wait ends), so the usage of the last moments is not lost. A worker from
+before does not send it, and the bot server does not wait for it.
 
 ## Speaking and being talked over
 

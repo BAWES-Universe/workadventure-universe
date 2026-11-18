@@ -23,10 +23,11 @@
  * again). Nothing else changes: the chat, the bubble and everyone else's voice carry on.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
-import { SAY_ONLY_FOR } from './protocol';
+import { SAY_ONLY_FOR, SESSION_ENDED } from './protocol';
 import type { FromWorker, LeaveReason, ListenInfo, ListenReason, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { RepliesLeft, TurnGate } from './VoiceAllowance';
+import type { VoiceMeter, VoiceWho } from './VoiceMeter';
 import type { VoiceLink } from './VoiceLink';
 import { hearingTerms } from './VoiceTerms';
 import type { ListeningBudget } from './VoiceListening';
@@ -98,6 +99,8 @@ const MAX_URL_CHARS = 2048;
 const MAX_PEOPLE = 500;
 /** Spoken lines remembered, so each is taken once and only if the bot heard it. Oldest first out. */
 const MAX_SPOKEN = 200;
+/** How long a bot being switched off waits for the worker's last report of a reply that was still playing. Only a wait for a message, never a limit on use. */
+const LAST_REPORT_WAIT_MS = 3000;
 /** What is held for a session that is still waiting for Orbit's answer: the setup data of a few connections, no more. */
 const MAX_HELD = 100;
 /** Sessions whose providers are remembered, so a late report from the worker is still told to Orbit for the right provider. */
@@ -217,6 +220,16 @@ export class VoiceCalls {
      * a reply to one person: it then speaks such a reply only while nobody else is there. Not set: never alone.
      */
     aloneWith?: (spaceName: string, personId: string) => boolean;
+    /**
+     * What a live call uses is booked in Orbit (see VoiceMeter): the audio the hearing took for each stretch of speech and the seconds of a reply
+     * that were played. Only for a session whose hearing or voice Orbit chose (a bubble on the worker's built-in test engine costs nothing). Not set:
+     * nothing is booked.
+     */
+    meter?: VoiceMeter;
+    /** Who a player is, as Orbit counts people: for hearing, the person who spoke. Not set, or null: Orbit names the Brick's maker. */
+    talkerOf?: (playerId: number) => VoiceWho | null;
+    /** The player a reply that was said as this segment was written for, for the seconds of it that were played. */
+    playerOfSegment?: (segmentId: string) => number | undefined;
     /** Called when a reply's segment ended without any of it being heard (see `handlePlayback`). */
     onUnplayed?: (spaceName: string, segmentId: string) => void;
     /** Called when some of a reply's segment has been heard (the worker reports what it played). */
@@ -238,6 +251,17 @@ export class VoiceCalls {
     private readonly opening = new Map<string, ToWorker[]>();
     /** The provider each part of a session runs on, to report how its calls went. */
     private readonly sessions = new Map<string, Record<ProviderPart, PartProvider>>();
+    /** Replies sent to the worker whose last report has not come yet (segment -> session). Oldest first out. */
+    private readonly unreported = new Map<string, string>();
+    /** Sessions whose worker named `session.ended`: it answers their `session.end` last, after the speech and the replies it still had to report. */
+    private readonly answersEnd = new Set<string>();
+    /** Sessions a shutdown has ended and whose answer has not come yet. */
+    private readonly ending = new Set<string>();
+    /** Set while a shutdown waits for the last reports: told whenever one comes. */
+    private reportArrived?: () => void;
+    private shuttingDown = false;
+    /** Who each player is for the books, kept from when they were here: a report of what they said or heard can arrive after they left. Oldest first out. */
+    private readonly talkers = new Map<number, VoiceWho>();
     /** Only for a bot whose voice Orbit decides (see VoiceSettings): asked just before a reply is said. */
     readonly beforeSpeaking?: (spaceName: string, turn: SpeechTurn) => Promise<TurnDecision>;
     /** Voice has just been paused for someone in this bubble (the allowance, or a key or provider that isn't working): say so, once. */
@@ -1048,29 +1072,52 @@ export class VoiceCalls {
             this.evictBubble(bubble.sessionId, 'worker not available');
             return;
         }
-        for (const message of held) this.link.send(message);
+        for (const message of held) if (this.link.send(message)) this.noteSent(message);
     }
 
     private rememberSession(sessionId: string, providers: Record<ProviderPart, PartProvider>): void {
         this.sessions.set(sessionId, providers);
+        // Only sessions no bubble uses any more are forgotten: a long call that outlived fifty newer sessions still books what it uses
+        const live = new Set([...this.bubbles.values()].map((bubble) => bubble.sessionId));
         for (const oldest of this.sessions.keys()) {
             if (this.sessions.size <= MAX_SESSIONS) break;
-            this.sessions.delete(oldest);
+            if (!live.has(oldest) && oldest !== sessionId) this.sessions.delete(oldest);
         }
     }
 
     /** Sends to the worker, or holds the message when the session it is for is still waiting for Orbit. */
     private post(message: ToWorker): boolean {
         const held = this.opening.get(message.sessionId);
-        if (!held) return this.link.send(message);
+        if (!held) {
+            const sent = this.link.send(message);
+            if (sent) this.noteSent(message);
+            return sent;
+        }
         if (held.length >= MAX_HELD) return false;
         held.push(message);
         return true;
     }
 
+    /** A reply on its way to the worker will be reported on when it ends: until then a shutdown has to leave the link open for it. */
+    private noteSent(message: ToWorker): void {
+        if (message.type === 'bot.say') {
+            this.unreported.set(message.segmentId, message.sessionId);
+            for (const oldest of this.unreported.keys()) {
+                if (this.unreported.size <= MAX_SPOKEN) break;
+                this.unreported.delete(oldest);
+            }
+        }
+    }
+
     private endSession(sessionId: string): void {
+        // A call that ends while the bot keeps running: the worker's last report of its replies is booked whenever it comes, and nobody waits
+        // for it. Only a shutdown, which closes the link, has to hold on for it
+        if (!this.shuttingDown) for (const [segmentId, owner] of [...this.unreported]) if (owner === sessionId) this.unreported.delete(segmentId);
         // A session that was never opened has nothing to end on the worker
-        if (!this.opening.delete(sessionId)) this.link.send({ type: 'session.end', sessionId });
+        if (this.opening.delete(sessionId)) return;
+        // A worker that answers (`session.ended`) says its last word on the session after the stretches of speech it had open and the replies
+        // it was playing: a shutdown waits for that
+        if (this.link.send({ type: 'session.end', sessionId }) && this.shuttingDown && this.answersEnd.has(sessionId)) this.ending.add(sessionId);
     }
 
     private refuse(spaceName: string, personId: string): void {
@@ -1152,6 +1199,7 @@ export class VoiceCalls {
             } else if (message.type === 'participant.join') {
                 this.stats.connected++;
                 this.joined.set(callKey(call.spaceName, call.participantId), call.epoch);
+                this.noteTalker(call.participantId);
                 this.tell(call.spaceName, call.participantId, 'on');
                 this.onAudience?.(call.spaceName);
             } else if (message.type === 'participant.leave') {
@@ -1182,6 +1230,16 @@ export class VoiceCalls {
             // What this session's worker can do: from here on a reply for one person alone can be said, to them only
             const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
             if (bubble) bubble.keepsToOne = message.features?.includes(SAY_ONLY_FOR) === true;
+            if (message.features?.includes(SESSION_ENDED) === true) this.answersEnd.add(message.sessionId);
+            for (const oldest of this.answersEnd) {
+                if (this.answersEnd.size <= MAX_SESSIONS) break;
+                this.answersEnd.delete(oldest);
+            }
+        } else if (message.type === 'session.ended') {
+            // The worker has said everything it had for that session: the last of its hearing and its playback is in
+            this.ending.delete(message.sessionId);
+            this.answersEnd.delete(message.sessionId);
+            this.reportArrived?.();
         } else if (message.type === 'user.speech_started' || message.type === 'user.partial' || message.type === 'user.turn') {
             this.handleSpeech(message);
         } else if (message.type === 'playback.progress') {
@@ -1224,10 +1282,20 @@ export class VoiceCalls {
      * over it. A reply cut before any of it was sent, and every other ending, shows nothing.
      */
     private handlePlayback(message: Extract<FromWorker, { type: 'playback.progress' }>): void {
+        if (message.finished) {
+            this.unreported.delete(message.segmentId);
+            this.reportArrived?.();
+        }
         const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
-        if (!bubble) return;
+        // The last report of a reply cut by the end of its session (left, closed, opened again) arrives after the bubble was forgotten: what was
+        // played was still paid for, so it is booked all the same
+        if (!bubble) {
+            if (message.finished) this.bookSpoken(message);
+            return;
+        }
         if (message.playedMs > 0) this.onHeard?.(bubble.spaceName, message.segmentId);
         if (!message.finished) return;
+        this.bookSpoken(message);
         this.onPlayed?.(bubble.spaceName, message.segmentId);
         // It was for one person alone and the worker could not keep it to them: that person is told why they did not hear it
         if (message.reason === 'private') {
@@ -1252,6 +1320,9 @@ export class VoiceCalls {
      */
     private handleSpeech(message: Extract<FromWorker, { type: 'user.speech_started' | 'user.partial' | 'user.turn' }>): void {
         const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
+        // The hearing provider took this audio whatever came of the words, and whether or not the person or the bubble is still here: it is booked first
+        if (message.type === 'user.turn') this.bookHeard(message);
+        else this.noteTalker(message.participantId);
         // The person must still be in the bubble: the words of someone who left are nobody's to see
         if (!bubble || !this.roster.get(bubble.spaceName)?.has(message.participantId)) {
             this.stats.staleFromWorker++;
@@ -1301,6 +1372,63 @@ export class VoiceCalls {
             this.remember(spaceName, to, message.turnId, message.text);
             this.draft(spaceName, to, { turnId: message.turnId, state: 'lost', text: message.text, reason: message.outcome === 'final' ? 'path' : message.reason });
         }
+    }
+
+    private noteTalker(participantId: string): void {
+        const player = this.playerIdOf?.(participantId) ?? 0;
+        if (player) this.noteWho(player);
+    }
+
+    /**
+     * A reply was said for this player: who they are is kept now, so the seconds of it that play are still booked for them when
+     * they have gone by the time the worker's last report comes (someone who only listened never spoke, so was never noted before).
+     */
+    noteRecipient(player: number): void {
+        this.noteWho(player);
+    }
+
+    private noteWho(player: number): void {
+        const who = this.talkerOf?.(player) ?? null;
+        if (!who) return;
+        this.talkers.delete(player);
+        this.talkers.set(player, who);
+        for (const oldest of this.talkers.keys()) {
+            if (this.talkers.size <= MAX_SPOKEN) break;
+            this.talkers.delete(oldest);
+        }
+    }
+
+    /** Who a player is for the books: as they are now, or as they were when they were last here. */
+    private talkerFor(player: number): VoiceWho | null {
+        return this.talkerOf?.(player) ?? this.talkers.get(player) ?? null;
+    }
+
+    /** The audio the hearing took for one stretch of speech, booked for the person who spoke and whoever paid for the hearing. */
+    private bookHeard(message: Extract<FromWorker, { type: 'user.turn' }>): void {
+        const owner = this.sessions.get(message.sessionId)?.recognition.owner;
+        if (!this.meter || owner === undefined) return;
+        const player = this.playerIdOf?.(message.participantId) ?? 0;
+        this.meter.add({
+            part: 'hearing',
+            key: `${message.sessionId}:${message.participantId}:${message.epoch}:${message.turnId}`,
+            ms: message.audioMs,
+            who: player ? this.talkerFor(player) : null,
+            owner,
+        });
+    }
+
+    /** The seconds of a reply that were played, booked for the person it was written for and whoever paid for the voice. */
+    private bookSpoken(message: Extract<FromWorker, { type: 'playback.progress' }>): void {
+        const owner = this.sessions.get(message.sessionId)?.speech.owner;
+        if (!this.meter || owner === undefined || !(message.playedMs > 0)) return;
+        const player = this.playerOfSegment?.(message.segmentId);
+        this.meter.add({
+            part: 'speaking',
+            key: `${message.sessionId}:${message.segmentId}`,
+            ms: message.playedMs,
+            who: player ? this.talkerFor(player) : null,
+            owner,
+        });
     }
 
     private draft(spaceName: string, personId: string, draft: VoiceDraft): void {
@@ -1398,6 +1526,11 @@ export class VoiceCalls {
 
     /** The worker went away: it holds none of this any more. People are told, so nobody waits on a silent call. */
     linkDown(): void {
+        // Everything the worker held is gone: no last report will come for any reply, and no session will be answered
+        this.unreported.clear();
+        this.ending.clear();
+        this.answersEnd.clear();
+        this.reportArrived?.();
         // Whoever was mid-sentence gets their words back to decide on: nothing is sent for them
         for (const { spaceName, personId, turnId, text } of [...this.live.values()]) {
             this.remember(spaceName, personId, turnId, text);
@@ -1671,8 +1804,12 @@ export class VoiceCalls {
         return !!bubble && this.post({ type: 'mode.set', sessionId: bubble.sessionId, mode, participantId: personId });
     }
 
-    /** The bot leaves or is switched off: every connection ends. */
-    shutdown(): void {
+    /**
+     * The bot leaves or is switched off: every connection ends. Answers when what the call used has been sent to Orbit (or Orbit would not
+     * take it), so whoever switches the server off can wait for it.
+     */
+    shutdown(): Promise<void> {
+        this.shuttingDown = true;
         for (const call of [...this.calls.values()]) this.game.sendDisconnect(call.spaceName, call.participantId);
         for (const bubble of this.bubbles.values()) {
             this.endSession(bubble.sessionId);
@@ -1711,7 +1848,34 @@ export class VoiceCalls {
         this.grouped.clear();
         this.otherVoiceBots.clear();
         this.voiceBotNames.clear();
-        this.link.close();
+        // A reply still playing is stopped by the end of its session and the worker reports what was played a moment later: that report is
+        // booked before the link goes, and what was booked is sent to Orbit after it
+        const finish = (): Promise<void> => {
+            this.link.close();
+            return this.meter?.shutdown() ?? Promise.resolve();
+        };
+        // Nothing playing (or no link to hear it on): the link closes at once, as it always did
+        if (!this.waitsForReports()) return finish();
+        return this.lastReports().then(finish);
+    }
+
+    private waitsForReports(): boolean {
+        return this.link.isUp() && (this.unreported.size > 0 || this.ending.size > 0);
+    }
+
+    /** Answers when the worker has reported on every reply it was playing, or when it cannot (link down) or does not within a short wait. */
+    private lastReports(): Promise<void> {
+        return new Promise<void>((resolve) => {
+            const finish = (): void => {
+                clearTimeout(timer);
+                this.reportArrived = undefined;
+                resolve();
+            };
+            const timer = setTimeout(finish, LAST_REPORT_WAIT_MS);
+            this.reportArrived = () => {
+                if ((this.unreported.size === 0 && this.ending.size === 0) || !this.link.isUp()) finish();
+            };
+        });
     }
 
     hasCall(spaceName: string, personId: string): boolean {

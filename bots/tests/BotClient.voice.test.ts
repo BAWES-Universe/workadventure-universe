@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import jwt from 'jsonwebtoken';
 import { BotClient } from '../client/BotClient';
-import type { BotConfiguration } from '../server/AdminApiService';
+import { adminApiService, type BotConfiguration } from '../server/AdminApiService';
 
 const links: { start: ReturnType<typeof vi.fn>; options: any }[] = [];
 vi.mock('../voice/VoiceLink', () => ({
@@ -173,6 +173,97 @@ describe('BotClient voice', () => {
                 privateEvent: { spaceName: 'space-1', receiverUserId: 'room_3', spaceEvent: { event: { $case: 'webRtcDisconnectMessage', webRtcDisconnectMessage: { userId: 'room_9' } } } },
             },
         });
+    });
+
+    it('disconnecting answers only when what the calls used was sent, even when the voice was already ended by the socket closing', async () => {
+        const { bot, internals } = setup(true);
+        internals.startVoice();
+        let sent!: () => void;
+        const drain = new Promise<void>((resolve) => (sent = resolve));
+        (bot as unknown as { voice: { shutdown: () => Promise<void> } }).voice.shutdown = () => drain;
+        // The socket to the game closing ends the voice first, then the server being switched off disconnects the bot
+        void (bot as unknown as { stopVoice(): Promise<void> }).stopVoice();
+        let over = false;
+        const done = bot.disconnect().then(() => (over = true));
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(over).toBe(false);
+        sent();
+        await done;
+        expect(over).toBe(true);
+    });
+
+    it('a server being switched off can wait for the voice of a bot that already left its call, though nothing holds that bot any more', async () => {
+        const { bot, internals } = setup(true);
+        internals.startVoice();
+        let sent!: () => void;
+        const drain = new Promise<void>((resolve) => (sent = resolve));
+        (bot as unknown as { voice: { shutdown: () => Promise<void> } }).voice.shutdown = () => drain;
+        void (bot as unknown as { stopVoice(): Promise<void> }).stopVoice();
+        let over = false;
+        const all = BotClient.drained().then(() => (over = true));
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(over).toBe(false);
+        sent();
+        await all;
+        expect(over).toBe(true);
+    });
+
+    it('still knows who a reply was for while the stopped voice waits for the worker\u2019s last report', async () => {
+        vi.spyOn(adminApiService, 'isConfigured').mockReturnValue(true);
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'token');
+        // Settled and awaited in `finally`, so a failing assertion never leaves a drain in `BotClient.allDraining`
+        let settle: (() => void) | undefined;
+        let stopped: Promise<void> | undefined;
+        try {
+            const { bot, internals } = setup(true);
+            internals.startVoice();
+            const inner = bot as unknown as { voice: { playerOfSegment?: (id: string) => number | undefined; shutdown: () => Promise<void> }; speech: { playerOfSegment: (id: string) => number | undefined } };
+            const voice = inner.voice;
+            inner.speech.playerOfSegment = (id) => (id === 's1' ? 7 : undefined);
+            voice.shutdown = () => new Promise<void>((resolve) => (settle = resolve));
+            stopped = (bot as unknown as { stopVoice(): Promise<void> }).stopVoice();
+            expect(voice.playerOfSegment?.('s1')).toBe(7);
+        } finally {
+            settle?.();
+            await stopped;
+            vi.unstubAllEnvs();
+            vi.restoreAllMocks();
+        }
+    });
+
+    it('books a call for the person in the bot\u2019s own room, never for someone in another room of the world who has the same number', async () => {
+        vi.spyOn(adminApiService, 'isConfigured').mockReturnValue(true);
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'token');
+        try {
+            const { bot, internals } = setup(true);
+            // What the behaviour knows is kept by number alone, so the last one told wins
+            const byNumber = new Map<number, { uuid: string; logged: boolean }>();
+            (bot as unknown as { behavior: unknown }).behavior = {
+                onSpaceUserJoined: async (_space: string, user: { id: number; uuid: string; isLogged?: boolean }) => void byNumber.set(user.id, { uuid: user.uuid, logged: user.isLogged === true }),
+                onSpaceUserLeft: async () => undefined,
+                getTalker: (id: number) => {
+                    const one = byNumber.get(id);
+                    return one ? { userId: one.uuid, isGuest: !one.logged } : null;
+                },
+            };
+            (internals as unknown as { spaces: Map<string, string> }).spaces.set('allWorldUser', 'room_9');
+            internals.startVoice();
+            const join = (spaceUserId: string, uuid: string, isLogged: boolean) =>
+                internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: 'allWorldUser', user: { spaceUserId, name: uuid, uuid, isLogged, tags: [] } } });
+            // The same number in this room (room_) and in another room of the world (other_room_), told in either order
+            await join('room_7', 'uuid-here', true);
+            await join('other_room_7', 'uuid-elsewhere', false);
+            const talkerOf = (bot as unknown as { voice: { talkerOf: (id: number) => { userId: string; isGuest: boolean } | null } }).voice.talkerOf;
+            expect(talkerOf(7)).toEqual({ userId: 'uuid-here', isGuest: false });
+            // Leaving the world takes them out
+            await internals.handleSubMessage({ $case: 'removeSpaceUserMessage', removeSpaceUserMessage: { spaceName: 'allWorldUser', spaceUserId: 'room_7' } });
+            expect(talkerOf(7)).toBeNull();
+        } finally {
+            vi.unstubAllEnvs();
+            vi.restoreAllMocks();
+        }
     });
 
     it('closes the socket to the worker when the bot disconnects', () => {

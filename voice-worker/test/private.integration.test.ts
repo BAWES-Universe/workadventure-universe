@@ -46,7 +46,7 @@ afterEach(async () => {
 describe('a reply for one person alone, over peer-to-peer connections', () => {
     it('is said by a worker that names what it can do, with the person on the message', async () => {
         const { r, people, finished } = await bubble(['alice']);
-        expect(r.fromWorker.find((m) => m.type === 'session.start')).toMatchObject({ features: ['say.onlyFor'] });
+        expect(r.fromWorker.find((m) => m.type === 'session.start')).toMatchObject({ features: ['say.onlyFor', 'session.ended'] });
         expect(r.calls.keepsToOne(r.game.spaceName)).toBe(true);
 
         expect(r.calls.say(r.game.spaceName, 'one-1', SHORT, undefined, 'alice')).toBe(true);
@@ -54,6 +54,21 @@ describe('a reply for one person alone, over peer-to-peer connections', () => {
         await waitFor('the reply to end', () => !!finished('one-1'), 6000);
         expect(finished('one-1')).toMatchObject({ interrupted: false, reason: 'completed' });
         expect(people.alice.loudFrames).toBeGreaterThan(40);
+        expect(r.violations).toEqual([]);
+    });
+
+    it('answers the end of the session last: the reply that was playing is reported first, and a shutdown keeps its link open until then', async () => {
+        const { r, finished } = await bubble(['alice']);
+        expect(r.calls.say(r.game.spaceName, 'one-1', LONG, undefined, 'alice')).toBe(true);
+        await waitFor('the reply to start playing', () => r.fromWorker.some((m) => m.type === 'playback.progress' && m.segmentId === 'one-1'), 6000);
+        await r.calls.shutdown();
+        const order = r.fromWorker.map((m) => (m.type === 'playback.progress' && m.segmentId === 'one-1' && m.finished ? 'reply reported' : m.type));
+        expect(order).toContain('session.ended');
+        expect(order.indexOf('reply reported')).toBeGreaterThan(-1);
+        expect(order.indexOf('reply reported')).toBeLessThan(order.indexOf('session.ended'));
+        expect(finished('one-1')).toMatchObject({ interrupted: true });
+        // Nothing after it for that session
+        expect(order.slice(order.indexOf('session.ended') + 1).filter((t) => t !== 'engine.status')).toEqual([]);
         expect(r.violations).toEqual([]);
     });
 

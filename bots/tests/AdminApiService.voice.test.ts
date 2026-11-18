@@ -92,3 +92,22 @@ describe('telling Orbit how a provider call went', () => {
         await expect(service.reportVoiceHealth('p1', { part: 'speech', ok: true, botId: 'bot-1' }, 1000)).rejects.toThrow();
     });
 });
+
+describe('booking what live calls used (POST /api/meter/events)', () => {
+    const event = { eventId: 'speech:call:bot-1:r:hearing:s:1', kind: 'speech', pool: 'chat', botId: 'bot-1', occurredAt: '2026-11-16T12:00:00.000Z', payerKind: 'universe', route: 'universe-ai', quantity: 3, unit: 'second', costMicros: null, basis: 'unknown', detail: { part: 'hearing', source: 'call', ms: 2400 } } as const;
+
+    it('sends the events with the service token and says yes once Orbit answered, even when it turned one of them down', async () => {
+        answer.body = JSON.stringify({ results: [{ eventId: event.eventId, status: 'invalid', error: 'nope' }] });
+        expect(await service.recordMeterEvents([event as never])).toBe(true);
+        expect(asked).toMatchObject({ method: 'POST', url: '/api/meter/events', auth: 'Bearer service-token', body: { events: [event] } });
+    });
+
+    it('says no, and throws nothing, when Orbit refused the token, failed, or could not be reached', async () => {
+        answer = { status: 401, body: '{}' };
+        expect(await service.recordMeterEvents([event as never])).toBe(false);
+        answer = { status: 500, body: '{}' };
+        expect(await service.recordMeterEvents([event as never])).toBe(false);
+        const down = new AdminApiService('http://127.0.0.1:1', 'admin-token');
+        expect(await down.recordMeterEvents([event as never])).toBe(false);
+    });
+});

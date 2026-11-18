@@ -598,8 +598,9 @@ export class BotManager {
         }
 
         try {
-            // Disconnect bot
-            await instance.client.disconnect();
+            // Disconnect bot. What its call still has to send to Orbit goes on in the background (the client keeps it for `BotClient.drained()`,
+            // which a shutdown waits for): a respawn, a visitor leaving or a room sync that despawned it must not be held up by it
+            void instance.client.disconnect().catch(() => undefined);
 
             // Unregister from bot registry
             await this.botRegistry.unassignBot(botId);
@@ -1902,13 +1903,23 @@ export class BotManager {
 
         for (const starting of this.startingCalls.values()) starting.cancelled = true;
         this.startingCalls.clear();
+        // What each call used is sent to Orbit before the server goes: the disconnects are waited for
+        const shutdownPromises: Promise<unknown>[] = [];
         for (const call of this.calls.values()) {
             clearJoinTimer(call);
-            call.client.disconnect();
+            shutdownPromises.push(Promise.resolve(call.client.disconnect()));
         }
         this.calls.clear();
-        const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
-        await Promise.all(shutdownPromises);
+        for (const botId of this.bots.keys()) shutdownPromises.push(this.despawnBot(botId));
+        try {
+            // One that fails to leave (Redis down) does not stop the others, nor the wait for what they used
+            for (const result of await Promise.allSettled(shutdownPromises)) {
+                if (result.status === 'rejected') console.error('[BotManager] A bot did not shut down cleanly:', result.reason);
+            }
+        } finally {
+            // Bots that left their call just before (nothing holds them any more) may still be sending what it used
+            await BotClient.drained();
+        }
 
         // Clear room tracking
         this.roomsWithBots.clear();

@@ -35,6 +35,7 @@ const { sockets, FakeSocket } = vi.hoisted(() => {
 vi.mock('ws', () => ({ default: FakeSocket, WebSocket: FakeSocket }));
 
 import { BotClient } from '../client/BotClient';
+import { adminApiService } from '../server/AdminApiService';
 
 const SPACE = callSpaceName({ botId: 'b1', callerUuid: 'uuid-1', callId: 'c1' });
 
@@ -206,5 +207,24 @@ describe('BotClient call-only connection', () => {
         // A uuid starting with digits would parse as a number if the prefix were not recognised
         await internals.handleSubMessage({ $case: 'removeSpaceUserMessage', removeSpaceUserMessage: { spaceName: SPACE, spaceUserId: 'call_12345678-aaaa' } });
         expect(onSpaceUserLeft).toHaveBeenCalledWith(SPACE, 0);
+    });
+
+    it('knows who the caller is for the books, though the bot\u2019s own id in a call is a random one with no room in it', async () => {
+        vi.spyOn(adminApiService, 'isConfigured').mockReturnValue(true);
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'token');
+        try {
+            const { client, internals } = bot(true);
+            client.setFullConfig({ botId: 'b1', voiceEnabled: true } as never);
+            client.setBehavior({ setBot: vi.fn(), onSpaceUserJoined: vi.fn(), getConfiguredFacing: vi.fn() } as never);
+            internals.spaces.set(SPACE, 'call_abc');
+            internals.startVoice();
+            const talkerOf = (client as unknown as { voice: { talkerOf: (id: number) => { userId: string; isGuest: boolean } | null } }).voice.talkerOf;
+            expect(talkerOf(7)).toBeNull();
+            await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: 'room_7', uuid: 'uuid-caller', isLogged: true, tags: [] } } });
+            expect(talkerOf(7)).toEqual({ userId: 'uuid-caller', isGuest: false });
+        } finally {
+            vi.unstubAllEnvs();
+            vi.restoreAllMocks();
+        }
     });
 });
