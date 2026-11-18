@@ -282,6 +282,8 @@ export function makeDeleter({ github, packagePath, packageName }) {
     if (response.status === 404) {
       const check = await github(`${packagePath}/versions/${version.id}`);
       if (check.status === 404) return;
+      // Only a version that is really still there points at the Admin role; a failed check (5xx, rate limit) says nothing about it.
+      if (!check.ok) throw new Error(`could not delete version ${version.id} of ${packageName}: GitHub answered 404, and checking whether it is gone answered ${check.status}.`);
       throw needsAdmin(`could not delete version ${version.id} of ${packageName}: GitHub answered 404 but the version still exists (does this repository have the Admin role under the package's "Manage Actions access"?)`);
     }
     if (response.status === 403 && (await isRateLimit(response))) {

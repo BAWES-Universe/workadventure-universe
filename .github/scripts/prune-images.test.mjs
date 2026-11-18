@@ -355,6 +355,12 @@ export function defineTests({ lib }) {
       const still = deleterFor([404, 200]);
       await assert.rejects(still.remove({ id: 5 }), (error) => /still exists/.test(error.message) && error.needsAdmin === true);
     });
+    it('does not blame the Admin role when the check after a 404 fails', async () => {
+      for (const status of [500, 429]) {
+        const { remove } = deleterFor([404, status]);
+        await assert.rejects(remove({ id: 5 }), (error) => new RegExp(`answered ${status}`).test(error.message) && !error.needsAdmin);
+      }
+    });
     it('names the Admin role on a 403 and marks it for the issue', async () => {
       const { remove } = deleterFor([403]);
       await assert.rejects(remove({ id: 5 }), (error) => /Admin role/.test(error.message) && error.needsAdmin === true);
