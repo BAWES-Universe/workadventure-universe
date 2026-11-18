@@ -608,6 +608,30 @@ describe("the Apps pages (#2001)", () => {
             });
         });
 
+        it("brings back what was set for a job when it is unticked and ticked again", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 0);
+            // Only title and url come back, and the optional input is added
+            await click("appShareReturn", 2);
+            await click("appShareInput", 1);
+            await click("appShareJobPick", 0);
+            await click("appShareJobPick", 0);
+            expect(allById("appShareReturn").map((one) => one.getAttribute("aria-checked"))).toEqual([
+                "true",
+                "true",
+                "false",
+            ]);
+            expect(allById("appShareInput").map((one) => one.getAttribute("aria-checked"))).toEqual(["true", "true"]);
+            await tapSheet("Let others use it");
+            expect(game.startAppShare).toHaveBeenCalledWith("tavily", "b1", {
+                jobs: [{ tool: "search", inputs: ["query", "max_results"], returns: ["title", "url"] }],
+                usesPerDayEveryone: 50,
+                usesPerDayPerson: 5,
+            });
+        });
+
         it("cannot send a job with nothing coming back", async () => {
             game.getAppShare.mockResolvedValue(twoJobs());
             await open();

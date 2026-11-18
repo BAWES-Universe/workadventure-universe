@@ -1123,9 +1123,13 @@ export class MCPConnector {
             return content;
         }
 
-        if (response.result !== undefined) {
-            return response.result;
+        // A result with no list of content is the App's own data. It is handed over as content, so a field of it that happens to be called
+        // `error` or `outcome` can never be read as the status of the call: only the notes made here carry those (#2006)
+        if (response.result !== undefined && response.result !== null) {
+            const data = response.result;
+            return [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data) }];
         }
+        if (response.result === null) return null;
 
         // An answer that is neither a result nor an error proves nothing about what the server did
         return { error: EMPTY_ANSWER_ERROR, outcome: 'uncertain' satisfies ToolCallOutcome, hint: MAY_HAVE_RUN_HINT };

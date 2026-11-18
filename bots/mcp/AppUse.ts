@@ -105,11 +105,16 @@ export function useBody(request: AppUseRequest): Record<string, unknown> {
 
 const isNames = (value: unknown): value is string[] => Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 
-/** What Orbit says about a shared ask: the fields that may come back, or null for the whole answer. Anything else is read as "nothing may come back". */
+/**
+ * What Orbit says about a shared ask: the fields that may come back, or null for the whole answer. It must say so on purpose: an
+ * answer with no `returns` at all is not read as "everything" (undefined: the ask is not run for someone else). A `returns` that is not a
+ * list of names is read as "nothing may come back".
+ */
 function sharedOf(value: unknown): { returns: string[] | null } | undefined {
-    if (!value || typeof value !== 'object') return undefined;
+    if (!value || typeof value !== 'object' || !('returns' in value)) return undefined;
     const returns = (value as { returns?: unknown }).returns;
-    if (returns === null || returns === undefined) return { returns: null };
+    if (returns === null) return { returns: null };
+    if (returns === undefined) return undefined;
     return { returns: isNames(returns) ? returns : [] };
 }
 
@@ -286,7 +291,8 @@ export function narrowToReturns(result: unknown, returns: string[] | null): unkn
     if (returns === null) return result;
     const keep = new Set(returns);
     const narrow = (value: unknown): unknown => {
-        if (Array.isArray(value)) return value.map(narrow);
+        // A bare value in a list (a word, a number) belongs to no field, so no field the owner picked lets it through
+        if (Array.isArray(value)) return value.filter((one) => one !== null && typeof one === 'object').map(narrow);
         if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([name]) => keep.has(name)));
         return value;
     };

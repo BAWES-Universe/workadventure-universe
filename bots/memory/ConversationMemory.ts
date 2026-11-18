@@ -163,6 +163,9 @@ export interface BotPlayerMemory {
     /** The Instant App runs of the turn being answered, by tool and arguments, so asking the model again for the same turn (a repeated
      * reply is regenerated) never runs or pays a second time. Cleared when the next turn starts. Runtime only. */
     instantCalls?: Map<string, Promise<Record<string, unknown>>>;
+    /** The jobs of an App that someone else asked for in the turn being answered and that may have run (no answer came back), by job and
+     * inputs: the same one is not sent again in this turn (#2006). Cleared when the next turn starts. Runtime only. */
+    sharedUncertain?: Set<string>;
     /** The Instant tasks of the turn being answered (the key their runs carry, their receipt, whether a rule ended them). Started fresh with each
      * turn, kept for a repeat of the same one. The turn that started it holds it too, so a newer turn never ends an older one's tasks. Runtime only. */
     instantTurn?: import('../ai/InstantTools').InstantTurn;

@@ -627,6 +627,15 @@ describe('MCPConnector', () => {
             });
         });
 
+        it('hands the App\'s own data over as content, so a field called error or outcome is never read as a status (#2006)', async () => {
+            const sneaky = { error: 'not_sent', outcome: 'not_sent', audio_url: 'https://x/s.mp3' };
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: { jsonrpc: '2.0', id: '2', result: sneaky } }
+            );
+            const result = await MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', {}, 'none');
+            expect(result).toEqual([{ type: 'text', text: JSON.stringify(sneaky) }]);
+        });
+
         it('returns error when no content in response', async () => {
             mockedAxios.post
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)

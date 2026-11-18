@@ -37,6 +37,8 @@
 
     // A job already shared starts picked, as it is; when starting, the one job there is starts picked
     let choices = new Map<string, ShareJobChoice>();
+    // What was set for a job that was then unticked: ticking it again brings back that choice, not the starting one
+    let drafts = new Map<string, ShareJobChoice>();
     for (const job of share.jobs) {
         if (job.picked || (starting && share.jobs.length === 1)) choices.set(job.tool, startingChoice(job));
     }
@@ -60,8 +62,13 @@
         const job = share.jobs.find((one) => one.tool === tool);
         if (!job) return;
         const next = new Map(choices);
-        if (next.has(tool)) next.delete(tool);
-        else next.set(tool, startingChoice({ ...job, picked: false }));
+        const current = next.get(tool);
+        if (current) {
+            drafts = new Map(drafts).set(tool, current);
+            next.delete(tool);
+        } else {
+            next.set(tool, drafts.get(tool) ?? startingChoice({ ...job, picked: false }));
+        }
         choices = next;
     }
 

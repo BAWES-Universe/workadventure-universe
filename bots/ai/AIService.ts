@@ -159,6 +159,9 @@ import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type Reply
 const INSTANT_RUN_CASE = '\u0000instant-run';
 
 /** How long after someone joins a space the game has said who they are (the cards wait as long, see NearbyAsks). */
+/** When a shared try that Orbit did not take is told to it again: three more times, then it stays as it is, counted. */
+export const SETTLE_RETRY_MS: readonly number[] = [2_000, 15_000, 60_000];
+
 const PERSON_BACK_WAIT_MS = 1500;
 
 /** What one turn did, for the "Say when nothing was saved" check (Orbit #666). */
@@ -370,13 +373,33 @@ export class AIService {
         this.ownerNotes = tellOwner;
     }
 
-    /** Tells Orbit what a shared try came to. Never throws: when Orbit cannot be told the try stays counted, which is the safe side. */
+    /**
+     * Tells Orbit what a shared try came to. Never throws. When Orbit does not take it, only the telling is tried again, a few times a
+     * little later and with the same call id and outcome (Orbit takes a repeat of it as the same word): the App is never called again for
+     * it. A try nobody could tell Orbit about stays counted, which is the safe side.
+     */
     private async settleShared(use: { botId: string; callId: string }, serverId: string, result: unknown): Promise<void> {
-        try {
-            await this.appSettle?.(use.botId, serverId, use.callId, settleOutcomeOf(result));
-        } catch (error) {
-            console.warn('[AIService] Could not settle a shared try:', error instanceof Error ? error.message : error);
-        }
+        const settle = this.appSettle;
+        if (!settle) return;
+        const outcome = settleOutcomeOf(result);
+        const tell = async (): Promise<boolean> => {
+            try {
+                return (await settle(use.botId, serverId, use.callId, outcome)) !== false;
+            } catch (error) {
+                console.warn('[AIService] Could not settle a shared try:', error instanceof Error ? error.message : error);
+                return false;
+            }
+        };
+        if (await tell()) return;
+        const later = (index: number): void => {
+            if (index >= SETTLE_RETRY_MS.length) return;
+            setTimeout(() => {
+                void tell().then((told) => {
+                    if (!told) later(index + 1);
+                });
+            }, SETTLE_RETRY_MS[index]).unref?.();
+        };
+        later(0);
     }
 
     /** Who a line about a shared App is about: the App's name, and its owner when the Brick knows them. */
@@ -434,10 +457,16 @@ export class AIService {
         abortSignal?: AbortSignal,
         toolTimeoutSeconds?: number | null,
         /** Who is asking, which call this is and what heading the tool is under: needed when the App sits on a connection (#2001). */
-        use?: AppUseRequest & { botId: string }
+        use?: AppUseRequest & { botId: string; forOthers?: boolean }
     ): Promise<any> {
         // Set when someone else is asking for a job its owner shared (#2006); an error then reaches them in the bot's words only
         let shared: { returns: string[] | null } | undefined;
+        // Someone else asks for the job: what is sent to the App is held to the inputs the owner picked, here, whatever Orbit says
+        const visitor = use?.forOthers === true;
+        if (visitor && entry.connectionId) {
+            if (!entry.sharedJob) return { error: appNotUsedLine('not_shared', this.appContextOf(entry, use?.botId ?? '')), outcome: 'not_sent' };
+            args = Object.fromEntries(Object.entries(args ?? {}).filter(([name]) => entry.sharedJob?.inputs.includes(name)));
+        }
         try {
             // An App with a key (#2044) is used only through Orbit, which holds the key, checks the use again and answers with the fields
             // the App lists: nothing here ever reaches the service
@@ -470,6 +499,13 @@ export class AIService {
                     };
                 }
                 shared = answer.shared;
+                // Someone else's try runs only when Orbit said what may come back, even if that is the whole answer: no word, no run. Nothing was
+                // sent, so the use is given back.
+                if (visitor && !shared && use) {
+                    const refused = { error: appNotUsedLine('unavailable'), outcome: 'not_sent' };
+                    await this.settleShared(use, entry.serverId, refused);
+                    return refused;
+                }
             }
             let sharedTry = !!shared && !!use;
             try {
@@ -1264,6 +1300,7 @@ export class AIService {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
+            memory?.sharedUncertain?.clear();
             memory?.sentAgain?.clear();
             memory?.cardsAgain?.clear();
         }
@@ -4873,7 +4910,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 result = this.toolNotRun(verdict);
                                 break;
                             }
-                            // Picking the job to share is the owner's OK: someone else is not asked for it on a card (#2006)
+                            // Picking the job to share is the owner's OK: someone else is not asked for it on a card (#2006). But a job that was never
+                            // reviewed, or has changed since, was not what the owner picked: nobody is asked about it and it is not run
+                            if (verdict.kind === 'ask' && forOthers && verdict.notReviewed) {
+                                result = { error: appNotUsedLine('not_shared', this.appContextOf(mcpServerConfig, botId ?? '')), outcome: 'not_sent' };
+                                break;
+                            }
                             if (verdict.kind === 'ask' && !forOthers) {
                                 // A card in a direct message asks for the OK; the call waits there, not here (#1657)
                                 const asked = await this.askForOk(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
@@ -4893,17 +4935,30 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 release = counted.release;
                             }
                             const asker = this.gatePerson(botId, playerId, botClient, spaceName);
+                            // A job that may have run for someone else is not sent again in this reply, whatever the model asks (#2006): the same job with the
+                            // same inputs gets the answer of the first try. Orbit never runs the same call twice either, but each ask here is a new call
+                            const memory = forOthers && botId && playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : undefined;
+                            const repeatKey = `${toolCall.name}:${stableJson(parsedArgs)}`;
+                            if (memory?.sharedUncertain?.has(repeatKey)) {
+                                result = { error: alreadyAskedLine('unknown', this.appContextOf(mcpServerConfig, botId ?? '')), outcome: 'uncertain' };
+                                break;
+                            }
                             result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
                                 botId: botId!,
                                 callId: toolCall.id,
                                 ...(verdict.heading ? { heading: verdict.heading } : {}),
-                                // Someone else is counted by who they are; a guest by their own session, so each has a day of their own (#2006)
+                                ...(forOthers ? { forOthers: true } : {}),
+                                // Someone else is counted by who they are. A guest is counted by the id their browser keeps, under one name whether or not the
+                                // game knows them, so each has a day of their own and a reload gives no new one; the session only when there is no such id
                                 ...(asker.signedIn && asker.identifier
                                     ? { requesterKey: asker.identifier }
                                     : forOthers && playerId !== undefined
-                                      ? { requesterKey: this.chatCallFor(botId!, playerId, botClient, spaceName)?.person.identifier || (playerUuid && !playerUuid.startsWith('temp-') ? `guest:${playerUuid}` : `guest:${playerId}`) }
+                                      ? { requesterKey: `guest:${this.chatCallFor(botId!, playerId, botClient, spaceName)?.person.identifier || (playerUuid && !playerUuid.startsWith('temp-') ? playerUuid : playerId)}` }
                                       : {}),
                             });
+                            if (memory && result && typeof result === 'object' && !Array.isArray(result) && (result as { outcome?: unknown }).outcome === 'uncertain') {
+                                (memory.sharedUncertain ??= new Set()).add(repeatKey);
+                            }
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
                         } else {
