@@ -213,19 +213,21 @@ describe('BotClient voice', () => {
     it('still knows who a reply was for while the stopped voice waits for the worker\u2019s last report', async () => {
         vi.spyOn(adminApiService, 'isConfigured').mockReturnValue(true);
         vi.stubEnv('BOT_SERVICE_TOKEN', 'token');
+        // Settled and awaited in `finally`, so a failing assertion never leaves a drain in `BotClient.allDraining`
+        let settle: (() => void) | undefined;
+        let stopped: Promise<void> | undefined;
         try {
             const { bot, internals } = setup(true);
             internals.startVoice();
             const inner = bot as unknown as { voice: { playerOfSegment?: (id: string) => number | undefined; shutdown: () => Promise<void> }; speech: { playerOfSegment: (id: string) => number | undefined } };
             const voice = inner.voice;
             inner.speech.playerOfSegment = (id) => (id === 's1' ? 7 : undefined);
-            let settle!: () => void;
             voice.shutdown = () => new Promise<void>((resolve) => (settle = resolve));
-            const stopped = (bot as unknown as { stopVoice(): Promise<void> }).stopVoice();
+            stopped = (bot as unknown as { stopVoice(): Promise<void> }).stopVoice();
             expect(voice.playerOfSegment?.('s1')).toBe(7);
-            settle();
-            await stopped;
         } finally {
+            settle?.();
+            await stopped;
             vi.unstubAllEnvs();
             vi.restoreAllMocks();
         }
