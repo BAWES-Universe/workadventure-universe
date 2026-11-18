@@ -155,19 +155,22 @@ export class ToolGate {
         return refusal('no_permission', verdict.line);
     }
 
-    /** Whether this person manages the bot's tools (Manage bots for it). False when Orbit can't say: a card is not shown on a guess. */
-    async canManage(botId: string, identifier: string): Promise<boolean> {
+    /**
+     * Whether this person manages the bot's tools (Manage bots for it). False when Orbit can't say: a card is not shown on a
+     * guess. `fresh` asks Orbit now instead of trusting what was said in the last half minute: for what only a manager may see.
+     */
+    async canManage(botId: string, identifier: string, options: { fresh?: boolean } = {}): Promise<boolean> {
         try {
-            return await this.managesTools(botId, identifier);
+            return await this.managesTools(botId, identifier, options.fresh === true);
         } catch {
             return false;
         }
     }
 
-    private managesTools(botId: string, identifier: string): Promise<boolean> {
+    private managesTools(botId: string, identifier: string, fresh = false): Promise<boolean> {
         const key = `${botId}|${identifier}`;
         const known = this.managers.get(key);
-        if (known && this.now() - known.at < MANAGER_CACHE_MS) return Promise.resolve(known.can);
+        if (known && !fresh && this.now() - known.at < MANAGER_CACHE_MS) return Promise.resolve(known.can);
         const failed = this.managerFailures.get(key);
         if (failed && this.now() - failed.at < MANAGER_RETRY_MS) return Promise.reject(failed.error);
         // Tools judged at the same moment share one question to Orbit

@@ -55,6 +55,8 @@ function waitForPopup(popup: Window): Promise<"done" | "stopped"> {
         };
         const onMessage = (event: MessageEvent) => {
             if (event.origin !== window.location.origin) return;
+            // Only what this attempt's own window says counts: another window's result does not settle it
+            if (event.source !== popup) return;
             const type = (event.data as { type?: unknown } | null)?.type;
             if (type === "oauth-success") finish("done");
             else if (type === "oauth-failure") finish("stopped");
@@ -86,8 +88,11 @@ async function connectListed(app: Connectable): Promise<ConnectResult> {
  * A ready-made app: Orbit starts the sign-in at the provider and answers the address of its page, unless the person is
  * already signed in there. The provider sends the window back to the game's own return page.
  */
+/** Each attempt has a window of its own: one name would hand the same window to a chat card and the Apps page started together */
+let readyMadeAttempts = 0;
+
 async function connectReadyMade(app: Connectable): Promise<ConnectResult> {
-    const popup = window.open("", "oauth-popup", "width=600,height=700");
+    const popup = window.open("", `oauth-popup-ready-made-${++readyMadeAttempts}`, "width=600,height=700");
     if (!popup) return { status: "blocked" };
     let appId: string;
     try {

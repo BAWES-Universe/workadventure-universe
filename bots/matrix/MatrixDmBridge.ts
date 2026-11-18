@@ -1386,6 +1386,25 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     return stepsSent;
                 },
             });
+            // The Reconnect card for a manager (#1819): a notice after the reply. Its text is made first, and the room is checked
+            // right before it goes: a third person who joined meanwhile must not read App names meant for the manager. How the
+            // send went is told back, so a card that did not get out is shown again at the next reply.
+            const sendSignIn = async (): Promise<void> => {
+                if (!reply?.toolSignIn) return;
+                const notice = toolSignInContent(reply.toolSignIn, await this.botName(botId, config));
+                if (!this.stillTheirs(event.room_id, botUserId, person.matrixUserId)) {
+                    reply.toolSignInDelivery?.(false);
+                    return;
+                }
+                const sent = await this.client.sendMessage(botUserId, event.room_id, notice).then(
+                    () => true,
+                    (error) => {
+                        console.warn(`[MatrixDmBridge] Could not send the Reconnect card from bot ${botId}:`, error?.message ?? error);
+                        return false;
+                    }
+                );
+                reply.toolSignInDelivery?.(sent);
+            };
             // Answered together with the messages that waited with it (#1159): that one answer was sent for all of them
             if (reply?.answeredTogether !== undefined) {
                 answered = reply.answeredTogether;
@@ -1404,6 +1423,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 if (!reply) console.warn(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}: no AI service here`);
                 else if (!reply.failed) console.warn(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}: the answer was empty`);
                 await couldNotAnswer(config);
+                // An empty answer does not take the manager's Reconnect card with it
+                if (reply && !reply.failed) await sendSignIn();
                 return;
             }
             if (reply.roomLink && reply.text) {
@@ -1458,12 +1479,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not say what bot ${botId} may do with an App:`, error?.message ?? error));
             }
-            if (reply.toolSignIn) {
-                // A tool's sign-in expired and this person manages the bot (#1819): the game draws the Reconnect card from it
-                await this.client
-                    .sendMessage(botUserId, event.room_id, toolSignInContent(reply.toolSignIn, await this.botName(botId, config)))
-                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send the Reconnect card from bot ${botId}:`, error?.message ?? error));
-            }
+            // A tool's sign-in expired and this person manages the bot (#1819): the game draws the Reconnect card from it
+            await sendSignIn();
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
                 const { body, field } = artifactDirectMessage(card);

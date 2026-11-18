@@ -64,7 +64,7 @@ vi.mock("../mcp/MCPConnector", () => ({
         executeToolCall: vi.fn().mockResolvedValue({ content: [] }),
         noteRefused: vi.fn(),
         clearCache: vi.fn(),
-        health: { settled: vi.fn(async () => undefined), isReported: vi.fn((_bot: string, id: string) => !found.unreported.has(id)) },
+        health: { settled: vi.fn(async () => undefined), issuesFor: vi.fn((_bot: string, ids: Set<string>) => (found.issues ?? []).filter((issue: any) => ids.has(issue.serverId))), isReported: vi.fn((_bot: string, id: string) => !found.unreported.has(id)) },
     },
 }));
 
@@ -156,6 +156,16 @@ describe("AIService – a tool whose sign-in expired (#1819)", () => {
         expect(admin.canManageBotTools).toHaveBeenCalledWith("bot-7", "sara@x.test");
     });
 
+    it("asks Orbit again before it sends the card, so a person who lost the right meanwhile is not shown it", async () => {
+        found.issues = [EXPIRED];
+        const { svc, admin, botClient } = setup();
+        // Said yes a moment ago (the cheap check), no when asked again for the card
+        admin.canManageBotTools.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        await reply(svc, admin, botClient);
+        expect(signInEvents(botClient)).toHaveLength(0);
+        expect(admin.canManageBotTools).toHaveBeenCalledTimes(2);
+    });
+
     it("shows no card to a member who does not manage the bot, nor to a guest", async () => {
         found.issues = [EXPIRED];
         const member = setup({ manages: false });
@@ -223,15 +233,58 @@ describe("AIService – a tool whose sign-in expired (#1819)", () => {
         expect(JSON.parse(events[1][2].body)).toEqual({ lost: [] });
     });
 
-    it("hands a direct message the card for its reply to send, to a person who manages the bot", async () => {
+    it("hands a direct message the card for its reply to send, to a person who manages the bot, and counts it shown once it was delivered", async () => {
         found.issues = [EXPIRED];
         const { svc, admin, botClient } = setup();
         const { chunks } = await reply(svc, admin, botClient, "dm");
         const withCard = chunks.filter((c) => c.toolSignIn);
         expect(withCard).toHaveLength(1);
         expect(withCard[0].toolSignIn.lost[0].name).toBe("Tavily");
+        // Delivered: the next reply carries none
+        withCard[0].toolSignInDelivery(true);
         const again = await reply(svc, admin, botClient, "dm");
         expect(again.chunks.filter((c) => c.toolSignIn)).toHaveLength(0);
+    });
+
+    it("hands a direct message the card again when the first one did not get out", async () => {
+        found.issues = [EXPIRED];
+        const { svc, admin, botClient } = setup();
+        const first = await reply(svc, admin, botClient, "dm");
+        first.chunks.find((c) => c.toolSignIn).toolSignInDelivery(false);
+        const second = await reply(svc, admin, botClient, "dm");
+        expect(second.chunks.filter((c) => c.toolSignIn)).toHaveLength(1);
+    });
+
+    it("holds a direct message's card while it is on its way, so a second reply does not carry it too", async () => {
+        found.issues = [EXPIRED];
+        const { svc, admin, botClient } = setup();
+        await reply(svc, admin, botClient, "dm");
+        const second = await reply(svc, admin, botClient, "dm");
+        expect(second.chunks.filter((c) => c.toolSignIn)).toHaveLength(0);
+    });
+
+    it("builds the card from what is down after Orbit was waited for, not from what was read before", async () => {
+        found.issues = [EXPIRED];
+        const { svc, admin, botClient } = setup();
+        const MCP = (await import("../mcp/MCPConnector")).MCPConnector as any;
+        // While the reply waited, the sign-in came back
+        MCP.health.settled.mockImplementationOnce(async () => {
+            found.issues = [];
+        });
+        await reply(svc, admin, botClient);
+        expect(signInEvents(botClient)).toHaveLength(0);
+    });
+
+    it("keeps taking the card back for a later reply when the person was not there to be sent the clear", async () => {
+        found.issues = [EXPIRED];
+        const { svc, admin, botClient } = setup();
+        await reply(svc, admin, botClient);
+        found.issues = [];
+        botClient.sendAskEvent.mockReturnValueOnce(false);
+        await reply(svc, admin, botClient);
+        await reply(svc, admin, botClient);
+        const events = signInEvents(botClient);
+        expect(events.map((e: any[]) => JSON.parse(e[2].body).lost.length)).toEqual([1, 0, 0]);
     });
 
     it("hands a direct message no card for a person who does not manage the bot", async () => {

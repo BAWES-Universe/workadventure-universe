@@ -11,9 +11,12 @@ export type ReconnectResult = "done" | "cancelled" | "blocked";
 
 const GIVE_UP_AFTER_MS = 10 * 60 * 1000;
 
+/** Each attempt has a window of its own: one name would hand the same window to two attempts started together */
+let attempts = 0;
+
 export function reconnectBotServer(botId: string, serverId: string): Promise<ReconnectResult> {
     // Opened at once, before anything is awaited, so the browser still takes it as the person's own tap
-    const popup = window.open("", "oauth-popup", "width=600,height=700");
+    const popup = window.open("", `oauth-popup-${++attempts}`, "width=600,height=700");
     if (!popup) return Promise.resolve("blocked");
 
     return new Promise<ReconnectResult>((resolve) => {
@@ -28,6 +31,8 @@ export function reconnectBotServer(botId: string, serverId: string): Promise<Rec
         };
         const onMessage = (event: MessageEvent) => {
             if (event.origin !== window.location.origin) return;
+            // Only what this attempt's own window says counts: another window's result does not settle it
+            if (event.source !== popup) return;
             if (event.data?.type === "oauth-success") finish("done");
             else if (event.data?.type === "oauth-failure") finish("cancelled");
         };

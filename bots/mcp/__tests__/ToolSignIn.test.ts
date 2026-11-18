@@ -191,6 +191,78 @@ describe('a new sign-in that meets a server not answering', () => {
     });
 });
 
+describe('a new sign-in that meets a server not answering, with a short sign-in recheck', () => {
+    it('waits the no-answer retry, not the shorter recheck', () => {
+        let now = 1_000_000;
+        const health = new ToolHealth(() => now, () => ({ recheckMs: 2 * MIN, noAnswerRetryMs: 5 * MIN }));
+        health.fail('bot', server(), 'expired');
+        const changed = server({ authConfig: '{"accessToken":"b"}' });
+        expect(health.shouldSkip('bot', changed)).toBe(false);
+        health.fail('bot', changed, 'no-answer');
+        now += 3 * MIN;
+        expect(health.shouldSkip('bot', changed)).toBe(true);
+        now += 3 * MIN;
+        expect(health.shouldSkip('bot', changed)).toBe(false);
+    });
+});
+
+describe('an App signed in again where the credentials do not show it', () => {
+    const readyMade = (extra: Record<string, unknown> = {}) => server({ id: 'rm', authType: 'none', authConfig: undefined, connectionId: 'conn-1', readyMade: true, ...extra });
+
+    it('is tried at once when Orbit held its mark and no longer does, and not at every reply after that', () => {
+        let now = 1_000_000;
+        const health = new ToolHealth(() => now, () => ({ recheckMs: 30 * MIN, noAnswerRetryMs: 5 * MIN }));
+        health.fail('bot', readyMade(), 'expired');
+        health.reported('bot', 'rm');
+        // Orbit still holds the mark: the wait stands
+        now += MIN;
+        expect(health.shouldSkip('bot', readyMade({ signInLostAt: new Date(now - MIN).toISOString() }))).toBe(true);
+        // Reconnected on the Apps page: Orbit cleared its mark, and nothing in the credentials changed
+        expect(health.shouldSkip('bot', readyMade())).toBe(false);
+        // Refused again: it is told again, and waits as before
+        expect(health.fail('bot', readyMade(), 'expired')).toBe(true);
+        health.reported('bot', 'rm');
+        expect(health.shouldSkip('bot', readyMade({ signInLostAt: new Date(now).toISOString() }))).toBe(true);
+    });
+
+    it('is left alone while Orbit has not yet been told, since it cannot hold a mark it was not given', () => {
+        const now = 1_000_000;
+        const health = new ToolHealth(() => now, () => ({ recheckMs: 30 * MIN, noAnswerRetryMs: 5 * MIN }));
+        health.fail('bot', readyMade(), 'expired');
+        expect(health.shouldSkip('bot', readyMade())).toBe(true);
+    });
+});
+
+describe('reports and reads that finish after the server moved on', () => {
+    it('counts a report only for the observation it was sent for', () => {
+        let now = 1_000_000;
+        const health = new ToolHealth(() => now, () => ({ recheckMs: 30 * MIN, noAnswerRetryMs: 5 * MIN }));
+        health.fail('bot', server(), 'no-answer');
+        const quiet = health.observation('bot', 'srv-1');
+        now += MIN;
+        // A sign-in is refused: the mark is now an expired sign-in, a new observation
+        health.fail('bot', server(), 'expired');
+        // The no-answer report lands late: Orbit does not have the expired sign-in yet
+        health.reported('bot', 'srv-1', quiet);
+        expect(health.isReported('bot', 'srv-1')).toBe(false);
+        health.reported('bot', 'srv-1', health.observation('bot', 'srv-1'));
+        expect(health.isReported('bot', 'srv-1')).toBe(true);
+    });
+
+    it('does not let a read made with older credentials clear a mark made with newer ones', () => {
+        const health = new ToolHealth();
+        const old = server();
+        const fresh = server({ authConfig: '{"accessToken":"b"}' });
+        health.fail('bot', fresh, 'expired');
+        expect(health.isStale('bot', 'srv-1', credentialsKey(old))).toBe(true);
+        expect(health.ok('bot', 'srv-1', credentialsKey(old))).toBe(false);
+        expect(health.issuesFor('bot', new Set(['srv-1']))).toHaveLength(1);
+        // A read made with the current credentials clears its own mark
+        expect(health.ok('bot', 'srv-1', credentialsKey(fresh))).toBe(true);
+        expect(health.issuesFor('bot', new Set(['srv-1']))).toHaveLength(0);
+    });
+});
+
 describe('a failure that says nothing new, and reports on their way', () => {
     it('starts the wait over for a server already marked, so it is not asked at every reply', () => {
         let now = 1_000_000;
@@ -266,7 +338,8 @@ describe('the note the bot reads', () => {
         const note = toolIssueNote([issue()]);
         expect(note).toContain('Tavily: the sign-in expired');
         expect(note).toContain('Only when someone asks for something that needs one of them');
-        expect(note).toContain('the people who manage you know');
+        expect(note).toContain('the people who manage you can sign in again');
+        expect(note).not.toContain('let the people who manage you know');
     });
 
     it('names both when two are down, and tells the two reasons apart', () => {
@@ -276,7 +349,7 @@ describe('the note the bot reads', () => {
     });
 
     it('does not say anyone was told when the server only did not answer', () => {
-        expect(toolIssueNote([issue({ state: 'no-answer' })])).not.toContain('let the people who manage you know');
+        expect(toolIssueNote([issue({ state: 'no-answer' })])).not.toContain('sign in again');
     });
 
     it('keeps a name that is a person’s text on one line', () => {
@@ -315,20 +388,44 @@ describe('the Reconnect card', () => {
     it('shows again at the next reply when the card did not get out', () => {
         const shown = new ToolSignInShown();
         const card = toolSignInCard(issues)!;
-        expect(shown.shouldShow('k', card)).toBe(true);
-        shown.forget('k');
-        expect(shown.shouldShow('k', card)).toBe(true);
+        shown.claim('k', card)!(false);
+        const again = shown.claim('k', card);
+        expect(again).not.toBeNull();
+        again!(true);
+        expect(shown.claim('k', card)).toBeNull();
+    });
+
+    it('holds a chat while a card is on its way, so two replies at once do not send it twice', () => {
+        vi.useFakeTimers();
+        try {
+            const shown = new ToolSignInShown();
+            const card = toolSignInCard(issues)!;
+            const first = shown.claim('k', card);
+            expect(first).not.toBeNull();
+            expect(shown.claim('k', card)).toBeNull();
+            // A send that was never settled does not hold the chat for ever
+            vi.advanceTimersByTime(3 * 60_000);
+            expect(shown.claim('k', card)).not.toBeNull();
+            // A late answer from the first send counts only once
+            first!(true);
+            first!(false);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('shows once per outage and chat, again when the outage changes, and takes itself back once', () => {
         const shown = new ToolSignInShown();
         const one = toolSignInCard([issues[0]])!;
         const two = toolSignInCard([issues[0], issues[2]])!;
-        expect(shown.shouldShow('k', one)).toBe(true);
-        expect(shown.shouldShow('k', one)).toBe(false);
-        expect(shown.shouldShow('k', two)).toBe(true);
+        shown.claim('k', one)!(true);
+        expect(shown.claim('k', one)).toBeNull();
+        const changed = shown.claim('k', two);
+        expect(changed).not.toBeNull();
+        changed!(true);
+        expect(shown.isShown('k')).toBe(true);
         expect(shown.cleared('k')).toBe(true);
         expect(shown.cleared('k')).toBe(false);
-        expect(shown.shouldShow('k', two)).toBe(true);
+        expect(shown.claim('k', two)).not.toBeNull();
     });
 });

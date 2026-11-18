@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
-import { MCPConnector } from '../MCPConnector';
+import { MCPConnector, signInRefusalOf } from '../MCPConnector';
 
 vi.mock('../../ai/encryption', () => ({ decryptApiKey: (val: string | null | undefined) => val || null }));
 vi.mock('dns/promises', () => ({ lookup: vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]) }));
@@ -35,6 +35,9 @@ let listCalls: number;
 let reports: Array<{ url: string; body: Record<string, unknown> }>;
 
 beforeEach(() => {
+    // The waits the tests expect, whatever the environment they run in
+    vi.stubEnv('BOT_TOOL_SIGNIN_RECHECK_MINUTES', '30');
+    vi.stubEnv('BOT_TOOL_NOANSWER_RETRY_MINUTES', '5');
     vi.clearAllMocks();
     MCPConnector.clearCache();
     servers = [{ ...base, authConfig: TOKEN_A }];
@@ -49,6 +52,16 @@ beforeEach(() => {
     http.put.mockImplementation(async (url: string, body: Record<string, unknown>) => {
         if (url.endsWith('/sign-in')) {
             reports.push({ url, body });
+            // Orbit keeps what it is told, and its server list shows it (as the real one does)
+            const id = decodeURIComponent(url.split('/mcp-servers/')[1].split('/')[0]);
+            for (const held of servers) {
+                if (held.id !== id) continue;
+                if (body.state === 'ok') {
+                    delete held.signInLostAt;
+                    delete held.noAnswerAt;
+                } else if (body.state === 'expired') held.signInLostAt = body.at;
+                else held.noAnswerAt = body.at;
+            }
             return { data: { changed: true } };
         }
         return { data: { added: [], changed: [], removed: [] } };
@@ -66,6 +79,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    vi.unstubAllEnvs();
     vi.useRealTimers();
     MCPConnector.clearCache();
 });
@@ -280,7 +294,9 @@ describe('a call refused while a reply runs', () => {
             throw httpError(401);
         });
         const result = await MCPConnector.executeToolCall('srv-1', base.serverUrl, 'search', {}, 'oauth', TOKEN_A);
-        expect(result).toMatchObject({ error: 'Sign-in expired. Nothing ran', outcome: 'failed', signInRefused: 401 });
+        expect(result).toMatchObject({ error: 'Sign-in expired. Nothing ran', outcome: 'failed' });
+        expect(result).not.toHaveProperty('signInRefused');
+        expect(signInRefusalOf(result)).toBe(401);
         expect(result.hint).toContain('Do not call this tool again');
         expect(http.post.mock.calls.filter(([, b]: any) => b.method === 'tools/call')).toHaveLength(1);
     });
@@ -375,5 +391,47 @@ describe('a ready-made App whose link refuses the sign-in (#1819)', () => {
         expect(found.issues).toHaveLength(1);
         expect(found.issues?.[0]).toMatchObject({ serverId: 'srv-rm', state: 'expired' });
         vi.unstubAllEnvs();
+    });
+});
+
+describe('what a failed read says about the server (#1819)', () => {
+    it('keeps a refused sign-in at initialize when the server then answers the listing with a 400', async () => {
+        http.post.mockImplementation(async (_url: string, body: { method: string }) => {
+            if (body.method === 'initialize') throw httpError(401);
+            throw httpError(400);
+        });
+        const found = await discover();
+        expect(found.issues).toHaveLength(1);
+        expect(found.issues?.[0]).toMatchObject({ state: 'expired' });
+        await flush();
+        expect(reports.map((r) => r.body.state)).toEqual(['expired']);
+    });
+
+    it('lists a ready-made App whose link failed with a 502 while opening the session as not answering', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        servers = [{ id: 'srv-rm', botId: 'bot-1', name: 'Gmail', serverUrl: 'https://stored.link/mcp', authType: 'none', enabled: true, readyMade: true, connectionId: 'conn-gmail' }];
+        http.post.mockImplementation(async () => ({ data: { status: 502, contentType: null, sessionId: null, body: '' } }));
+        const found = await discover();
+        expect(found.issues?.[0]).toMatchObject({ serverId: 'srv-rm', state: 'no-answer' });
+        vi.unstubAllEnvs();
+    });
+
+    it('does not take a field of a tool\'s own answer for a refused sign-in', async () => {
+        http.post.mockImplementation(async (_url: string, body: { method: string }) => {
+            if (body.method === 'initialize') return { data: { jsonrpc: '2.0', id: 'init', result: {} }, headers: {} };
+            return { data: { jsonrpc: '2.0', id: '2', result: { content: [{ type: 'text', text: 'ok' }], signInRefused: 401 } }, headers: {} };
+        });
+        const result = await MCPConnector.executeToolCall('srv-1', base.serverUrl, 'search', {}, 'oauth', TOKEN_A);
+        expect(signInRefusalOf(result)).toBeUndefined();
+    });
+
+    it('records a server that did not answer when Test server meets it, as a reply does', async () => {
+        listAnswer = () => {
+            throw httpError(502);
+        };
+        const test = await MCPConnector.refreshServerTools('bot-1', 'srv-1', ORBIT, 'admin');
+        expect(test).toMatchObject({ read: false });
+        await flush();
+        expect(reports.map((r) => r.body.state)).toEqual(['no-answer']);
     });
 });

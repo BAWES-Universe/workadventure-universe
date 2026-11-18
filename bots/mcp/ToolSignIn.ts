@@ -93,6 +93,10 @@ interface Entry {
     credentials: string;
     /** Orbit has this state */
     reported: boolean;
+    /** Which observation of the server this is: a report to Orbit only counts for the observation it was sent for */
+    generation: number;
+    /** How long to leave the server alone after it was checked, when that is not the usual wait for its state */
+    waitMs?: number;
     connectionId?: string;
 }
 
@@ -113,6 +117,7 @@ export interface SeenServer {
 /** What the bot server knows about its tool servers, by bot and server. */
 export class ToolHealth {
     private readonly entries = new Map<string, Entry>();
+    private generations = 0;
     /** Reports to Orbit that are still on their way, by bot and server */
     private readonly pending = new Map<string, Promise<unknown>>();
 
@@ -146,6 +151,7 @@ export class ToolHealth {
                 checkedMs: 0,
                 credentials: credentialsKey(server),
                 reported: true,
+                generation: ++this.generations,
             };
             this.entries.set(key, entry);
             return false;
@@ -158,9 +164,22 @@ export class ToolHealth {
             entry.checkedMs = 0;
             // Orbit may have cleared its mark with the new sign-in: if it is refused again, Orbit is told again
             entry.reported = false;
+            entry.waitMs = undefined;
+            entry.generation = ++this.generations;
             return false;
         }
-        const wait = entry.state === 'expired' ? this.settings().recheckMs : this.settings().noAnswerRetryMs;
+        // Orbit held this mark and no longer does: the sign-in was made again where this process cannot see it in the
+        // credentials (an App's connection, signed in again on the Apps page, keeps the same ones). Tried at once; if it is
+        // refused again, Orbit is told again, so an unchanged server is not tried at every reply.
+        const orbitHolds = entry.state === 'expired' ? server.signInLostAt : server.noAnswerAt;
+        if (entry.reported && !orbitHolds) {
+            entry.checkedMs = 0;
+            entry.waitMs = undefined;
+            entry.reported = false;
+            entry.generation = ++this.generations;
+            return false;
+        }
+        const wait = entry.waitMs ?? (entry.state === 'expired' ? this.settings().recheckMs : this.settings().noAnswerRetryMs);
         return this.now() - entry.checkedMs < wait;
     }
 
@@ -171,6 +190,7 @@ export class ToolHealth {
         const now = this.now();
         if (entry && entry.state === state) {
             entry.checkedMs = now;
+            entry.waitMs = undefined;
             entry.credentials = credentialsKey(server);
             return !entry.reported;
         }
@@ -178,7 +198,8 @@ export class ToolHealth {
         if (entry && entry.state === 'expired' && state === 'no-answer') {
             // A sign-in not tried yet (new, or a mark taken from Orbit) that met a server not answering is tried again
             // after the short wait, not the long one
-            entry.checkedMs = entry.checkedMs === 0 ? now - Math.max(0, this.settings().recheckMs - this.settings().noAnswerRetryMs) : now;
+            entry.waitMs = entry.checkedMs === 0 ? this.settings().noAnswerRetryMs : undefined;
+            entry.checkedMs = now;
             return false;
         }
         this.entries.set(key, {
@@ -190,6 +211,7 @@ export class ToolHealth {
             checkedMs: now,
             credentials: credentialsKey(server),
             reported: false,
+            generation: ++this.generations,
         });
         return true;
     }
@@ -197,7 +219,10 @@ export class ToolHealth {
     /** The server was tried again and failed in a way that says nothing new: its wait starts over, nothing else changes. */
     touch(botId: string, serverId: string): void {
         const entry = this.entries.get(this.key(botId, serverId));
-        if (entry) entry.checkedMs = this.now();
+        if (entry) {
+            entry.checkedMs = this.now();
+            entry.waitMs = undefined;
+        }
     }
 
     /** Whether Orbit has this server's state. */
@@ -226,14 +251,26 @@ export class ToolHealth {
         if (timer) clearTimeout(timer);
     }
 
-    /** Orbit has been told the state. */
-    reported(botId: string, serverId: string): void {
-        const entry = this.entries.get(this.key(botId, serverId));
-        if (entry) entry.reported = true;
+    /** Which observation of the server is held now: a report is sent for it, and counts only for it. */
+    observation(botId: string, serverId: string): number | undefined {
+        return this.entries.get(this.key(botId, serverId))?.generation;
     }
 
-    /** The server answered. True when it had a mark to clear (Orbit is told once). */
-    ok(botId: string, serverId: string): boolean {
+    /** Orbit has been told the state. Counts only when it is the observation the report was sent for. */
+    reported(botId: string, serverId: string, observation?: number): void {
+        const entry = this.entries.get(this.key(botId, serverId));
+        if (entry && (observation === undefined || entry.generation === observation)) entry.reported = true;
+    }
+
+    /** The mark held now was made with other credentials than these: a read made with these is older than the mark. */
+    isStale(botId: string, serverId: string, credentials: string): boolean {
+        const entry = this.entries.get(this.key(botId, serverId));
+        return entry !== undefined && entry.credentials !== credentials;
+    }
+
+    /** The server answered. True when it had a mark to clear (Orbit is told once). A read made with credentials older than the mark does not clear it. */
+    ok(botId: string, serverId: string, credentials?: string): boolean {
+        if (credentials !== undefined && this.isStale(botId, serverId, credentials)) return false;
         return this.entries.delete(this.key(botId, serverId));
     }
 
@@ -326,7 +363,11 @@ export function toolIssueNote(issues: readonly ToolIssue[]): string {
     }
     lines.push(
         'Only when someone asks for something that needs one of them, say so plainly in a sentence or two: name the tool, ' +
-            (expired.length > 0 ? 'say its sign-in expired and that you have let the people who manage you know' : 'say it is not answering') +
+            (expired.length > 0 && quiet.length > 0
+                ? 'and say why as listed above (a tool whose sign-in expired: that, and that the people who manage you can sign in again; a tool that is not answering: that)'
+                : expired.length > 0
+                  ? 'say its sign-in expired and that the people who manage you can sign in again'
+                  : 'say it is not answering') +
             ', then answer with what you can without it. Never pretend you used it. Otherwise do not bring it up.'
     );
     return lines.join('\n');

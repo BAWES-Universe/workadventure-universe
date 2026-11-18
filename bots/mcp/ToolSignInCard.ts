@@ -55,27 +55,46 @@ export function toolSignInContent(card: ToolSignInCard, botName: string): Record
 }
 
 const MAX_REMEMBERED = 1000;
+/** How long a card on its way holds its chat before another reply may try it */
+const SEND_HOLD_MS = 2 * 60_000;
+
+/** The card is on its way to a chat: say how it went. A card that did not get out is shown again at the next reply. */
+export type ToolSignInDelivery = (delivered: boolean) => void;
 
 /** Who was shown which outage, by bot and chat, so a card shows once per outage and chat and clears once. */
 export class ToolSignInShown {
     private readonly shown = new Map<string, string>();
+    /** The cards on their way: one at a time for a chat, so two replies at once do not send it twice */
+    private readonly sending = new Map<string, number>();
 
-    /** True when this person should be shown the card now: they have not been shown this outage in this chat. */
-    shouldShow(key: string, card: ToolSignInCard): boolean {
+    /**
+     * The card this person should be shown now: null when they were shown this outage in this chat, or it is on its way.
+     * Otherwise a function to call with how the send went: only a card that got out counts as shown.
+     */
+    claim(key: string, card: ToolSignInCard): ToolSignInDelivery | null {
         const sig = signature(card);
-        if (this.shown.get(key) === sig) return false;
-        this.shown.delete(key);
-        this.shown.set(key, sig);
-        while (this.shown.size > MAX_REMEMBERED) this.shown.delete(this.shown.keys().next().value!);
-        return true;
+        const startedAt = this.sending.get(key);
+        // A send that was never settled (the reply behind it was dropped) does not hold the chat for long
+        if (this.shown.get(key) === sig || (startedAt !== undefined && Date.now() - startedAt < SEND_HOLD_MS)) return null;
+        this.sending.set(key, Date.now());
+        let done = false;
+        return (delivered) => {
+            if (done) return;
+            done = true;
+            this.sending.delete(key);
+            if (!delivered) return;
+            this.shown.delete(key);
+            this.shown.set(key, sig);
+            while (this.shown.size > MAX_REMEMBERED) this.shown.delete(this.shown.keys().next().value!);
+        };
     }
 
-    /** The card did not get out: the next reply shows it again. */
-    forget(key: string): void {
-        this.shown.delete(key);
+    /** A card was shown here and the outage is over: it should now be taken back. */
+    isShown(key: string): boolean {
+        return this.shown.has(key);
     }
 
-    /** The outage is over: true when a card was shown here and should now be taken back. */
+    /** The card was taken back (or there was none to take back). */
     cleared(key: string): boolean {
         return this.shown.delete(key);
     }

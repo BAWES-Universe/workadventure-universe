@@ -2484,16 +2484,15 @@ export class BotClient {
     /**
      * The card this bot needs one answer with, or a reply only one person needs, to that person and nobody else
      * (#1658). Sent as a private event; the pusher passes it on only when a bot sends it about itself. False when the
-     * bot is not in that space, so nothing was sent.
+     * bot is not in that space, or the connection dropped it, so nothing was sent.
      */
     sendAskEvent(spaceName: string, playerId: number, event: { kind: 'card' | 'reply' | 'signin'; id: string; revision: number; body: string }): boolean {
         const receiverUserId = this.spaceUserIdOf(spaceName, playerId);
         if (!receiverUserId) return false;
-        this.sendPrivateEvent(spaceName, receiverUserId, {
+        return this.sendPrivateEvent(spaceName, receiverUserId, {
             $case: 'botAsk',
             botAsk: { botId: this.config.botId, botName: this.config.name, ...event },
         });
-        return true;
     }
 
     /**
@@ -3218,9 +3217,9 @@ export class BotClient {
     }
 
     /** A private event to one person in a space the bot is in. */
-    private sendPrivateEvent(spaceName: string, receiverUserId: string, event: NonNullable<PrivateSpaceEvent['event']>): void {
-        if (!this.spaces.has(spaceName)) return;
-        this.send({
+    private sendPrivateEvent(spaceName: string, receiverUserId: string, event: NonNullable<PrivateSpaceEvent['event']>): boolean {
+        if (!this.spaces.has(spaceName)) return false;
+        return this.send({
             message: {
                 $case: 'privateEvent',
                 privateEvent: { spaceName, receiverUserId, spaceEvent: { event } },
@@ -4467,9 +4466,10 @@ export class BotClient {
         for (const message of pending) this.send(message);
     }
 
-    private send(message: ClientToServerMessage): void {
+    /** True when the message went out, or is held until the join is confirmed; false when it was dropped. */
+    private send(message: ClientToServerMessage): boolean {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            return;
+            return false;
         }
 
         // Still joining: hold messages until the server confirms the join (a ping is always allowed). The join
@@ -4480,24 +4480,26 @@ export class BotClient {
                 // the cap never costs the bot its position.
                 this.pendingMessages = this.pendingMessages.filter((m) => m.message?.$case !== 'userMovesMessage');
                 this.pendingMessages.push(message);
-                return;
+                return true;
             }
             const held = this.pendingMessages.filter((m) => m.message?.$case !== 'userMovesMessage').length;
             if (held < BotClient.MAX_PENDING_MESSAGES) {
                 this.pendingMessages.push(message);
-            } else {
-                console.warn(
-                    `[Bot ${this.config.botId}] Join still pending: dropped a ${message.message?.$case ?? 'message'} (queue full)`
-                );
+                return true;
             }
-            return;
+            console.warn(
+                `[Bot ${this.config.botId}] Join still pending: dropped a ${message.message?.$case ?? 'message'} (queue full)`
+            );
+            return false;
         }
 
         try {
             const encoded = ClientToServerMessage.encode(message).finish();
             this.ws.send(encoded);
+            return true;
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] Error sending message:`, error);
+            return false;
         }
     }
 }

@@ -23,9 +23,9 @@ import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { sanitizedError } from '../utils/sanitizedError';
-import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { MCPConnector, REQUEST_TIMEOUT, signInRefusalOf, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import { toolIssueNote, type ToolIssue } from '../mcp/ToolSignIn';
-import { ToolSignInShown, toolSignInCard, type ToolSignInCard } from '../mcp/ToolSignInCard';
+import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDelivery } from '../mcp/ToolSignInCard';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -447,8 +447,8 @@ export class AIService {
                     : undefined
             );
             // The tool server turned the sign-in away: Orbit is told, and the bot stops calling it (#1819)
-            const refused = (rawResult as { signInRefused?: unknown } | null)?.signInRefused;
-            if (typeof refused === 'number') {
+            const refused = signInRefusalOf(rawResult);
+            if (refused !== undefined) {
                 const adminApiToken = this.adminApiService?.['adminApiToken'];
                 if (adminApiToken) MCPConnector.noteRefused(entry, { adminApiUrl: this.adminApiUrl, adminApiToken }, refused);
             }
@@ -1513,7 +1513,7 @@ export class AIService {
             // A tool whose sign-in expired, or that did not answer: the bot is told which, and the people who manage it get the card (#1819).
             // Never for an answer for one person alone or for a Brick standing in for others: they use none of the owner's apps (#1993, #2005)
             const toolSignIn = options?.onlyForThem || forOthers ? undefined : await this.toolSignInFor(botId, toolIssues, channel, botClient, spaceName, playerId);
-            if (toolSignIn) yield { content: '', done: false, toolSignIn };
+            if (toolSignIn) yield { content: '', done: false, toolSignIn: toolSignIn.card, toolSignInDelivery: toolSignIn.delivery };
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
@@ -3596,7 +3596,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botClient: BotClient | undefined,
         spaceName: string | undefined,
         playerId: number | undefined
-    ): Promise<ToolSignInCard | undefined> {
+    ): Promise<{ card: ToolSignInCard; delivery: ToolSignInDelivery } | undefined> {
         // The tool servers could not be asked: a card shown before stays as it is
         if (!botId || !issues) return undefined;
         try {
@@ -3605,13 +3605,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const nearby = channel === 'world' && !!botClient && !!spaceName && playerId !== undefined;
             // No sign-in is lost any more (a server that only does not answer has no card): a card shown before is taken back once
             if (!toolSignInCard(issues)) {
-                if (nearby && this.signInShown.cleared(key)) {
-                    botClient!.sendAskEvent(spaceName!, playerId!, {
+                if (nearby && this.signInShown.isShown(key)) {
+                    const sent = botClient!.sendAskEvent(spaceName!, playerId!, {
                         kind: 'signin',
                         id: `signin-${botId}`,
                         revision: Math.floor(Date.now() / 1000),
                         body: JSON.stringify({ lost: [] }),
                     });
+                    // Taken back only once it went out: a person who was not there is sent it at a later reply
+                    if (sent) this.signInShown.cleared(key);
                 } else {
                     this.signInShown.cleared(key);
                 }
@@ -3622,9 +3624,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // The card goes once Orbit has the state it shows: the page checks with Orbit as the card opens. Only a manager's
             // reply waits for this, and only while a report is still on its way.
             await MCPConnector.health.settled(botId);
-            const card = toolSignInCard(issues.filter((issue) => MCPConnector.health.isReported(botId, issue.serverId)));
+            // Read again after the wait: a sign-in that came back, or failed again, while it ran is not shown as it was
+            const fresh = MCPConnector.health.issuesFor(botId, new Set(issues.map((issue) => issue.serverId)));
+            const card = toolSignInCard(fresh.filter((issue) => MCPConnector.health.isReported(botId, issue.serverId)));
             if (!card) return undefined;
-            if (!this.signInShown.shouldShow(key, card)) return undefined;
+            const delivery = this.signInShown.claim(key, card);
+            if (!delivery) return undefined;
+            // The card names Apps and connections only a manager may see: asked of Orbit now, not taken from a few moments ago
+            if (!(await this.toolGate.canManage(botId, person.identifier, { fresh: true }))) {
+                delivery(false);
+                return undefined;
+            }
             if (nearby) {
                 const sent = botClient!.sendAskEvent(spaceName!, playerId!, {
                     kind: 'signin',
@@ -3632,11 +3642,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     revision: Math.floor(Date.now() / 1000),
                     body: JSON.stringify(card),
                 });
-                // The person is not in the space (any more): they are shown the card when they are next here
-                if (!sent) this.signInShown.forget(key);
+                // The person is not in the space (any more), or the connection dropped it: they are shown the card at a later reply
+                delivery(sent);
                 return undefined;
             }
-            return channel === 'dm' ? card : undefined;
+            // A direct message: the reply sends it, and says how it went
+            if (channel === 'dm') return { card, delivery };
+            delivery(false);
+            return undefined;
         } catch (error) {
             console.warn('[AIService] Could not show the Reconnect card:', error instanceof Error ? error.message : error);
             return undefined;
