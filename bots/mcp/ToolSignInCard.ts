@@ -45,6 +45,10 @@ function signature(card: ToolSignInCard | null): string {
 
 /** The card as a direct message's notice: other apps show the plain words, the game draws the card from the field. */
 export function toolSignInContent(card: ToolSignInCard, botName: string): Record<string, unknown> {
+    // An empty list is the bot taking its earlier card back: the game drops the card, other apps read the plain words
+    if (card.lost.length === 0) {
+        return { msgtype: 'm.notice', body: `${botName} can use its Apps again.`, [TOOL_SIGNIN_KEY]: { lost: [] } };
+    }
     const names = card.lost.map((one) => one.name);
     const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
     return {

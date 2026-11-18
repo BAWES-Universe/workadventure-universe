@@ -376,6 +376,18 @@ describe('MatrixDmBridge', () => {
         });
     });
 
+    it('sends an empty Reconnect notice to take the card back, so the game drops it (#1819)', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValueOnce({ text: 'Back to normal.', media: [], toolSignIn: { lost: [] } });
+        await bridge.onEvent(message('news?'));
+        const notice = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => content?.['universe.tool_signin']);
+        expect(notice).toEqual({
+            msgtype: 'm.notice',
+            body: 'Guide can use its Apps again.',
+            'universe.tool_signin': { lost: [] },
+        });
+    });
+
     describe('the Reconnect card (#1819)', () => {
         const toolSignIn = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
         const cardsSent = () => client.sendMessage.mock.calls.filter((call: any[]) => call[2]?.['universe.tool_signin']);

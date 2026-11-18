@@ -3614,6 +3614,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     });
                     // Taken back only once it went out: a person who was not there is sent it at a later reply
                     if (sent) this.signInShown.cleared(key);
+                } else if (channel === 'dm' && this.signInShown.isShown(key)) {
+                    // A direct message takes its card back the same way, with a notice whose list is empty: the reply sends it
+                    // and says how it went, and it is taken back here only once it got out
+                    return {
+                        card: { lost: [] },
+                        delivery: (delivered) => {
+                            if (delivered) this.signInShown.cleared(key);
+                        },
+                    };
                 } else {
                     this.signInShown.cleared(key);
                 }

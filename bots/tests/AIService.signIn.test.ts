@@ -255,6 +255,25 @@ describe("AIService – a tool whose sign-in expired (#1819)", () => {
         expect(second.chunks.filter((c) => c.toolSignIn)).toHaveLength(1);
     });
 
+    it("takes a direct message's card back with an empty list once the sign-in is back, and again when the first one did not get out", async () => {
+        found.issues = [EXPIRED];
+        const { svc, admin, botClient } = setup();
+        (await reply(svc, admin, botClient, "dm")).chunks.find((c) => c.toolSignIn).toolSignInDelivery(true);
+        found.issues = [];
+        const first = await reply(svc, admin, botClient, "dm");
+        const retract = first.chunks.filter((c) => c.toolSignIn);
+        expect(retract).toHaveLength(1);
+        expect(retract[0].toolSignIn).toEqual({ lost: [] });
+        // It did not get out: still owed at the next reply
+        retract[0].toolSignInDelivery(false);
+        const second = await reply(svc, admin, botClient, "dm");
+        expect(second.chunks.filter((c) => c.toolSignIn)).toHaveLength(1);
+        second.chunks.find((c) => c.toolSignIn).toolSignInDelivery(true);
+        // Taken back: nothing more is sent, and nothing is sent to a chat that was never shown a card
+        const third = await reply(svc, admin, botClient, "dm");
+        expect(third.chunks.filter((c) => c.toolSignIn)).toHaveLength(0);
+    });
+
     it("holds a direct message's card while it is on its way, so a second reply does not carry it too", async () => {
         found.issues = [EXPIRED];
         const { svc, admin, botClient } = setup();
