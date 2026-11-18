@@ -193,6 +193,38 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(client.getJoinedRooms).toHaveBeenCalled();
     });
 
+    it('sends no offer, App offer, artifact card or own-initiative line once the purge began', async () => {
+        deps.reply.mockImplementation(async () => {
+            bridge.purgedBots.add(BOT);
+            return {
+                text: 'Late answer',
+                media: [],
+                bricks: [{ kind: 'offer', ask: 'Want one?', name: 'N', line: 'l', instructions: 'i' }, { kind: 'app', app: 'a', name: 'A', state: 's', connectionId: 'c', ask: 'x', asked: 'y', other: false }],
+                claimOffer: async () => 'topic',
+                claimApp: async () => 'topic',
+                artifacts: [{ id: 'art', title: 'T', kind: 'mini app', version: 1 }],
+            };
+        });
+        await bridge.onEvent(message('$m1'));
+        expect(client.sendText).not.toHaveBeenCalled();
+        expect(client.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('refuses a card sent as a Brick whose purge has begun, and waits for one already being sent', async () => {
+        let release!: () => void;
+        const slow = vi.fn(() => new Promise<string>((resolve) => { release = () => resolve('$card'); }));
+        const sending = bridge.sendAsBrick(BOT, slow);
+        const purge = bridge.purgeChats(BOT);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(client.getJoinedRooms).not.toHaveBeenCalled();
+        release();
+        expect(await sending).toBe('$card');
+        expect(await purge).toBe(true);
+        const later = vi.fn(async () => '$no');
+        await expect(bridge.sendAsBrick(BOT, later)).rejects.toThrow('being deleted');
+        expect(later).not.toHaveBeenCalled();
+    });
+
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
         bridge.purgedBots.add(BOT);
         await bridge.closeChat(BOT, ROOM, 'en');

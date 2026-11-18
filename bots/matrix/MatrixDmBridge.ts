@@ -523,7 +523,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 { roomId, note: true }
             );
             if (reply?.text && !reply.failed) {
-                await this.client.sendText(botUserId, roomId, reply.text);
+                if (!(await this.say(botId, () => this.client.sendText(botUserId, roomId, reply.text!)))) return;
                 reply.keep?.();
             }
         } catch (error: any) {
@@ -745,7 +745,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // the message is not sent twice. Past the homeserver's memory of it, the game still draws a named line once
         const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`).digest('hex');
         const content = { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines, ...(part ? { [GUEST_CHAT_PART_KEY]: { v: 1, from: part.from, to: part.to, last: part.last } } : {}) };
-        await this.client.sendMessage(this.botUserId(botId), known.roomId, content, txnId);
+        await this.say(botId, () => this.client.sendMessage(this.botUserId(botId), known.roomId!, content, txnId));
         return 'sent';
     }
 
@@ -821,7 +821,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const room = await this.roomToSpeakIn(botId, matrixUserId);
         if ('reason' in room) return { ok: false, reason: room.reason };
         try {
-            const eventId = await this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text, [OWN_INITIATIVE_KEY]: true }, transactionId);
+            const eventId = await this.say(botId, () => this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text, [OWN_INITIATIVE_KEY]: true }, transactionId));
             return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
@@ -885,7 +885,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // Each send waits, so who is in the room is looked at again before every one of them
             if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return keepWaiting(index);
             try {
-                await this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true });
+                await this.say(botId, () => this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true }));
             } catch (error: any) {
                 keepWaiting(index);
                 console.warn(`[MatrixDmBridge] Could not keep an answer of bot ${botId} in ${roomId}:`, error?.message ?? error);
@@ -1125,6 +1125,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private say<T>(botId: string, send: () => Promise<T>): Promise<T | undefined> {
         if (this.purgedBots.has(botId)) return Promise.resolve(undefined);
         return this.profileWriting(botId, send);
+    }
+
+    /** For what the bot server sends as the Brick outside this class (the cards of its approvals): refused for a Brick being purged, waited for by its purge. */
+    async sendAsBrick<T>(botId: string, send: () => Promise<T>): Promise<T> {
+        const sent = await this.say(botId, send);
+        if (this.purgedBots.has(botId) && sent === undefined) throw new Error('This Brick is being deleted, so it says nothing more');
+        return sent as T;
     }
 
     /** Runs a write for a Brick (its chat profile, or a message kept for it), remembered while it runs so a purge can wait for it. */
@@ -1706,7 +1713,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 // Orbit counted it as shown when it allowed it, so a send that fails once is tried again before it is lost.
                 // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.
                 const txnId = randomUUID();
-                await this.client
+                await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
@@ -1718,7 +1725,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 const { app, name, state, connectionId, ask, asked, other } = appOffer;
                 const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, state, connectionId, ask, asked, other } };
                 const txnId = randomUUID();
-                await this.client
+                await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
@@ -1726,14 +1733,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
             const justConnected = reply.text ? connectedAppOf(content[APP_CONNECTED_KEY]) : null;
             if (justConnected) {
-                await this.client
+                await out
                     .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not say what bot ${botId} may do with an App:`, error?.message ?? error));
             }
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
                 const { body, field } = artifactDirectMessage(card);
-                await this.client
+                await out
                     .sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body, [ARTIFACT_KEY]: field })
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error));
             }
@@ -2040,15 +2047,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const content = { msgtype: 'm.notice', body: words || (state === 'failed' ? 'Could not listen to this voice note.' : 'Listening…'), [TRANSCRIPT_KEY]: field };
             try {
                 if (!shownId) {
-                    shownId = await this.client.sendMessage(botUserId, roomId, content);
+                    shownId = await this.say(botId, () => this.client.sendMessage(botUserId, roomId, content));
                     return;
                 }
-                await this.client.sendMessage(botUserId, roomId, {
-                    msgtype: 'm.notice',
-                    body: `* ${content.body}`,
-                    'm.new_content': content,
-                    'm.relates_to': { rel_type: 'm.replace', event_id: shownId },
-                });
+                await this.say(botId, () =>
+                    this.client.sendMessage(botUserId, roomId, {
+                        msgtype: 'm.notice',
+                        body: `* ${content.body}`,
+                        'm.new_content': content,
+                        'm.relates_to': { rel_type: 'm.replace', event_id: shownId! },
+                    })
+                );
             } catch (error: any) {
                 // A lost transcript row must never cost the person the answer
                 console.warn(`[MatrixDmBridge] Could not show a transcript in ${roomId}:`, error?.message ?? error);

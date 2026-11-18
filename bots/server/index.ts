@@ -201,8 +201,15 @@ async function setupMatrix(): Promise<void> {
     // The card a bot shows in the person's direct message (#1657) goes through the Matrix account of the bot
     const botUser = (botId: string) => botMatrixId(matrixConfig.domain, botId) ?? '';
     dmCards = {
-        send: (botId, roomId, content) => matrixClient.sendMessage(botUser(botId), roomId, content),
-        say: async (botId, roomId, text) => void (await matrixClient.sendText(botUser(botId), roomId, text)),
+        // Through the bridge: nothing is sent as a Brick whose purge has begun, and the purge waits for a card already being sent
+        send: (botId, roomId, content) => {
+            const sendIt = () => matrixClient.sendMessage(botUser(botId), roomId, content);
+            return matrixBridge ? matrixBridge.sendAsBrick(botId, sendIt) : sendIt();
+        },
+        say: async (botId, roomId, text) => {
+            const sendIt = () => matrixClient.sendText(botUser(botId), roomId, text);
+            void (await (matrixBridge ? matrixBridge.sendAsBrick(botId, sendIt) : sendIt()));
+        },
     };
     matrixBridge = new MatrixDmBridge(matrixConfig, matrixClient, {
         approvals,
