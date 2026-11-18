@@ -119,21 +119,26 @@ jobs:
           node .github/scripts/prune-images-cli.mjs "${args[@]}"
       # GitHub refused a delete because this repository lacks the Admin role on the package. Say so in an issue assigned to
       # the owner, so the missing setting is reported instead of waiting in a log. One open issue per package: a later
-      # run that hits the same refusal adds nothing while that issue is open.
+      # run that hits the same refusal adds nothing while that issue is open. Two runs that report at the same moment can
+      # both create one; each then keeps the oldest and closes the rest, so one issue stays open.
       - name: Report missing Admin access on ${{ matrix.package }}
         if: failure() && steps.prune.outputs.needs_admin == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE: ${{ matrix.package }}
+          TITLE: Image clean-up needs Admin access on ${{ matrix.package }}
           ASSIGNEE: BAWES
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          title="Image clean-up needs Admin access on $PACKAGE"
-          # Read the whole list first: grep -q on a pipe can stop gh early (SIGPIPE), which pipefail would count as no match.
-          open_titles=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json title --jq '.[].title')
-          if grep -qxF "$title" <<<"$open_titles"; then
-            echo "An open issue already reports this: $title"
+          # Every open issue (all pages, not a capped list) with exactly this title, oldest first.
+          matching() {
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" \
+              --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number' | sort -n
+          }
+          existing=$(matching)
+          if [ -n "$existing" ]; then
+            echo "An open issue already reports this: #$(head -n1 <<<"$existing")"
             exit 0
           fi
           body=$(printf '%s\n' \
@@ -146,5 +151,9 @@ jobs:
             "4. Close this issue. The next clean-up run deletes as planned, and opens a new issue if it is still refused." \
             "" \
             "Run that hit this: $RUN_URL")
-          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body" --assignee "$ASSIGNEE" \
-            || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" --assignee "$ASSIGNEE" \
+            || gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body"
+          mapfile -t numbers < <(matching)
+          for number in "${numbers[@]:1}"; do
+            gh issue close "$number" --repo "$GITHUB_REPOSITORY" --reason "not planned" --comment "Duplicate of #${numbers[0]}." || true
+          done
