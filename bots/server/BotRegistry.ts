@@ -186,32 +186,23 @@ export class BotRegistry {
     /**
      * A room a purged Brick is about to leave and has yet to forget (register R29). Once it has left, the homeserver no longer lists the room for it,
      * so this is the only record that the forget is still owed; it survives a restart. Strict: throws while a store that was in use is down, so the
-     * caller does not leave a room it could not write this down for. No store at all is not a failure (the caller keeps its own copy).
+     * caller does not leave a room it could not write this down for. No store at all is a failure too: a record kept only in memory would be lost by a restart.
      */
     async rememberPendingForget(matrixUserId: string, roomId: string): Promise<void> {
-        if (!this.redis?.isOpen) {
-            if (this.sharedStoreSeen) throw new Error('The shared store is down');
-            return;
-        }
+        if (!this.redis?.isOpen) throw new Error(this.sharedStoreSeen ? 'The shared store is down' : 'There is no shared store to keep the owed forget in');
         await this.redis.hSet('bots:matrix:pending-forgets', `${matrixUserId}|${roomId}`, '1');
     }
 
-    /** The rooms this user left and still has to forget. Throws while a store that was in use is down: "none" would be a guess. */
+    /** The rooms this user left and still has to forget. Throws while the store is down or missing: "none" would be a guess. */
     async pendingForgetsOf(matrixUserId: string): Promise<string[]> {
-        if (!this.redis?.isOpen) {
-            if (this.sharedStoreSeen) throw new Error('The shared store is down');
-            return [];
-        }
+        if (!this.redis?.isOpen) throw new Error(this.sharedStoreSeen ? 'The shared store is down' : 'There is no shared store to read the owed forgets from');
         const prefix = `${matrixUserId}|`;
         return (await this.redis.hKeys('bots:matrix:pending-forgets')).filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length));
     }
 
-    /** Every room owed a forget, for whichever Brick, so a retry never depends on a purge being asked for again. Throws while a store that was in use is down. */
+    /** Every room owed a forget, for whichever Brick, so a retry never depends on a purge being asked for again. Throws while the store is down or missing. */
     async allPendingForgets(): Promise<Array<{ matrixUserId: string; roomId: string }>> {
-        if (!this.redis?.isOpen) {
-            if (this.sharedStoreSeen) throw new Error('The shared store is down');
-            return [];
-        }
+        if (!this.redis?.isOpen) throw new Error(this.sharedStoreSeen ? 'The shared store is down' : 'There is no shared store to read the owed forgets from');
         return (await this.redis.hKeys('bots:matrix:pending-forgets')).flatMap((key) => {
             const cut = key.indexOf('|');
             return cut > 0 ? [{ matrixUserId: key.slice(0, cut), roomId: key.slice(cut + 1) }] : [];

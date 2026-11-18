@@ -33,11 +33,11 @@ describe('BotRegistry: rooms a purged Brick still has to forget', () => {
         expect((await registry.allPendingForgets()).map((one: any) => `${one.matrixUserId}|${one.roomId}`).sort()).toEqual(['@bot_a:hs|!two:hs', '@bot_b:hs|!three:hs']);
     });
 
-    it('is quiet when there is no shared store at all, and fails when one that was in use is down', async () => {
+    it('fails, never guesses, when there is no shared store or the one in use is down', async () => {
         const registry = registryWith(undefined);
-        await registry.rememberPendingForget('@bot_a:hs', '!one:hs');
-        expect(await registry.pendingForgetsOf('@bot_a:hs')).toEqual([]);
-        await registry.clearPendingForget('@bot_a:hs', '!one:hs');
+        await expect(registry.rememberPendingForget('@bot_a:hs', '!one:hs')).rejects.toThrow('no shared store');
+        await expect(registry.pendingForgetsOf('@bot_a:hs')).rejects.toThrow('no shared store');
+        await expect(registry.allPendingForgets()).rejects.toThrow('no shared store');
 
         registry.sharedStoreSeen = true;
         await expect(registry.rememberPendingForget('@bot_a:hs', '!one:hs')).rejects.toThrow('shared store is down');

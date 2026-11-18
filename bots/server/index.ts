@@ -378,6 +378,11 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, carryGuestChat, carryBrick, noteHearing: noteHearing ?? undefined });
+
+        // Initialize bot manager
+        await botManager.initialize();
+        // Only now, with the shared store connected: a purge writes the rooms it leaves down there, and has no store to write to before this.
         // A Brick purged for good keeps nothing in chat: its rooms are cleared from Orbit's list. With no chat server on purpose (none of its settings set)
         // there is none to clear; with settings half set, or a chat server this process could not verify at start, the purge waits (a verified one needs a restart to be reached).
         chatPurges = new ChatPurgeSweeper({
@@ -386,10 +391,6 @@ async function start() {
             purge: async (botId) => (matrixBridge ? matrixBridge.purgeChats(botId) : matrixIntentionallyOff()),
         });
         chatPurges.start();
-        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, carryGuestChat, carryBrick, noteHearing: noteHearing ?? undefined });
-
-        // Initialize bot manager
-        await botManager.initialize();
         // A Brick deleted through another bot server stops here at once too (#1996). Without it, within the minute.
         const replies = dmReplies;
         if (replies) {
