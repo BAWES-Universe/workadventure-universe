@@ -250,6 +250,28 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(mediaSent).not.toHaveBeenCalled();
     });
 
+    it('a chat closed for a Brick that is no longer in the room drops what is kept for the room, and does not fail', async () => {
+        client.getJoinedMembers.mockRejectedValue(new Error('403 M_FORBIDDEN: not in the room'));
+        client.getJoinedRooms.mockResolvedValue([]);
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(deps.rooms.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+        expect(bridge.roomBots.has(ROOM)).toBe(false);
+        expect(client.redactEvent).not.toHaveBeenCalled();
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(client.forgetRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+    });
+
+    it('a Brick still in the room whose members cannot be read keeps the room for the next try (nothing dropped, nothing left)', async () => {
+        client.getJoinedMembers.mockRejectedValue(new Error('502'));
+        client.getJoinedRooms.mockResolvedValue([ROOM]);
+        await expect(bridge.purgeRoom(BOT, BOT_USER, ROOM)).rejects.toThrow('502');
+        // The room list cannot be read either: the same
+        client.getJoinedRooms.mockRejectedValue(new Error('502'));
+        await expect(bridge.purgeRoom(BOT, BOT_USER, ROOM)).rejects.toThrow('502');
+        expect(deps.rooms.forgetDmRoom).not.toHaveBeenCalled();
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+    });
+
     it('a chat closed for a gone Brick (its purge not begun) takes no new send from the Brick once the clearing has begun', async () => {
         expect(bridge.purgedBots.has(BOT)).toBe(false);
         let lateSend: Promise<unknown> | undefined;

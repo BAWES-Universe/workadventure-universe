@@ -1092,8 +1092,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // Every way into a room's clearing (the purge, a chat closed for a gone bot, a person leaving) waits for what the Brick is sending or writing right now,
         // so nothing it says can land after the history was read and before it leaves
         await Promise.all([...(this.profileWork.get(botId) ?? [])]);
-        // Not swallowed: without the members the links to this room in the shared store could not be dropped, and the room is gone from the Brick's joined list after the leave
-        const members = await this.client.getJoinedMembers(userId, roomId);
+        // Not swallowed while the Brick is in the room: without the members the links to this room in the shared store could not be dropped, and the room is gone from the Brick's joined list after the leave
+        let members: string[];
+        try {
+            members = await this.client.getJoinedMembers(userId, roomId);
+        } catch (error) {
+            // A Brick that is no longer in the room (it left, or was removed, while this process was not looking) has nothing it can redact or leave:
+            // only what is kept for the room here and in the shared store is dropped, and that is not left for a try that would fail the same way
+            const stillJoined = await this.client.getJoinedRooms(userId).then((rooms) => rooms !== null && rooms.includes(roomId), () => true);
+            if (stillJoined) throw error;
+            await this.forgetRoom(roomId);
+            // Strict, as for a room the Brick leaves: a link that cannot be dropped is tried again
+            await this.deps.rooms?.forgetDmRoom(roomId);
+            await this.client.forgetRoom(userId, roomId).catch(() => undefined);
+            this.purgeCursors.delete(roomId);
+            return;
+        }
         let from: string | undefined = this.purgeCursors.get(roomId);
         let finished = false;
         for (let page = 0; page < PURGE_PAGES_MAX; page++) {
