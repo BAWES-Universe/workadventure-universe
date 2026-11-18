@@ -257,16 +257,25 @@ export function parseArgs(argv) {
   return out;
 }
 
-/**
- * Deletes one package version through the GitHub API. `github(path, init)` is a fetch against it. A 404 only counts as
- * "already gone" when the version is really not there: GitHub also answers 404 when the token may not delete.
- */
 // A delete GitHub refused for lack of the Admin role. The live workflow opens an issue for it (prune-images.yml), so the
 // missing setting is reported instead of waiting to be found in a log.
 function needsAdmin(message) {
   return Object.assign(new Error(message), { needsAdmin: true });
 }
 
+// GitHub also answers 403 for a rate limit (a secondary limit is common when deleting quickly). That is not a missing Admin
+// role, so it must not open the issue. Rate-limit answers carry retry-after or x-ratelimit-remaining: 0, or say so in the body.
+async function isRateLimit(response) {
+  const header = (name) => response.headers?.get?.(name) ?? null;
+  if (header('retry-after') !== null || header('x-ratelimit-remaining') === '0') return true;
+  const body = typeof response.text === 'function' ? await response.text().catch(() => '') : '';
+  return /rate limit/i.test(body);
+}
+
+/**
+ * Deletes one package version through the GitHub API. `github(path, init)` is a fetch against it. A 404 only counts as
+ * "already gone" when the version is really not there: GitHub also answers 404 when the token may not delete.
+ */
 export function makeDeleter({ github, packagePath, packageName }) {
   return async (version) => {
     const response = await github(`${packagePath}/versions/${version.id}`, { method: 'DELETE' });
@@ -274,6 +283,9 @@ export function makeDeleter({ github, packagePath, packageName }) {
       const check = await github(`${packagePath}/versions/${version.id}`);
       if (check.status === 404) return;
       throw needsAdmin(`could not delete version ${version.id} of ${packageName}: GitHub answered 404 but the version still exists (does this repository have the Admin role under the package's "Manage Actions access"?)`);
+    }
+    if (response.status === 403 && (await isRateLimit(response))) {
+      throw new Error(`could not delete version ${version.id} of ${packageName}: GitHub rate-limited the deletes (403). Nothing is wrong with the package settings; the next run carries on.`);
     }
     if (response.status === 403) {
       throw needsAdmin(`could not delete version ${version.id} of ${packageName}: GitHub answered 403. Give this repository the Admin role under the package's "Manage Actions access" (package settings; deleting a version needs Admin, not Write) and run it again.`);
