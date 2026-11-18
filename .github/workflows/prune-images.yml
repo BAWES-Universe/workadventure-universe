@@ -59,6 +59,8 @@ jobs:
       contents: read
       packages: write
       pull-requests: read
+      # Only to open the issue below when GitHub refuses a delete.
+      issues: write
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -81,6 +83,7 @@ jobs:
         with:
           node-version: 22
       - name: Prune ${{ matrix.package }}
+        id: prune
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE: ${{ matrix.package }}
@@ -114,3 +117,32 @@ jobs:
           [ "$DRY_RUN" = true ] || args+=(--live)
           [ -z "$CLOSED_BRANCH" ] || args+=(--closed-branch "$CLOSED_BRANCH" --closed-pr "$CLOSED_PR")
           node .github/scripts/prune-images-cli.mjs "${args[@]}"
+      # GitHub refused a delete because this repository lacks the Admin role on the package. Say so in an issue assigned to
+      # the owner, so the missing setting is reported instead of waiting in a log. One open issue per package: a later
+      # run that hits the same refusal adds nothing while that issue is open.
+      - name: Report missing Admin access on ${{ matrix.package }}
+        if: failure() && steps.prune.outputs.needs_admin == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE: ${{ matrix.package }}
+          ASSIGNEE: BAWES
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Image clean-up needs Admin access on $PACKAGE"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json title --jq '.[].title' | grep -qxF "$title"; then
+            echo "An open issue already reports this: $title"
+            exit 0
+          fi
+          body=$(printf '%s\n' \
+            "The image clean-up could not delete old versions of **$PACKAGE**: GitHub refused because this repository does not have the Admin role on that package. Nothing else is affected; the clean-up of this image waits until this is fixed." \
+            "" \
+            "**How to fix (about a minute):**" \
+            "1. Open https://github.com/orgs/$GITHUB_REPOSITORY_OWNER/packages and click **$PACKAGE**." \
+            "2. Click **Package settings** at the bottom of the right-hand column." \
+            "3. Under **Manage Actions access**, set **${GITHUB_REPOSITORY#*/}** to **Admin**. If it is not listed, click **Add Repository**, pick it, and choose **Admin**." \
+            "4. Close this issue. The next clean-up run deletes as planned, and opens a new issue if it is still refused." \
+            "" \
+            "Run that hit this: $RUN_URL")
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body" --assignee "$ASSIGNEE" \
+            || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"

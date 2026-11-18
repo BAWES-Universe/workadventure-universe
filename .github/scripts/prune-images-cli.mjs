@@ -164,5 +164,7 @@ try {
   }
 } catch (error) {
   console.error(`::error::${error.message}`);
+  // Tells the workflow's next step to open an issue naming this package (prune-images.yml).
+  if (error.needsAdmin && process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, 'needs_admin=true\n');
   process.exit(1);
 }

@@ -261,17 +261,23 @@ export function parseArgs(argv) {
  * Deletes one package version through the GitHub API. `github(path, init)` is a fetch against it. A 404 only counts as
  * "already gone" when the version is really not there: GitHub also answers 404 when the token may not delete.
  */
+// A delete GitHub refused for lack of the Admin role. The live workflow opens an issue for it (prune-images.yml), so the
+// missing setting is reported instead of waiting to be found in a log.
+function needsAdmin(message) {
+  return Object.assign(new Error(message), { needsAdmin: true });
+}
+
 export function makeDeleter({ github, packagePath, packageName }) {
   return async (version) => {
     const response = await github(`${packagePath}/versions/${version.id}`, { method: 'DELETE' });
     if (response.status === 404) {
       const check = await github(`${packagePath}/versions/${version.id}`);
       if (check.status === 404) return;
-      throw new Error(`could not delete version ${version.id} of ${packageName}: GitHub answered 404 but the version still exists (does this repository have the Admin role under the package's "Manage Actions access"?)`);
+      throw needsAdmin(`could not delete version ${version.id} of ${packageName}: GitHub answered 404 but the version still exists (does this repository have the Admin role under the package's "Manage Actions access"?)`);
     }
-    if (!response.ok) {
-      const hint = response.status === 403 ? ` Give this repository the Admin role under the package's "Manage Actions access" (package settings; deleting a version needs Admin, not Write) and run it again.` : '';
-      throw new Error(`could not delete version ${version.id} of ${packageName}: GitHub answered ${response.status}.${hint}`);
+    if (response.status === 403) {
+      throw needsAdmin(`could not delete version ${version.id} of ${packageName}: GitHub answered 403. Give this repository the Admin role under the package's "Manage Actions access" (package settings; deleting a version needs Admin, not Write) and run it again.`);
     }
+    if (!response.ok) throw new Error(`could not delete version ${version.id} of ${packageName}: GitHub answered ${response.status}.`);
   };
 }
