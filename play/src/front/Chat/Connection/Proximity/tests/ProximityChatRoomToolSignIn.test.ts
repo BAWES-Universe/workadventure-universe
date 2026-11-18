@@ -162,6 +162,36 @@ describe("ProximityChatRoom tool sign-in card (#1819)", () => {
         expect(cards()).toHaveLength(1);
     });
 
+    it("still ignores an older word that arrives late after the bot took its card back", () => {
+        emit(signIn(nora, [TAVILY], 3));
+        emit(signIn(nora, [], 4));
+        emit(signIn(nora, [TAVILY], 2));
+        expect(cards()).toEqual([]);
+    });
+
+    it("does not hand the card over to the next map's chat", () => {
+        emit(signIn(nora, [TAVILY]));
+        expect(cards()).toHaveLength(1);
+        room.stashHistoryForNextScene();
+        const spaceRegistry = {
+            joinSpace: () => Promise.resolve(fake.space as unknown as SpaceInterface),
+            leaveSpace: () => Promise.resolve(),
+        } as unknown as SpaceRegistryInterface;
+        const next = new ProximityChatRoom(
+            "room_2",
+            spaceRegistry,
+            { newChatMessageWritingStatusStream: new Subject() },
+            { getPlayers: () => new Map() } as unknown as RemotePlayersRepository,
+            { playBubbleInSound: vi.fn(), playBubbleOutSound: vi.fn() },
+            () => undefined
+        );
+        try {
+            expect([...next.messages].filter((message) => (message as ProximityChatMessage).toolSignIn)).toEqual([]);
+        } finally {
+            next.destroy();
+        }
+    });
+
     it("counts the card as unread, as any message that arrives", () => {
         expect(get(room.unreadNotificationCount)).toBe(0);
         emit(signIn(nora, [TAVILY]));

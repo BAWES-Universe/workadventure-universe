@@ -1211,7 +1211,32 @@ const mapEditor: BaseTranslation = {
                     servers: "{count:number} app{{s}}",
                     notChecked: "Not checked yet",
                     needsSignIn: "{server:string} needs signing in again",
-                    needSignInMany: "{count:number} servers need signing in again",
+                    needSignInMany: "{count:number} Apps need signing in again",
+                    // A tool server's own page after the bot found its sign-in lost (game #1819)
+                    signInExpiredAt: "Sign-in expired at {time:string}",
+                    signInExpiredSince: "Sign-in expired · since {time:string}",
+                    noAnswerAt:
+                        "Didn't answer at {time:string} · tried again when next used, after a few minutes",
+                    noAnswerShort: "Didn't answer · {time:string}",
+                    reconnectedAt:
+                        "Connected · it can do {count:number} thing{{s}} · reconnected at {time:string}",
+                    untilReconnected:
+                        "Until it's reconnected, {bot:string} answers without {server:string} and tells people who ask for it.",
+                    waitingFor: "Waiting for {server:string}…",
+                    reconnectServer: "Reconnect {server:string}",
+                    finishInWindow: "Finish in the {server:string} window. This page updates by itself.",
+                    signInWindowFailed:
+                        "Couldn't open the sign-in window. Allow pop-ups for this site, or try again in a moment.",
+                    opensSignIn:
+                        "Opens {server:string}'s sign-in. Sign in with the {server:string} account {bot:string} should use.",
+                    newToken: "New token from {server:string}",
+                    newApiKey: "New API key from {server:string}",
+                    pasteItHere: "Paste it here",
+                    saveAndCheck: "Save and check",
+                    saving: "Saving…",
+                    couldntSaveKey: "Couldn't save it. Try again.",
+                    replacesOldKey: "Replaces the old one. {bot:string} uses it from its next reply.",
+                    asksForSignIn: "{server:string} now asks for a sign-in. Edit server to add one.",
                     toCheck: "{count:number} to check",
                     sorted: "{server:string}'s {tools:string} are sorted by what they do. For each heading, pick whether {bot:string} uses those tools right away, asks first, or never.",
                     cutOf: "Showing the first {shown:number} of {total:number} tools",

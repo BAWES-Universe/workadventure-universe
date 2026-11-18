@@ -329,7 +329,9 @@ export class ProximityChatRoom implements ChatRoom {
     /** The reply limit card shown for each bot, by bot id, so a newer one replaces it */
     private replyLimitCards = new Map<string, string>();
     /** The Reconnect card each bot showed this person (#1819): the message that holds it, by bot. */
-    private toolSignInCards = new Map<string, { messageId: string; revision: number }>();
+    private toolSignInCards = new Map<string, string>();
+    /** The newest word of each bot about its card, kept when it takes the card back so an older one arriving late is ignored */
+    private toolSignInRevisions = new Map<string, number>();
     private spaceVoiceDraftSubscription: Subscription | undefined;
     private spaceVoiceDoneSubscription: Subscription | undefined;
     /**
@@ -1239,21 +1241,21 @@ export class ProximityChatRoom implements ChatRoom {
     ): void {
         const toolSignIn = parseNearbyToolSignIn(event.body, event.botId, event.botName);
         if (!toolSignIn) return;
+        const lastRevision = this.toolSignInRevisions.get(toolSignIn.botId);
+        // Only the bot's own newer word changes the card (also after it took the card back); an older one that arrives late is ignored
+        if (lastRevision !== undefined && event.revision < lastRevision) return;
+        this.toolSignInRevisions.set(toolSignIn.botId, event.revision);
         const shown = this.toolSignInCards.get(toolSignIn.botId);
-        // Only the bot's own newer word changes the card; an older one that arrives late is ignored
-        if (shown && event.revision < shown.revision) return;
-        if (shown) this.messages.delete(shown.messageId);
-        if (toolSignIn.lost.length === 0) {
-            this.toolSignInCards.delete(toolSignIn.botId);
-            return;
-        }
+        if (shown) this.messages.delete(shown);
+        this.toolSignInCards.delete(toolSignIn.botId);
+        if (toolSignIn.lost.length === 0) return;
         const message = this.addBotCardMessage(
             senderSpaceUserId,
             { toolSignIn },
             "",
             `${toolSignIn.botId}-signin-${event.revision}`
         );
-        if (message) this.toolSignInCards.set(toolSignIn.botId, { messageId: message.id, revision: event.revision });
+        if (message) this.toolSignInCards.set(toolSignIn.botId, message.id);
     }
 
     private addBotCardMessage(
@@ -1550,9 +1552,12 @@ export class ProximityChatRoom implements ChatRoom {
      */
     public stashHistoryForNextScene(): void {
         // A card still waiting for a pick cannot be answered on the next map (this room's cards stay behind with it), so it
-        // is not handed over, as when the person leaves a bubble. Cards that ended go with the chat.
+        // is not handed over, as when the person leaves a bubble. Cards that ended go with the chat. A Reconnect card
+        // (#1819) belongs to this map's bubble and its bot too: the next map's bot shows its own if it is still needed.
         const messages = Array.from(get(this.messages)).filter(
-            (message) => !(message instanceof ProximityChatMessage && message.ask && !get(message.ask)?.answer)
+            (message) =>
+                !(message instanceof ProximityChatMessage && message.ask && !get(message.ask)?.answer) &&
+                !(message instanceof ProximityChatMessage && message.toolSignIn)
         );
         const unsentDrafts = new Map(get(this._unsentDrafts));
         // Leaving the map ends the stay you're in: close it in the copy, so the next map never receives an open

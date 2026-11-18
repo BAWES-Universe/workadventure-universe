@@ -350,7 +350,7 @@ describe("the Tools group says a lost sign-in first on its line (#1819)", () => 
     it("counts them when several do", async () => {
         const lost = { signInLostAt: "2026-11-05T09:54:00.000Z" };
         expect(await brief([server("s1", "Tavily", lost), server("s2", "Attio", lost)])).toContain(
-            "2 servers need signing in again"
+            "2 Apps need signing in again"
         );
     });
 

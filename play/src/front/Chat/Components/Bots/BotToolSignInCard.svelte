@@ -5,6 +5,7 @@
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { reconnectBotServer } from "../../../external-modules/bots/services/reconnectServer";
     import { reconnectApp } from "../../Bricks/Apps/Reconnect";
+    import { replaceKey } from "../../Bricks/Apps/KeyForm";
     import { openBotPage } from "../../../external-modules/bots/index";
     import { IconCheck, IconEye, IconLogin, IconX } from "@wa-icons";
 
@@ -17,12 +18,18 @@
     export let signIn: BotToolSignIn;
     /** X: hides the card for this person. The bot's page and Orbit home still show the lost sign-in. */
     export let onClose: () => void = () => {};
+    /** Changes when the chat moves on (a new message): the card asks Orbit again whether the sign-in is still lost. */
+    export let refresh: unknown = undefined;
+    const RECHECK_EVERY_MS = 5000;
 
     type RowState = "lost" | "waiting" | "back";
     let states = new Map<string, RowState>();
     // What Orbit said when the card opened: connections that are not lost any more leave the card
     let rows: ToolSignInLost[] = signIn.lost;
     let blocked = false;
+    let keyFormFailed = false;
+    // Until Orbit has said what is still lost, no button works: a card from yesterday must not start a fix that is done
+    let checking = true;
 
     // `states` is passed in, so the card draws again when a row's state changes
     function stateOf(known: Map<string, RowState>, row: ToolSignInLost): RowState {
@@ -44,23 +51,56 @@
         }
     }
 
-    // Asked as the card opens
-    void check().then((servers) => {
-        if (!servers) return;
-        const lost = stillLost(signIn.lost, servers);
-        rows = lost;
-        // Nothing is lost any more: the card has nothing to offer
-        if (lost.length === 0) onClose();
-    });
+    /**
+     * Asks Orbit what is still lost and takes the rest off the card. A connection this person is fixing from the card, or
+     * just fixed, stays until the card is closed.
+     */
+    let asking = false;
+    let askedAt = 0;
+    async function recheck(): Promise<void> {
+        if (asking) return;
+        /* eslint-disable require-atomic-updates, svelte/infinite-reactive-loop */
+        asking = true;
+        askedAt = Date.now();
+        try {
+            const servers = await check();
+            if (!servers) return;
+            const lost = stillLost(signIn.lost, servers);
+            rows = signIn.lost.filter(
+                (row) => lost.some((one) => one.serverId === row.serverId) || stateOf(states, row) !== "lost"
+            );
+            // Nothing is lost any more: the card has nothing to offer
+            if (rows.length === 0) onClose();
+        } finally {
+            asking = false;
+            checking = false;
+            /* eslint-enable require-atomic-updates, svelte/infinite-reactive-loop */
+        }
+    }
+
+    // Asked as the card opens, and again when the chat moves on (a new message) while it is pinned: never more than every few seconds
+    void recheck();
+    let lastRefresh = refresh;
+    $: if (refresh !== lastRefresh) {
+        lastRefresh = refresh;
+        // eslint-disable-next-line svelte/infinite-reactive-loop
+        if (!checking && Date.now() - askedAt >= RECHECK_EVERY_MS) void recheck();
+    }
 
     async function reconnect(row: ToolSignInLost): Promise<void> {
-        if (stateOf(states, row) === "waiting") return;
-        // A pasted key or token is typed on the server's own page
+        if (checking || stateOf(states, row) === "waiting") return;
+        blocked = false;
+        keyFormFailed = false;
+        // An App's pasted key is replaced where the Apps page replaces it, never through a sign-in window
+        if (row.kind !== "oauth" && row.connectionId) {
+            keyFormFailed = !(await replaceKey(row.connectionId));
+            return;
+        }
+        // A pasted key or token of the bot's own server is typed on the server's own page
         if (row.kind !== "oauth") {
             openBotPage(signIn.botId);
             return;
         }
-        blocked = false;
         setState(row, "waiting");
         // An App's own sign-in, the one the Apps page has (it also knows GitHub and the ready-made Apps); otherwise the bot's server
         const result = row.connectionId
@@ -123,7 +163,7 @@
         {:else}
             <button
                 class="tool-signin-cta"
-                disabled={stateOf(states, one) === "waiting"}
+                disabled={checking || stateOf(states, one) === "waiting"}
                 on:click={() => reconnect(one)}
                 data-testid="botToolSignInReconnect"
             >
@@ -142,7 +182,7 @@
             <button
                 class="tool-signin-row"
                 class:done={stateOf(states, row) === "back"}
-                disabled={stateOf(states, row) !== "lost"}
+                disabled={checking || stateOf(states, row) !== "lost"}
                 on:click={() => reconnect(row)}
                 data-testid="botToolSignInRow"
             >
@@ -170,6 +210,9 @@
     {/if}
     {#if blocked}
         <span class="tool-signin-hint" role="status">{$LL.chat.toolSignIn.blocked()}</span>
+    {/if}
+    {#if keyFormFailed}
+        <span class="tool-signin-hint" role="status">{$LL.chat.toolSignIn.keyFormFailed()}</span>
     {/if}
     <span class="tool-signin-who"><IconEye />{$LL.chat.toolSignIn.onlyYou({ bot: signIn.botName })}</span>
 </div>

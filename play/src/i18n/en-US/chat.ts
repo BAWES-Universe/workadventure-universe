@@ -944,6 +944,7 @@ const chat: BaseTranslation = {
         rowBackLine: "Working again",
         rowSince: "Since {time}",
         blocked: "Couldn't open the sign-in window. Allow pop-ups and try again.",
+        keyFormFailed: "Couldn't open the key form. Try again.",
         onlyYou: "Only you see this card. You can manage {bot}.",
         close: "Close",
     },

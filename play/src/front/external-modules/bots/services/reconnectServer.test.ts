@@ -18,7 +18,7 @@ describe("reconnectBotServer (#1819)", () => {
             return popup;
         });
         vi.stubGlobal("open", open);
-        api.startOAuth.mockImplementation(async (_bot: string, serverId: string) => `https://provider.test/${serverId}`);
+        api.startOAuth.mockImplementation((_bot: string, serverId: string) => Promise.resolve(`https://provider.test/${serverId}`));
     });
 
     afterEach(() => {
@@ -58,7 +58,9 @@ describe("reconnectBotServer (#1819)", () => {
         // The second window finishes: it settles only the second attempt
         tell("oauth-success", windows[1]);
         expect(await second).toBe("done");
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 20);
+        });
         expect(firstSettled).toBe(false);
         tell("oauth-success", windows[0]);
         expect(await first).toBe("done");

@@ -98,8 +98,13 @@ describe("the card in a direct message", () => {
         expect(readBotToolSignIn(sender, notice({ msgtype: "m.text" }), "Nora")).toBeUndefined();
     });
 
-    it("is not drawn when it lists nothing", () => {
-        expect(readBotToolSignIn(sender, notice({ [BOT_TOOL_SIGNIN_KEY]: { lost: [] } }), "Nora")).toBeUndefined();
+    it("comes back empty when the bot takes its card back, so the chat drops the earlier one", () => {
+        expect(readBotToolSignIn(sender, notice({ [BOT_TOOL_SIGNIN_KEY]: { lost: [] } }), "Nora")?.lost).toEqual([]);
+    });
+
+    it("is nothing when the list has entries that cannot be read", () => {
+        expect(readBotToolSignIn(sender, notice({ [BOT_TOOL_SIGNIN_KEY]: { lost: [{ name: "x" }] } }), "Nora")).toBeUndefined();
+        expect(parseBotToolSignIn({ lost: [null, 3] }, BOT, "Nora")).toBeUndefined();
     });
 });
 
@@ -119,13 +124,19 @@ describe("what Orbit says now", () => {
 });
 
 describe("since when", () => {
-    it("is the time today, and the day with it when it is another day", () => {
-        const now = new Date("2026-11-05T12:00:00.000Z");
-        const today = toolSignInSince("2026-11-05T09:54:00.000Z", "en-US", now);
-        const older = toolSignInSince("2026-11-03T09:54:00.000Z", "en-US", now);
+    // Built in the local clock, so the days are the same wherever the tests run
+    const now = new Date(2026, 10, 5, 12, 0);
+    const at = (day: number) => new Date(2026, 10, day, 9, 54).toISOString();
+
+    it("is the time today, the weekday with it within the week, and the date with it for anything older", () => {
+        const today = toolSignInSince(at(5), "en-US", now);
+        const lastWeek = toolSignInSince(at(3), "en-US", now);
+        const older = toolSignInSince(new Date(2026, 9, 20, 9, 54).toISOString(), "en-US", now);
         expect(today).toMatch(/\d{1,2}:\d{2}/);
         expect(today).not.toMatch(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/);
-        expect(older).toMatch(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/);
+        expect(lastWeek).toMatch(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/);
+        expect(older).toMatch(/Oct 20/);
+        expect(older).not.toMatch(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/);
     });
 });
 

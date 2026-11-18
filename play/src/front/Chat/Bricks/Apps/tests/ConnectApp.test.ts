@@ -117,7 +117,9 @@ describe("Connect on an app (#2001)", () => {
         let settled = false;
         void result.then(() => (settled = true));
         tell("oauth-success", { another: "window" });
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 20);
+        });
         expect(settled).toBe(false);
         tell("oauth-success");
         expect(await result).toEqual({ status: "connected", appId: "c9" });

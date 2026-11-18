@@ -185,7 +185,7 @@ describe('BotClient call-only connection', () => {
         const { client, internals } = bot(true);
         client.setBehavior({ setBot: vi.fn(), onSpaceUserJoined: vi.fn(), getConfiguredFacing: vi.fn() } as never);
         internals.spaces.set(SPACE, 'call_abc');
-        const sent = vi.spyOn(client as unknown as { send(m: unknown): void }, 'send').mockImplementation(() => undefined);
+        const sent = vi.spyOn(client as unknown as { send(m: unknown): boolean }, 'send').mockImplementation(() => true);
         const receivers = () =>
             sent.mock.calls.map(([m]) => (m as { message: { privateEvent: { receiverUserId: string } } }).message.privateEvent.receiverUserId);
         const card = { limit: 'l', resetsAt: 'r', who: 'w' };

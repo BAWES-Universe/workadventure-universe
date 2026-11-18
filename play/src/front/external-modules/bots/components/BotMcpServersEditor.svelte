@@ -1,12 +1,14 @@
 <script lang="ts">
     import { onMount, onDestroy, afterUpdate } from "svelte";
+    import { get } from "svelte/store";
     import {
         botApiService,
         type McpServer,
         type CreateMcpServerDto,
         type McpServerTestResult,
     } from "../services/BotApiService";
-    import LL from "../../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../../i18n/i18n-svelte";
+    import { toolSignInSince } from "../../../Chat/Bots/BotToolSignIn";
     import { beginBot, botToolsStore, loadAllServerTools, setServers } from "../stores/BotToolsStore";
     import { toCheck } from "../toolsModel";
     import { reconnectBotServer } from "../services/reconnectServer";
@@ -643,15 +645,9 @@
 
     // ─── A sign-in the bot server found lost while answering (#1819) ─────────────────────
 
-    /** When a connection stopped, in the viewer's own clock: the time today, with the day when it is not today. */
+    /** When a connection stopped, in the viewer's own clock: the time today, the weekday within the week, the date for older ones. */
     function clock(iso: string): string {
-        const at = new Date(iso);
-        const sameDay = at.toDateString() === new Date().toDateString();
-        return at.toLocaleTimeString(undefined, {
-            ...(sameDay ? {} : { weekday: "short" }),
-            hour: "numeric",
-            minute: "2-digit",
-        });
+        return toolSignInSince(iso, $locale);
     }
 
     /**
@@ -659,21 +655,22 @@
      * `head` is the longer line on the server's own page.
      */
     function liveLine(server: McpServer, head: boolean): string | null {
+        const text = $LL.mapEditor.edit.bots.page.tools;
         if (server.signInLostAt) {
             return head
-                ? `Sign-in expired at ${clock(server.signInLostAt)}`
-                : `Sign-in expired · since ${clock(server.signInLostAt)}`;
+                ? text.signInExpiredAt({ time: clock(server.signInLostAt) })
+                : text.signInExpiredSince({ time: clock(server.signInLostAt) });
         }
         if (server.noAnswerAt) {
             return head
-                ? `Didn't answer at ${clock(server.noAnswerAt)} · tries again in a few minutes`
-                : `Didn't answer · ${clock(server.noAnswerAt)}`;
+                ? text.noAnswerAt({ time: clock(server.noAnswerAt) })
+                : text.noAnswerShort({ time: clock(server.noAnswerAt) });
         }
         if (server.reconnectedAt && head && getStatusDot(server) === "ok") {
-            const count = server.lastTestResult?.toolCount ?? 0;
-            return `Connected · it can do ${count} thing${count !== 1 ? "s" : ""} · reconnected at ${clock(
-                server.reconnectedAt
-            )}`;
+            return text.reconnectedAt({
+                count: server.lastTestResult?.toolCount ?? 0,
+                time: clock(server.reconnectedAt),
+            });
         }
         return null;
     }
@@ -715,7 +712,7 @@
             void handleTestConnection(server.id);
         } catch (error) {
             console.error("[BotMcpServersEditor] Could not save the new key:", error);
-            keyError = "Couldn't save it. Try again.";
+            keyError = get(LL).mapEditor.edit.bots.page.tools.couldntSaveKey();
         } finally {
             // eslint-disable-next-line require-atomic-updates
             savingKey = false;
@@ -780,7 +777,7 @@
                 {#if server.signInLostAt}
                     <!-- The bot server found the sign-in refused while answering -->
                     <p class="mcp-why">
-                        Until it's reconnected, {botName} answers without {server.name} and tells people who ask for it.
+                        {$LL.mapEditor.edit.bots.page.tools.untilReconnected({ bot: botName, server: server.name })}
                     </p>
                     {#if server.authType === "oauth"}
                         <PageButton
@@ -790,26 +787,31 @@
                             disabled={reconnectingServerId !== null}
                             on:click={() => handleReconnect(server)}
                             >{reconnectingServerId === server.id
-                                ? `Waiting for ${server.name}…`
-                                : `Reconnect ${server.name}`}</PageButton
+                                ? $LL.mapEditor.edit.bots.page.tools.waitingFor({ server: server.name })
+                                : $LL.mapEditor.edit.bots.page.tools.reconnectServer({ server: server.name })}</PageButton
                         >
                         <span class="mcp-hint"
                             >{reconnectingServerId === server.id
-                                ? `Finish in the ${server.name} window. This page updates by itself.`
+                                ? $LL.mapEditor.edit.bots.page.tools.finishInWindow({ server: server.name })
                                 : reconnectBlocked
-                                ? "Couldn't open the sign-in window. Allow pop-ups and try again."
-                                : `Opens ${server.name}'s sign-in. Sign in with the ${server.name} account ${botName} should use.`}</span
+                                ? $LL.mapEditor.edit.bots.page.tools.signInWindowFailed()
+                                : $LL.mapEditor.edit.bots.page.tools.opensSignIn({
+                                      server: server.name,
+                                      bot: botName,
+                                  })}</span
                         >
                     {:else if server.authType === "bearer" || server.authType === "api-key"}
                         <label class="mcp-keylab" for="mcp-newkey"
-                            >New {server.authType === "bearer" ? "token" : "API key"} from {server.name}</label
+                            >{server.authType === "bearer"
+                                ? $LL.mapEditor.edit.bots.page.tools.newToken({ server: server.name })
+                                : $LL.mapEditor.edit.bots.page.tools.newApiKey({ server: server.name })}</label
                         >
                         <input
                             id="mcp-newkey"
                             class="mcp-input mcp-key"
                             type="password"
                             autocomplete="off"
-                            placeholder="Paste it here"
+                            placeholder={$LL.mapEditor.edit.bots.page.tools.pasteItHere()}
                             bind:value={newKey}
                         />
                         <PageButton
@@ -818,13 +820,17 @@
                             testId="bot-save-key"
                             disabled={savingKey || !newKey.trim()}
                             on:click={() => handleSaveKey(server)}
-                            >{savingKey ? "Saving…" : "Save and check"}</PageButton
+                            >{savingKey
+                                ? $LL.mapEditor.edit.bots.page.tools.saving()
+                                : $LL.mapEditor.edit.bots.page.tools.saveAndCheck()}</PageButton
                         >
                         <span class="mcp-hint"
-                            >{keyError || `Replaces the old one. ${botName} uses it from its next reply.`}</span
+                            >{keyError || $LL.mapEditor.edit.bots.page.tools.replacesOldKey({ bot: botName })}</span
                         >
                     {:else}
-                        <span class="mcp-hint">{server.name} now asks for a sign-in. Edit server to add one.</span>
+                        <span class="mcp-hint"
+                            >{$LL.mapEditor.edit.bots.page.tools.asksForSignIn({ server: server.name })}</span
+                        >
                     {/if}
                 {/if}
                 {#if testProblem[server.id]}

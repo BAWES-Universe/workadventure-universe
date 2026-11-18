@@ -380,7 +380,7 @@
                   drawnMessages as (ChatMessage & { session?: ProximitySessionMarker })[],
                   $spaceJoinedAt
               )
-    ).filter((entry) => !entry.message.transcriptNotice);
+    ).filter((entry) => !entry.message.transcriptNotice && !entry.message.toolSignIn);
     function isNoticeEntry(entry: TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>): boolean {
         return (
             ((entry.role === "start" || entry.role === "resume") && entry.message.session !== undefined) ||
@@ -542,10 +542,20 @@
     // The newest Reconnect card a bot showed this person (#1819), pinned above the message box until they close it. A
     // direct message keeps its cards in the chat: the card checks with Orbit that the sign-in is still lost before it shows.
     let signInClosedCount = 0;
+    // Each bot has its newest word only (an empty one is the bot taking its card back); of those, the newest one that was not closed.
     $: dockedSignIn = (() => {
         void signInClosedCount;
-        const newest = [...($messages ?? [])].reverse().find((message) => message.toolSignIn);
-        return newest && !isToolSignInClosed(newest.id) ? newest : undefined;
+        const newestOfBot = new Map<string, ChatMessage>();
+        for (const message of $messages ?? []) {
+            if (!message.toolSignIn) continue;
+            // Deleted first, so the map keeps the bots in the order of their newest word
+            newestOfBot.delete(message.toolSignIn.botId);
+            newestOfBot.set(message.toolSignIn.botId, message);
+        }
+        const open = [...newestOfBot.values()].filter(
+            (message) => (message.toolSignIn?.lost.length ?? 0) > 0 && !isToolSignInClosed(message.id)
+        );
+        return open.length > 0 ? open[open.length - 1] : undefined;
     })();
     $: askStore = (partnerBotId || proximityRoom) && messages ? chatAsks(messages) : readable([]);
     let askNow = Date.now();
@@ -1651,8 +1661,6 @@
                             {#if shownReplyLimits.has(entry.message.id)}
                                 <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
                             {/if}
-                        {:else if entry.message.toolSignIn}
-                            <!-- The Reconnect card is pinned above the message box, so the chat never repeats it. -->
                         {:else if askById.has(entry.message.id)}
                             <!-- A waiting card is pinned above the message box, so the chat never repeats it. Once it
                                  ended, it moves into the chat where it was asked, as it ended. -->
@@ -1760,11 +1768,13 @@
                     />
                 {/if}
                 {#if dockedSignIn?.toolSignIn}
-                    {#key dockedSignIn.id}
+                    {@const signInMessageId = dockedSignIn.id}
+                    {#key signInMessageId}
                         <BotToolSignInCard
                             signIn={dockedSignIn.toolSignIn}
+                            refresh={$messages?.length}
                             onClose={() => {
-                                closeToolSignIn(dockedSignIn?.id ?? "");
+                                closeToolSignIn(signInMessageId);
                                 signInClosedCount += 1;
                             }}
                         />

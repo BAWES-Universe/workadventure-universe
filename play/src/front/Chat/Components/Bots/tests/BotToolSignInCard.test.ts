@@ -21,6 +21,7 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
         rowBackLine: () => "Working again",
         rowSince: ({ time }: { time: string }) => `Since ${time}`,
         blocked: () => "Couldn't open the sign-in window. Allow pop-ups and try again.",
+        keyFormFailed: () => "Couldn't open the key form. Try again.",
         onlyYou: ({ bot }: { bot: string }) => `Only you see this card. You can manage ${bot}.`,
         close: () => "Close",
     };
@@ -38,6 +39,10 @@ vi.mock("../../../Bricks/Apps/Reconnect", () => ({
 const reconnectBotServer = vi.fn();
 vi.mock("../../../../external-modules/bots/services/reconnectServer", () => ({
     reconnectBotServer: (...args: unknown[]) => reconnectBotServer(...args),
+}));
+const replaceKey = vi.fn();
+vi.mock("../../../Bricks/Apps/KeyForm", () => ({
+    replaceKey: (...args: unknown[]) => replaceKey(...args),
 }));
 const openBotPage = vi.fn();
 vi.mock("../../../../external-modules/bots/index", () => ({
@@ -170,6 +175,35 @@ describe("the Reconnect card for a tool whose sign-in expired (#1819)", () => {
         expect(reconnectBotServer).not.toHaveBeenCalled();
     });
 
+    it("replaces an App's key where the Apps page does, never through a sign-in window or the bot's page", async () => {
+        replaceKey.mockResolvedValue(true);
+        await show(card({ ...ATTIO, connectionId: "conn-7" }));
+        byId("botToolSignInReconnect")?.click();
+        await vi.waitFor(() => expect(replaceKey).toHaveBeenCalledWith("conn-7"));
+        expect(reconnectApp).not.toHaveBeenCalled();
+        expect(reconnectBotServer).not.toHaveBeenCalled();
+        expect(openBotPage).not.toHaveBeenCalled();
+        expect(text()).not.toContain("Couldn't open the key form");
+        replaceKey.mockResolvedValue(false);
+        byId("botToolSignInReconnect")?.click();
+        await vi.waitFor(() => expect(text()).toContain("Couldn't open the key form"));
+    });
+
+    it("keeps the buttons off until Orbit has said what is still lost", async () => {
+        let answer: (servers: unknown) => void = () => undefined;
+        getBotMcpServers.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        await show(card(TAVILY));
+        expect(byId("botToolSignInReconnect")?.disabled).toBe(true);
+        byId("botToolSignInReconnect")?.click();
+        expect(reconnectBotServer).not.toHaveBeenCalled();
+        answer(lostOnOrbit("srv-1"));
+        await vi.waitFor(() => expect(byId("botToolSignInReconnect")?.disabled).toBe(false));
+    });
+
     it("lists two connections as one quiet row each, with no second main button", async () => {
         await show(card(TAVILY, ATTIO));
         expect(text()).toContain("2 Apps need signing in again");
@@ -198,5 +232,7 @@ describe("the Reconnect card for a tool whose sign-in expired (#1819)", () => {
         await show(card(TAVILY));
         expect(text()).toContain("Tavily needs signing in again");
         expect(onClose).not.toHaveBeenCalled();
+        // and it can still be used
+        expect(byId("botToolSignInReconnect")?.disabled).toBe(false);
     });
 });

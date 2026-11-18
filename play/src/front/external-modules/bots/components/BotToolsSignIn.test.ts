@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     getMcpServerTools: vi.fn(),
     updateBotMcpServer: vi.fn(),
     testBotMcpServer: vi.fn(),
+    refreshMcpServerTools: vi.fn(),
     moveMcpTool: vi.fn(),
     confirmMcpTools: vi.fn(),
     saveMcpServerSettings: vi.fn(),
@@ -71,6 +72,7 @@ describe("a tool server the bot server found with a lost sign-in (#1819)", () =>
             totalSeen: null,
         });
         mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 4, toolNames: [] });
+        mocks.refreshMcpServerTools.mockResolvedValue({ saved: "saved" });
         target = document.createElement("div");
         document.body.append(target);
     });
@@ -121,6 +123,8 @@ describe("a tool server the bot server found with a lost sign-in (#1819)", () =>
         await settle();
         expect(reconnect.reconnectBotServer).toHaveBeenCalledWith("b1", "s1");
         expect(mocks.testBotMcpServer).toHaveBeenCalledWith("b1", "s1");
+        expect(mocks.refreshMcpServerTools).toHaveBeenCalledWith("b1", "s1");
+        expect(byTestId("bot-test-problem")).toBeNull();
         expect(byTestId("bot-reconnect")).toBeNull();
         expect(head()).toMatch(/Connected · it can do 4 things · reconnected at \d{1,2}:\d{2}/);
     });
@@ -131,7 +135,7 @@ describe("a tool server the bot server found with a lost sign-in (#1819)", () =>
         await mountServer();
         byTestId("bot-reconnect")?.click();
         await settle();
-        expect(head()).toContain("Allow pop-ups and try again.");
+        expect(head()).toContain("Couldn't open the sign-in window. Allow pop-ups for this site, or try again in a moment.");
         expect(byTestId("bot-reconnect")).not.toBeNull();
         expect(mocks.testBotMcpServer).not.toHaveBeenCalled();
     });
@@ -153,13 +157,15 @@ describe("a tool server the bot server found with a lost sign-in (#1819)", () =>
         await settle();
         expect(mocks.updateBotMcpServer).toHaveBeenCalledWith("b1", "s1", { authConfig: "tvly-new" });
         expect(mocks.testBotMcpServer).toHaveBeenCalledWith("b1", "s1");
+        expect(mocks.refreshMcpServerTools).toHaveBeenCalledWith("b1", "s1");
+        expect(byTestId("bot-test-problem")).toBeNull();
         expect(byTestId("bot-save-key")).toBeNull();
     });
 
     it("says a server that did not answer is not a sign-in: no Reconnect", async () => {
         mocks.getBotMcpServers.mockResolvedValue([server({ noAnswerAt: LOST_AT })]);
         await mountServer();
-        expect(head()).toMatch(/Didn't answer at \d{1,2}:\d{2}\D+· tries again in a few minutes/);
+        expect(head()).toMatch(/Didn't answer at \d{1,2}:\d{2}\D+· tried again when next used, after a few minutes/);
         expect(byTestId("bot-reconnect")).toBeNull();
         expect(byTestId("bot-save-key")).toBeNull();
     });

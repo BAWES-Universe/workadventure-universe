@@ -51,6 +51,8 @@ export function parseBotToolSignIn(value: unknown, botId: string, botName: strin
             ...(typeof connectionId === "string" && connectionId ? { connectionId } : {}),
         });
     }
+    // A list that had entries but none that can be read is not the bot taking its card back: it is nothing to draw
+    if (raw.length > 0 && lost.length === 0) return undefined;
     return { botId, botName: botName.trim().slice(0, NAME_MAX), lost };
 }
 
@@ -63,7 +65,10 @@ export function parseNearbyToolSignIn(body: string, botId: string, botName: stri
     }
 }
 
-/** The card a bot's direct message notice carries, or undefined when it has none or is not from a bot. */
+/**
+ * The card a bot's direct message notice carries, or undefined when it has none or is not from a bot. A notice with an
+ * empty list is the bot taking its earlier card back: it is returned, so the chat drops the card that came before it.
+ */
 export function readBotToolSignIn(
     sender: string | null | undefined,
     content: Record<string, unknown>,
@@ -71,17 +76,20 @@ export function readBotToolSignIn(
 ): BotToolSignIn | undefined {
     const botId = botIdFromChatId(sender);
     if (!botId || content.msgtype !== "m.notice") return undefined;
-    const card = parseBotToolSignIn(content[BOT_TOOL_SIGNIN_KEY], botId, botName);
-    return card && card.lost.length > 0 ? card : undefined;
+    return parseBotToolSignIn(content[BOT_TOOL_SIGNIN_KEY], botId, botName);
 }
 
-/** Since when, in the viewer's own clock: the time today, with the day when it is not today. */
+/**
+ * Since when, in the viewer's own clock: the time today; the weekday with it within the last week; the date with it for
+ * anything older (a weekday alone would name the wrong day).
+ */
 export function toolSignInSince(since: string, locale: string, now: Date = new Date()): string {
     const at = new Date(since);
     const sameDay = at.toDateString() === now.toDateString();
+    const withinWeek = now.getTime() - at.getTime() < 6 * 24 * 60 * 60 * 1000;
     try {
         return new Intl.DateTimeFormat(locale, {
-            ...(sameDay ? {} : { weekday: "short" }),
+            ...(sameDay ? {} : withinWeek ? { weekday: "short" } : { month: "short", day: "numeric" }),
             hour: "numeric",
             minute: "2-digit",
         }).format(at);
