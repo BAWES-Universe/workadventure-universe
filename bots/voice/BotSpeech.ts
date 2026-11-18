@@ -25,6 +25,8 @@ import { DEFAULT_REPLY_LIMITS, type ReplyLimits } from './settings';
 export interface SpeechVoice {
     /** `onlyFor`: the one person the reply is for. Their audio alone carries it, or it is not said (false). */
     say(spaceName: string, segmentId: string, text: string, maxMs?: number, onlyFor?: string): boolean;
+    /** The reply just said is for this player: who they are is kept for the books, in case they have gone when its last report comes. */
+    noteRecipient?(player: number): void;
     /** Whether someone's audio is connected so the bot is heard. With `onlyFor`: whether that person's is. */
     hasAudience(spaceName: string, onlyFor?: string): boolean;
     /** Whether a reply for this person alone would be heard by others if it were said now, so it must not be. */
@@ -449,7 +451,10 @@ export class BotSpeech {
         }
         this.segments.set(segmentId, { spaceName, responseId, heard: false });
         const player = playerOf(responseId);
-        if (player !== undefined) remember(this.players, segmentId, player);
+        if (player !== undefined) {
+            remember(this.players, segmentId, player);
+            this.voice.noteRecipient?.(player);
+        }
         remember(this.unfinished, segmentId, spaceName);
         for (const oldest of this.segments.keys()) {
             if (this.segments.size <= MAX_REMEMBERED) break;

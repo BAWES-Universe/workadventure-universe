@@ -1359,8 +1359,20 @@ export class VoiceCalls {
 
     private noteTalker(participantId: string): void {
         const player = this.playerIdOf?.(participantId) ?? 0;
-        const who = player ? this.talkerOf?.(player) ?? null : null;
-        if (!player || !who) return;
+        if (player) this.noteWho(player);
+    }
+
+    /**
+     * A reply was said for this player: who they are is kept now, so the seconds of it that play are still booked for them when
+     * they have gone by the time the worker's last report comes (someone who only listened never spoke, so was never noted before).
+     */
+    noteRecipient(player: number): void {
+        this.noteWho(player);
+    }
+
+    private noteWho(player: number): void {
+        const who = this.talkerOf?.(player) ?? null;
+        if (!who) return;
         this.talkers.delete(player);
         this.talkers.set(player, who);
         for (const oldest of this.talkers.keys()) {

@@ -322,6 +322,20 @@ describe('a live call is booked in Orbit', () => {
         expect(b.requests.flat().map((e) => [e.detail.part, e.quantity, e.userId, e.isGuest])).toEqual([['hearing', 3, 'uuid-room_7', false]]);
     });
 
+    it('books a reply for the person it was said to even when that person never spoke in the call and has gone by the time the last report comes (a silent listener)', async () => {
+        const b = bot({ recognition: false, speech: false });
+        await b.connect();
+        const here = new Set([8]);
+        b.calls.talkerOf = (playerId) => (here.has(playerId) ? { userId: `uuid-room_${playerId}`, isGuest: true } : null);
+        // The reply goes to player 8, who is not one of the call's own connections, so nothing about them was ever noted by their own speech or join
+        await b.say(reply(1, 8), 'For the listener.');
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 1500, totalMs: 4000, finished: false, interrupted: false });
+        here.delete(8);
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 2500, totalMs: 4000, finished: true, interrupted: true, reason: 'session_end' });
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(b.requests.flat().map((e) => [e.detail.part, e.quantity, e.userId, e.isGuest])).toEqual([['speaking', 3, 'uuid-room_8', true]]);
+    });
+
     it('keeps the providers of a session a call still uses, however many newer sessions were opened since', async () => {
         const b = bot({ recognition: false, speech: false });
         await b.connect();
