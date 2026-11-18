@@ -165,6 +165,13 @@ export interface MatrixDmBridgeDeps {
         getDmRoomOf?(botId: string, matrixUserId: string): Promise<string | null>;
         forgetDmRoomOf?(botId: string, matrixUserId: string): Promise<void>;
         /**
+         * Rooms a purged Brick is leaving whose forget is still owed (R29): written down before the leave, read on every try, cleared once forgotten.
+         * They survive a restart, because after the leave the homeserver no longer lists the room for the Brick.
+         */
+        rememberPendingForget?(matrixUserId: string, roomId: string): Promise<void>;
+        pendingForgetsOf?(matrixUserId: string): Promise<string[]>;
+        clearPendingForget?(matrixUserId: string, roomId: string): Promise<void>;
+        /**
          * One device at a time makes the chat of a bot and a person (#1995): true for the first to ask while the claim
          * lasts, false for the others. Null when there is no shared store, and the bridge keeps its own claim. Held
          * under the claim's own token, so letting go of it never lets go of a newer claim.
@@ -948,15 +955,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    /** Forgets the rooms the Brick already left whose forget failed earlier. False while any is still not forgotten. */
+    /** Forgets the rooms the Brick already left whose forget is still owed (kept in the shared store, so a restart keeps them). False while any is still not forgotten. */
     private async finishForgets(userId: string): Promise<boolean> {
-        let all = true;
-        for (const key of [...this.pendingForgets]) {
+        const owed = new Set<string>(await (this.deps.rooms?.pendingForgetsOf?.(userId) ?? Promise.resolve([])));
+        for (const key of this.pendingForgets) {
             const cut = key.indexOf('|');
-            if (key.slice(0, cut) !== userId) continue;
+            if (key.slice(0, cut) === userId) owed.add(key.slice(cut + 1));
+        }
+        let all = true;
+        for (const roomId of owed) {
             try {
-                await this.client.forgetRoom(userId, key.slice(cut + 1));
-                this.pendingForgets.delete(key);
+                await this.client.forgetRoom(userId, roomId);
+                await this.deps.rooms?.clearPendingForget?.(userId, roomId);
+                this.pendingForgets.delete(`${userId}|${roomId}`);
             } catch (error: any) {
                 all = false;
                 console.warn(`[MatrixDmBridge] Could not forget a room a purged Brick left:`, error?.message ?? error);
@@ -1002,9 +1013,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
             this.directRooms.delete(`${botId}|${member}`);
             await this.deps.rooms?.forgetDmRoomOf?.(botId, member);
         }
-        await this.client.leaveRoom(userId, roomId, 'Brick deleted');
+        // Written down before the leave: once left, the homeserver no longer lists the room, so this record is the only thing that still owes the forget.
+        // Strict: a record that cannot be written keeps the room joined for the next try.
+        await this.deps.rooms?.rememberPendingForget?.(userId, roomId);
         this.pendingForgets.add(`${userId}|${roomId}`);
+        await this.client.leaveRoom(userId, roomId, 'Brick deleted');
         await this.client.forgetRoom(userId, roomId);
+        await this.deps.rooms?.clearPendingForget?.(userId, roomId);
         this.pendingForgets.delete(`${userId}|${roomId}`);
     }
 
@@ -1353,6 +1368,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const content = event.content ?? {};
         const botId = await this.botForRoom(event.room_id);
         if (!botId) return;
+        // A Brick whose chats are being purged answers nothing and writes nothing more
+        if (this.purgedBots.has(botId)) return;
         const botUserId = this.botUserId(botId);
 
         const language = detectLanguage(String(content.body ?? ''));
@@ -1403,6 +1420,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             else await couldNotAnswer();
             return;
         }
+        // The purge began while the configuration was being loaded
+        if (this.purgedBots.has(botId)) return;
         this.botNotFound.delete(botId);
         // A Brick its owner deleted, while Undo can still give it back (#1996): it answers nothing and says nothing, nothing
         // written to it is kept, and it stays in its chat, so Undo finds the chat as it was.
@@ -1444,8 +1463,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const closing = this.deps.approvals?.onPersonMessage(botId, event.room_id, asker);
             if (closing) await withinMs(closing, APPROVALS_WAIT_MS);
         }
+        // The purge began while the cards were closing: nothing more is answered or written for this Brick
+        if (this.purgedBots.has(botId)) return;
         // Chats started before bots had pictures get theirs with the next message; after that this costs nothing.
-        void this.avatars?.update(this.botUserId(botId), config);
+        // Tracked like every profile write, and skipped once a purge has begun, so a message in flight cannot put the picture back after it is cleared
+        if (this.avatars && !this.purgedBots.has(botId)) {
+            void this.profileWriting(botId, () => (this.purgedBots.has(botId) ? Promise.resolve() : this.avatars!.update(this.botUserId(botId), config))).catch(() => undefined);
+        }
         // A key typed into the chat (game #2044): never answered, never remembered (not even for a resting Brick), never given to the
         // model. The Brick says where keys go.
         const refuseKey = async () => {
@@ -1701,12 +1725,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return (this.botNotFound.get(botId)?.inARow ?? 0) >= BOT_GONE_AFTER;
     }
 
-    /** The bot was deleted: one goodbye note, then it leaves so the chat reads as closed. */
+    /**
+     * The bot was deleted: one goodbye note, and the chat reads as closed. It does NOT leave the room here: a Brick that has left can no longer
+     * redact what it said (a redaction needs it in the room), and the purge only finds the rooms it is still in. The purge (R29) redacts the
+     * note and everything else the Brick said, then leaves and forgets the room.
+     */
     private async closeChat(botId: string, roomId: string, language: NoteLanguage): Promise<void> {
-        // A purge is clearing this Brick's rooms and is the one that leaves them, once everything it said is redacted
+        // A purge is clearing this Brick's rooms: nothing more is written to them for it
         if (this.purgedBots.has(botId)) return;
         await this.sendNote(botId, roomId, 'gone', language);
-        await this.client.leaveRoom(this.botUserId(botId), roomId).catch(() => undefined);
         await this.forgetRoom(roomId);
     }
 
@@ -1867,6 +1894,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             this.drainQueues.set(botId, messages);
             // Taken one at a time, so on shutdown stop() can put back whatever is left.
             for (let event = messages.shift(); event; event = messages.shift()) {
+                // A purge began while the queue was being worked through: what is left is dropped, not answered (and not kept: the purge dropped the stored ones too)
+                if (this.purgedBots.has(botId)) {
+                    messages.length = 0;
+                    break;
+                }
                 let roomBot: string | null;
                 try {
                     roomBot = await this.botForRoom(event.room_id, true);

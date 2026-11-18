@@ -333,8 +333,6 @@ async function shutdown(signal: string) {
     try {
         // Stop game loop
         stopGameLoop();
-        // No new Brick's chats are cleared, and the one being cleared gets the same grace as the direct messages (it is asked for again if it does not finish)
-        await chatPurges?.stop(DM_SHUTDOWN_GRACE_MS);
         // No more tries at hearing Brick changes, even when the game loop never started
         stopBrickListening?.();
         brickRunner?.stop();
@@ -348,9 +346,12 @@ async function shutdown(signal: string) {
         // Direct messages already taken in get their answer first; new ones go back to Synapse for the next bot server.
         // Waiting messages a drain took but hasn't started on go back in line (before the shared store closes), and the
         // ones being answered get the same time. Kept under the container's stop grace, so nothing is killed mid-way.
+        // The Brick's chats being cleared wait in the same breath, never after it: no new Brick is started, and the one under way is asked for
+        // again by the next bot server if it does not finish. All three share the one grace, which stays under the container's stop time.
         const [settled, drained] = await Promise.all([
             matrixRouter ? matrixRouter.settle(DM_SHUTDOWN_GRACE_MS) : true,
             matrixBridge ? matrixBridge.stop(DM_SHUTDOWN_GRACE_MS) : true,
+            chatPurges?.stop(DM_SHUTDOWN_GRACE_MS),
         ]);
         if (!settled || !drained) {
             console.warn('[BotServer] Some direct messages were still being answered at shutdown');

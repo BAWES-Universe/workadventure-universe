@@ -184,6 +184,37 @@ export class BotRegistry {
     }
 
     /**
+     * A room a purged Brick is about to leave and has yet to forget (register R29). Once it has left, the homeserver no longer lists the room for it,
+     * so this is the only record that the forget is still owed; it survives a restart. Strict: throws while a store that was in use is down, so the
+     * caller does not leave a room it could not write this down for. No store at all is not a failure (the caller keeps its own copy).
+     */
+    async rememberPendingForget(matrixUserId: string, roomId: string): Promise<void> {
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
+        await this.redis.hSet('bots:matrix:pending-forgets', `${matrixUserId}|${roomId}`, '1');
+    }
+
+    /** The rooms this user left and still has to forget. Throws while a store that was in use is down: "none" would be a guess. */
+    async pendingForgetsOf(matrixUserId: string): Promise<string[]> {
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return [];
+        }
+        const prefix = `${matrixUserId}|`;
+        return (await this.redis.hKeys('bots:matrix:pending-forgets')).filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length));
+    }
+
+    async clearPendingForget(matrixUserId: string, roomId: string): Promise<void> {
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
+        await this.redis.hDel('bots:matrix:pending-forgets', `${matrixUserId}|${roomId}`);
+    }
+
+    /**
      * One device at a time makes the direct chat of a bot and a person (game #1995), across every bot server: true for
      * the first to ask, false for anyone who asks while that claim lasts. Null without Redis, and the caller keeps its
      * own in-process claim. Throws while a Redis that was in use is down: another server may hold the claim, so the

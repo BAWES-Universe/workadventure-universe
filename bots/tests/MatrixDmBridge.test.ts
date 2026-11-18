@@ -1535,7 +1535,7 @@ describe('MatrixDmBridge', () => {
         }
     });
 
-    it('a deleted bot says goodbye once Orbit has said so three times a minute apart, then leaves and forgets the chat', async () => {
+    it('a deleted bot says goodbye once Orbit has said so three times a minute apart, and forgets the chat; the purge, not the goodbye, leaves the room', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         try {
             await bridge.onEvent(invite());
@@ -1553,7 +1553,8 @@ describe('MatrixDmBridge', () => {
             expect(client.sendMessage.mock.calls.at(-1)[2].body).toBe(
                 "Guide isn't around anymore. The bot was removed, so this chat is closed."
             );
-            expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+            // Still in the room: a Brick that has left can no longer redact what it said, so the purge (R29) leaves it after redacting the note too
+            expect(client.leaveRoom).not.toHaveBeenCalled();
             expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         } finally {
             vi.useRealTimers();
@@ -1581,7 +1582,7 @@ describe('MatrixDmBridge', () => {
         }
     });
 
-    it('a bot deleted while someone waits says goodbye to them and leaves, without waiting for another message', async () => {
+    it('a bot deleted while someone waits says goodbye to them, without waiting for another message, and stays in the room for the purge to clear', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false } as never);
         await bridge.onEvent(message('Hola, ¿estás ahí?'));
@@ -1601,7 +1602,7 @@ describe('MatrixDmBridge', () => {
         }
         expect(noteStates()).toEqual(['resting', 'gone']);
         expect(client.sendMessage.mock.calls.at(-1)[2][BOT_STATUS_KEY].lang).toBe('es');
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
         expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         expect(deps.reply).not.toHaveBeenCalled();
     });
