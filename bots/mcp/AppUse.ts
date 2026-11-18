@@ -111,15 +111,16 @@ const isNames = (value: unknown): value is string[] => Array.isArray(value) && v
 
 /**
  * What Orbit says about a shared ask: the fields that may come back, or null for the whole answer. It must say so on purpose: an
- * answer with no `returns` at all is not read as "everything" (undefined: the ask is not run for someone else). A `returns` that is not a
- * list of names is read as "nothing may come back".
+ * answer with no `returns` at all is not read as "everything", and neither is one that is not a list of names: both are no policy
+ * (undefined: the ask is not run for someone else, since a job that runs may have effects whatever comes back). `null` and a list of
+ * names are the only ones accepted.
  */
 function sharedOf(value: unknown): { returns: string[] | null } | undefined {
     if (!value || typeof value !== 'object' || !('returns' in value)) return undefined;
     const returns = (value as { returns?: unknown }).returns;
     if (returns === null) return { returns: null };
     if (returns === undefined) return undefined;
-    return { returns: isNames(returns) ? returns : [] };
+    return isNames(returns) ? { returns } : undefined;
 }
 
 function ownerNoteOf(value: unknown): OwnerNote | undefined {

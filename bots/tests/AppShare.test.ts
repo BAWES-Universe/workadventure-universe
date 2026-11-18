@@ -79,8 +79,12 @@ describe('what Orbit is sent when someone else asks', () => {
         }
     });
 
-    it('takes an answer it cannot read about what may come back as "nothing may come back"', async () => {
-        vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { allowed: true, shared: { returns: 'everything' } } });
+    it('does not take an answer it cannot read about what may come back as a policy either: no word is the same as a malformed one', async () => {
+        for (const returns of ['everything', 5, true, {}, ['a', 1], [null]]) {
+            vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { allowed: true, shared: { returns } } });
+            expect(await askOrbitAboutAppUse(() => SIDE)('b', 's', { callId: 'c' })).toEqual({ allowed: true });
+        }
+        vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { allowed: true, shared: { returns: [] } } });
         expect(await askOrbitAboutAppUse(() => SIDE)('b', 's', { callId: 'c' })).toEqual({ allowed: true, shared: { returns: [] } });
     });
 });
@@ -414,6 +418,17 @@ describe('what holds for someone else even if Orbit or the model gets it wrong',
         const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue([{ type: 'text', text: JSON.stringify({ secret: 's' }) }] as never);
         const settle = vi.fn<AppUseSettle>(async () => true);
         const [result] = await ask(service(async () => ({ allowed: true }), settle), 'make_song', { style: 'oud' });
+        expect(execute).not.toHaveBeenCalled();
+        expect(result.result.outcome).toBe('not_sent');
+        expect(settle).toHaveBeenCalledWith('b1', 's1', 'call-1', 'failed');
+    });
+
+    it('never runs it when Orbit gives a policy it cannot read, as through the real answer reader', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('song' as never);
+        const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { allowed: true, shared: { returns: 'everything' } } });
+        const settle = vi.fn<AppUseSettle>(async () => true);
+        const [result] = await ask(service(askOrbitAboutAppUse(() => SIDE), settle), 'make_song', { style: 'oud' });
+        expect(post).toHaveBeenCalled();
         expect(execute).not.toHaveBeenCalled();
         expect(result.result.outcome).toBe('not_sent');
         expect(settle).toHaveBeenCalledWith('b1', 's1', 'call-1', 'failed');
