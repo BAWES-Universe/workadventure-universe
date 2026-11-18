@@ -124,7 +124,7 @@ return redis.call('HDEL', KEYS[1], ARGV[1])
 const PENDING_KEY = 'bots:forgets:pending';
 const LEDGER_KEY = 'bots:forgets:ledger';
 
-/** Reads the entries of a hash that are well formed, oldest first, with the name each is kept under; anything else in it is ignored (a damaged entry must never stop the bot starting). */
+/** Reads the entries of a hash that are well formed, oldest first (an entry with no time, 0, is the newest), with the name each is kept under; anything else in it is ignored (a damaged entry must never stop the bot starting). */
 function readEntries<T extends { since: number }>(raw: Record<string, string>, valid: (entry: Partial<T> | null) => entry is T): Array<{ field: string; entry: T }> {
     const entries: Array<{ field: string; entry: T }> = [];
     for (const [field, value] of Object.entries(raw)) {
@@ -135,7 +135,9 @@ function readEntries<T extends { since: number }>(raw: Record<string, string>, v
             // not an entry
         }
     }
-    return entries.sort((a, b) => a.entry.since - b.entry.since);
+    // 0 is "whenever it was said", the latest of all (as in the scripts): it sorts last, so it is the last to be let go
+    const rank = (since: number) => (since === 0 ? Infinity : since);
+    return entries.sort((a, b) => (rank(a.entry.since) === rank(b.entry.since) ? 0 : rank(a.entry.since) < rank(b.entry.since) ? -1 : 1));
 }
 
 const validPending = (entry: Partial<PendingItemForget> | null): entry is PendingItemForget =>

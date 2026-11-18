@@ -126,6 +126,18 @@ describe('the forget queue in the shared store', () => {
         expect(redis.hash('bots:forgets:ledger').has('k1')).toBe(false);
     });
 
+    it('treats a forget with no time (0, whenever it was said) as the newest: beyond the safety limit it is the last to be let go, and it is read last', async () => {
+        const redis = fakeRedis();
+        redis.hash('bots:forgets:ledger').set('untimed', JSON.stringify(forgotten('untimed', 0)));
+        for (let i = 0; i < MAX_FORGOTTEN_ITEMS + 2; i++) redis.hash('bots:forgets:ledger').set(`k${i}`, JSON.stringify(forgotten(`k${i}`, i + 1)));
+        const kept = await new RedisForgetQueue(() => redis.client).load();
+        expect(kept.ledger).toHaveLength(MAX_FORGOTTEN_ITEMS);
+        expect(kept.ledger[kept.ledger.length - 1].itemKey).toBe('untimed');
+        expect(redis.hash('bots:forgets:ledger').has('untimed')).toBe(true);
+        expect(redis.hash('bots:forgets:ledger').has('k0')).toBe(false);
+        expect(redis.hash('bots:forgets:ledger').has('k1')).toBe(false);
+    });
+
     it('fails when the shared store does not answer in time, so a silent connection never holds a memory load or save', async () => {
         const redis = fakeRedis();
         const silent: ForgetQueueRedis = { hGetAll: () => new Promise(() => undefined), multi: () => ({ hSet: () => undefined, hDel: () => undefined, eval: () => undefined, exec: () => new Promise(() => undefined) }) };
