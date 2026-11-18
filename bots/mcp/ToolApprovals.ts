@@ -216,6 +216,8 @@ export class ToolApprovals {
     private readonly proposing = new Map<string, Promise<Proposed>>();
     /** A goal's saved step whose card could not be shown and whose saved step could not be closed: the next ask for it shows the card instead of joining a card nobody has. */
     private readonly unshown = new Set<string>();
+    /** Of those, the ones whose note could not be written to the shared store: only this process knows, so only its note counts. */
+    private readonly unshownHereOnly = new Set<string>();
     /** A person's card in a bubble that closed because they said something else: a new card for the same tool is a change (#1658). */
     private readonly changing = new Map<string, number>();
     /** The replies only a person saw in a bubble, kept a while so they come back with the person after a reload (#1658). */
@@ -321,6 +323,8 @@ export class ToolApprovals {
                 if (task && person.matrixUserId && this.deps.roomStillTheirs && !this.deps.roomStillTheirs(botId, roomId, person.matrixUserId)) throw new Error('The chat is not only theirs any more');
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
                 card.shownAt = this.now();
+                // Held before anything is awaited again: the person may tap it at once, and the tap must find this card, not make another
+                this.keep(action.id, card);
                 if (task) await this.cardShown(action.id);
             } catch (error) {
                 // No card, no OK: the saved action is closed so a tap can never find it
@@ -334,7 +338,6 @@ export class ToolApprovals {
                 else if (task) await this.cardShown(action.id);
                 return { kind: 'failed', result: NO_CARD_RESULT };
             }
-            this.keep(action.id, card);
             if (!nearby) return { kind: 'waiting', result: task ? WAITING_TASK_RESULT : WAITING_RESULT };
             this.scheduleExpiry(action.id, card);
             // One line for everyone: the bot needs an OK, or it changed what it asks (the person said something else)
@@ -346,19 +349,37 @@ export class ToolApprovals {
         }
     }
 
-    /** Whether this saved step of a goal is known to have no card (here, or on any bot server when the store is there). */
+    /**
+     * Whether this saved step of a goal is known to have no card. When the shared store can be read it is the answer: another bot server may
+     * have shown the card since this one failed to, and this process's own note is then out of date. Only a note that never reached the store,
+     * or a store that cannot be read, is believed here alone.
+     */
     private async noCardShown(actionId: string): Promise<boolean> {
-        if (this.unshown.has(actionId)) return true;
-        return (await this.deps.unshownCards?.marked(actionId).catch(() => false)) ?? false;
+        const store = this.deps.unshownCards;
+        if (this.unshown.has(actionId)) {
+            if (!store || this.unshownHereOnly.has(actionId)) return true;
+            try {
+                if (await store.marked(actionId)) return true;
+            } catch {
+                return true;
+            }
+            this.unshown.delete(actionId);
+            return false;
+        }
+        return (await store?.marked(actionId).catch(() => false)) ?? false;
     }
 
     private async cardNotShown(actionId: string): Promise<void> {
         this.unshown.add(actionId);
-        await this.deps.unshownCards?.mark(actionId).catch(() => undefined);
+        await this.deps.unshownCards?.mark(actionId).then(
+            () => this.unshownHereOnly.delete(actionId),
+            () => void this.unshownHereOnly.add(actionId)
+        );
     }
 
     private async cardShown(actionId: string): Promise<void> {
         this.unshown.delete(actionId);
+        this.unshownHereOnly.delete(actionId);
         await this.deps.unshownCards?.clear(actionId).catch(() => undefined);
     }
 

@@ -171,6 +171,11 @@ interface TurnFacts {
     artifactSaved: boolean;
     /** The switch is on for this bot. */
     guard: boolean;
+    /**
+     * Set when a reply other people read is made from what only the people who were here for it may be told (files named in the prompt, or read
+     * by a tool): `joined` says whether someone has walked up since. Its words are held until the round is over and checked then (see `heldForGroup`).
+     */
+    fileDerived?: { joined(): boolean };
 }
 
 /**
@@ -940,7 +945,7 @@ export class AIService {
         let said = '';
         let done: AIStreamChunk | null = null;
         const first = watch && usage ? { ...shared, rules: [...(shared?.rules ?? []), privateAnswerRule(name)], usage } : shared;
-        for await (const chunk of attempt(message, isRetry, turn, first)) {
+        for await (const chunk of this.heldForGroup(attempt(message, isRetry, turn, first), turn)) {
             // Callers stop at the first done: it is held until the reply is known to be honest
             if (chunk.done) {
                 done = chunk;
@@ -1004,12 +1009,46 @@ export class AIService {
         hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
         yield { content: '', done: false, reset: true, toolNames: [] };
         const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
-        for await (const chunk of attempt(nothingSavedRetryMessage(message, said), true, second)) {
+        for await (const chunk of this.heldForGroup(attempt(nothingSavedRetryMessage(message, said), true, second), second)) {
             if (chunk.reset) hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
             if (chunk.done) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
             yield chunk;
             if (chunk.done) return;
         }
+    }
+
+    /**
+     * A reply other people read that is made from files or pages is held, round by round, until the provider call is over, and who is here is
+     * checked again just before it is said: someone who walked up while the provider was answering was not asked about, so what the
+     * reply found in the files is not said, and the fixed line is said instead (#1993). When nobody joined it is said as it was, only at
+     * the end of the round rather than word by word. Any other reply passes straight through.
+     */
+    private async *heldForGroup(chunks: AsyncIterable<AIStreamChunk>, turn: TurnFacts): AsyncGenerator<AIStreamChunk> {
+        let held = '';
+        let refused = false;
+        const release = function* (): Generator<AIStreamChunk> {
+            const text = held;
+            held = '';
+            if (!text || refused) return;
+            if (turn.fileDerived?.joined()) {
+                refused = true;
+                yield { content: SOMEONE_CAME_READING, done: false };
+                return;
+            }
+            yield { content: text, done: false };
+        };
+        for await (const chunk of chunks) {
+            if (chunk.content && turn.fileDerived && !chunk.done && !chunk.reset) {
+                held += chunk.content;
+                // Whatever else the chunk carries (usage, steps) is passed on without its words
+                const { content: _words, ...rest } = chunk;
+                if (Object.entries(rest).some(([key, value]) => key !== 'done' && value !== undefined)) yield { ...rest, content: '' } as AIStreamChunk;
+                continue;
+            }
+            if (chunk.done || chunk.reset) yield* release();
+            yield chunk;
+        }
+        yield* release();
     }
 
     /**
@@ -1325,7 +1364,11 @@ export class AIService {
             // The newest files line is asked for now, so it comes in while the map context is read
             // With other people reading, only what all of them were shown is named (#1993)
             const present = options?.shared ? options.present ?? [SOMEONE_UNKNOWN] : undefined;
-            const recentFiles = this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService, present);
+            const recentFiles = this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService, present).then((line) => {
+                // Files named in the prompt of a reply others read: who is here is checked again when its words are delivered
+                if (line && present !== undefined && turn) turn.fileDerived = { joined: () => this.someoneCameSince(botClient, spaceName, playerId, present) };
+                return line;
+            });
 
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
@@ -2028,7 +2071,10 @@ export class AIService {
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
-                            if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) readForTheGroup = true;
+                            if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
+                                readForTheGroup = true;
+                                if (turn) turn.fileDerived = { joined: () => this.someoneCameSince(botClient, spaceName, playerId, present) };
+                            }
                             const sharedLine = sharedLineOf(toolResults) || (readForTheGroup && this.someoneCameSince(botClient, spaceName, playerId, present) ? SOMEONE_CAME_READING : '');
                             const sharedLineIds = sharedLineIdsOf(toolResults);
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
@@ -5513,6 +5559,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** The one person it goes to, for a reply written for them alone (#1993). */
         only?: number,
     ): void {
+        // An item made for one person goes to the person this memory is about, as they are in the space now: the id it was queued with is not
+        // trusted, because a memory restored for a person who came back carries the id they had before, which may be someone else's now.
         // generateBotResponseStream can be called without botClient or spaceName
         // (both are optional/undefined in its signature). Guard here prevents
         // a runtime TypeError on botClient.sendMediaMessage() below.
@@ -5558,7 +5606,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 remaining.push(item);
                 continue;
             }
-            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId, item.audience ?? only)) {
+            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId, item.audience !== undefined ? playerId : only)) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }

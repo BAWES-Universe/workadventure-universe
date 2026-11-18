@@ -583,8 +583,20 @@ export class SpeechObserver {
         if (mark) {
             mark.path = path;
             mark.epoch = Math.max(mark.epoch, frame.epoch);
-        } else if (owner.marks.size < this.maxStreams) {
-            owner.marks.set(frame.participantId, { path, epoch: frame.epoch, firingAt: -Infinity, baselineAt: -Infinity });
+            // Most recently heard last, so the one let go to make room is the one heard from longest ago
+            owner.marks.delete(frame.participantId);
+            owner.marks.set(frame.participantId, mark);
+        } else {
+            // Full of people whose streams have ended: the one heard from longest ago makes room, so a person admitted after the places
+            // were reused is still known by the newest path they were on (a person with a stream is never let go: they are all within `maxStreams`)
+            if (owner.marks.size >= this.maxStreams) {
+                for (const known of owner.marks.keys()) {
+                    if (this.streams.has(`${owner.id}\n${known}`)) continue;
+                    owner.marks.delete(known);
+                    break;
+                }
+            }
+            if (owner.marks.size < this.maxStreams) owner.marks.set(frame.participantId, { path, epoch: frame.epoch, firingAt: -Infinity, baselineAt: -Infinity });
         }
         const key = `${owner.id}\n${frame.participantId}`;
         let stream = this.streams.get(key);

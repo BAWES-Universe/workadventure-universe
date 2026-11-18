@@ -9,7 +9,7 @@ import { DmReplyService } from './DmReplyService';
 import { GUEST_FILE_BYTES_MAX, type GuestBrickMedia, type GuestUpload } from './GuestBrickService';
 import { checkReceipt, readReceiptFile } from './UploadReceipts';
 import { FileParser } from '../services/FileParser';
-import { uploadAttachment } from '../matrix/uploadAttachment';
+import { uploadAttachmentWithLink } from '../matrix/uploadAttachment';
 import { storeOf } from '../services/ChatFiles';
 import type { CarriedMedia, GuestChatNote } from '../matrix/MatrixDmBridge';
 import { sharedNoteHearing } from '../voice/NoteHearingWiring';
@@ -159,8 +159,11 @@ export function buildCarryCopy(admin: AdminApiService, guestId: string, userUuid
         handed: () => admin.guestChatHandedTo(guestId, userUuid),
         read: (receipt) => readGuestUpload(guestId, receipt, secret, uploaderUrl, undefined, undefined, true),
         store: async (bytes, type, name) => {
-            const location = await uploadAttachment(Buffer.from(bytes), type, name);
-            return location ? lastingLinkOf(location, uploaderUrl) : null;
+            const uploaded = await uploadAttachmentWithLink(Buffer.from(bytes), type, name);
+            if (!uploaded) return null;
+            // The uploader's own lasting link is written with the address it is reached at from outside, which a browser can open; the bot
+            // server's own address for it (UPLOADER_URL) may be a name inside its network
+            return uploaded.lasting ?? lastingLinkOf(uploaded.location, uploaderUrl);
         },
     };
 }

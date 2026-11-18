@@ -79,13 +79,18 @@ afterEach(() => {
 });
 
 describe('asking again for a microphone that did not come back', () => {
-    it('asks once more after the gap even when a late "subscribed" from the ask before arrives in it', async () => {
+    it('asks once more after the gap even when a late "subscribed" from the ask before arrives in it, and the unsubscribe it asked for finishes after the gap', async () => {
         const { room, fake, alice, publication } = await inRoom();
-        const arrives = () => fake.emit('trackSubscribed', { sid: publication.sid, kind: 1 }, publication, alice);
+        // As the SDK does: the publication reads subscribed before "subscribed" is announced
+        const arrives = () => {
+            publication.subscribed = true;
+            fake.emit('trackSubscribed', { sid: publication.sid, kind: 1 }, publication, alice);
+        };
         room.setPeople([{ participantId: 'room_alice', mode: 'talk' }]);
         arrives();
         // Listening stops and comes back; the microphone does not arrive by itself
         room.setMode('off', 'room_alice');
+        publication.subscribed = false;
         room.setMode('talk', 'room_alice');
         publication.asked.length = 0;
 
@@ -95,6 +100,9 @@ describe('asking again for a microphone that did not come back', () => {
         // The "subscribed" of the ask before comes in during that gap
         await vi.advanceTimersByTimeAsync(50);
         arrives();
+        await vi.advanceTimersByTimeAsync(50);
+        // The unsubscribe asked for at the start of the gap completes only after the gap has ended
+        publication.subscribed = false;
         await vi.advanceTimersByTimeAsync(200);
 
         expect(publication.asked).toEqual([false, true]);

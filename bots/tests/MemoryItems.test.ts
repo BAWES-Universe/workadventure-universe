@@ -215,6 +215,29 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         expect(mine().personalInfo.facts.has('birthday_mentioned_at')).toBe(false);
     });
 
+    it('judges a birthday and a state by the same time it is listed with, so one said after the forget stays and one said before goes', () => {
+        const info = mine().personalInfo;
+        // Nothing says where these were drawn from: the time comes from the note kept with each (as the list shows it)
+        delete info.drawnFrom;
+        const birthday = memoryItemKey('birthday', null, 'June 5');
+        const tired = memoryItemKey('fact', 'current_state', 'tired');
+        info.facts.set('birthday_mentioned_at', '3000');
+        info.facts.set('tired_mentioned_at', '4000');
+        expect(memoryItemsOf(mine()).filter((item) => item.id === birthday || item.id === tired).map((item) => item.at)).toEqual([4000, 3000]);
+        // Forgotten at 3500: the birthday (3000) goes, the state (4000) was said after and stays
+        expect(dropItems(mine(), new Set([birthday, tired]), new Map([[birthday, 3500], [tired, 3500]]))).toBe(1);
+        expect(mine().personalInfo.birthday).toBeUndefined();
+        expect(mine().personalInfo.facts.get('current_state')).toBe('tired');
+        // Forgotten at 2500: the birthday was said after that, and stays
+        const again = talking();
+        say(again, 'my birthday is June 5', 3000);
+        const noted = again.getMemory(BOT, SARA)!;
+        delete noted.personalInfo.drawnFrom;
+        noted.personalInfo.facts.set('birthday_mentioned_at', '3000');
+        expect(dropItems(noted, new Set([birthday]), new Map([[birthday, 2500]]))).toBe(0);
+        expect(noted.personalInfo.birthday).toBe('June 5');
+    });
+
     it('takes a like, and a state with the note of when it was said', () => {
         dropItems(mine(), new Set([memoryItemKey('pref', null, 'lo-fi'), memoryItemKey('fact', 'current_state', 'tired')]));
         expect(mine().personalInfo.preferences).toEqual([]);
@@ -758,12 +781,13 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
         warn.mockRestore();
     });
 
-    it('lets go of one Orbit has answered with a client error for over a week, but never one it could not reach (Sentry)', async () => {
+    it('lets go of one Orbit has refused with a client error for over a week, but never one it could not reach (Sentry)', async () => {
         const memory = await start();
         await forgetWhileDown(memory);
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const [entry] = [...memory.unreportedItemForgets.values()];
-        entry.first = Date.now() - 8 * 24 * 60 * 60 * 1000;
+        const week = 8 * 24 * 60 * 60 * 1000;
+        entry.first = Date.now() - week;
         // An outage, however long, keeps it
         down();
         await memory.reportUnreportedForgets();
@@ -771,12 +795,20 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
         hoisted.axios.post.mockReset().mockRejectedValue(new Error('no answer'));
         await memory.reportUnreportedForgets();
         expect(memory.unreportedItemForgets.size).toBe(1);
-        // A 404 that lasts over a week is let go; the same 404 a day after is kept (an Orbit not yet updated says 404 too)
+        // Eight days of outage and then one refusal is not a week of refusals: the count starts at the refusal
         hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'no route', response: { status: 404 } });
-        entry.first = Date.now() - 24 * 60 * 60 * 1000;
         await memory.reportUnreportedForgets();
         expect(memory.unreportedItemForgets.size).toBe(1);
-        entry.first = Date.now() - 8 * 24 * 60 * 60 * 1000;
+        const once = [...memory.unreportedItemForgets.values()][0];
+        expect(once.refusedSince).toBeGreaterThan(Date.now() - 60 * 1000);
+        // An outage in between ends the count
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'down', response: { status: 503 } });
+        await memory.reportUnreportedForgets();
+        expect([...memory.unreportedItemForgets.values()][0].refusedSince).toBeUndefined();
+        // Refused for over a week running: let go
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'no route', response: { status: 404 } });
+        await memory.reportUnreportedForgets();
+        [...memory.unreportedItemForgets.values()][0].refusedSince = Date.now() - week;
         await memory.reportUnreportedForgets();
         clearTimeout(memory.unreportedRetryTimer);
         expect(memory.unreportedItemForgets.size).toBe(0);
@@ -976,6 +1008,86 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         // This server's own report was taken and let go here, but the later ask stays owed in the shared store
         expect(memory.unreportedItemForgets.size).toBe(0);
         expect(store.contents().pending).toEqual([expect.objectContaining({ itemKey: lofi, since: (mine.since as number) + 1000 })]);
+    });
+
+    it('keeps a later ask another bot server stored while the store was being read, when this one let go of an earlier ask', async () => {
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(memory.unreportedRetryTimer);
+        const key = forgetKeyOf({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi });
+        const mine = store.pending.get(key)!;
+        const later = (mine.since as number) + 20_000;
+        // A read of the store starts; another bot server was asked again and wrote the later ask, and the read answers with it
+        const answered = { pending: [{ ...mine, since: later }], ledger: [] as never[] };
+        let answer: () => void = () => undefined;
+        vi.spyOn(store, 'load').mockImplementationOnce(() => new Promise((resolve) => (answer = () => resolve(answered as never))));
+        memory.queueRefreshedAt = 0;
+        vi.spyOn(memory.memoryStorage, 'loadMemories').mockResolvedValue([]);
+        const loading = memory.loadMemories(BOT);
+        await new Promise((resolve) => setImmediate(resolve));
+        // Meanwhile Orbit takes this server's own, earlier ask
+        up();
+        await memory.reportUnreportedForgets();
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        store.pending.set(key, { ...mine, since: later });
+        answer();
+        await loading;
+        await memory.queueWriting;
+        // The later ask was not taken by Orbit: it is still owed here, and still kept in the store
+        expect(memory.unreportedItemForgets.get(key)?.since).toBe(later);
+        expect(store.contents().pending).toEqual([expect.objectContaining({ itemKey: lofi, since: later })]);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('writes a ledger entry again on the timer when the store was down, even when nothing is owed to Orbit', async () => {
+        const memory = await start();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        store.unreachable = true;
+        up();
+        // Orbit's own list: the ledger entry is all there is to keep, and nothing is owed to Orbit
+        memory.forgetItems(BOT, [{ id: 'forget-1', userUuid: 'uuid-sara', itemKey: lofi, at: 5000 }]);
+        await memory.queueWriting;
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(store.contents().ledger).toEqual([]);
+        // The timer is armed, so the write is tried again without anything else happening
+        expect(memory.unreportedRetryTimer).not.toBeNull();
+        clearTimeout(memory.unreportedRetryTimer);
+        memory.unreportedRetryTimer = null;
+        store.unreachable = false;
+        await memory.reportUnreportedForgets();
+        expect(store.contents().ledger).toEqual([expect.objectContaining({ itemKey: lofi, since: 5000 })]);
+        expect(memory.unreportedRetryTimer).toBeNull();
+        warn.mockRestore();
+    });
+
+    it('keeps what is waiting, and does not let it go, while this server has no way to tell Orbit', async () => {
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(memory.unreportedRetryTimer);
+        expect(store.contents().pending).toHaveLength(1);
+        // Another server (here, a new process) started without the service token reads what is waiting
+        const saved = process.env.BOT_SERVICE_TOKEN;
+        delete process.env.BOT_SERVICE_TOKEN;
+        try {
+            const other: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueue: store });
+            await other.forgetQueueReady;
+            expect(other.unreportedItemForgets.size).toBe(1);
+            await other.reportUnreportedForgets();
+            clearTimeout(other.unreportedRetryTimer);
+            // It did not count as told: the entry is still here and still in the store for a server that can tell Orbit
+            expect(other.unreportedItemForgets.size).toBe(1);
+            expect(store.contents().pending).toHaveLength(1);
+        } finally {
+            process.env.BOT_SERVICE_TOKEN = saved;
+        }
+        up();
+        await memory.reportUnreportedForgets();
+        expect(told()).toHaveLength(1);
+        expect(store.contents().pending).toEqual([]);
     });
 
     it('never overwrites what another bot server wrote: each thing is its own entry in the store', async () => {

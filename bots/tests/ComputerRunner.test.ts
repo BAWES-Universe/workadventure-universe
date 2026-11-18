@@ -563,6 +563,18 @@ describe('reading Orbit’s events', () => {
         expect(noBlank.at(-1)).toMatchObject({ code: 'stream_broke' });
     });
 
+    it('drops a stream whose unfinished last line is too big, however much came before it in the same piece, or that pushes an event past its bound at the end', async () => {
+        const big = 'x'.repeat(streamLimits.line + 10);
+        const afterHeader = await all(body(frame({ type: 'created', id: 'r', sessionId: 's' }), `event: text\ndata: ${big}`));
+        expect(afterHeader.map((e) => e.type)).toEqual(['created', 'failed']);
+        expect(afterHeader.at(-1)).toMatchObject({ code: 'stream_broke' });
+        // Seven lines of about half a megabyte fit an event; an eighth, with no newline at the end of the stream, does not
+        const line = `data: ${'y'.repeat(streamLimits.line / 2)}`;
+        const atTheEnd = await all(body(frame({ type: 'created', id: 'r', sessionId: 's' }), ...Array.from({ length: 7 }, () => `${line}\n`), line));
+        expect(atTheEnd.map((e) => e.type)).toEqual(['created', 'failed']);
+        expect(atTheEnd.at(-1)).toMatchObject({ code: 'stream_broke' });
+    });
+
     it('keeps the end of a reply that is too long, where the marker that says how it ended is', () => {
         const long = `${'x'.repeat(250_000)} [[done]]`;
         const event = runnerEventOf(JSON.stringify({ type: 'completed', outputText: long, usage: null }));

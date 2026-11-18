@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
 import { answerOf, callKeyApp, keyAppTools, loadKeyApps, parseKeyApps } from '../mcp/KeyApps';
 import { MCPConnector } from '../mcp/MCPConnector';
+import { resultOf } from '../ai/ToolSteps';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (val: string | null | undefined) => val || null }));
 vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), isCancel: vi.fn(), isAxiosError: vi.fn() } }));
@@ -150,7 +151,7 @@ describe('a call', () => {
         });
         const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, turn.signal, WAIT)) as { error: string; outcome?: string };
         expect(result.error).toMatch(/couldn't tell whether/);
-        expect(result.outcome).toBeUndefined();
+        expect(result.outcome).toBe('uncertain');
     });
 
     it('waits as long as it was told to: the bot’s Patience, or the default the other tools have', async () => {
@@ -165,7 +166,7 @@ describe('a call', () => {
         http.post.mockRejectedValueOnce(new Error('timeout'));
         const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, undefined, WAIT)) as { error: string; outcome?: string };
         expect(result.error).toMatch(/couldn't tell whether/);
-        expect(result.outcome).toBeUndefined();
+        expect(result.outcome).toBe('uncertain');
     });
 });
 
@@ -193,11 +194,11 @@ describe('what the model is told', () => {
             [429, { code: 'limit' }, 'not_sent'],
             [502, { code: 'key_rejected' }, 'failed'],
             // Orbit may have sent it and lost the answer: never said to be undone
-            [502, { code: 'unavailable' }, undefined],
+            [502, { code: 'unavailable' }, 'uncertain'],
             // Any server error may have come after the request was sent on: never said to be undone
-            [500, {}, undefined],
-            [503, {}, undefined],
-            [504, { code: 'timeout' }, undefined],
+            [500, {}, 'uncertain'],
+            [503, {}, 'uncertain'],
+            [504, { code: 'timeout' }, 'uncertain'],
             [503, { code: 'key_rejected' }, 'failed'],
         ];
         for (const [status, body, outcome] of cases) {
@@ -205,6 +206,12 @@ describe('what the model is told', () => {
             expect(result.error.length).toBeGreaterThan(10);
             expect(result.outcome).toBe(outcome);
         }
+    });
+
+    it('shows a server error as not known, never as failed: the step cannot say it did not work', () => {
+        for (const status of [500, 502, 503, 504]) expect(resultOf('step', answerOf(status, {}))).toMatchObject({ ok: false, unknown: true });
+        // A key the service refused is proven
+        expect(resultOf('step', answerOf(503, { code: 'key_rejected' }))).toEqual(expect.not.objectContaining({ unknown: true }));
     });
 
     it('treats a call that was already made as done, so a retry never makes a second one', () => {

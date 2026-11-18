@@ -157,11 +157,13 @@ export class BotRegistry {
 
         if (this.redis?.isOpen) {
             if (isUp(this.redis)) {
+                // Neither may hold the shutdown: a Redis that is ready but does not answer would keep either pending for ever, and the
+                // connection below would never be closed. Each has the same bound as closing it.
                 // Mark server as shutting down
-                await this.markServerShuttingDown().catch(() => undefined);
+                await inTime(this.markServerShuttingDown(), SHUTDOWN_WAIT_MS).catch(() => undefined);
 
                 // Unassign all bots from this server
-                await this.unassignAllBotsFromServer().catch(() => undefined);
+                await inTime(this.unassignAllBotsFromServer(), SHUTDOWN_WAIT_MS).catch(() => undefined);
             }
             // A connection that is not ready (Redis went away) is cut off: asking it to quit would wait for Redis
             await closeConnection(this.redis, SHUTDOWN_WAIT_MS);
@@ -181,9 +183,15 @@ export class BotRegistry {
         await this.redis.hSet('bots:matrix:dm-rooms', roomId, botId);
     }
 
-    /** The bot a Matrix direct message room belongs to, or null when unknown. */
+    /**
+     * The bot a Matrix direct message room belongs to, or null when unknown. Throws while a Redis that was in use is down: "unknown" would
+     * read as a room nobody is in any more, and a message waiting for it would be thrown away; a caller that must be certain waits instead.
+     */
     async getDmRoomBot(roomId: string): Promise<string | null> {
-        if (!isUp(this.redis)) return null;
+        if (!isUp(this.redis)) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return null;
+        }
         return (await this.redis.hGet('bots:matrix:dm-rooms', roomId)) ?? null;
     }
 

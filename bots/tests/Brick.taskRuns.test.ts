@@ -743,8 +743,16 @@ describe('a run Orbit gave up on with no report is told once', () => {
     it('says it in the failure words under the run\'s own told id, and tells Orbit only after it went out', async () => {
         const { runner, say, api } = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice()] });
         await runner.tick();
-        expect(say).toHaveBeenCalledWith('brick-1', '@sara:matrix.test', failedText({ words: 'Call the bank' }, 'the chat was not there'), 'brick-told:run-77');
+        expect(say).toHaveBeenCalledWith('brick-1', '@sara:matrix.test', failedText({ words: 'Call the bank', kind: 'reminder' }, 'the chat was not there'), 'brick-told:run-77');
         expect(api.keepTold).toHaveBeenCalledWith('run-77');
+    });
+
+    it('does not promise another try for a reminder Orbit gave up on, but does for something that comes round again', () => {
+        const reminder = failedText({ words: 'Call the bank', kind: 'reminder' }, 'the chat was not there');
+        expect(reminder).toContain('Call the bank');
+        expect(reminder).not.toMatch(/try again at the next time/);
+        expect(reminder).toMatch(/won't try it again on my own/);
+        expect(failedText({ words: 'Send the report', kind: 'schedule' }, 'x')).toMatch(/try again at the next time/);
     });
 
     it('is handed out again when it could not be said just now, and kept as told when it can never be said', async () => {

@@ -487,6 +487,31 @@ describe('by the clock', () => {
         expect(o.calls.length).toBe(3);
     });
 
+    it('still knows the newest path of a person admitted after the places were reused, once their stream has ended too', async () => {
+        const o = observing('at once', { maxStreams: 2 });
+        await o.observer.ready();
+        // p1 and p2 each send a window and are let go; their marks stay
+        o.feed(32, 'p1', 1, 512);
+        o.feed(32, 'p2', 1, 512);
+        await settle();
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        // p3 comes in on path 2 and takes a place; then their stream is let go as well
+        o.feed(32, 'p3', 2, 512);
+        await settle();
+        const calls = o.calls.length;
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        const dropped = o.counters.get('observer_stale_dropped');
+
+        // The old path (1) of p3 sends more: none of it is taken, and no call is made for it
+        o.feed(64, 'p3', 1, 512);
+        await settle();
+        expect(o.counters.get('observer_stale_dropped')).toBeGreaterThan(dropped);
+        expect(o.calls.length).toBe(calls);
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0 });
+    });
+
     it('audio left waiting goes by the clock even if no more ever arrives: a held-up line, and a last bit shorter than a window', async () => {
         const o = observing('held');
         await o.observer.ready();

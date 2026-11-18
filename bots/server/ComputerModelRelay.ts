@@ -138,7 +138,9 @@ export async function readBoundedWithFlag(response: globalThis.Response, max: nu
             if (done) break;
             bytes += value.byteLength;
             if (bytes > max) {
-                await reader.cancel().catch(() => undefined);
+                // Not waited for: the body of a clone is one of two branches of a tee, and cancelling one branch finishes only when the other is
+                // cancelled or read to its end too, which a caller that reads the original after this returns would never reach
+                void reader.cancel().catch(() => undefined);
                 return { text: text + decoder.end(), tooLong: true };
             }
             text += decoder.write(Buffer.from(value));
@@ -541,7 +543,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     let at: number;
                     while ((at = pending.indexOf('\n')) >= 0) {
                         if (skipping) skipping = false;
-                        else read(pending.slice(0, at).replace(/\r$/, ''));
+                        // A line that was completed in this very chunk is held to the bound too: it is passed on, never read
+                        else if (at <= RELAY_GUARDS.maxStreamLineChars) read(pending.slice(0, at).replace(/\r$/, ''));
                         pending = pending.slice(at + 1);
                     }
                     if (pending.length > RELAY_GUARDS.maxStreamLineChars) {

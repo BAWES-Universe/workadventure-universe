@@ -101,6 +101,19 @@ describe('ReplyReaders', () => {
         expect(readers.readerOf(SPACE, REPLY, now(true))).toBe('room-1_7');
     });
 
+    it('keeps a reply private while its reader cannot be named, even after a newer turn for the same person says the room is not alone', () => {
+        const readers = new ReplyReaders();
+        readers.starts(SPACE, 7, true);
+        const unnamed = { alone: vi.fn(() => true), spaceUserIdOf: () => undefined };
+        expect(readers.readerOf(SPACE, REPLY, unnamed)).toBeNull();
+        // Someone walks up and the person asks again: the next reply is decided afresh, but this one is not
+        readers.starts(SPACE, 7, false);
+        expect(readers.readerOf(SPACE, REPLY, unnamed)).toBeNull();
+        expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
+        // The newer reply, a different one, is for everyone
+        expect(readers.readerOf(SPACE, 'bot-bot-test-player-7-newer', now(false))).toBeUndefined();
+    });
+
     it('forgets who the last reply went to once the person, or the bot, has left', () => {
         const readers = new ReplyReaders();
         readers.starts(SPACE, 7, true);

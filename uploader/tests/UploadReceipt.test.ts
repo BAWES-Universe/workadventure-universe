@@ -127,14 +127,22 @@ describe("upload receipts (voice notes for every bot, plan v3 section 5)", () =>
   });
 
   it("still gives a receipt when the session runs out while the file is being stored: it names who the session was when the upload came in", async () => {
-    uploadFile.mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2200));
-      return "stored.ogg";
-    });
-    const expiresSoon = sessionToken({ identifier: guest, exp: Math.floor(Date.now() / 1000) + 1 });
-    const response = await post({ Authorization: expiresSoon }, "guest-brick");
-    expect(response.status).toBe(200);
-    expect(readReceipt(response.data[0].receipt, SECRET)).toMatchObject({ sub: guest, fid: "stored.ogg" });
+    // A clock of the test's own: the session is good for a minute and is checked at the very start, then the clock is moved past its end while the file is stored
+    const start = Date.now();
+    let at = start;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => at);
+    try {
+      uploadFile.mockImplementation(async () => {
+        at = start + 5 * 60 * 1000;
+        return "stored.ogg";
+      });
+      const expiresSoon = sessionToken({ identifier: guest, exp: Math.floor(start / 1000) + 60 });
+      const response = await post({ Authorization: expiresSoon }, "guest-brick");
+      expect(response.status).toBe(200);
+      expect(readReceipt(response.data[0].receipt, SECRET)).toMatchObject({ sub: guest, fid: "stored.ogg" });
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("calls an upload with no purpose, or one it does not know, a chat file", async () => {

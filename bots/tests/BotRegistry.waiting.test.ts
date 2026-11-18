@@ -123,10 +123,12 @@ describe('BotRegistry waiting messages', () => {
         const down = Object.create(BotRegistry.prototype) as BotRegistry;
         Object.assign(down, { redis: { isOpen: false }, sharedStoreSeen: true });
         await expect(down.getDmRoomOf('b1', '@a:x')).rejects.toThrow('The shared store is down');
+        await expect(down.getDmRoomBot('!r:x')).rejects.toThrow('The shared store is down');
 
         const never = Object.create(BotRegistry.prototype) as BotRegistry;
         Object.assign(never, { redis: null, sharedStoreSeen: false });
         await expect(never.getDmRoomOf('b1', '@a:x')).resolves.toBeNull();
+        await expect(never.getDmRoomBot('!r:x')).resolves.toBeNull();
     });
 
     it('says so when it cannot keep a direct room while a store that was in use is down, and does nothing when there never was one', async () => {
@@ -156,7 +158,8 @@ describe('while Redis reconnects (the connection is open but not ready)', () => 
         expect(registry.hasSharedStore()).toBe(false);
         await expect(registry.getDmRoomOf('b1', '@a:x')).rejects.toThrow('The shared store is down');
         await expect(registry.claimDirectChat('b1', '@a:x', 1000)).rejects.toThrow('The shared store is down');
-        await expect(registry.getDmRoomBot('!r:x')).resolves.toBeNull();
+        // Not "unknown": a room nobody is in any more would have its waiting message thrown away
+        await expect(registry.getDmRoomBot('!r:x')).rejects.toThrow('The shared store is down');
         expect(hGet).not.toHaveBeenCalled();
         expect(set).not.toHaveBeenCalled();
     });
@@ -186,6 +189,24 @@ describe('while Redis reconnects (the connection is open but not ready)', () => 
             const stopping = registry.disconnect().catch(() => undefined);
             await vi.advanceTimersByTimeAsync(10_000);
             await stopping;
+            expect(disconnect).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('still closes the connection when Redis is ready but never answers the shutdown cleanup', async () => {
+        vi.useFakeTimers();
+        try {
+            const silent = () => new Promise<never>(() => undefined);
+            const quit = vi.fn(() => new Promise<void>(() => undefined));
+            const disconnect = vi.fn(async () => undefined);
+            const registry = registryWith({ isOpen: true, isReady: true, quit, disconnect, hSet: vi.fn(silent), keys: vi.fn(silent), get: vi.fn(silent), del: vi.fn(silent) });
+            const stopping = registry.disconnect().catch(() => undefined);
+            await vi.advanceTimersByTimeAsync(10_000);
+            await stopping;
+            // Neither cleanup call held it: the connection was reached, and cut off when it did not quit either
+            expect(quit).toHaveBeenCalled();
             expect(disconnect).toHaveBeenCalled();
         } finally {
             vi.useRealTimers();

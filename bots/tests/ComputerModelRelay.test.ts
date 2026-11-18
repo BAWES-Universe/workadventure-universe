@@ -412,6 +412,17 @@ describe('streaming', () => {
         expect(settled()[0]).toMatchObject({ tokens: { input: 7, output: 3 } });
     });
 
+    it('does not read a line that grew past the bound in the same chunk that ended it', async () => {
+        const pad = 'x'.repeat(RELAY_GUARDS.maxStreamLineChars + 100);
+        const oversized = `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 999, completion_tokens: 999 }, pad })}\n\n`;
+        upstreamHandler = (_req, res) => sse(res, [data({ choices: [{ delta: { content: 'hello' } }] }) + oversized, 'data: [DONE]\n\n']);
+        const { text } = await askAndSettle({ messages, stream: true });
+        // Passed on as it came, but never read: its counts are not what the call is priced from
+        expect(text).toContain('[DONE]');
+        expect(settled()[0].tokens?.input).not.toBe(999);
+        expect(settled()[0].tokens?.output).not.toBe(999);
+    });
+
     it('a chunk cut across two writes is still read', async () => {
         const whole = data({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } });
         upstreamHandler = (_req, res) => sse(res, [whole.slice(0, 20), whole.slice(20), 'data: [DONE]\n\n']);
@@ -490,6 +501,16 @@ describe('reading a provider’s answer', () => {
         });
         return { response: new Response(stream), state };
     };
+
+    it('does not wait on the cancel of a clone, whose other branch the caller has yet to read', async () => {
+        const { response } = bodyOf('abcd', 'efgh', 'ijkl', 'mnop');
+        const clone = response.clone();
+        const stuck = Symbol('stuck');
+        const read = await Promise.race([readBoundedWithFlag(clone, 10), new Promise<symbol>((resolve) => setTimeout(() => resolve(stuck), 500))]);
+        expect(read).toEqual({ text: 'abcdefgh', tooLong: true });
+        // The original is still there to be read afterwards
+        expect(await readBoundedWithFlag(response, 100)).toEqual({ text: 'abcdefghijklmnop', tooLong: false });
+    });
 
     it('reads a short answer whole', async () => {
         expect(await readBoundedWithFlag(bodyOf('{"a":', '1}').response, 100)).toEqual({ text: '{"a":1}', tooLong: false });

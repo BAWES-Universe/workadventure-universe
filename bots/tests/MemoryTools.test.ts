@@ -212,6 +212,10 @@ describe('forgetting that keeps kind, label, owner, "not" and what is said to ke
         expect(itemsAbout(items, 'forget coffee but not coffee')).toEqual([]);
         expect(itemsAbout(items, "forget coffee but don't forget coffee")).toEqual([]);
         expect(ids(itemsAbout(items, 'forget coffee and tea but not coffee'))).toEqual(['pref::tea']);
+        // "do not forget" and "please do not forget" keep the thing just as "don't forget" does
+        expect(ids(itemsAbout(items, 'forget coffee and tea but do not forget coffee'))).toEqual(['pref::tea']);
+        expect(ids(itemsAbout(items, 'forget coffee and tea, and please do not forget coffee'))).toEqual(['pref::tea']);
+        expect(ids(itemsAbout(items, 'forget coffee and tea but never forget coffee'))).toEqual(['pref::tea']);
         const named = [thing('name', 'Mark'), thing('birthday', '12 June')];
         expect(ids(itemsAbout(named, 'forget my name and remember my birthday'))).toEqual(['name::Mark']);
         expect(ids(itemsAbout(named, 'forget my name, remember my birthday'))).toEqual(['name::Mark']);

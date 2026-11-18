@@ -29,6 +29,8 @@ export class ReplyReaders {
     private readonly turns = new Map<string, boolean>();
     /** By reply: its space, and its one reader's space user id, or null when it is for everyone there. */
     private readonly bound = new Map<string, { spaceName: string; reader: string | null }>();
+    /** By reply: its space, for a reply decided to be for one person alone whose reader cannot be named yet (it stays private until it can be). */
+    private readonly unresolved = new Map<string, string>();
     /** By space and player: whether the reply last sent to them there went to them alone. */
     private readonly latest = new Map<string, boolean>();
 
@@ -63,14 +65,20 @@ export class ReplyReaders {
         }
         let reader: string | null = null;
         if (playerId !== undefined) {
-            const alone = this.turns.get(ReplyReaders.turnKey(spaceName, playerId)) ?? now.alone(playerId);
+            // A reply already decided to be private stays so, whatever a newer turn for the same person says meanwhile
+            const alone = this.unresolved.has(responseId) || (this.turns.get(ReplyReaders.turnKey(spaceName, playerId)) ?? now.alone(playerId));
             if (alone) {
                 const named = now.spaceUserIdOf(playerId);
-                // Alone with the bot, but their id in the space is not known yet: unresolved is not public
-                if (!named) return null;
+                // Alone with the bot, but their id in the space is not known yet: unresolved is not public, and the decision is kept for the next piece
+                if (!named) {
+                    this.unresolved.set(responseId, spaceName);
+                    if (this.unresolved.size > MAX_BOUND) this.unresolved.delete(this.unresolved.keys().next().value as string);
+                    return null;
+                }
                 reader = named;
             }
         }
+        this.unresolved.delete(responseId);
         this.bound.set(responseId, { spaceName, reader });
         if (this.bound.size > MAX_BOUND) this.bound.delete(this.bound.keys().next().value as string);
         this.noteLatest(spaceName, playerId, reader !== null);
@@ -118,11 +126,15 @@ export class ReplyReaders {
         for (const [responseId, reply] of [...this.bound]) {
             if (reply.spaceName === spaceName) this.bound.delete(responseId);
         }
+        for (const [responseId, space] of [...this.unresolved]) {
+            if (space === spaceName) this.unresolved.delete(responseId);
+        }
     }
 
     reset(): void {
         this.turns.clear();
         this.bound.clear();
+        this.unresolved.clear();
         this.latest.clear();
     }
 }

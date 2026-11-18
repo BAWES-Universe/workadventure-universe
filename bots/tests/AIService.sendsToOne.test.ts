@@ -173,6 +173,18 @@ describe('what a reply sends with it (#1993)', () => {
             expect(memory.pendingMedia).toEqual([]);
         });
 
+        it('goes to the person the memory is about as they are now, not to the id it was queued with before they came back', () => {
+            const bot = client();
+            const now = Date.now();
+            const OTHER = 77;
+            // A memory restored for a person who came back as player 77: the item still carries the id Khalid had (and someone else may hold now)
+            const memory = waiting(now - 60_000);
+            (memory.pendingMedia[0] as { audience?: number }).audience = KHALID;
+            service(memory)['flushPendingMedia'](bot as never, SPACE, 'bot1', OTHER, undefined, undefined);
+
+            expect(bot.sendMediaMessage).toHaveBeenCalledWith(SPACE, 'https://cdn.example.test/song.mp3', 'audio', 'audio/mpeg', 'Your song', undefined, OTHER, OTHER);
+        });
+
         it('is queued with the person it is for when an answer for them alone makes it', () => {
             const memory = { pendingMedia: [] as Array<{ audience?: number }>, maxPendingMedia: 5 };
             const results = [{ id: 't1', name: 'generate_media', result: { urls: ['https://cdn.example.test/chart.png'] } }];

@@ -21,6 +21,8 @@ export interface PendingItemForget {
     since: number;
     /** When it first failed to reach Orbit. */
     first: number;
+    /** When Orbit began answering the request itself with a refusal (a 4xx), counted only while it keeps doing so; an outage resets it. */
+    refusedSince?: number;
 }
 
 /** One thing that was forgotten, kept after Orbit took it. */
@@ -39,9 +41,7 @@ export interface ForgetFileContents {
     ledger: ForgottenItem[];
 }
 
-/** A safety limit, not one anyone sees: the oldest are let go beyond it, so a list that only grows cannot fill the store. */
-export const MAX_PENDING_FORGETS = 5000;
-/** The same kind of limit for the ledger, which is kept for ever otherwise (a hash and a time per forgotten thing). */
+/** A safety limit, not one anyone sees, for the ledger, which is kept for ever otherwise (a hash and a time per forgotten thing). What is waiting for Orbit has none. */
 export const MAX_FORGOTTEN_ITEMS = 20000;
 
 const text = (value: unknown): value is string => typeof value === 'string' && value !== '';
@@ -183,19 +183,16 @@ export class RedisForgetQueue implements ForgetQueueStore {
         const [pending, ledger] = await this.within(Promise.all([client.hGetAll(PENDING_KEY), client.hGetAll(LEDGER_KEY)]));
         const waiting = readEntries(pending, validPending);
         const forgotten = readEntries(ledger, validForgotten);
-        // A safety limit nobody sees: the oldest beyond it are let go, so what is kept cannot grow without end
-        const cut = client.multi();
-        let trimmed = false;
-        for (const { field } of waiting.slice(0, Math.max(0, waiting.length - MAX_PENDING_FORGETS))) {
-            trimmed = true;
-            cut.hDel(PENDING_KEY, field);
+        // What Orbit has not taken yet is never let go for size: it is the promise that a forgotten thing stays forgotten, and it can only grow
+        // as far as what people actually had remembered. The ledger is a second protection (Orbit keeps the forget too), so its oldest
+        // beyond a safety limit are let go, and only if still the ask that was read: an entry another server replaced meanwhile is left.
+        const extra = forgotten.slice(0, Math.max(0, forgotten.length - MAX_FORGOTTEN_ITEMS));
+        if (extra.length > 0) {
+            const cut = client.multi();
+            for (const { field, entry } of extra) cut.eval(REMOVE_SCRIPT, { keys: [LEDGER_KEY], arguments: [field, String(entry.since)] });
+            await this.within(cut.exec()).catch(() => undefined);
         }
-        for (const { field } of forgotten.slice(0, Math.max(0, forgotten.length - MAX_FORGOTTEN_ITEMS))) {
-            trimmed = true;
-            cut.hDel(LEDGER_KEY, field);
-        }
-        if (trimmed) await this.within(cut.exec()).catch(() => undefined);
-        return { pending: waiting.slice(-MAX_PENDING_FORGETS).map((one) => one.entry), ledger: forgotten.slice(-MAX_FORGOTTEN_ITEMS).map((one) => one.entry) };
+        return { pending: waiting.map((one) => one.entry), ledger: forgotten.slice(-MAX_FORGOTTEN_ITEMS).map((one) => one.entry) };
     }
 
     async write(changes: ForgetQueueChanges): Promise<void> {

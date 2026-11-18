@@ -95,15 +95,21 @@ export async function* readRunnerEvents(body: ReadableStream<Uint8Array>): Async
                     }
                 }
             }
-            if (tooBig) break;
+            // What is left has no newline: a line that is already past the bound, whatever came before it in this chunk, is too big
+            if (tooBig || pending.length > streamLimits.line) {
+                tooBig = true;
+                break;
+            }
         }
+        // The last line, with no newline, counts toward the event too
+        const rest = pending.replace(/\r$/, '');
+        if (!tooBig && rest.startsWith('data:') && (rest.length > streamLimits.line || dataChars + rest.length > streamLimits.event)) tooBig = true;
         if (tooBig) {
             data = [];
             pending = '';
             yield { type: 'failed', code: 'stream_broke', message: 'Orbit sent an event that was too large to read' };
             return;
         }
-        const rest = pending.replace(/\r$/, '');
         if (rest.startsWith('data:')) data.push(rest.slice(5).replace(/^ /, ''));
         const last = frame();
         if (last) {

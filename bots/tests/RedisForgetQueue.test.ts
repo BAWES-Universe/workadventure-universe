@@ -3,7 +3,7 @@
  * overwrite each other, written together in one transaction, and a damaged entry never stops a bot server starting.
  */
 import { describe, expect, it } from 'vitest';
-import { forgetKeyOf, MAX_PENDING_FORGETS, PUT_SCRIPT, REMOVE_SCRIPT, RedisForgetQueue, type ForgetQueueRedis } from '../memory/ForgetQueue';
+import { forgetKeyOf, MAX_FORGOTTEN_ITEMS, PUT_SCRIPT, REMOVE_SCRIPT, RedisForgetQueue, type ForgetQueueRedis } from '../memory/ForgetQueue';
 
 /** The few Redis hash commands the queue uses, in memory. `execs` counts transactions. */
 function fakeRedis() {
@@ -97,13 +97,33 @@ describe('the forget queue in the shared store', () => {
         expect((await queue.load()).pending.map((entry) => entry.itemKey)).toEqual(['good']);
     });
 
-    it('lets go of the oldest beyond the safety limit, so the store cannot grow without end', async () => {
+    it('never lets go of a forget Orbit has not taken, however many are waiting', async () => {
         const redis = fakeRedis();
-        for (let i = 0; i < MAX_PENDING_FORGETS + 3; i++) redis.hash('bots:forgets:pending').set(`k${i}`, JSON.stringify(pending(`k${i}`, i + 1)));
+        for (let i = 0; i < 5003; i++) redis.hash('bots:forgets:pending').set(`k${i}`, JSON.stringify(pending(`k${i}`, i + 1)));
         const kept = await new RedisForgetQueue(() => redis.client).load();
-        expect(kept.pending).toHaveLength(MAX_PENDING_FORGETS);
-        expect(kept.pending[0].itemKey).toBe('k3');
-        expect(redis.hash('bots:forgets:pending').size).toBe(MAX_PENDING_FORGETS);
+        expect(kept.pending).toHaveLength(5003);
+        expect(redis.hash('bots:forgets:pending').size).toBe(5003);
+    });
+
+    it('lets go of the oldest of the ledger beyond the safety limit, but not an entry another server replaced after it was read', async () => {
+        const redis = fakeRedis();
+        for (let i = 0; i < MAX_FORGOTTEN_ITEMS + 3; i++) redis.hash('bots:forgets:ledger').set(`k${i}`, JSON.stringify(forgotten(`k${i}`, i + 1)));
+        const read = redis.client.hGetAll;
+        let replaced = false;
+        redis.client.hGetAll = async (key) => {
+            const all = await read(key);
+            // Another bot server asks for the oldest one again right after it was read
+            if (key === 'bots:forgets:ledger' && !replaced) {
+                replaced = true;
+                redis.hash('bots:forgets:ledger').set('k0', JSON.stringify(forgotten('k0', 9_000_000)));
+            }
+            return all;
+        };
+        const kept = await new RedisForgetQueue(() => redis.client).load();
+        expect(kept.ledger).toHaveLength(MAX_FORGOTTEN_ITEMS);
+        expect(redis.hash('bots:forgets:ledger').size).toBe(MAX_FORGOTTEN_ITEMS + 1);
+        expect(JSON.parse(redis.hash('bots:forgets:ledger').get('k0')!).since).toBe(9_000_000);
+        expect(redis.hash('bots:forgets:ledger').has('k1')).toBe(false);
     });
 
     it('fails when the shared store does not answer in time, so a silent connection never holds a memory load or save', async () => {

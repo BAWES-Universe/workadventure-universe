@@ -260,9 +260,13 @@ export function heldText(notice: Pick<HeldNotice, 'words' | 'resumesAt' | 'timeZ
     return `"${notice.words.trim()}" has to wait: goals and tasks have used their part of your usage for now. Nothing is lost, and it carries on at ${clockTime(notice.resumesAt, notice.timeZone ?? 'UTC')}. You can still chat with me as usual.`;
 }
 
-/** A run that did not work, said once to the person (Orbit says when): what it was, and why. */
-export function failedText(run: Pick<DueRun, 'words'>, error: string): string {
-    return `I couldn't do "${run.words.trim()}": ${error.trim().replace(/[.!?]+$/, '')}. I'll try again at the next time, or ask me any time.`;
+/**
+ * A run that did not work, said once to the person (Orbit says when): what it was, and why. A reminder happens once and Orbit has
+ * given up on it by now, so it is not promised another try; a schedule or a watch has a next time.
+ */
+export function failedText(run: Pick<DueRun, 'words'> & { kind?: DueRun['kind'] }, error: string): string {
+    const why = `I couldn't do "${run.words.trim()}": ${error.trim().replace(/[.!?]+$/, '')}.`;
+    return run.kind === 'reminder' ? `${why} I won't try it again on my own. Ask me and I'll try again.` : `${why} I'll try again at the next time, or ask me any time.`;
 }
 
 /** The goal's one question, as the person reads it: what the goal found, and the three answers. */

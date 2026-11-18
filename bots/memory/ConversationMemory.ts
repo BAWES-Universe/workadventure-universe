@@ -115,7 +115,7 @@ export interface PendingMedia {
     again?: boolean;
     /** What the file is called, when it has a name of its own (a file sent again); otherwise the link's last part. */
     name?: string;
-    /** The one person it was made for (an answer for them alone, #1993), by their id in the space: whatever turn sends it later, it goes to them alone. */
+    /** Set when it was made for the one person this memory is about (an answer for them alone, #1993): whatever turn sends it later, it goes to them alone, as they are in the space then. The id is only a marker; it is not used to address it, since a player id can belong to someone else after a restore. */
     audience?: number;
 }
 

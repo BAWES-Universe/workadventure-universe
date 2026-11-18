@@ -79,6 +79,19 @@ async function locationOf(bucket: string | undefined, fileUuid: string): Promise
   return `${UPLOADER_URL}/upload-file/${fileUuid}`;
 }
 
+/**
+ * For a file kept in a bucket whose link is signed (it runs out), the uploader's own lasting link to it, written with the address this
+ * uploader is reached at from outside: a bot server may know the uploader only by a name inside its network, which a browser cannot open.
+ */
+export function lastingLocationOf(bucket: string | undefined, fileUuid: string, location: string): { lastingLocation?: string } {
+  if (!bucket || !UPLOADER_URL || location.startsWith(`${UPLOADER_URL}/upload-file/`)) return {};
+  const isChatBucket = bucket === S3_CDN_USER_REFS_BUCKET || bucket === S3_CDN_BOT_GENS_BUCKET;
+  const publicUrl = bucket === S3_CDN_USER_REFS_BUCKET ? S3_CDN_USER_REFS_PUBLIC_URL : S3_CDN_BOT_GENS_PUBLIC_URL;
+  // A bucket with a public link already answered with it, which lasts
+  if (!isChatBucket || publicUrl) return {};
+  return { lastingLocation: `${UPLOADER_URL.replace(/\/+$/, "")}/chat-file/${encodeURIComponent(bucket)}/${encodeURIComponent(fileUuid)}` };
+}
+
 /** What a player says an upload is for; anything else is a chat file. */
 function purposeOf(value: unknown): ReceiptPurpose {
   return RECEIPT_PURPOSES.includes(value as ReceiptPurpose) ? (value as ReceiptPurpose) : "chat-file";
@@ -344,6 +357,7 @@ export class FileController {
           lastModified: Date;
           type?: string;
           receipt?: string;
+          lastingLocation?: string;
         }[] = [];
 
         // Validate session token if admin API is configured (skip for bot uploads)
@@ -413,6 +427,7 @@ export class FileController {
             lastModified: new Date(),
             type: file.mimetype,
             ...(receipt ? { receipt } : {}),
+            ...lastingLocationOf(bucket, fileUuid, location),
           });
         }
 

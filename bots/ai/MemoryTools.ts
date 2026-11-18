@@ -109,6 +109,9 @@ const FILLER = new Set([
 /** Words that turn a thing around. "tired" and "not tired" are different things. */
 const NEGATIONS = new Set(['not', 'no', 'never', 'without', 'nothing', "don't", 'dont', "isn't", "wasn't", "aren't", "doesn't", "didn't"]);
 
+/** Plain words that may come before the "not" of a request to keep something ("do not forget", "please don't forget"). */
+const BEFORE_NEGATION = new Set(['do', 'does', 'please', 'pls', 'you', 'can', 'could', 'will', 'would', 'just']);
+
 const POSSESSIVE = /['’]s$|s['’]$/u;
 
 /** The words of a phrase, lower-case and in one spelling of each letter. Apostrophes and hyphens inside a word stay in it ("o'brien", "jean-luc"). */
@@ -274,8 +277,12 @@ export function resolveForgetting(items: MemoryItem[], about: string): Forgettin
         if (clause.keep) {
             // "but not coffee", "don't forget coffee": the "not" says to keep the thing, so it is not part of what is named. A thing that is itself
             // "not tired" is still protected by the words as they were said, so each way of reading it keeps what it names (more kept is the safe side)
+            // "do not forget coffee" and "please do not forget coffee": the words before the "not" are not part of what is named either
             let from = 0;
+            while (from < named.length - 1 && BEFORE_NEGATION.has(named[from])) from++;
+            const negatedAt = from;
             while (from < named.length - 1 && NEGATIONS.has(named[from])) from++;
+            if (from === negatedAt) from = 0;
             if (from > 0) {
                 const bare = resolveClause(items, named.slice(from));
                 found.picked.push(...bare.picked.filter((item) => !found.picked.includes(item)));

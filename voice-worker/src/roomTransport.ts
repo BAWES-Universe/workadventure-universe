@@ -183,7 +183,9 @@ export class RoomTransport implements OutputTarget {
             publication.setSubscribed(false);
             const again = setTimeout(() => {
                 this.asking.delete(sid);
-                if (this.gone || publication.subscribed || !this.stillPublished(participant, sid) || !this.mayHear(participant.identity)) return;
+                // Not "already subscribed": the media server sets that before it says so, so a late arrival from the ask before shows it here,
+                // while the unsubscribe asked for above is still on its way and would leave the microphone off with nothing to ask again
+                if (this.gone || !this.stillPublished(participant, sid) || !this.mayHear(participant.identity)) return;
                 publication.setSubscribed(true);
                 this.watchAsk(participant, publication, tries + 1);
             }, RESUBSCRIBE_GAP_MS);

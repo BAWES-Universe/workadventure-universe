@@ -188,7 +188,7 @@ export async function callKeyApp(
     } catch (error) {
         console.warn('[KeyApps] A key app could not be reached:', error instanceof Error ? error.message : error);
         // The request may have reached Orbit and the service: there is no proof either way
-        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person." };
+        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person.", outcome: 'uncertain' };
     }
     return answerOf(response.status, response.data);
 }
@@ -220,7 +220,7 @@ export function answerOf(status: number, data: unknown): unknown {
     if (status >= 500 && status < 600) {
         if (body.code === 'key_rejected') return { error: "The service did not accept the key, so it may have stopped working. This was not done. Tell the person to open Apps and tap Replace key.", outcome: 'failed' };
         // Orbit may have sent it and lost the answer (a timeout): there is no proof either way, so it is never said to be undone
-        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person." };
+        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person.", outcome: 'uncertain' };
     }
     return { error: "That App can't be used right now. This was not done.", outcome: 'not_sent' };
 }

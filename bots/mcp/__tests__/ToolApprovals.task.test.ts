@@ -359,6 +359,64 @@ describe('a goal’s card that could not be shown, remembered for every bot serv
         expect(sent).toHaveLength(1);
     });
 
+    it('is shown again by the server that failed, not twice, once another server has shown it', async () => {
+        orbit.cancelFails = true;
+        const { store } = sharedStore();
+        let theirs = false;
+        const first = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        expect((await first.propose(input())).kind).toBe('failed');
+        // Another bot server shows the card and clears the shared note
+        theirs = true;
+        expect((await make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store }).propose(input())).kind).toBe('waiting');
+        expect(sent).toHaveLength(1);
+        // The first server asks for the same step again: its own old note must not send a second card
+        const again = await first.propose(input());
+        expect((again as unknown as { result: { message: string } }).result.message).toMatch(/already asked/);
+        expect(sent).toHaveLength(1);
+    });
+
+    it('still believes its own note when it could not be written to the shared store', async () => {
+        orbit.cancelFails = true;
+        const marked = new Set<string>();
+        let writable = false;
+        const store = {
+            mark: async (id: string) => {
+                if (!writable) throw new Error('down');
+                marked.add(id);
+            },
+            marked: async (id: string) => marked.has(id),
+            clear: async (id: string) => void marked.delete(id),
+        };
+        let theirs = false;
+        const first = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        expect((await first.propose(input())).kind).toBe('failed');
+        // The store is back, but it never heard of the failure: this server still knows the step has no card, and shows it
+        writable = true;
+        theirs = true;
+        expect((await first.propose(input())).kind).toBe('waiting');
+        expect(sent).toHaveLength(1);
+    });
+
+    it('holds a shown card at once, so a tap made while the shared note is being cleared is not undone', async () => {
+        const { store } = sharedStore();
+        let release: () => void = () => undefined;
+        const slow = { ...store, clear: (id: string) => new Promise<void>((resolve) => (release = () => resolve(void store.clear(id)))) };
+        orbit.cancelFails = true;
+        const approvals = make(orbit, sent, undefined, RUN, () => true, { unshownCards: slow });
+        // A saved step that has no card yet: it is shown now, and the shared note is cleared slowly
+        expect((await make(orbit, sent, undefined, RUN, () => false, { unshownCards: store }).propose(input())).kind).toBe('failed');
+        orbit.cancelFails = false;
+        const proposing = approvals.propose(input());
+        for (let i = 0; i < 20 && sent.length < 1; i++) await settle();
+        expect(sent).toHaveLength(1);
+        // The person taps the visible card before the note is cleared
+        await approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } as never });
+        release();
+        await proposing;
+        await settle();
+        expect((approvals as unknown as { cards: Map<string, { waiting: boolean }> }).cards.get('act_1')?.waiting).toBe(false);
+    });
+
     it('does not fail a goal’s ask when the shared store cannot be read or written', async () => {
         const down = {
             mark: async () => {

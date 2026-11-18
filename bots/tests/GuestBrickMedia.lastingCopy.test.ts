@@ -5,7 +5,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const hoisted = vi.hoisted(() => ({ uploadAttachment: vi.fn() }));
-vi.mock('../matrix/uploadAttachment', () => ({ uploadAttachment: hoisted.uploadAttachment }));
+vi.mock('../matrix/uploadAttachment', () => ({
+    uploadAttachment: hoisted.uploadAttachment,
+    // As the uploader answers: the location, and its own lasting link when the location is a signed one
+    uploadAttachmentWithLink: async (...args: unknown[]) => {
+        const answer = await hoisted.uploadAttachment(...args);
+        return typeof answer === 'string' ? { location: answer } : answer;
+    },
+}));
 
 import { buildCarryCopy, copyCarriedMedia, lastingLinkOf, type CarryCopy } from '../server/GuestBrickMedia';
 
@@ -32,6 +39,15 @@ describe('the link a copy is kept under', () => {
         expect(await copy.store(new Uint8Array([1]), 'image/png', 'a.png')).toBe(`${UPLOADER}/chat-file/user-refs/${FILE}`);
         hoisted.uploadAttachment.mockResolvedValue(null);
         expect(await copy.store(new Uint8Array([1]), 'image/png', 'a.png')).toBeNull();
+    });
+});
+
+describe('a copy for a browser to open', () => {
+    it("is the lasting link the uploader wrote with its outside address, not one built from the bot server's own name for the uploader", async () => {
+        hoisted.uploadAttachment.mockResolvedValue({ location: SIGNED, lasting: `https://uploader.public.test/chat-file/user-refs/${FILE}` });
+        // Inside the bot server's network the uploader is a name no browser can open
+        const copy = buildCarryCopy({ guestChatHandedTo: async () => true } as never, 'guest-1', 'uuid-alice', { SECRET_KEY: 's', UPLOADER_URL: 'http://uploader:8080' } as never)!;
+        expect(await copy.store(new Uint8Array([1]), 'image/png', 'a.png')).toBe(`https://uploader.public.test/chat-file/user-refs/${FILE}`);
     });
 });
 
