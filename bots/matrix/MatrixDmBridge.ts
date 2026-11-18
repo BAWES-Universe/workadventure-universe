@@ -1118,7 +1118,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         await work;
     }
 
-    /** Runs a write to a Brick's chat profile, remembered while it runs so a purge can wait for it. */
+    /** Runs a write for a Brick (its chat profile, or a message kept for it), remembered while it runs so a purge can wait for it. */
     private profileWriting<T>(botId: string, write: () => Promise<T>): Promise<T> {
         const running = write();
         const set = this.profileWork.get(botId) ?? new Set<Promise<unknown>>();
@@ -1850,7 +1850,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         });
         if (this.deps.waiting?.hasSharedStore()) {
             try {
-                await this.deps.waiting.rememberWaitingDm(botId, event.room_id, message);
+                // Tracked with the profile writes: a purge waits for a write under way before it empties the store, so the message cannot land after it
+                await this.profileWriting(botId, () => this.deps.waiting!.rememberWaitingDm(botId, event.room_id, message));
                 // A copy kept here while the store was down is now older than this one, so only the store's is answered.
                 this.dropLocalWaiting(botId, event.room_id);
                 return;
@@ -1859,6 +1860,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 console.warn(`[MatrixDmBridge] Could not keep a waiting message for bot ${botId} in the shared store:`, error?.message ?? error);
             }
         }
+        // A purge that began while the write was under way keeps nothing, not even in this process
+        if (this.purgedBots.has(botId)) return;
         const rooms = this.localWaiting.get(botId) ?? new Map<string, { message: string; at: number }>();
         rooms.set(event.room_id, { message, at: Date.now() });
         this.localWaiting.set(botId, rooms);

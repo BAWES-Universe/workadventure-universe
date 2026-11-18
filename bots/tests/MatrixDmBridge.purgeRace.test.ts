@@ -149,6 +149,22 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(warned).toBe(1);
     });
 
+    it('keeps nothing when a waiting-message write that began before the purge fails after it: the purge waits for the write, and no local copy is made', async () => {
+        let fail!: (error: Error) => void;
+        deps.waiting.rememberWaitingDm = vi.fn(() => new Promise<void>((_resolve, reject) => { fail = reject; }));
+        const kept = bridge.rememberWaiting(BOT, message('$w1'));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const purge = bridge.purgeChats(BOT);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        // The purge is still waiting for the write: nothing has been dropped or taken yet
+        expect(deps.waiting.takeWaitingDms).not.toHaveBeenCalled();
+        fail(new Error('The shared store is down'));
+        await kept;
+        expect(await purge).toBe(true);
+        expect(bridge.localWaiting.get(BOT)?.size ?? 0).toBe(0);
+        expect(deps.waiting.takeWaitingDms).toHaveBeenCalledWith(BOT);
+    });
+
     it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
         bridge.purgedBots.add(BOT);
         await bridge.closeChat(BOT, ROOM, 'en');
