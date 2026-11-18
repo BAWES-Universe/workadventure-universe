@@ -30,6 +30,7 @@ describe('BotRegistry: rooms a purged Brick still has to forget', () => {
         await registry.clearPendingForget('@bot_a:hs', '!one:hs');
         expect(await registry.pendingForgetsOf('@bot_a:hs')).toEqual(['!two:hs']);
         expect(await registry.pendingForgetsOf('@bot_b:hs')).toEqual(['!three:hs']);
+        expect((await registry.allPendingForgets()).map((one: any) => `${one.matrixUserId}|${one.roomId}`).sort()).toEqual(['@bot_a:hs|!two:hs', '@bot_b:hs|!three:hs']);
     });
 
     it('is quiet when there is no shared store at all, and fails when one that was in use is down', async () => {
@@ -42,5 +43,6 @@ describe('BotRegistry: rooms a purged Brick still has to forget', () => {
         await expect(registry.rememberPendingForget('@bot_a:hs', '!one:hs')).rejects.toThrow('shared store is down');
         await expect(registry.pendingForgetsOf('@bot_a:hs')).rejects.toThrow('shared store is down');
         await expect(registry.clearPendingForget('@bot_a:hs', '!one:hs')).rejects.toThrow('shared store is down');
+        await expect(registry.allPendingForgets()).rejects.toThrow('shared store is down');
     });
 });

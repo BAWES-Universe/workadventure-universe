@@ -206,6 +206,18 @@ export class BotRegistry {
         return (await this.redis.hKeys('bots:matrix:pending-forgets')).filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length));
     }
 
+    /** Every room owed a forget, for whichever Brick, so a retry never depends on a purge being asked for again. Throws while a store that was in use is down. */
+    async allPendingForgets(): Promise<Array<{ matrixUserId: string; roomId: string }>> {
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return [];
+        }
+        return (await this.redis.hKeys('bots:matrix:pending-forgets')).flatMap((key) => {
+            const cut = key.indexOf('|');
+            return cut > 0 ? [{ matrixUserId: key.slice(0, cut), roomId: key.slice(cut + 1) }] : [];
+        });
+    }
+
     async clearPendingForget(matrixUserId: string, roomId: string): Promise<void> {
         if (!this.redis?.isOpen) {
             if (this.sharedStoreSeen) throw new Error('The shared store is down');

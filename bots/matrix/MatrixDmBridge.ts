@@ -170,6 +170,8 @@ export interface MatrixDmBridgeDeps {
          */
         rememberPendingForget?(matrixUserId: string, roomId: string): Promise<void>;
         pendingForgetsOf?(matrixUserId: string): Promise<string[]>;
+        /** All of them, so a room owed a forget is retried even when no purge is asked for again. */
+        allPendingForgets?(): Promise<Array<{ matrixUserId: string; roomId: string }>>;
         clearPendingForget?(matrixUserId: string, roomId: string): Promise<void>;
         /**
          * One device at a time makes the chat of a bot and a person (#1995): true for the first to ask while the claim
@@ -954,6 +956,31 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return false;
         } finally {
             this.purging.delete(botId);
+        }
+    }
+
+    /** Tries again every forget still owed, for any Brick (kept in the shared store and in this process). Never throws. */
+    private async retryOwedForgets(): Promise<void> {
+        try {
+            const owed = new Map<string, { userId: string; roomId: string }>();
+            for (const { matrixUserId, roomId } of (await this.deps.rooms?.allPendingForgets?.()) ?? []) owed.set(`${matrixUserId}|${roomId}`, { userId: matrixUserId, roomId });
+            for (const key of this.pendingForgets) {
+                const cut = key.indexOf('|');
+                owed.set(key, { userId: key.slice(0, cut), roomId: key.slice(cut + 1) });
+            }
+            for (const [key, { userId, roomId }] of owed) {
+                // A room being cleared right now is not owed yet: its own run does the forget
+                if (this.roomPurges.has(roomId)) continue;
+                try {
+                    await this.client.forgetRoom(userId, roomId);
+                    await this.deps.rooms?.clearPendingForget?.(userId, roomId);
+                    this.pendingForgets.delete(key);
+                } catch (error: any) {
+                    console.warn('[MatrixDmBridge] Could not forget a room a deleted Brick left (tried again later):', error?.message ?? error);
+                }
+            }
+        } catch (error: any) {
+            console.warn('[MatrixDmBridge] Could not read the rooms owed a forget:', error?.message ?? error);
         }
     }
 
@@ -1827,6 +1854,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** Every few minutes: bots with waiting messages that are back on answer them. */
     async checkWaiting(): Promise<void> {
+        // A room a deleted Brick left whose forget did not go through is finished here, whether or not a purge is asked for again
+        await this.retryOwedForgets();
         // Messages kept in this process expire like the shared store's, so a bot that stays off holds nothing.
         for (const [botId, rooms] of this.localWaiting) {
             for (const [roomId, kept] of rooms) {

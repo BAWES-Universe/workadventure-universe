@@ -222,4 +222,38 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(client.forgetRoom).toHaveBeenLastCalledWith(BOT_USER, '!old:matrix.test');
         expect(store.size).toBe(0);
     });
+
+    it('retries a forget that failed after a closing chat left the room, on the next check, with no purge asked for', async () => {
+        const store = new Set<string>();
+        deps.rooms.rememberPendingForget = vi.fn(async (u: string, r: string) => void store.add(`${u}|${r}`));
+        deps.rooms.pendingForgetsOf = vi.fn(async () => []);
+        deps.rooms.allPendingForgets = vi.fn(async () => [...store].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) })));
+        deps.rooms.clearPendingForget = vi.fn(async (u: string, r: string) => void store.delete(`${u}|${r}`));
+        client.forgetRoom.mockRejectedValueOnce(new Error('Matrix forget: 502'));
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+        expect(store.size).toBe(1);
+        // A fresh process, as after a restart: the record is in the shared store
+        const restarted = new MatrixDmBridge(config, client as never, deps) as any;
+        await restarted.checkWaiting();
+        expect(client.forgetRoom).toHaveBeenLastCalledWith(BOT_USER, ROOM);
+        expect(store.size).toBe(0);
+        // Nothing owed, nothing tried
+        client.forgetRoom.mockClear();
+        await restarted.checkWaiting();
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+    });
+
+    it('keeps a forget that still fails, and does not touch a room being cleared right now', async () => {
+        bridge.pendingForgets.add(`${BOT_USER}|${ROOM}`);
+        bridge.roomPurges.set(ROOM, new Promise(() => undefined));
+        await bridge.checkWaiting();
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+        bridge.roomPurges.clear();
+        client.forgetRoom.mockRejectedValueOnce(new Error('Matrix forget: 502'));
+        await bridge.checkWaiting();
+        expect(bridge.pendingForgets.size).toBe(1);
+        await bridge.checkWaiting();
+        expect(bridge.pendingForgets.size).toBe(0);
+    });
 });
