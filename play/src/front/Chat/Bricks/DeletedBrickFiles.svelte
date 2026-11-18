@@ -65,7 +65,9 @@
         <div class="bkg-cap gap">{$LL.chat.brick.files.deletedBrickFiles()}</div>
         <p class="bkg-note"><span>{$LL.chat.brick.files.deletedBrickFilesLoadFailed()}</span></p>
         <span class="bkg-acts">
-            <PageButton testId="deletedBrickFilesRetry" on:click={load}>{$LL.chat.brick.files.deletedBrickFilesRetry()}</PageButton>
+            <PageButton testId="deletedBrickFilesRetry" on:click={load}
+                >{$LL.chat.brick.files.deletedBrickFilesRetry()}</PageButton
+            >
         </span>
     </div>
 {/if}
