@@ -136,24 +136,27 @@ jobs:
             gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" \
               --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number' | sort -n
           }
+          # A failed lookup fails this step (set -e on the assignment), so it is reported rather than read as "no issue".
           existing=$(matching)
-          if [ -n "$existing" ]; then
-            echo "An open issue already reports this: #$(head -n1 <<<"$existing")"
-            exit 0
+          if [ -z "$existing" ]; then
+            body=$(printf '%s\n' \
+              "The image clean-up could not delete old versions of **$PACKAGE**: GitHub refused because this repository does not have the Admin role on that package. Nothing else is affected; the clean-up of this image waits until this is fixed." \
+              "" \
+              "**How to fix (about a minute):**" \
+              "1. Open https://github.com/orgs/$GITHUB_REPOSITORY_OWNER/packages and click **$PACKAGE**." \
+              "2. Click **Package settings** at the bottom of the right-hand column." \
+              "3. Under **Manage Actions access**, set **${GITHUB_REPOSITORY#*/}** to **Admin**. If it is not listed, click **Add Repository**, pick it, and choose **Admin**." \
+              "4. Close this issue. The next clean-up run deletes as planned, and opens a new issue if it is still refused." \
+              "" \
+              "Run that hit this: $RUN_URL")
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" --assignee "$ASSIGNEE" \
+              || gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body"
+            existing=$(matching)
           fi
-          body=$(printf '%s\n' \
-            "The image clean-up could not delete old versions of **$PACKAGE**: GitHub refused because this repository does not have the Admin role on that package. Nothing else is affected; the clean-up of this image waits until this is fixed." \
-            "" \
-            "**How to fix (about a minute):**" \
-            "1. Open https://github.com/orgs/$GITHUB_REPOSITORY_OWNER/packages and click **$PACKAGE**." \
-            "2. Click **Package settings** at the bottom of the right-hand column." \
-            "3. Under **Manage Actions access**, set **${GITHUB_REPOSITORY#*/}** to **Admin**. If it is not listed, click **Add Repository**, pick it, and choose **Admin**." \
-            "4. Close this issue. The next clean-up run deletes as planned, and opens a new issue if it is still refused." \
-            "" \
-            "Run that hit this: $RUN_URL")
-          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" --assignee "$ASSIGNEE" \
-            || gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body"
-          mapfile -t numbers < <(matching)
+          # Every run that gets here reconciles, so duplicates left by an earlier run (or a race) are closed now: keep the
+          # oldest, close the rest. A failed close fails this step and the next run tries again.
+          mapfile -t numbers <<<"$existing"
+          echo "Open issue reporting this: #${numbers[0]}"
           for number in "${numbers[@]:1}"; do
-            gh issue close "$number" --repo "$GITHUB_REPOSITORY" --reason "not planned" --comment "Duplicate of #${numbers[0]}." || true
+            gh issue close "$number" --repo "$GITHUB_REPOSITORY" --reason "not planned" --comment "Duplicate of #${numbers[0]}."
           done
