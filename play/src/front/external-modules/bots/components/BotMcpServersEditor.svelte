@@ -557,6 +557,9 @@
         }
     }
 
+    /** Each attempt has a window of its own: one name would hand the same window to two sign-ins started together */
+    let oauthAttempts = 0;
+
     async function handleOAuthConnect(serverId: string) {
         oauthConnectingServerId = serverId;
 
@@ -569,7 +572,7 @@
         // Open a blank popup immediately before the async call, so the browser
         // still recognizes this as user-initiated and doesn't block the popup.
         // After startOAuth resolves, we navigate the placeholder to the authorize URL.
-        const popup = window.open("", "oauth-popup", "width=600,height=700");
+        const popup = window.open("", `oauth-popup-editor-${++oauthAttempts}`, "width=600,height=700");
         if (!popup) {
             console.error("[BotMcpServersEditor] Popup blocked");
             oauthConnectingServerId = null;
@@ -590,6 +593,8 @@
             // 5-second countdown), so the main window updates right away.
             const messageHandler = (event: MessageEvent) => {
                 if (event.origin !== window.location.origin) return;
+                // Only what this attempt's own window says counts: another window's result does not settle it
+                if (event.source !== popup) return;
                 if (event.data?.type === "oauth-success") {
                     if (oauthCleanup) {
                         oauthCleanup();
