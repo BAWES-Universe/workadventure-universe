@@ -36,6 +36,17 @@ describe('MatrixAppServiceClient: calls for purging a deleted Brick\'s chats', (
         await expect(client.getJoinedRooms(USER)).rejects.toThrow('502');
     });
 
+    it('never reads a refusal as "no account" for an id outside the application service\'s namespace, even when the profile is absent', async () => {
+        http.get.mockImplementation(async (url: string) => (url.includes('/profile/') ? { status: 404, data: { errcode: 'M_NOT_FOUND' } } : { status: 403, data: { errcode: 'M_FORBIDDEN' } }));
+        for (const outside of ['@alice:matrix.test', '@bot_abc:other.test', '@robot_abc:matrix.test']) {
+            await expect(client.getJoinedRooms(outside)).rejects.toThrow('403');
+        }
+        // The profile of an outside id is not even asked for
+        expect(http.get.mock.calls.every((call: any[]) => !String(call[0]).includes('/profile/'))).toBe(true);
+        // Inside the namespace the same two answers still mean "no account"
+        expect(await client.getJoinedRooms(USER)).toBeNull();
+    });
+
     it('never reads an answer that is not a list of rooms as "no rooms"', async () => {
         http.get.mockResolvedValue({ status: 200, data: {} });
         await expect(client.getJoinedRooms(USER)).rejects.toThrow('not a list');

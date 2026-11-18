@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance } from 'axios';
 import { randomUUID } from 'crypto';
-import type { MatrixAppServiceConfig } from './MatrixConfig';
+import { botIdFromMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { MatrixEvent } from './MatrixAppServiceRouter';
 
 /**
@@ -134,7 +134,8 @@ export class MatrixAppServiceClient {
             if (!Array.isArray(rooms) || !rooms.every((id: unknown) => typeof id === 'string')) throw new Error(`Matrix joined rooms of ${userId}: the answer is not a list of rooms`);
             return rooms;
         }
-        if (response.status === 403 && (await this.accountExists(userId)) === false) return null;
+        // Only a user inside this application service's namespace can be "not registered yet"; for anyone else a 403 is a real refusal, whatever the profile says
+        if (response.status === 403 && botIdFromMatrixId(this.config.domain, userId) !== null && (await this.accountExists(userId)) === false) return null;
         throw new Error(`Matrix joined rooms of ${userId}: ${response.status} ${response.data?.errcode ?? ''}`);
     }
 
