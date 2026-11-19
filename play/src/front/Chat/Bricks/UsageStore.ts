@@ -39,7 +39,26 @@ let epoch = 0;
 // The read waiting for the one in flight to end (see refreshMyUsage)
 let queued: Promise<void> | undefined;
 
+let watching = false;
+/**
+ * Forgets what was read when the account really changes: another account or Orbit in place (the game initialises again for it), or
+ * the person signing out. Set up on the first read, so a page that never reads the usage watches nothing.
+ */
+function watchAccount(): void {
+    if (watching) return;
+    watching = true;
+    botApiService.onIdentityChange(() => forgetMyUsage());
+    let signedIn = get(userIsConnected);
+    // Lives as long as the game: never stopped
+    // eslint-disable-next-line svelte/no-ignored-unsubscribe
+    userIsConnected.subscribe((now) => {
+        if (signedIn && !now) forgetMyUsage();
+        signedIn = now;
+    });
+}
+
 function startRead(): Promise<void> {
+    watchAccount();
     const startedAt = changes;
     const startedEpoch = epoch;
     const startedAccount = account;

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
     getMyUsage: vi.fn<() => Promise<unknown>>(),
     askForMoreUsage: vi.fn<(category?: string) => Promise<unknown>>(),
+    onIdentityChange: (_listener: () => void) => () => undefined,
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: api }));
 vi.mock("../../../Stores/MenuStore", async () => {

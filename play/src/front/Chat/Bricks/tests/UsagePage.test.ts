@@ -2,6 +2,7 @@ import { tick } from "svelte";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const game = vi.hoisted(() => ({
+    identityChanged: [] as Array<() => void>,
     getMyUsage: vi.fn<() => Promise<unknown>>(),
     askForMoreUsage: vi.fn<(category?: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
@@ -13,6 +14,10 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
     botApiService: {
         getMyUsage: game.getMyUsage,
         askForMoreUsage: game.askForMoreUsage,
+        onIdentityChange: (listener: () => void) => {
+            game.identityChanged.push(listener);
+            return () => undefined;
+        },
     },
 }));
 // The pictures are not what these tests are about
