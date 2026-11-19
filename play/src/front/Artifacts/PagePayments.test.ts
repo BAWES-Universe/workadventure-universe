@@ -13,7 +13,8 @@ vi.mock("./ArtifactApi", () => {
     return { ArtifactRequestError, payOnArtifact: vi.fn() };
 });
 
-const frameWindow = { postMessage: vi.fn() } as unknown as Window;
+const framePost = vi.fn();
+const frameWindow = { postMessage: framePost } as unknown as Window;
 const otherWindow = { postMessage: vi.fn() } as unknown as Window;
 
 function ask(
@@ -77,7 +78,7 @@ describe("a page that takes payments, in the game's window", () => {
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "x".repeat(65) });
         await flush();
         expect(pay).not.toHaveBeenCalled();
-        expect(frameWindow.postMessage).not.toHaveBeenCalled();
+        expect(framePost).not.toHaveBeenCalled();
     });
 
     it("starts the owner's checkout, sends the buyer there, and tells the page only a status", async () => {
