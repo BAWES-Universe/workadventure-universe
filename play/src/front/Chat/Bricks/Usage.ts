@@ -265,6 +265,7 @@ function parseLines(value: unknown): ReceiptLine[] {
 function parseActivity(value: unknown): ActivityItem[] {
     if (!Array.isArray(value)) return [];
     const out: ActivityItem[] = [];
+    const seen = new Set<string>();
     for (const item of value) {
         if (!isRaw(item)) continue;
         const id = typeof item.id === "string" && /^[\w-]{1,64}$/.test(item.id) ? item.id : undefined;
@@ -272,6 +273,9 @@ function parseActivity(value: unknown): ActivityItem[] {
         const at = when(item.at);
         // One task that cannot be read is left out, never the whole list
         if (!id || !title || !at) continue;
+        // A receipt has one row: the same id twice is one task (its first row), never two rows that open the same receipt
+        if (seen.has(id)) continue;
+        seen.add(id);
         // A task the system is still looking up (an older Orbit may send it as "checking") is not a state anyone can act on: it is
         // left out and shows when it has settled
         if (item.state === "checking") continue;

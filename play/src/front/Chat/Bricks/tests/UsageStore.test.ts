@@ -163,6 +163,9 @@ describe("a person's usage in the game (#1999)", () => {
                 })
             )
             .mockResolvedValueOnce({ ...out, storage: { bytes: 222 } });
+        // Listening from the start: what is ever shown is seen, so the old answer is known never to have been
+        const seen: Array<number | undefined> = [];
+        const stop = myUsageStore.subscribe((usage) => seen.push(usage?.storageBytes));
         const first = loadMyUsage();
         const refreshed = refreshMyUsage();
         // One read waits for the one in flight; asking again does not add another
@@ -171,8 +174,83 @@ describe("a person's usage in the game (#1999)", () => {
         answerOld({ ...out, storage: { bytes: 111 } });
         await first;
         await refreshed;
+        stop();
         expect(api.getMyUsage).toHaveBeenCalledTimes(2);
         expect(get(myUsageStore)?.storageBytes).toBe(222);
+        expect(seen).not.toContain(111);
+    });
+
+    it("does not call a read of the next account settled because an earlier account's read ended", async () => {
+        let answerOld: (answer: unknown) => void = () => undefined;
+        api.getMyUsage.mockReturnValueOnce(
+            new Promise((resolve) => {
+                answerOld = resolve;
+            })
+        );
+        const first = loadMyUsage();
+        forgetMyUsage();
+        expect(get(myUsageSettled)).toBe(false);
+        answerOld(out);
+        await first;
+        expect(get(myUsageSettled)).toBe(false);
+        expect(get(myUsageStore)).toBeUndefined();
+    });
+
+    it("leaves the usage of another account alone when a request for more, made by the one before, is taken late", async () => {
+        await loadMyUsage();
+        let taken: (value: unknown) => void = () => undefined;
+        api.askForMoreUsage.mockReturnValueOnce(
+            new Promise((resolve) => {
+                taken = resolve;
+            })
+        );
+        const asking = askMyUsageForMore("computer");
+        // Signed out, and someone else's usage read, while the request was out
+        forgetMyUsage();
+        await loadMyUsage();
+        taken({ asked: true, created: true });
+        await expect(asking).resolves.toBe(true);
+        expect(get(myUsageStore)?.computer?.asked).toBe(false);
+        expect(get(myUsageStore)?.computer?.canAskForMore).toBe(true);
+        // And it did not count as a change that would make the next account's read be thrown away
+        api.getMyUsage.mockResolvedValueOnce({ ...out, storage: { bytes: 77 } });
+        await loadMyUsage();
+        expect(get(myUsageStore)?.storageBytes).toBe(77);
+    });
+
+    it("keeps the newest stamp seen even when an answer with no stamp came in between", async () => {
+        api.getMyUsage.mockResolvedValueOnce({ ...out, version: 20, storage: { bytes: 20 } });
+        await loadMyUsage();
+        api.getMyUsage.mockResolvedValueOnce({ ...out, storage: { bytes: 25 } });
+        await loadMyUsage();
+        expect(get(myUsageStore)?.storageBytes).toBe(25);
+        // A slow answer stamped before the first one: it is older than what was seen, whatever was held last
+        api.getMyUsage.mockResolvedValueOnce({ ...out, version: 10, storage: { bytes: 10 } });
+        await loadMyUsage();
+        expect(get(myUsageStore)?.storageBytes).toBe(25);
+        // And once the account changes the stamps start over
+        forgetMyUsage();
+        api.getMyUsage.mockResolvedValueOnce({ ...out, version: 5, storage: { bytes: 5 } });
+        await loadMyUsage();
+        expect(get(myUsageStore)?.storageBytes).toBe(5);
+    });
+
+    it("drops the read that was waiting behind another one when the account changes meanwhile", async () => {
+        let answerOld: (answer: unknown) => void = () => undefined;
+        api.getMyUsage.mockReturnValueOnce(
+            new Promise((resolve) => {
+                answerOld = resolve;
+            })
+        );
+        const first = loadMyUsage();
+        const waiting = refreshMyUsage();
+        forgetMyUsage();
+        answerOld(out);
+        await first;
+        await waiting;
+        // The queued read was for the account before: it asks nobody
+        expect(api.getMyUsage).toHaveBeenCalledTimes(1);
+        expect(get(myUsageStore)).toBeUndefined();
     });
 
     it("starts the read at once when none is out", async () => {
