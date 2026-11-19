@@ -144,6 +144,20 @@ describe('worker-load.sh', () => {
         assert.equal(existsSync(calls), false);
     });
 
+    it('does not leave or reuse what an earlier run of the same name left, when a new run is not valid', () => {
+        const bad = stubs('0 of 5 people connected');
+        mkdirSync(join(bad.dir, 'data'));
+        const out = join(bad.dir, 'out');
+        mkdirSync(out);
+        const old = ['on-5.worker.json', 'on-5.memory.tsv', 'on-5.load.json', 'on-5.load.log', 'on-5.container.txt', 'on-5.worker.log'];
+        for (const f of old) writeFileSync(join(out, f), 'OLD RUN\n');
+        const failed = sh('worker-load.sh', [join(bad.dir, 'data'), out, '30'], bad.env, bad.dir);
+        assert.equal(failed.status, 1);
+        // Nothing of the earlier run is left to be read as this one's result; what the new run wrote is its own
+        for (const f of ['on-5.worker.json', 'on-5.memory.tsv', 'on-5.load.json']) assert.equal(existsSync(join(out, f)), false, `${f} of the earlier run is still there`);
+        for (const f of ['on-5.load.log', 'on-5.container.txt', 'on-5.worker.log']) assert.doesNotMatch(readFileSync(join(out, f), 'utf8'), /OLD RUN/, `${f} is the earlier run's`);
+    });
+
     it('stops with the reason kept when not everyone connected, and goes on to measure when everyone did', () => {
         const bad = stubs('0 of 5 people connected');
         mkdirSync(join(bad.dir, 'data'));
@@ -171,5 +185,60 @@ describe('the table of the load runs', () => {
         assert.match(apart.stdout, /room-off-5: .*differ by more than a second/);
         const same = table(workerFile({ measuredFrom: '2026-11-19T10:00:00Z', measuredTo: '2026-11-19T10:02:40Z' }), { from: '2026-11-19T10:00:00.4Z', to: '2026-11-19T10:02:40.6Z' });
         assert.doesNotMatch(same.stdout, /not directly comparable/);
+    });
+});
+
+describe('worker-soak.sh', () => {
+    it('does not leave what an earlier run of the same name left, when a new run is not valid', () => {
+        const dir = scratch();
+        const bin = join(dir, 'bin');
+        mkdirSync(bin);
+        const stub = (name: string, body: string) => {
+            writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+            chmodSync(join(bin, name), 0o755);
+        };
+        stub('docker', 'case "$1" in inspect) echo "stub";; esac; exit 0');
+        stub('curl', 'exit 0');
+        stub('node', 'echo "0 of 9 people connected" >&2; sleep 30 & wait');
+        mkdirSync(join(dir, 'data'));
+        const out = join(dir, 'out');
+        mkdirSync(out);
+        const result = ['worker.json', 'trace.tsv', 'shutdown.json', 'lane.load.json', 'room.load.json', 'times.txt', 'exit.txt'].map((f) => `soak-on.${f}`);
+        for (const f of result) writeFileSync(join(out, f), 'OLD RUN\n');
+        const run = spawnSync('sh', [join(root, 'scripts', 'worker-soak.sh'), join(dir, 'data'), out, '30'], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNS: 'on' }, cwd: dir, encoding: 'utf8', timeout: 60000 });
+        assert.equal(run.status, 1);
+        assert.match(readFileSync(join(out, 'soak-on.INVALID.txt'), 'utf8'), /not all 9 people connected/);
+        for (const f of result) assert.equal(existsSync(join(out, f)), false, `${f} of the earlier run is still there`);
+    });
+});
+
+describe('worker-telemetry-check.sh', () => {
+    it('reports a missing summary, not an earlier run\'s, when the worker fails before it writes one', () => {
+        const dir = scratch();
+        const bin = join(dir, 'bin');
+        mkdirSync(bin);
+        // The tracer (and so the worker) fails at once; nothing it would write is written
+        for (const [name, body] of Object.entries({ strace: 'exit 1', curl: 'exit 0', npx: 'exit 0' })) {
+            writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+            chmodSync(join(bin, name), 0o755);
+        }
+        const out = join(dir, 'out');
+        mkdirSync(out);
+        const earlier = JSON.stringify({ heard: { frames: 99999 }, observerWork: { status: 'on', windows: { accepted: 7 }, errors: 0 } });
+        for (const name of ['worker-observer-off', 'worker-observer-on']) {
+            writeFileSync(join(out, `${name}.summary.json`), earlier);
+            writeFileSync(join(out, `${name}.load.json`), 'OLD RUN');
+            writeFileSync(join(out, `${name}.strace`), 'OLD RUN');
+            writeFileSync(join(out, `${name}.log`), 'OLD RUN');
+        }
+        const run = spawnSync('bash', [join(root, 'scripts', 'worker-telemetry-check.sh'), join(dir, 'data'), '0', '0'], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OUT: out }, cwd: dir, encoding: 'utf8', timeout: 120000 });
+        assert.doesNotMatch(run.stdout, /99999/);
+        assert.equal((run.stdout.match(/summary missing/g) ?? []).length, 2, run.stdout + run.stderr);
+        for (const name of ['worker-observer-off', 'worker-observer-on']) {
+            assert.equal(existsSync(join(out, `${name}.summary.json`)), false);
+            assert.equal(existsSync(join(out, `${name}.load.json`)), false);
+            assert.doesNotMatch(readFileSync(join(out, `${name}.strace`), 'utf8'), /OLD RUN/);
+            assert.doesNotMatch(readFileSync(join(out, `${name}.log`), 'utf8'), /OLD RUN/);
+        }
     });
 });

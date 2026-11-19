@@ -9,6 +9,8 @@ cd "$(dirname "$0")/.."
 DATA="$1"; TALK="${2:-20}"; IDLE="${3:-75}"; OUT="${OUT:-out/telemetry}"; PORT=8831; mkdir -p "$OUT"
 run() { # name, extra env...
     local name="$1"; shift
+    # What a run leaves, so that a run that fails before it writes its summary is never read with the files of an earlier one
+    rm -f "$OUT/$name".summary.json "$OUT/$name".full.strace "$OUT/$name".strace "$OUT/$name".log "$OUT/$name".load.json
     env -i PATH="$PATH" HOME="$(mktemp -d)" ORT_DISABLE_TELEMETRY=1 VOICE_WORKER_PORT=$PORT VOICE_ICE_SERVERS='[]' \
         LOAD_SUMMARY="$OUT/$name.summary.json" "$@" \
         strace -f -qq -s 256 -e trace=connect,sendto,sendmsg,sendmmsg -o "$OUT/$name.full.strace" \
