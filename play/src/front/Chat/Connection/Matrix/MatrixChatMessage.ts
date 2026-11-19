@@ -225,12 +225,38 @@ export class MatrixChatMessage implements ChatMessage {
         };
     }
 
+    /**
+     * Told when a late decryption changed what the message carries besides its text (ideas, an offer, Bricks made, a guest's chat).
+     * The timeline draws those from the list of messages, which does not change when only a field of one does: the room that holds
+     * this message sets it to say so to the list.
+     */
+    onCardsChanged: (() => void) | undefined;
+
     private updateMessageContentOnDecryptedEvent() {
         // Until it is decrypted, the event's type is m.room.encrypted: an image or file only shows as one now.
         this.type = this.mapMatrixMessageTypeToChatMessage();
-        Object.assign(this, this.readCards());
+        const cards = this.readCards();
+        const changed = JSON.stringify(cards) !== JSON.stringify(this.currentCards());
+        Object.assign(this, cards);
         this.content.set(this.getMessageContent());
         this.loadMediaUrl();
+        if (changed) this.onCardsChanged?.();
+    }
+
+    private currentCards() {
+        return {
+            botStatus: this.botStatus,
+            botStatusAt: this.botStatusAt,
+            roomLink: this.roomLink,
+            replyLimit: this.replyLimit,
+            artifact: this.artifact,
+            answeredNearby: this.answeredNearby,
+            brickIdeas: this.brickIdeas,
+            brickMade: this.brickMade,
+            brickOffer: this.brickOffer,
+            appOffer: this.appOffer,
+            guestChat: this.guestChat,
+        };
     }
 
     /** Files need the access token to download (authenticated media): the URL arrives once fetched. */
