@@ -57,6 +57,15 @@ describe("taking away an App nobody finished (#2001)", () => {
         expect(game.disconnectMyApp).toHaveBeenNthCalledWith(2, "app-9");
     });
 
+    it("asks again, with the same key, when Orbit answers with no id it can read, and removes the App once it has one", async () => {
+        game.addMyApp.mockResolvedValueOnce({}).mockResolvedValueOnce({ id: "app-1" });
+        game.disconnectMyApp.mockResolvedValue(undefined);
+        await findAndRemove(body);
+        expect(game.addMyApp).toHaveBeenCalledTimes(2);
+        expect(game.addMyApp).toHaveBeenNthCalledWith(2, body);
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+    });
+
     it("keeps looking while Orbit does not answer, but not after a refusal (nothing was made) or a used key", async () => {
         game.addMyApp.mockRejectedValueOnce(new Error("no answer")).mockRejectedValueOnce(withStatus(429));
         game.addMyApp.mockResolvedValueOnce({ id: "app-1" });

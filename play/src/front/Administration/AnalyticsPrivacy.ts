@@ -126,6 +126,19 @@ function redact(properties: Record<string, unknown> | undefined, depth = 0): voi
     }
 }
 
+/** An attribute that holds a list of addresses with a size each ("a.png 1x, b.png 2x"). */
+const REPLAY_SRCSET_KEYS = /^(?:attr__)?(?:data-)?(?:image)?srcset$/i;
+/** An address inside a style or a stylesheet's text: url(...), with or without quotes. */
+const CSS_URL = /url\(\s*(["']?)(.*?)\1\s*\)/gi;
+
+/** One address of a replay, without its query and hash (absolute or relative), and without an email in its path. A data: address holds no address and stays. */
+function cleanReplayAddress(address: string): string {
+    const bare = address.trim();
+    if (bare === "" || /^data:/i.test(bare)) return address;
+    if (WEB_ADDRESS.test(bare)) return withoutQueryOrHash(bare);
+    return emailFreePath(bare.replace(/[?#].*$/s, ""));
+}
+
 /** A value of a replay recording, cleaned: an address without its query and hash, no email, no secret-named attribute's value. */
 function cleanReplayValue(key: string, value: string): string {
     if (REPLAY_SECRET_KEYS.test(key) && !/^\*+$/.test(value)) return "[removed]";
@@ -133,6 +146,25 @@ function cleanReplayValue(key: string, value: string): string {
     if (WEB_ADDRESS.test(cleaned)) cleaned = withoutQueryOrHash(cleaned);
     // A relative address (/invite/sara%40example.test?token=x): its query and hash are cut, and an email in its path goes, encoded or not
     else if (REPLAY_ADDRESS_KEYS.test(key)) cleaned = emailFreePath(cleaned.replace(/[?#].*$/s, ""));
+    // A list of addresses (srcset): each one is cleaned, its size stays
+    else if (REPLAY_SRCSET_KEYS.test(key)) {
+        cleaned = cleaned
+            .split(",")
+            .map((candidate) => {
+                const part = candidate.trim();
+                const space = part.search(/\s/);
+                return space < 0
+                    ? cleanReplayAddress(part)
+                    : `${cleanReplayAddress(part.slice(0, space))}${part.slice(space)}`;
+            })
+            .join(", ");
+    }
+    // A style or a stylesheet's text (also rrweb's inlined one) names its images in url(...): their query and hash are cut as well
+    if (/url\(/i.test(cleaned))
+        cleaned = cleaned.replace(
+            CSS_URL,
+            (_all, quote: string, address: string) => `url(${quote}${cleanReplayAddress(address)}${quote})`
+        );
     return cleaned.replace(EMAIL, "[email]");
 }
 

@@ -61,7 +61,8 @@ export interface ForgetQueueRemoval {
  * thing again meanwhile, so a put does not replace a later ask and a removal does not remove one (0 is "whenever it was said": the latest of all).
  */
 export interface ForgetQueueChanges {
-    pending: { put: PendingItemForget[]; del: ForgetQueueRemoval[] };
+    /** `refuse`: entries whose only change is when Orbit began refusing them: written only if the entry is still there (one another server saw Orbit take is not brought back). */
+    pending: { put: PendingItemForget[]; del: ForgetQueueRemoval[]; refuse?: PendingItemForget[] };
     ledger: { put: ForgottenItem[]; del: ForgetQueueRemoval[] };
 }
 
@@ -89,9 +90,13 @@ export interface ForgetQueueRedis {
     };
 }
 
-/** Puts an entry unless the one stored is a later ask (0, "whenever it was said", is later than any time). Run in Redis, so two bot servers cannot cross. */
+/**
+ * Puts an entry unless the one stored is a later ask (0, "whenever it was said", is later than any time). Run in Redis, so two bot servers cannot cross.
+ * With a fourth argument of "existing" it only updates: an entry that is gone (another server saw Orbit take it) is not created again.
+ */
 export const PUT_SCRIPT = `
 local cur = redis.call('HGET', KEYS[1], ARGV[1])
+if not cur and ARGV[4] == 'existing' then return 0 end
 if cur then
   local ok, entry = pcall(cjson.decode, cur)
   if ok and type(entry) == 'table' and type(entry.since) == 'number' then
@@ -200,10 +205,11 @@ export class RedisForgetQueue implements ForgetQueueStore {
     async write(changes: ForgetQueueChanges): Promise<void> {
         const client = this.client();
         const batch = client.multi();
-        const put = (hash: string, entry: PendingItemForget | ForgottenItem) =>
-            batch.eval(PUT_SCRIPT, { keys: [hash], arguments: [forgetKeyOf(entry), JSON.stringify(entry), String(entry.since)] });
+        const put = (hash: string, entry: PendingItemForget | ForgottenItem, existing = false) =>
+            batch.eval(PUT_SCRIPT, { keys: [hash], arguments: [forgetKeyOf(entry), JSON.stringify(entry), String(entry.since), ...(existing ? ['existing'] : [])] });
         const remove = (hash: string, one: ForgetQueueRemoval) => batch.eval(REMOVE_SCRIPT, { keys: [hash], arguments: [one.key, String(one.since)] });
         for (const entry of changes.pending.put) put(PENDING_KEY, entry);
+        for (const entry of changes.pending.refuse ?? []) put(PENDING_KEY, entry, true);
         for (const one of changes.pending.del) remove(PENDING_KEY, one);
         for (const entry of changes.ledger.put) put(LEDGER_KEY, entry);
         for (const one of changes.ledger.del) remove(LEDGER_KEY, one);

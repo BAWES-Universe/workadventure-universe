@@ -197,6 +197,23 @@ describe('the call', () => {
         expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
     });
 
+    it('keeps the cost the provider reported when a rate per token is set and it sent no counts, in a whole reply', async () => {
+        route = { config: config({ endpoint: upstreamBase, settings: { costPerToken: 0.001 } }), source: 'universe-ai', keyOwnerId: null };
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'x'.repeat(300) } }], usage: { cost: 0.0123 } });
+        await askAndSettle({ messages });
+        // Not the 100 estimated tokens at the rate (a different, made-up amount): the provider's own figure
+        expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
+        // The estimated counts still fill the token tallies
+        expect(settled()[0].tokens?.output).toBe(100);
+    });
+
+    it('still prices real counts at the rate per token, which wins over a reported cost', async () => {
+        route = { config: config({ endpoint: upstreamBase, settings: { costPerToken: 0.001 } }), source: 'universe-ai', keyOwnerId: null };
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 10, completion_tokens: 20, cost: 0.0123 } });
+        await askAndSettle({ messages });
+        expect(settled()[0]).toMatchObject({ costMicros: 30_000, basis: 'measured' });
+    });
+
     it('writes max_completion_tokens for OpenAI’s own host, which wants the newer name', async () => {
         // Same shape the provider code uses; the guard is on the host name
         const { isOpenAIHost } = await import('../ai/providers/OpenAIProvider');
@@ -388,6 +405,13 @@ describe('streaming', () => {
         expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
     });
 
+    it('keeps the cost the provider reported when a rate per token is set and it sent no counts, in a stream', async () => {
+        route = { config: config({ endpoint: upstreamBase, settings: { costPerToken: 0.001 } }), source: 'universe-ai', keyOwnerId: null };
+        upstreamHandler = (_req, res) => sse(res, [data({ choices: [{ delta: { content: 'x'.repeat(300) } }] }), data({ choices: [], usage: { cost: 0.0123 } }), 'data: [DONE]\n\n']);
+        await askAndSettle({ messages, stream: true });
+        expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
+    });
+
     it('counts a character once when its bytes arrive in two pieces', async () => {
         // 30 characters of 3 bytes each, cut inside the 15th: read piece by piece it would count 31
         const line = Buffer.from(data({ choices: [{ delta: { content: '€'.repeat(30) } }] }));
@@ -465,6 +489,42 @@ describe('streaming', () => {
         await askAndSettle({ messages, stream: true }, 2);
         expect(upstreamRequests).toHaveLength(3);
         expect(upstreamRequests[2].body.stream_options).toBeUndefined();
+    });
+});
+
+describe('a first answer that refuses stream_options', () => {
+    it('is let go of before the call is made again without them, and the call settles as before', async () => {
+        const cancel = vi.fn(async () => undefined);
+        let calls = 0;
+        const fetchFor = () =>
+            (async (input: RequestInfo | URL, init?: RequestInit) => {
+                if (++calls === 1) {
+                    const answer = JSON.stringify({ error: { message: 'Stream options can only be defined when stream=True' } });
+                    return { ok: false, status: 400, clone: () => new Response(answer, { status: 400 }), body: { cancel } } as unknown as Response;
+                }
+                return fetch(input, init);
+            }) as typeof fetch;
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 2 } })}\n\n`);
+            res.end('data: [DONE]\n\n');
+        };
+        // A host the earlier test did not use, so what it learned about stream_options does not apply
+        route = { config: config({ endpoint: upstreamBase.replace('127.0.0.1', 'localhost') }), source: 'universe-ai', keyOwnerId: null };
+        const app = express();
+        app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], fetchFor }));
+        const own = await listen(app);
+        try {
+            const answer = await fetch(`${urlOf(own)}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ messages, stream: true }) });
+            expect(await answer.text()).toContain('"ok"');
+            await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+            expect(cancel).toHaveBeenCalledTimes(1);
+            expect(calls).toBe(2);
+            expect(settled()[0]).toMatchObject({ sent: true, tokens: { input: 5, output: 2 } });
+        } finally {
+            await new Promise<void>((resolve) => { own.closeAllConnections?.(); own.close(() => resolve()); });
+        }
     });
 });
 

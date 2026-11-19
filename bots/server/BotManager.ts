@@ -1875,6 +1875,13 @@ export class BotManager {
                     console.log(
                         `[BotManager] Room ${roomId} verification: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Keeping bots (possible timing issue).`
                     );
+                    // A person and only Bricks that are not connected: a room Orbit could not be read for is read again here as well,
+                    // or it would wait for a count that never changes
+                    if (waUserCount > connectedBots && this.homedReadFailed.has(roomId)) {
+                        await this.ensureBotsForRoom(roomId).catch((error: unknown) => {
+                            console.warn(`[BotManager] Could not read Orbit again for room ${roomId}:`, error instanceof Error ? error.message : error);
+                        });
+                    }
                 }
             } else {
                 // Room has real players (waUserCount > ourBotCount)

@@ -373,6 +373,20 @@ describe('a Brick that lives in a room, moved and returned by Orbit', () => {
         expect(internals.bots.get('brick-1')?.config.roomUrl).toBe(ROOM);
     });
 
+    it('is read again by the room check when a person is there, a Brick of the room is not connected, and Orbit could not say which Bricks live there', async () => {
+        const { botManager, admin, internals } = manager(() => [homed()]);
+        await botManager.handlePlayerEnterRoom(ROOM);
+        // The Brick dropped its connection, so the game counts one user: the person. An earlier read of Orbit had failed
+        internals.bots.get('brick-1')!.status = 'disconnected';
+        (botManager as unknown as { homedReadFailed: Set<string> }).homedReadFailed.add(ROOM);
+        const before = admin.getHomedBricks.mock.calls.length;
+        internals.queryWorkAdventureRooms = async () => new Map([[ROOM, 1]]);
+        await botManager.verifyRoomOccupancy();
+        expect(admin.getHomedBricks.mock.calls.length).toBeGreaterThan(before);
+        // The bot is kept meanwhile, as before
+        expect(internals.bots.has('brick-1')).toBe(true);
+    });
+
     it('stops listing a room with no Bricks once nobody is in it', async () => {
         const { botManager, internals } = manager(() => {
             throw new Error('down');

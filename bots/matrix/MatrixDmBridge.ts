@@ -401,6 +401,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private unplaced = new Map<string, { event: MatrixEvent; at: number }>();
     private unplacedTimer: NodeJS.Timeout | undefined;
     private unplacedDelay = UNPLACED_RETRY_MS;
+    /**
+     * A bot's leave or ban in a room whose bot could not be looked up (the store did not answer in time): kept, and tried again until the store answers,
+     * so the room is cleared then and a new chat can start. By room, with the bot that left.
+     */
+    private pendingBotRemovals = new Map<string, string>();
+    private botRemovalTimer: NodeJS.Timeout | undefined;
+    private botRemovalDelay = UNPLACED_RETRY_MS;
     private handledEvents = new Set<string>();
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
     private roomMembers = new Map<string, Set<string>>();
@@ -472,6 +479,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         this.waitingTimer = undefined;
         clearTimeout(this.unplacedTimer);
         this.unplacedTimer = undefined;
+        clearTimeout(this.botRemovalTimer);
+        this.botRemovalTimer = undefined;
         for (const [botId, queue] of this.drainQueues) {
             for (const event of queue.splice(0)) await this.rememberWaiting(botId, event, attemptsOf(event));
         }
@@ -1503,7 +1512,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** The bot in this DM room, or null for a room it never joined or has left. `strict` throws when the store can't be read. */
-    private async botForRoom(roomId: string, strict = false): Promise<string | null> {
+    private async botForRoom(roomId: string, strict = false, answered?: { gaveUp: boolean }): Promise<string | null> {
         const known = this.roomBots.get(roomId);
         if (known) return known;
         let stored: string | null;
@@ -1517,6 +1526,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 if (strict) throw error;
                 if (Date.now() + this.roomLookupPollMs > giveUpAt || this.stopping) {
                     console.warn(`[MatrixDmBridge] Could not look up the bot for ${roomId}:`, error?.message ?? error);
+                    // Null here is "the store did not answer", not "no bot": a caller that has to act on the answer says so
+                    if (answered) answered.gaveUp = true;
                     return null;
                 }
                 await new Promise((resolve) => setTimeout(resolve, this.roomLookupPollMs));
@@ -1556,9 +1567,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (botId) {
             if (membership === 'invite') {
                 await this.onInvite(event, botId);
-            } else if ((membership === 'leave' || membership === 'ban') && (await this.botForRoom(event.room_id)) === botId) {
+            } else if (membership === 'leave' || membership === 'ban') {
+                const answered = { gaveUp: false };
                 // Looked up through the store too, so a leave seen after a restart still clears the room.
-                await this.forgetRoom(event.room_id);
+                if ((await this.botForRoom(event.room_id, false, answered)) === botId) await this.forgetRoom(event.room_id);
+                // The store did not answer in time: the removal is kept and tried again, or the stored room would name a bot that is gone
+                else if (answered.gaveUp) this.keepBotRemoval(event.room_id, botId);
             }
             return;
         }
@@ -1744,7 +1758,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * line for the next check, and only after the last try is the person told to send it again. Messages in one `batch`
      * share a single "couldn't answer" note.
      */
-    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }): Promise<void> {
+    /** `recovered`: a message kept while the store was down, tried again. A newer message may have been answered, or have started to be, while this one waited on Orbit. */
+    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }, recovered = false): Promise<void> {
         const content = event.content ?? {};
         let botId: string | null;
         try {
@@ -1926,6 +1941,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
             name: user.name,
             isGuest: user.isGuest,
         };
+        // A recovered message is checked again just before it is answered: the steps above take a while, and a newer message in this chat may have been answered
+        // meanwhile (it is dropped, never answered after it), or may be being answered now (it is kept, and waits to see whether that answer lands)
+        if (recovered) {
+            const at = event.origin_server_ts ?? 0;
+            if (at <= (this.answeredLive.get(event.room_id) ?? -1)) return;
+            if (at <= (this.answeringLive.get(event.room_id) ?? -1)) {
+                this.keepUnplaced(event);
+                return;
+            }
+        }
         // Show "typing" only when the reply takes a moment, like a person would; quick replies need no extra calls.
         let typing = false;
         let typingRefresh: NodeJS.Timeout | undefined;
@@ -2200,6 +2225,42 @@ export class MatrixDmBridge implements MatrixEventHandler {
         this.scheduleUnplaced();
     }
 
+    /** Keep a bot's removal from a room until the store can say whether the room is its own. */
+    private keepBotRemoval(roomId: string, botId: string): void {
+        if (this.stopping) return;
+        this.pendingBotRemovals.delete(roomId);
+        this.pendingBotRemovals.set(roomId, botId);
+        if (this.pendingBotRemovals.size > DIRECT_ROOMS_MAX) this.pendingBotRemovals.delete(this.pendingBotRemovals.keys().next().value!);
+        this.scheduleBotRemovals();
+    }
+
+    private scheduleBotRemovals(): void {
+        if (this.botRemovalTimer || this.stopping || this.pendingBotRemovals.size === 0) return;
+        this.botRemovalTimer = setTimeout(() => {
+            this.botRemovalTimer = undefined;
+            void this.retryBotRemovals();
+        }, this.botRemovalDelay);
+        this.botRemovalTimer.unref?.();
+    }
+
+    private async retryBotRemovals(): Promise<void> {
+        // Each try that leaves some waiting is later than the last
+        this.botRemovalDelay = Math.min(this.botRemovalDelay * 2, UNPLACED_RETRY_MAX_MS);
+        for (const [roomId, botId] of [...this.pendingBotRemovals]) {
+            if (this.stopping) return;
+            try {
+                // Strict: a store that still cannot answer keeps the removal; one that answers decides it
+                const stored = await this.botForRoom(roomId, true);
+                this.pendingBotRemovals.delete(roomId);
+                if (stored === botId) await this.forgetRoom(roomId);
+            } catch (error: any) {
+                console.warn(`[MatrixDmBridge] Could not look up the bot for ${roomId} to clear it after the bot left, trying again:`, error?.message ?? error);
+            }
+        }
+        if (this.pendingBotRemovals.size === 0) this.botRemovalDelay = UNPLACED_RETRY_MS;
+        this.scheduleBotRemovals();
+    }
+
     private scheduleUnplaced(): void {
         if (this.unplacedTimer || this.stopping || this.unplaced.size === 0) return;
         this.unplacedTimer = setTimeout(() => {
@@ -2225,7 +2286,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 this.keepUnplaced(event);
                 continue;
             }
-            await this.handleMessage(event, false).catch((error) =>
+            await this.handleMessage(event, false, undefined, true).catch((error) =>
                 console.warn(`[MatrixDmBridge] Could not answer a message kept while the store was down in ${roomId}:`, error?.message ?? error)
             );
         }

@@ -60,12 +60,15 @@ export class PersistentMemory extends ConversationMemory {
     private forgetQueue: ForgetQueueStore | null = null;
     /** What the shared store is known to hold, by entry name (as the JSON written), so each write sends only what changed. */
     private queueSynced = { pending: new Map<string, { json: string; since: number }>(), ledger: new Map<string, { json: string; since: number }>() };
+    /** Entries a write put that was not answered (it timed out, or failed after the store applied it): they may be in the store, so a removal is sent for them too. */
+    private queueMaybe = { pending: new Map<string, { since: number }>(), ledger: new Map<string, { since: number }>() };
     /** Writes to the store one after another, so a later write never lands before an earlier one. */
     private queueWriting: Promise<unknown> = Promise.resolve();
     /** Settles once the store has been read for the first time (whether or not it could be). */
     forgetQueueReady: Promise<void> = Promise.resolve();
     private queueRestored = false;
     private queueRestoreTimer: NodeJS.Timeout | null = null;
+    private queueRefresh: Promise<void> | null = null;
     private queueRefreshedAt = 0;
     /** Entries let go in this process while the shared store was being read: what was read may still hold them, and must not bring them back. */
     private letGoWhileReading: Set<Map<string, number>> = new Set();
@@ -115,7 +118,9 @@ export class PersistentMemory extends ConversationMemory {
     setForgetQueue(store: ForgetQueueStore): void {
         this.forgetQueue = store;
         this.queueSynced = { pending: new Map(), ledger: new Map() };
+        this.queueMaybe = { pending: new Map(), ledger: new Map() };
         this.queueRestored = false;
+        this.queueRefresh = null;
         this.forgetQueueReady = this.restoreForgetQueue(true);
     }
 
@@ -182,6 +187,7 @@ export class PersistentMemory extends ConversationMemory {
             const mine = this.forgottenLedger.get(key);
             if (!mine || (mine.since !== 0 && (entry.since === 0 || mine.since < entry.since))) this.forgottenLedger.set(key, entry);
         }
+        this.capLedger();
     }
 
     /** A late read of the store may bring forgets that apply to what is already held: they are applied to it now. */
@@ -196,17 +202,29 @@ export class PersistentMemory extends ConversationMemory {
         const store = this.forgetQueue;
         if (!store || (store.inUse && !store.inUse())) return;
         if (!this.queueRestored) return;
+        // A load that comes while a read is out waits for that same read: it must not use a snapshot that read would have filtered
+        if (this.queueRefresh) return this.queueRefresh;
         if (Date.now() - this.queueRefreshedAt < PersistentMemory.UNREPORTED_RETRY_MS) return;
-        this.queueRefreshedAt = Date.now();
-        try {
-            // Our own writes first, or an entry removed here and not yet removed there would come back
-            await this.queueWriting;
-            const { kept, gone } = await this.loadQueue(store);
-            this.mergeStored(kept, gone);
-            if (this.unreportedItemForgets.size > 0) this.armUnreportedRetry();
-        } catch (error) {
-            console.warn(`[PersistentMemory] Could not read the forgets kept in the shared store: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        const run = (async () => {
+            try {
+                // Our own writes first, or an entry removed here and not yet removed there would come back
+                await this.queueWriting;
+                const { kept, gone } = await this.loadQueue(store);
+                if (store !== this.forgetQueue) return;
+                this.mergeStored(kept, gone);
+                // What another server forgot applies to what this one already holds (a restore does the same)
+                this.dropRecordedForgetsFromHeld();
+                // The half minute starts when the read is done; a read that failed is tried again at the next load
+                this.queueRefreshedAt = Date.now();
+                if (this.unreportedItemForgets.size > 0) this.armUnreportedRetry();
+            } catch (error) {
+                console.warn(`[PersistentMemory] Could not read the forgets kept in the shared store: ${error instanceof Error ? error.message : String(error)}`);
+            } finally {
+                if (this.queueRefresh === run) this.queueRefresh = null;
+            }
+        })();
+        this.queueRefresh = run;
+        return run;
     }
 
     /** Lets go of one entry of the waiting list or the ledger, and notes it for any read of the shared store that is out right now. */
@@ -287,30 +305,41 @@ export class PersistentMemory extends ConversationMemory {
         await this.forgetQueueReady;
         // No shared store at all: nothing can be written, so these are kept in this process only, and it is said so (not "kept for good")
         if (store.inUse && !store.inUse()) return false;
-        const changes: ForgetQueueChanges = { pending: { put: [], del: [] }, ledger: { put: [], del: [] } };
+        const changes: ForgetQueueChanges = { pending: { put: [], del: [], refuse: [] }, ledger: { put: [], del: [] } };
         const sent = { pending: new Map<string, { json: string; since: number }>(), ledger: new Map<string, { json: string; since: number }>() };
         const diff = <T extends { botId: string; userUuid: string; itemKey: string; since: number }>(
             now: ReadonlyMap<string, T>,
             synced: ReadonlyMap<string, { json: string; since: number }>,
-            into: { put: T[]; del: ForgetQueueRemoval[] },
-            record: Map<string, { json: string; since: number }>
+            into: { put: T[]; del: ForgetQueueRemoval[]; refuse?: T[] },
+            record: Map<string, { json: string; since: number }>,
+            maybe: Map<string, { since: number }>
         ) => {
             for (const [key, entry] of now) {
                 const json = JSON.stringify(entry);
-                if (synced.get(key)?.json !== json) {
-                    into.put.push(entry);
+                const was = synced.get(key);
+                if (was?.json !== json) {
+                    // Only the time Orbit began refusing it changed: that is written to an entry that is still there, never creating one another server saw Orbit take
+                    const sameAsk = was && into.refuse && JSON.stringify({ ...JSON.parse(was.json), refusedSince: undefined }) === JSON.stringify({ ...entry, refusedSince: undefined });
+                    (sameAsk ? into.refuse : into.put)!.push(entry);
                     record.set(key, { json, since: entry.since });
                 }
             }
-            for (const [key, was] of synced) if (!now.has(key)) into.del.push({ key, since: was.since });
+            // 0 is "whenever it was said", the latest of all
+            const later = (a: number, b: number) => ((a === 0 ? Infinity : a) >= (b === 0 ? Infinity : b) ? a : b);
+            // A put that was never answered may have been applied: what is no longer held is removed too, as the later of the two asks (the removal is a harmless nothing if it never was)
+            for (const [key, was] of synced) if (!now.has(key)) into.del.push({ key, since: maybe.has(key) ? later(was.since, maybe.get(key)!.since) : was.since });
+            for (const [key, was] of maybe) if (!now.has(key) && !synced.has(key)) into.del.push({ key, since: was.since });
         };
-        diff<PendingItemForget>(this.unreportedItemForgets, this.queueSynced.pending, changes.pending, sent.pending);
-        diff<ForgottenItem>(this.forgottenLedger, this.queueSynced.ledger, changes.ledger, sent.ledger);
-        if (changes.pending.put.length + changes.pending.del.length + changes.ledger.put.length + changes.ledger.del.length === 0) return true;
+        diff<PendingItemForget>(this.unreportedItemForgets, this.queueSynced.pending, changes.pending, sent.pending, this.queueMaybe.pending);
+        diff<ForgottenItem>(this.forgottenLedger, this.queueSynced.ledger, changes.ledger, sent.ledger, this.queueMaybe.ledger);
+        if (changes.pending.put.length + changes.pending.del.length + (changes.pending.refuse?.length ?? 0) + changes.ledger.put.length + changes.ledger.del.length === 0) return true;
         try {
             await store.write(changes);
         } catch (error) {
             console.warn(`[PersistentMemory] Could not write the waiting forgets to the shared store: ${error instanceof Error ? error.message : String(error)}`);
+            // The write may have reached the store before it failed or timed out: what it put is not taken as written (it is put again), but is remembered as possibly there
+            for (const [key, one] of sent.pending) this.queueMaybe.pending.set(key, { since: one.since });
+            for (const [key, one] of sent.ledger) this.queueMaybe.ledger.set(key, { since: one.since });
             // Tried again on the timer, even when nothing is owed to Orbit (a ledger entry alone must not be lost to a restart)
             this.queueDirty = true;
             this.armUnreportedRetry();
@@ -321,6 +350,11 @@ export class PersistentMemory extends ConversationMemory {
         for (const [key, one] of sent.ledger) this.queueSynced.ledger.set(key, one);
         for (const one of changes.pending.del) this.queueSynced.pending.delete(one.key);
         for (const one of changes.ledger.del) this.queueSynced.ledger.delete(one.key);
+        // What was answered is known now: written (kept in the synced list) or removed
+        for (const key of sent.pending.keys()) this.queueMaybe.pending.delete(key);
+        for (const key of sent.ledger.keys()) this.queueMaybe.ledger.delete(key);
+        for (const one of changes.pending.del) this.queueMaybe.pending.delete(one.key);
+        for (const one of changes.ledger.del) this.queueMaybe.ledger.delete(one.key);
         return true;
     }
 
@@ -332,9 +366,21 @@ export class PersistentMemory extends ConversationMemory {
         const kind = item.kind ?? before?.kind;
         this.forgottenLedger.delete(mapKey);
         this.forgottenLedger.set(mapKey, { botId: item.botId, userUuid: item.userUuid, itemKey: item.itemKey, ...(kind ? { kind } : {}), since });
-        // A safety limit nobody sees: past it the oldest are no longer remembered, so the file cannot grow without end
+        this.capLedger();
+    }
+
+    /**
+     * A safety limit nobody sees: past it the oldest are no longer remembered, so the file cannot grow without end. The oldest is the one the
+     * shared store lets go first too: the earliest time, and "whenever it was said" (0) counts as the latest of all, so it is kept longest.
+     */
+    private capLedger(): void {
         while (this.forgottenLedger.size > MAX_FORGOTTEN_ITEMS) {
-            this.letGo(this.forgottenLedger, this.forgottenLedger.keys().next().value as string);
+            let oldest: { key: string; since: number } | null = null;
+            for (const [key, entry] of this.forgottenLedger) {
+                const rank = entry.since === 0 ? Infinity : entry.since;
+                if (!oldest || rank < oldest.since) oldest = { key, since: rank };
+            }
+            this.letGo(this.forgottenLedger, (oldest as { key: string }).key);
             console.warn('[PersistentMemory] Too many forgotten things kept; letting the oldest go');
         }
     }
@@ -623,6 +669,12 @@ export class PersistentMemory extends ConversationMemory {
             if (timer) clearTimeout(timer);
             this.debounceTimers.delete(key);
             this.pendingSaves.delete(key);
+        }
+        // A save that is waiting on Orbit holds its snapshot apart from the active memory, which the cleanup of old memories may have let go:
+        // the person is fenced by who they are, not only by a memory that is still there (a save started after this reads the new count)
+        for (const [key, tracked] of this.uuidTracking) {
+            if (!key.startsWith(prefix) || !isForgotten(tracked.userUuid) || this.getAllMemories().has(key)) continue;
+            this.wipes.set(key, (this.wipes.get(key) ?? 0) + 1);
         }
 
         for (const key of Array.from(this.loadedMemoriesByUuid.keys())) {
