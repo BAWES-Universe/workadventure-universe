@@ -421,6 +421,24 @@ describe("the Bricks page (#1995)", () => {
         expect(byId("bricksLoading")).toBeNull();
         expect(rows()).toHaveLength(2);
         expect(game.ensureMyBrick).toHaveBeenCalledTimes(1);
+
+        // Opened again with what was read before still in the store: it says so again, and shows the new list
+        page?.$destroy();
+        page = undefined;
+        let again: (value: unknown) => void = () => undefined;
+        game.ensureMyBrick.mockReturnValue(
+            new Promise((resolve) => {
+                again = resolve;
+            })
+        );
+        page = new BricksPage({ target });
+        await tick();
+        expect(byId("bricksLoading")?.textContent).toBe("Loading your Bricks…");
+        again({ brick: card(), made: false, deleted: false });
+        await settle();
+        expect(byId("bricksLoading")).toBeNull();
+        expect(rows()).toHaveLength(2);
+        expect(game.ensureMyBrick).toHaveBeenCalledTimes(2);
     });
 
     it("has the back arrow to Chats and nothing to tuck the page away with, on a phone too", async () => {

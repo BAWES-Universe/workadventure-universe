@@ -87,8 +87,12 @@ describe("a link to a Brick's chat inside an answer", () => {
         expect(openBrickChat).toHaveBeenCalledWith("11");
         expect(loadMyBricks).not.toHaveBeenCalled();
 
-        // A middle click would open the game again in a new tab: it opens the chat too
+        // A middle click would open the game again in a new tab: it opens the chat too, once
+        openBrickChat.mockClear();
         expect(tap(link, "auxclick").defaultPrevented).toBe(true);
+        await flush();
+        expect(openBrickChat).toHaveBeenCalledTimes(1);
+        expect(openBrickChat).toHaveBeenCalledWith("11");
         // A right click opens the browser's menu as anywhere else
         expect(tap(link, "auxclick", 2).defaultPrevented).toBe(false);
 

@@ -123,6 +123,25 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
         ]);
     });
 
+    it("reads a long chat from its newest line and stops at what a request carries, never through to its first line", () => {
+        const lines = Array.from({ length: 20000 }, (_, index) => ({
+            from: index % 2 ? ("brick" as const) : ("guest" as const),
+            text: `line ${index}`,
+            at: index + 1,
+        }));
+        const looked = new Set<number>();
+        const watched = new Proxy(lines, {
+            get(target, key, receiver) {
+                if (typeof key === "string" && /^\d+$/.test(key)) looked.add(Number(key));
+                return Reflect.get(target, key, receiver) as unknown;
+            },
+        });
+        const history = historyExcept(watched, new Set());
+        expect(history).toHaveLength(REQUEST_LINES_MAX);
+        expect(history[history.length - 1].text).toBe("line 19999");
+        expect(Math.min(...looked)).toBeGreaterThanOrEqual(20000 - REQUEST_LINES_MAX - 1);
+    });
+
     it("keeps a request under what the bot server takes in, however long the chat or the message is", () => {
         const long = "é\n".repeat(20000);
         const lines = Array.from({ length: REQUEST_LINES_MAX }, (_, index) => ({
