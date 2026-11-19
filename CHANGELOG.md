@@ -99,8 +99,6 @@ Highlights, moved here from the README:
 - **Orbit.** See who is live, answer invitations, your passport, and recent visitors to the places you manage.
 - **Safer.** Only the right people can kick, edit maps or change bots, and emails stay private.
 
-Full list: [v0.3.0 release notes](https://github.com/BAWES-Universe/workadventure-universe/releases).
-
 Full list: [v0.3.0 release notes](https://github.com/BAWES-Universe/workadventure-universe/releases/tag/v0.3.0). Later 0.3.x releases are on the [releases page](https://github.com/BAWES-Universe/workadventure-universe/releases).
 
 [Unreleased]: https://github.com/BAWES-Universe/workadventure-universe/compare/v0.4.3...universe-develop
