@@ -562,6 +562,9 @@ describe("the Usage page (#1999)", () => {
 
     it("says the reset time again in the new language when the language changes while the page is open", async () => {
         game.getMyUsage.mockResolvedValue(live({ fullAgainAt: "2026-11-25T15:40:00" }));
+        // The clock is on another local day than the reset, so the date is in the words whatever day the test runs
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date("2026-11-10T12:00:00"));
         try {
             await open();
             expect(text()).toContain("25 Nov, 3:40 PM");
@@ -571,8 +574,127 @@ describe("the Usage page (#1999)", () => {
             expect(text()).toContain("15:40");
             expect(text()).not.toContain("3:40 PM");
         } finally {
+            vi.useRealTimers();
             setLocale("en-US");
         }
+    });
+
+    it("says the rows of tasks and credit again in the new language, an open receipt included, with no new read", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    activity: [task()],
+                    credit: [
+                        {
+                            covers: ["apps"],
+                            availableMicros: 3_100_000,
+                            totalMicros: 5_000_000,
+                            until: "2026-12-31T12:00:00",
+                        },
+                    ],
+                }
+            )
+        );
+        try {
+            await open({ receiptId: "act_1" });
+            expect(byId("usageReceipt")?.textContent).toContain("$0.06");
+            expect(byId("usageActivity")?.textContent).toContain("$0.06");
+            expect(text()).toContain("$3.10 of $5");
+            loadLocale("fr-FR");
+            setLocale("fr-FR");
+            await settle();
+            expect(game.getMyUsage).toHaveBeenCalledTimes(1);
+            // Every figure is written the way the new language writes it, with nothing read again
+            expect(byId("usageReceipt")?.textContent).toContain("0,06");
+            expect(byId("usageReceipt")?.textContent).not.toContain("$0.06");
+            expect(byId("usageActivity")?.textContent).toContain("0,06");
+            expect(text()).not.toContain("$3.10");
+        } finally {
+            setLocale("en-US");
+        }
+    });
+
+    it("opens a receipt again, and puts the keyboard on it, each time a link asks for it, even the same one", async () => {
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
+        await open({ receiptId: "act_1", receiptRequest: 1 });
+        expect(byId("usageReceipt")).not.toBeNull();
+        expect(document.activeElement).toBe(byId("usageActivity"));
+        // The person closes it, and the same link is followed again
+        byId("usageActivity")?.click();
+        await settle();
+        expect(byId("usageReceipt")).toBeNull();
+        (page as unknown as { $set: (props: object) => void }).$set({ receiptRequest: 2 });
+        await settle();
+        expect(byId("usageReceipt")).not.toBeNull();
+        expect(document.activeElement).toBe(byId("usageActivity"));
+    });
+
+    it("leaves a receipt closed that was closed, when nothing asks for it again", async () => {
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
+        await open({ receiptId: "act_1", receiptRequest: 1 });
+        byId("usageActivity")?.click();
+        await settle();
+        expect(byId("usageReceipt")).toBeNull();
+        (page as unknown as { $set: (props: object) => void }).$set({ receiptRequest: 1 });
+        await settle();
+        expect(byId("usageReceipt")).toBeNull();
+    });
+
+    it("waits on both request buttons while one request is out, and gives them back when it is done", async () => {
+        let taken: (value: unknown) => void = () => undefined;
+        game.askForMoreUsage.mockReturnValue(
+            new Promise((resolve) => {
+                taken = resolve;
+            })
+        );
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    apps: money({ availableMicros: 0, canAskForMore: true }),
+                    computer: computer({
+                        kind: "monthly",
+                        availableMicros: 0,
+                        totalMicros: 1_000_000,
+                        canAskForMore: true,
+                    }),
+                }
+            )
+        );
+        await open();
+        const buttons = () =>
+            [byId("usageAskForMoreApps"), byId("usageAskForMoreComputer")].filter(Boolean) as HTMLButtonElement[];
+        expect(buttons()).toHaveLength(2);
+        buttons()[0].click();
+        await settle();
+        expect(buttons().every((button) => button.disabled)).toBe(true);
+        taken({ asked: true });
+        await settle();
+        // The one that was asked shows it was; the other is available again
+        expect(byId("usageAskForMoreApps")).toBeNull();
+        expect((byId("usageAskForMoreComputer") as HTMLButtonElement | null)?.disabled).toBe(false);
+    });
+
+    it("says less than a cent in progress, not $0, for a reservation below one cent", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live({}, { apps: money({ inProgressMicros: 5_000 }), computer: computer({ money: undefined }) })
+        );
+        await open();
+        expect(text()).toContain("Less than $0.01 in progress");
+        expect(text()).not.toContain("$0 in progress");
+        page?.$destroy();
+        forgetMyUsage();
+        game.getMyUsage.mockResolvedValue(live({}, { apps: money({ inProgressMicros: 250_000 }) }));
+        await open();
+        expect(text()).toContain("$0.25 in progress");
+    });
+
+    it("says 'about half left' for the old half bar, not 'plenty'", async () => {
+        game.getMyUsage.mockResolvedValue(usage({ chat: { left: 0.4, words: "half", fullAgainAt: null } }));
+        await open();
+        expect(text()).toContain("About half left");
+        expect(text()).not.toContain("Plenty left");
     });
 
     it("says who pays for storage when Orbit says Universe does", async () => {

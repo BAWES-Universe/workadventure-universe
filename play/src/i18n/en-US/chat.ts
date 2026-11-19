@@ -1611,6 +1611,7 @@ const chat: BaseTranslation = {
             // The page
             universeAi: "Universe AI",
             plenty: "Plenty left",
+            half: "About half left",
             low: "Almost used up",
             out: "Used up for now",
             fullAgain: "Full again at {when}",
@@ -1668,6 +1669,7 @@ const chat: BaseTranslation = {
             renews: "Renews {day} at {time}",
             renewsNoTime: "Renews every month",
             inProgress: "{amount} in progress",
+            inProgressTiny: "Less than $0.01 in progress",
             unavailable: "Usage temporarily unavailable",
             unavailableHint: "Your Bricks keep working. Try again in a moment.",
             askNoteApps:

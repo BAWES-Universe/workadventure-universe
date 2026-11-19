@@ -180,11 +180,13 @@ vi.mock("../../Stores/ChatStore", async () => {
 // Opening Usage from a chat leaves the chat first, which this test has no chat for: only the request is real
 vi.mock("../OpenUsage", async () => {
     const store = await import("svelte/store");
-    const requested = store.writable<{ receiptId: string | undefined } | undefined>(undefined);
+    const requested = store.writable<{ receiptId: string | undefined; request: number } | undefined>(undefined);
+    let requests = 0;
     return {
         usagePageRequest: { subscribe: requested.subscribe },
         takeUsagePageRequest: () => requested.set(undefined),
-        openUsagePage: (request: { receiptId: string | undefined }) => requested.set(request),
+        openUsagePage: (request: { receiptId: string | undefined }) =>
+            requested.set({ ...request, request: ++requests }),
     };
 });
 // Opening Goals and tasks from a chat leaves the chat first, as Usage does: only the request is real here
@@ -1446,6 +1448,32 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("usagePage")).not.toBeNull();
             expect(byId("usageReceipt")).not.toBeNull();
             expect(byId("bricksPage")).toBeNull();
+        });
+
+        it("opens the same receipt again when a link asks for it a second time while the page is open", async () => {
+            game.getMyUsage.mockResolvedValue({
+                chat: { left: 1, words: "plenty", fullAgainAt: null },
+                activity: [
+                    {
+                        id: "act_1",
+                        title: "Trip page",
+                        at: new Date().toISOString(),
+                        spentMicros: 60000,
+                        category: "apps",
+                        lines: [{ label: "Instant research", amountMicros: 60000 }],
+                    },
+                ],
+            });
+            await open();
+            openUsagePage({ receiptId: "act_1" });
+            await settle();
+            expect(byId("usageReceipt")).not.toBeNull();
+            byId("usageActivity")?.click();
+            await settle();
+            expect(byId("usageReceipt")).toBeNull();
+            openUsagePage({ receiptId: "act_1" });
+            await settle();
+            expect(byId("usageReceipt")).not.toBeNull();
         });
 
         it("still works when the usage could not be read", async () => {
