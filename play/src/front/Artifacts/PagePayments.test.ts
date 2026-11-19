@@ -1661,6 +1661,41 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         payments.destroy();
     });
 
+    it("does not take who the buyer is from a status answer that comes after its watch has ended at the deadline", async () => {
+        let held: (answer: unknown) => void = () => undefined;
+        let hold = false;
+        let paid = false;
+        const pay = vi.fn(async (_artifact: unknown, _chat: unknown, body: { order?: string }) => {
+            if (!body.order) return checkout;
+            if (hold) {
+                hold = false;
+                // The status question that is on its way when the twenty minutes end
+                return new Promise((resolve) => {
+                    held = resolve;
+                });
+            }
+            return paid ? { status: "paid", testPayment: false } : { status: "checking", pollAfterMs: 30_000 };
+        });
+        const payments = make(pay as never, { pageUrl: () => "https://orbit.test/a/a1" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await flush();
+        // Polls at 3s, 33s, ... : the one at 1173s is the last before the deadline, and it is still waiting for its answer when the deadline comes
+        await vi.advanceTimersByTimeAsync(1_170_000);
+        hold = true;
+        await vi.advanceTimersByTimeAsync(31_000);
+        expect(told()).toContain("cant_confirm");
+        // A guest's new checkout starts; then the old status answer arrives, saying "account"
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r2", session: "s1" });
+        await flush();
+        held({ status: "checking", buyer: "account" });
+        await flush();
+        paid = true;
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line)).toMatchObject({ paid: { test: false }, buyer: "guest" });
+        expect(get(payments.line).receipt).toContain("#receipt=");
+        payments.destroy();
+    });
+
     it("ends a start that came back with no checkout to show as one that can be checked, never as a plain failure", async () => {
         const pay = vi.fn().mockResolvedValue({ status: "paid", checkoutUrl: null, reused: true });
         const payments = make(pay);

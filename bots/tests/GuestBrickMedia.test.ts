@@ -14,7 +14,7 @@ vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } })
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { BotAPI } from '../server/BotAPI';
-import { GuestBrickService, readDelivery, signDelivery, type GuestBrickMedia } from '../server/GuestBrickService';
+import { GuestBrickService, readDelivery, signDelivery, type GuestBrickMedia, type GuestUpload } from '../server/GuestBrickService';
 import { CarryNotNowError, copyCarriedMedia, readGuestUpload, type CarryCopy } from '../server/GuestBrickMedia';
 import { readCarriedLines } from '../server/GuestBrickService';
 import { carriedWords } from '../matrix/MatrixDmBridge';
@@ -518,7 +518,7 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         const small = new Uint8Array(2 * 1024 * 1024);
         const pending: Array<() => void> = [];
         const steps = copySteps({
-            read: vi.fn(async (receipt: string) => {
+            read: vi.fn(async (receipt: string): Promise<GuestUpload> => {
                 if (receipt === 'r-big') return { ok: true, bytes: big, url: 'g', type: 'image/png', name: 'big.png', sha256: 's' };
                 // The file is read when the test lets it: the store yields between steps
                 await new Promise<void>((resolve) => pending.push(resolve));

@@ -285,7 +285,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
      * A question that is not a start, with a limit on the wait: when no answer comes in STATUS_FOR_MS it counts as no answer. The
      * question itself is left to the browser's own end (an answer that comes later is never read).
      */
-    const askWithin = (request: ArtifactPayRequest): Promise<ArtifactPay> => {
+    const askWithin = (request: ArtifactPayRequest, stillWanted: () => boolean = () => true): Promise<ArtifactPay> => {
         let stop: ReturnType<typeof setTimeout> | undefined;
         let givenUp = false;
         const timeout = new Promise<never>((_resolve, reject) => {
@@ -296,7 +296,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         });
         // Taken up in whichever way it ends, so a late answer or a late timeout never leaves an unhandled rejection
         timeout.catch(() => undefined);
-        const asked = Promise.resolve(ask(request, undefined, () => !givenUp && !destroyed));
+        const asked = Promise.resolve(ask(request, undefined, () => !givenUp && !destroyed && stillWanted()));
         asked.catch(() => undefined);
         return Promise.race([asked, timeout]).finally(() => {
             if (stop) clearTimeout(stop);
@@ -441,7 +441,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             if (over || destroyed) return;
             let next = FIRST_POLL_MS;
             try {
-                const answer: ArtifactPay = await askWithin({ order: orderId });
+                // An answer that comes after the watch has ended (its deadline, say) says nothing about who is asking now: a new checkout may have started
+                const answer: ArtifactPay = await askWithin({ order: orderId }, () => !over);
                 if (over || destroyed) return;
                 // How far apart to ask is the server's word: short for a new order, longer the longer it waits
                 if (typeof answer.pollAfterMs === "number" && Number.isFinite(answer.pollAfterMs)) {

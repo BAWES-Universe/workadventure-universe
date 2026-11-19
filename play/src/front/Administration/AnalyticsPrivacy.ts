@@ -153,12 +153,18 @@ function cleanReplayValue(key: string, value: string): string {
             .map((candidate) => {
                 const part = candidate.trim();
                 const space = part.search(/\s/);
-                return space < 0 ? cleanReplayAddress(part) : `${cleanReplayAddress(part.slice(0, space))}${part.slice(space)}`;
+                return space < 0
+                    ? cleanReplayAddress(part)
+                    : `${cleanReplayAddress(part.slice(0, space))}${part.slice(space)}`;
             })
             .join(", ");
     }
     // A style or a stylesheet's text (also rrweb's inlined one) names its images in url(...): their query and hash are cut as well
-    if (/url\(/i.test(cleaned)) cleaned = cleaned.replace(CSS_URL, (_all, quote: string, address: string) => `url(${quote}${cleanReplayAddress(address)}${quote})`);
+    if (/url\(/i.test(cleaned))
+        cleaned = cleaned.replace(
+            CSS_URL,
+            (_all, quote: string, address: string) => `url(${quote}${cleanReplayAddress(address)}${quote})`
+        );
     return cleaned.replace(EMAIL, "[email]");
 }
 

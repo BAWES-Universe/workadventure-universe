@@ -237,7 +237,13 @@ describe("keepPrivate", () => {
                 class: "plain",
             },
             childNodes: [
-                { tagName: "style", attributes: { _cssText: ".a { background: url(/pics/bg.png?token=abc123#frag) } .b { background: url('data:image/png;base64,AAAA') }" } },
+                {
+                    tagName: "style",
+                    attributes: {
+                        _cssText:
+                            ".a { background: url(/pics/bg.png?token=abc123#frag) } .b { background: url('data:image/png;base64,AAAA') }",
+                    },
+                },
                 { tagName: "span", attributes: { style: "color: red" } },
             ],
         };
