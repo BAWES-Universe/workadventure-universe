@@ -104,6 +104,57 @@ describe("the guest id sent along when a guest signs in to an account", () => {
         expect(localUserStore.peekGuestTokenAside()).toBeNull();
     });
 
+    it("keeps it for 30 more minutes from a retry, so a hand-over that keeps failing past the first 30 minutes still has it", async () => {
+        vi.useFakeTimers();
+        try {
+            const start = Date.now();
+            vi.setSystemTime(start);
+            // Kept aside at the start (beforeEach ran at the real start time, so keep it again at this clock)
+            localUserStore.setAuthToken(GUEST);
+            localUserStore.keepGuestTokenAside(start);
+            localUserStore.setAuthToken(gameToken);
+            mocks.me.mockResolvedValue(retryAnswer);
+            vi.setSystemTime(start + 29 * 60 * 1000);
+            await signIn(gameToken);
+            expect(guestTokenOfCall(0)).toBe(GUEST);
+            // Minute 40: the first 30 are over, the retry at minute 29 gave it 30 more
+            vi.setSystemTime(start + 40 * 60 * 1000);
+            expect(localUserStore.peekGuestTokenAside()).toBe(GUEST);
+            await signIn(gameToken);
+            expect(guestTokenOfCall(1)).toBe(GUEST);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("does not renew it for a refusal that is not a retry, nor once signed in", async () => {
+        vi.useFakeTimers();
+        try {
+            const start = Date.now();
+            vi.setSystemTime(start);
+            localUserStore.setAuthToken(GUEST);
+            localUserStore.keepGuestTokenAside(start);
+            localUserStore.setAuthToken(gameToken);
+            mocks.me.mockResolvedValueOnce({
+                data: {
+                    status: "error",
+                    type: "error",
+                    code: "SOMETHING",
+                    title: "Error",
+                    subtitle: "x",
+                    details: "y",
+                },
+            });
+            vi.setSystemTime(start + 29 * 60 * 1000);
+            await signIn(gameToken);
+            // Not renewed: it still runs out 30 minutes after it was kept
+            vi.setSystemTime(start + 31 * 60 * 1000);
+            expect(localUserStore.peekGuestTokenAside()).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("sends nothing when there is no guest id kept aside", async () => {
         localStorage.clear();
         localUserStore.setAuthToken(gameToken);
