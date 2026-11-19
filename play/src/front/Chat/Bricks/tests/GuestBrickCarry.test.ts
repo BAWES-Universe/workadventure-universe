@@ -390,6 +390,37 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         expect(steps.carry).not.toHaveBeenCalled();
     });
 
+    it("keeps the hand-over when Orbit said yes but the account signed out while it answered: the next run only brings the chat, and never asks again and lets it go", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.take).mockImplementationOnce(() => {
+            state.current = false;
+            return Promise.resolve(true);
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        expect(steps.carry).not.toHaveBeenCalled();
+        expect(state.chat?.carryTaken).toBe(true);
+        expect(steps.calls).not.toContain("drop");
+        // Orbit hands a chat over once: asked again it would say no
+        vi.mocked(steps.take).mockResolvedValue(false);
+        state.current = true;
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        expect(steps.take).toHaveBeenCalledTimes(1);
+        expect(steps.carry).toHaveBeenCalled();
+    });
+
+    it("marks nothing of another guest's chat that came to the device while Orbit answered yes and the account had signed out", async () => {
+        const { state, steps } = device();
+        const other = chatWithWords({ guestId: "9f1d2c3b-aaaa-4bbb-8ccc-0123456789ab" });
+        vi.mocked(steps.take).mockImplementationOnce(() => {
+            state.current = false;
+            state.chat = other;
+            return Promise.resolve(true);
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        expect(state.chat).toBe(other);
+        expect(steps.calls).toEqual([]);
+    });
+
     it("says nothing and drops nothing when the account changed while a part was on its way", async () => {
         const { state, steps } = device();
         vi.mocked(steps.carry).mockImplementation(() => {

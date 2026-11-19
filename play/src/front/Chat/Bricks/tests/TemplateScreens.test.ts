@@ -715,6 +715,24 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(byId("brickMadeFrom")).not.toBeNull();
         });
 
+        it("takes the card away when a later read says the Brick is no longer made from a template, and keeps it when a later read only fails", async () => {
+            game.getMadeFrom.mockResolvedValueOnce(madeFrom());
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            expect(byId("brickMadeFrom")).not.toBeNull();
+            const set = (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set;
+            // A read that failed says nothing: the card stays
+            game.getMadeFrom.mockRejectedValueOnce(Object.assign(new Error("offline"), { status: 500 }));
+            set.call(part, { refreshKey: "b" });
+            await settle();
+            expect(byId("brickMadeFrom")).not.toBeNull();
+            // Orbit says there is no template for it now: the old card and its update go
+            game.getMadeFrom.mockRejectedValueOnce(Object.assign(new Error("nope"), { status: 404 }));
+            set.call(part, { refreshKey: "c" });
+            await settle();
+            expect(byId("brickMadeFrom")).toBeNull();
+        });
+
         it("does not keep asking about a Brick that is not made from a template", async () => {
             game.getMadeFrom.mockRejectedValue(Object.assign(new Error("nope"), { status: 404 }));
             part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });

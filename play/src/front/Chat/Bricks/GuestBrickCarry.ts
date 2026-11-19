@@ -53,7 +53,17 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             console.warn("Could not ask for the chat this device had as a guest", error);
             return "later";
         }
-        if (!steps.current()) return "later";
+        if (!steps.current()) {
+            // Orbit hands a chat over once, and it said yes: its mark is kept (for this run's account only; the step makes it by that account's
+            // chat) so the next run only brings it, and never asks again, hears "no" and lets the chat go. Said for nobody else, and nothing is dropped
+            if (handedOver) {
+                const held = steps.read();
+                if (held && held.guestId === chat.guestId && held.startedAt === chat.startedAt) {
+                    steps.keep({ ...held, carryTaken: true });
+                }
+            }
+            return "later";
+        }
         // What the device holds now: signing out, or another guest's chat, can replace it while the question is open. What Orbit
         // answers is about the chat it was asked about, never about the one there now
         const current = steps.read();
