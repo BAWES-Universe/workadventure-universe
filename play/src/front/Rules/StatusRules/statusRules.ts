@@ -18,6 +18,20 @@ const basicStatus: Array<AvailabilityStatus> = [
     AvailabilityStatus.DENY_PROXIMITY_MEETING,
 ];
 
+/**
+ * Statuses that availabilityStatusStore puts above a requested status (Busy, Do not disturb, Back in a moment).
+ * The user keeps their requested status while one of these applies, so moving between them goes both ways.
+ */
+const overridingStatus: Array<AvailabilityStatus> = [
+    AvailabilityStatus.SPEAKER,
+    AvailabilityStatus.SILENT,
+    AvailabilityStatus.DENY_PROXIMITY_MEETING,
+];
+
+const statusForbiddenFromRequestedStatus: Array<AvailabilityStatus> = basicStatus.filter(
+    (status) => !overridingStatus.includes(status)
+);
+
 export type RequestedStatus =
     | AvailabilityStatus.DO_NOT_DISTURB
     | AvailabilityStatus.BACK_IN_A_MOMENT
@@ -32,15 +46,15 @@ export const setableStatus: Array<AvailabilityStatus> = [
 const invalidTransition: Map<AvailabilityStatus, Array<AvailabilityStatus>> = new Map([
     [AvailabilityStatus.UNCHANGED, [...setableStatus]],
     [AvailabilityStatus.ONLINE, []],
-    [AvailabilityStatus.SILENT, [...setableStatus]],
+    [AvailabilityStatus.SILENT, []],
     [AvailabilityStatus.AWAY, [...setableStatus]],
     [AvailabilityStatus.JITSI, []],
     [AvailabilityStatus.BBB, []],
-    [AvailabilityStatus.DENY_PROXIMITY_MEETING, [...setableStatus]],
-    [AvailabilityStatus.SPEAKER, [...setableStatus]],
-    [AvailabilityStatus.BUSY, [...basicStatus]],
-    [AvailabilityStatus.DO_NOT_DISTURB, [...basicStatus]],
-    [AvailabilityStatus.BACK_IN_A_MOMENT, [...basicStatus]],
+    [AvailabilityStatus.DENY_PROXIMITY_MEETING, []],
+    [AvailabilityStatus.SPEAKER, []],
+    [AvailabilityStatus.BUSY, [...statusForbiddenFromRequestedStatus]],
+    [AvailabilityStatus.DO_NOT_DISTURB, [...statusForbiddenFromRequestedStatus]],
+    [AvailabilityStatus.BACK_IN_A_MOMENT, [...statusForbiddenFromRequestedStatus]],
     [AvailabilityStatus.UNRECOGNIZED, []],
     [AvailabilityStatus.LIVEKIT, []],
 ]);
