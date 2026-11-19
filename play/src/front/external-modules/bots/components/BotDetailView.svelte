@@ -260,7 +260,11 @@
         // calls flushPendingSaves() itself first: Svelte runs a parent's onDestroy before its children's, so by now
         // BotEditor would no longer be listening for the store update this makes.
         flushPendingSaves();
+        retired = true;
     });
+
+    /** Set when the view is gone: a save that ends after that never starts another from a view nobody sees. */
+    let retired = false;
 
     /** Run pending debounced saves now rather than dropping them */
     export function flushPendingSaves() {
@@ -489,7 +493,7 @@
      * name Orbit has now, and saved if they differ.
      */
     function saveNewerNameLater(botId: string) {
-        if (currentBot?.id !== botId) return;
+        if (retired || currentBot?.id !== botId) return;
         if ((currentBot.name?.trim() || "") !== lastSavedName) handleNameChange();
     }
 

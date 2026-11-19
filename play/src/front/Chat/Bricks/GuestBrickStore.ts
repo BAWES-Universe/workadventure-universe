@@ -111,6 +111,7 @@ export function bringGuestChatInto(brickId: string): void {
     if (!get(userIsConnected) || !myChatId || !own?.isDefault) return;
     bringGuestChat(
         {
+            current: () => get(userIsConnected) && localUserStore.getChatId() === myChatId,
             read: () => {
                 const chat = parseGuestChat(localUserStore.getGuestBrickChat(), null, Date.now());
                 if (!chat) return chat;

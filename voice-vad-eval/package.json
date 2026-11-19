@@ -29,6 +29,10 @@
     "@evan/opus": "1.0.3",
     "onnxruntime-node": "1.31.1",
     "onnxruntime-web": "1.31.1",
-    "tsx": "4.23.15"
+    "tsx": "4.23.15",
+    "ws": "8.22.1"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
   }
 }

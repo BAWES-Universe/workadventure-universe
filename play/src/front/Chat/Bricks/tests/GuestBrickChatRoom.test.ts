@@ -80,6 +80,27 @@ describe("a guest's chat with the Brick for guests (#1997)", () => {
         expect(get(room.name)).toBe("Brick");
     });
 
+    it("tries to keep the chat again after the device refused it, instead of taking a failed save for a written one", async () => {
+        let refuse = true;
+        const { room, device, answers, settle } = setup({
+            save: (raw) => {
+                if (!refuse) device.saved = raw;
+            },
+        });
+        // `device` is not known to the override above until setup returns, so it reads through the closure
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Second row.", needsAccount: false }));
+        room.sendMessage("Where's the coffee?");
+        await settle();
+        expect(device.saved).toBeNull();
+        refuse = false;
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Yes.", needsAccount: false }));
+        room.sendMessage("Thanks");
+        await settle();
+        // The refused save was not taken for a written one: the chat that stayed in the room is kept now
+        expect(device.saved).not.toBeNull();
+        expect(JSON.parse(device.saved ?? "{}").lines).toHaveLength(4);
+    });
+
     it("asks once for each message the guest writes, with the chat so far, the place and one id for the try", async () => {
         const { room, asked, answers, said, settle } = setup();
         answers.push(() =>

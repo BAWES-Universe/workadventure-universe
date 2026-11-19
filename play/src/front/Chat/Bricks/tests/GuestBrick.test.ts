@@ -49,6 +49,21 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
         expect(read?.lines.map((line) => line.text)).toEqual(["Where's the coffee?", "Second row."]);
     });
 
+    it("reads a chat saved mid-carry by the build before parts (carryingTo) as the part that was on its way", () => {
+        let chat = newGuestChat(GUEST, 1000);
+        for (let i = 0; i < 4; i++)
+            chat = withLine(chat, { from: i % 2 ? "brick" : "guest", text: `line ${i}`, at: 2000 + i });
+        const old = { ...JSON.parse(serializeGuestChat(chat)), carriedTo: 1, carryingTo: 3 };
+        const read = parseGuestChat(JSON.stringify(old), GUEST, 5000, HOUR);
+        // The part asked again is the one that went: lines 1 and 2, same ids, not the whole chat from the start
+        expect(read?.carrying).toEqual(carriedPart(chat, 1, 3));
+        expect(read?.carrying?.lines).toHaveLength(2);
+        // A place that cannot be (behind where it got to, or past the lines) is not a part
+        for (const carryingTo of [1, 0, 9, 2.5, "3"]) {
+            expect(parseGuestChat(JSON.stringify({ ...old, carryingTo }), GUEST, 5000, HOUR)?.carrying).toBeUndefined();
+        }
+    });
+
     it("does not give a chat to anyone but the guest it was kept for", () => {
         const chat = withLine(newGuestChat(GUEST, 1), { from: "guest", text: "hi", at: 2 });
         expect(

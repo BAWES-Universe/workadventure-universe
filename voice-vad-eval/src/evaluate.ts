@@ -35,6 +35,8 @@ function shaOfSource(source: string): string {
 for (let index = 0; index < manifest.length; index++) {
     if (index % shards !== shard) continue;
     const item = manifest[index];
+    // The recording is hashed before anything of it is read for this clip, so the hash is of what the clip was built from
+    const sha = shaOfSource(item.source);
     const built = item.build();
     const gate: Record<string, GateResult> = {};
     for (const ms of [100, 200, 300]) gate[`gate ${ms} ms`] = runGate(built.pcm, ms, 320);
@@ -50,7 +52,7 @@ for (let index = 0; index < manifest.length; index++) {
             condition: item.condition,
             split: item.split,
             source: item.source,
-            sourceSha: shaOfSource(item.source),
+            sourceSha: sha,
             speaker: item.speaker,
             seconds: built.pcm.length / 16000,
             clipStart: item.kind === 'speech' ? LEAD : undefined,
@@ -63,6 +65,11 @@ for (let index = 0; index < manifest.length; index++) {
         })
     );
     if (++done % 200 === 0) console.error(`shard ${shard}: ${done} clips, ${Math.round((Date.now() - started) / 1000)} s`);
+}
+// A recording that was replaced while this ran is not what its clips were scored from: nothing is written, and the shard did not finish
+for (const [source, sha] of shaBySource) {
+    const now = sourceSha(data, source);
+    if (now !== sha) throw new Error(`the source ${source} changed while it was being scored (${sha} then, ${now} now): run the evaluation again`);
 }
 writeFileSync(join(out, `raw-${shard}.jsonl`), lines.join('\n') + '\n');
 // Written last: a shard without this did not finish

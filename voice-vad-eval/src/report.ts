@@ -382,21 +382,24 @@ if (adjudged.size) {
     }
     table(['non-speech set', 'detector', 'distinct recordings', 'hours incl. variants', 'firings', 'per hour', 'recordings with a firing'], rows);
 }
+// The hashes are the ones taken when the clips were scored; the files are hashed again here, and a source that is not the
+// recording that was scored stops the report (a dataset that did not change passes). Every row is checked, not the first of each
+// source (variants of a source scored in other shards carry their own hash), and before anything is written, so a refused run
+// leaves no new results beside old evidence files
+const sourcesNow = new Map<string, string>();
+for (const m of manifest) {
+    const r = byId.get(m.id)!;
+    if (typeof r.sourceSha !== 'string') throw new Error(`the raw results hold no source hash for ${r.source} (${r.id}): run the evaluation again`);
+    let now = sourcesNow.get(r.source);
+    if (now === undefined) sourcesNow.set(r.source, (now = sourceSha(data, r.source)));
+    if (now !== r.sourceSha) throw new Error(`the source ${r.source} is not the recording that was scored for ${r.id} (${r.sourceSha} then, ${now} now): run the evaluation again`);
+}
 writeFileSync(join(out, 'results.md'), md.join('\n'));
 
 // ---- Evidence files: one line per clip, readable without the audio ----
-// The hashes are the ones taken when the clips were scored; the files are hashed again here, and a source that is not the
-// recording that was scored stops the report (a dataset that did not change passes)
-const sourceShas = new Map<string, string>();
 const perClip = ['id\tsplit\tkind\tset\tlabel\tcondition\tsource\tsource_sha256_16\tspeaker\tseconds\tclip_start\test_onset\test_offset\tgate_firings\tgate_outcome\tsilero_firings\tsilero_outcome\tadjudged'];
 for (const m of manifest) {
     const r = byId.get(m.id)!;
-    if (!sourceShas.has(r.source)) {
-        if (typeof r.sourceSha !== 'string') throw new Error(`the raw results hold no source hash for ${r.source}: run the evaluation again`);
-        const now = sourceSha(data, r.source);
-        if (now !== r.sourceSha) throw new Error(`the source ${r.source} is not the recording that was scored (${r.sourceSha} then, ${now} now): run the evaluation again`);
-        sourceShas.set(r.source, r.sourceSha);
-    }
     const g = triggers.get(r.id)!.get(BASE)!;
     const c = triggers.get(r.id)!.get(FROZEN_RULE)!;
     const outcome = (det: string): string => {
@@ -405,7 +408,7 @@ for (const m of manifest) {
         return s.outcome + (s.background ? '+background' : '');
     };
     const n3 = (x?: number): string => (x === undefined ? '' : x.toFixed(3));
-    perClip.push([r.id, r.split, r.kind, r.set, r.label, r.condition, r.source, sourceShas.get(r.source), r.speaker ?? '', r.seconds.toFixed(2), n3(r.clipStart), n3(r.onset), n3(r.offset), g.map((t) => t.toFixed(2)).join(' '), outcome(BASE), c.map((t) => t.toFixed(2)).join(' '), outcome(FROZEN_RULE), adjudged.get(r.source) ?? ''].join('\t'));
+    perClip.push([r.id, r.split, r.kind, r.set, r.label, r.condition, r.source, r.sourceSha, r.speaker ?? '', r.seconds.toFixed(2), n3(r.clipStart), n3(r.onset), n3(r.offset), g.map((t) => t.toFixed(2)).join(' '), outcome(BASE), c.map((t) => t.toFixed(2)).join(' '), outcome(FROZEN_RULE), adjudged.get(r.source) ?? ''].join('\t'));
 }
 writeFileSync(join(out, 'per-clip.tsv'), perClip.join('\n') + '\n');
 // The clips today's gate catches and the frozen rule does not

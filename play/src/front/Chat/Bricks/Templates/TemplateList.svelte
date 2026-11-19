@@ -43,7 +43,9 @@
         const read = await readTemplateLists();
         if (dismissed || mine !== reads) return;
         if (!read.ok) {
-            if (!quiet) phase = "failed";
+            // A quiet read changes nothing of what is drawn, unless nothing is drawn yet: the first read was passed by this one
+            // (a star changed while it was out), so the failed list shows its try-again row instead of "Loading" for good
+            if (!quiet || phase !== "ready") phase = "failed";
             return;
         }
         lists = read.value;

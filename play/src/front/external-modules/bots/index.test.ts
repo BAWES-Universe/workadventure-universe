@@ -106,6 +106,37 @@ describe("the card of a bot", () => {
     });
 });
 
+describe("a card replaced by another for the same person", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        wokaMenuStore.clear();
+        registeredActionsByUuid.clear();
+    });
+
+    it("asks again for the card that replaces a search card, with no clear between (Locate, then the avatar appears)", () => {
+        setupWokaMenuHook();
+        wokaMenuStore.initialize("Brick", -1, "bot-brick-1", undefined);
+        const first = mocks.addTemplateAction.mock.calls[0][1] as () => boolean;
+        wokaMenuStore.initialize("Brick", 7, "bot-brick-1", undefined);
+        expect(mocks.addTemplateAction).toHaveBeenCalledTimes(2);
+        const second = mocks.addTemplateAction.mock.calls[1][1] as () => boolean;
+        expect(second()).toBe(true);
+        expect(first()).toBe(false);
+        // The replacing card holding its buttons back asks nothing more
+        wokaMenuStore.expect("bot-brick-1", "something");
+        expect(mocks.addTemplateAction).toHaveBeenCalledTimes(2);
+    });
+
+    it("adds Summon to the replacing card too, not only to the first", async () => {
+        setupWokaMenuHook();
+        registeredActionsByUuid.set("bot-brick-1", [{ actionName: "Summon", callback: () => undefined }]);
+        wokaMenuStore.initialize("Brick", -1, "bot-brick-1", undefined);
+        await vi.waitFor(() => expect(get(wokaMenuStore)?.actions.map((a) => a.actionName)).toEqual(["Summon"]));
+        wokaMenuStore.initialize("Brick", 7, "bot-brick-1", undefined);
+        await vi.waitFor(() => expect(get(wokaMenuStore)?.actions.map((a) => a.actionName)).toEqual(["Summon"]));
+    });
+});
+
 describe("leaving a room", () => {
     beforeEach(() => {
         vi.useFakeTimers();

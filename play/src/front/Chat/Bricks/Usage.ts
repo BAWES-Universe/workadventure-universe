@@ -321,10 +321,10 @@ function parseActivity(value: unknown): ActivityItem[] {
         if (!id || !title || !at) continue;
         // A receipt has one row: the same id twice is one task (its first row), never two rows that open the same receipt
         if (seen.has(id)) continue;
-        seen.add(id);
         // A task the system is still looking up (an older Orbit may send it as "checking") is not a state anyone can act on: it is
-        // left out and shows when it has settled
+        // left out and shows when it has settled. It does not take the id: a later row of the same task that has settled is its row
         if (item.state === "checking") continue;
+        seen.add(id);
         const state = item.state === "refunded" ? "refunded" : "done";
         const actions = parseActions(item.actions);
         // Partly done needs a step that worked and one that did not; an older Orbit that sends neither is done or refunded as before

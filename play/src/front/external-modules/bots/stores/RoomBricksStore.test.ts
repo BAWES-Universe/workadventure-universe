@@ -104,6 +104,28 @@ describe("the Bricks of the room being edited (#2005)", () => {
         expect(api.notifyRoomEnter).toHaveBeenCalledWith(ROOM);
     });
 
+    it("does not take how a Brick behaved in the room before for how it behaves here, after walking into another room", async () => {
+        api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
+        const patrol = {
+            behaviorType: "patrol",
+            behaviorConfig: {
+                assignedSpace: { center: { x: 10, y: 20 }, radius: 80 },
+                patrolRoute: [{ x: 1, y: 2 }],
+                wanderSpeed: 3,
+            },
+        };
+        api.getRoomBricks.mockResolvedValueOnce(
+            answer({ here: [{ ...answer().here[0], id: "m1", mine: true, ...patrol }] })
+        );
+        await loadRoomBricks();
+        // Another room now, and nothing has read its Bricks yet
+        api.getRoomId.mockReturnValue("/@/team/universe/other");
+        api.getRoomBricks.mockResolvedValue(answer({ here: [] }));
+        const spot = { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } };
+        await placeBrickHere({ id: "m1" }, spot);
+        expect(api.placeBrickHome).toHaveBeenCalledWith("m1", "/@/team/universe/other", spot);
+    });
+
     it("moves a Brick that already stands here with how it behaves kept: only its spot changes", async () => {
         api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
         const patrol = {

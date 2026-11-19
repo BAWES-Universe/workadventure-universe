@@ -24,13 +24,15 @@ describe("the caption of a Brick that visits (#2005)", () => {
         const user = { uuid: "bot-1", tags: [] as string[] };
         const users = writable(new Map([["u1", user]]));
         const caption = visitingCaptionStore(users, writable(english), "bot-1");
-        expect(get(caption)).toBeUndefined();
+        // One subscription for the whole visit: what a person looking at it would see, change by change
+        const seen: (string | undefined)[] = [];
+        const stop = caption.subscribe((value) => seen.push(value));
         user.tags = ["visiting:Omar"];
         users.update((map) => map);
-        expect(get(caption)).toBe("with Omar");
         user.tags = [];
         users.update((map) => map);
-        expect(get(caption)).toBeUndefined();
+        expect(seen).toEqual([undefined, "with Omar", undefined]);
+        stop();
     });
 
     it("says nothing for another bot or before the list is there", () => {

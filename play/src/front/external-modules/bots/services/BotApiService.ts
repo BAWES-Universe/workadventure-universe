@@ -2046,7 +2046,9 @@ export class BotApiService {
         const generation = this.visitRecheckGeneration;
         // Of the syncs that may change the looking after (walking in, bringing along; not its own checks nor the end of a visit),
         // only the latest one sent decides: an older one that is answered later says nothing about a visit started since
-        const serial = options?.ending || options?.recheck ? undefined : ++this.visitSyncSerial;
+        // A check of its own does not count as one of them, but it carries the count it was sent under: answered after a newer sync, it is
+        // passed by it, so a "not here" from before a Bring along never stops the looking after that sync started
+        const serial = options?.ending ? undefined : options?.recheck ? this.visitSyncSerial : ++this.visitSyncSerial;
         try {
             // With a deadline over the request and the body, like Orbit's visit calls: the Brick page's buttons wait for this,
             // so a bot server that never answers must not leave them disabled

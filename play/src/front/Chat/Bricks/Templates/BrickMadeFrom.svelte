@@ -72,11 +72,19 @@
             name,
             makerName: maker,
             update,
-            onDone: (next: MadeFromView | undefined, taken: UpdateField[] = []) => {
+            onDone: (next: MadeFromView | undefined, taken: UpdateField[] = [], noTemplate = false) => {
                 if (gone) return;
-                // What a read that is still out says is from before this: it never brings the dismissed update back
-                reads++;
-                view = next ?? view;
+                if (noTemplate) {
+                    // Orbit said this Brick is not made from a template any more: nothing shows, and nothing is read again
+                    reads++;
+                    view = undefined;
+                    answered = true;
+                    return;
+                }
+                // What a read that is still out says is from before this: it never brings the dismissed update back. A new read
+                // starts after the change, so what the page shows is what Orbit holds now
+                if (next) view = next;
+                load();
                 if (taken.length > 0) onTaken(taken);
             },
         });

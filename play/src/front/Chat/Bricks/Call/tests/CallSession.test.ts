@@ -77,6 +77,18 @@ describe("a call starts and connects", () => {
         expect(run(speaking, { type: "bot-waiting", waiting: false, now: T0 + 2000 }).doing).toBe("speaking");
     });
 
+    it("what the bot was doing ends with the call: an ended call is never working or waiting", () => {
+        const working = run(live(), { type: "bot-working", work: "search", line: "Looking it up", now: T0 + 1000 });
+        const waiting = run(working, { type: "bot-waiting", waiting: true, now: T0 + 2000 });
+        for (const busy of [working, waiting]) {
+            const ended = run(busy, { type: "end", by: "you" });
+            expect(ended).toMatchObject({ phase: "ended", doing: "listening", endedBy: "you" });
+            expect(ended.work).toBeUndefined();
+            expect(ended.workLine).toBeUndefined();
+            expect(ended.waitingNow).toBe(false);
+        }
+    });
+
     it("the end of speech or of work only leaves its own state, so a quiet stretch never ends a busy call", () => {
         const working = run(live(), { type: "bot-working", work: "search", line: "Looking it up", now: T0 + 1000 });
         expect(run(working, { type: "bot-speaking", speaking: false, now: T0 + 2000 })).toMatchObject({
@@ -331,7 +343,8 @@ describe("whatever happens, in whatever order (every pairing of connecting, on, 
         let seed = 12345;
         const next = (max: number) => {
             seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
-            return seed % max;
+            // The high bits: the low bits of this generator repeat, and every run would walk the same way
+            return (seed >>> 16) % max;
         };
         for (let run = 0; run < 300; run++) {
             let state = startCall(T0);

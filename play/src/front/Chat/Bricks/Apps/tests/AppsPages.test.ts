@@ -671,6 +671,39 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("appShareSheet")).toBeNull();
         });
 
+        it("shows a restricted choice for a job whose app no longer names its fields, never as the whole answer", async () => {
+            game.getAppShare.mockResolvedValue(
+                sharedView({
+                    jobs: [
+                        shareJob({
+                            picked: true,
+                            inputs: [{ name: "query", required: true, picked: true }],
+                            returns: { names: null, picked: ["title", "url"] },
+                        }),
+                    ],
+                })
+            );
+            await open();
+            await click("appShareChange");
+            expect(byId("appShareGetBackAll")).toBeNull();
+            expect(allById("appShareGetBackKept").map((one) => words(one))).toEqual(["title", "url"]);
+        });
+
+        it("reads what is shared again when a change got no answer (a timeout), and keeps the old state as it was only for a definite refusal", async () => {
+            game.getAppShare.mockResolvedValue(sharedView());
+            game.changeAppShare.mockRejectedValue(new Error("offline"));
+            await open();
+            await click("appShareChange");
+            await tapSheet("Save");
+            expect(game.getAppShare).toHaveBeenCalledTimes(2);
+            game.getAppShare.mockClear();
+            // A definite refusal: nothing changed, nothing is read again
+            game.changeAppShare.mockRejectedValue(Object.assign(new Error("No."), { status: 409 }));
+            await click("appShareChange");
+            await tapSheet("Save");
+            expect(game.getAppShare).not.toHaveBeenCalled();
+        });
+
         it("stops at once with one tap and nothing to confirm, and then says Only you again", async () => {
             game.getAppShare.mockResolvedValueOnce(sharedView());
             await open();

@@ -48,6 +48,9 @@ run() { # name, extra docker args...
     wait "$room" || room_rc=$?
     [ "$lane_rc" -eq 0 ] || problems="$problems the lane load generator failed (exit $lane_rc, see $name.lane.log);"
     [ "$room_rc" -eq 0 ] || problems="$problems the room load generator failed (exit $room_rc, see $name.room.log);"
+    # The load generator ends well (exit 0) even when some of the people could not join: what it says about who connected is read too
+    grep -q '^2 of 2 people connected' "$OUT/$name.lane.log" || problems="$problems not all people connected on the lane path (see $name.lane.log);"
+    grep -q '^2 of 2 people connected' "$OUT/$name.room.log" || problems="$problems not all people connected in the room (see $name.room.log);"
     sleep "$IDLE"
     curl -fsS "http://127.0.0.1:$PORT/stats" > "$OUT/$name.stats.json" 2>/dev/null || echo '{}' > "$OUT/$name.stats.json"
     # Whether the runtime's native library is in the worker's memory at all

@@ -232,4 +232,30 @@ describe("renaming a bot while its name is being saved", () => {
         expect(mocks.api.updateBot).toHaveBeenLastCalledWith("b1", { name: "Tinyfish Researcher" });
         view.$destroy();
     });
+
+    it("does not start a save from a page that was closed, when the save that was out ends after it", async () => {
+        const { target, view } = openPage();
+        await settle();
+        vi.useFakeTimers();
+
+        let answerFirst: () => void = () => {};
+        mocks.api.updateBot.mockImplementationOnce(
+            (id: string, data: object) =>
+                new Promise((resolve) => {
+                    answerFirst = () => resolve({ id, ...data });
+                })
+        );
+        type(target, "Tinyfish B");
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(mocks.api.updateBot).toHaveBeenCalledTimes(1);
+        // Another name typed while B is on its way, and the page closed: closing saves it
+        type(target, "Tinyfish C");
+        view.$destroy();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(mocks.api.updateBot).toHaveBeenCalledTimes(2);
+        // B's answer comes after the page is gone: nothing more is saved from it (a page opened since may have saved its own)
+        answerFirst();
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(mocks.api.updateBot).toHaveBeenCalledTimes(2);
+    });
 });

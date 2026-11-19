@@ -31,7 +31,8 @@ if [ ! -d mini_speech_commands ]; then
     unzip -q mini_speech_commands.zip -d mini_speech_commands.partial
     # The archive holds one folder of that name
     if [ -d mini_speech_commands.partial/mini_speech_commands ]; then
-        mv mini_speech_commands.partial/mini_speech_commands mini_speech_commands && rmdir mini_speech_commands.partial
+        # What else the archive holds (a macOS one has a __MACOSX folder beside it) goes with the leftover folder
+        mv mini_speech_commands.partial/mini_speech_commands mini_speech_commands && rm -rf mini_speech_commands.partial
     else
         mv mini_speech_commands.partial mini_speech_commands
     fi

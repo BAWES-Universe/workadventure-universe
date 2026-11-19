@@ -242,6 +242,8 @@ export class GuestBrickChatRoom implements ChatRoom {
         // answer never writes the whole of it back
         if (this.savedStartedAt === chat.startedAt && this.deps.readSaved() === null) return;
         this.deps.save(serializeGuestChat(chat));
+        // Not written (the device is full or refuses): it is not "written before", so the next line tries again
+        if (this.deps.readSaved() === null) return;
         this.savedStartedAt = chat.startedAt;
     }
 

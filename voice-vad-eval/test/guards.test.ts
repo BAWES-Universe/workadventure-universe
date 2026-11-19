@@ -202,6 +202,111 @@ describe('the table of the load runs', () => {
     });
 });
 
+describe('the table of the load runs, for a worker that never became healthy', () => {
+    it('lists it as not having lasted its run, with no memory trace, instead of failing on the missing file', () => {
+        const dir = scratch();
+        // What a run that was not valid leaves: how the container ended, and no memory trace
+        writeFileSync(join(dir, 'on-5.container.txt'), 'running=false oom_killed=false exit_code=1\n');
+        const result = spawnSync('python3', ['-I', join(root, 'scripts', 'worker-load-table.py'), dir], { encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Did not last its run: on-5 \(running=false oom_killed=false exit_code=1\)/);
+        assert.match(result.stdout, /no memory trace was written/);
+    });
+});
+
+describe('fetch-data.sh: the archive of spoken commands', () => {
+    it('puts the folder in place when the archive also holds a __MACOSX folder, and ends well with the zip removed', () => {
+        const dir = scratch();
+        const archive = join(dir, 'made.zip');
+        const made = spawnSync('python3', ['-I', '-c', `import zipfile,sys\nz=zipfile.ZipFile(sys.argv[1],'w')\nz.writestr('mini_speech_commands/yes/a.wav','x')\nz.writestr('__MACOSX/mini_speech_commands/._a','x')\nz.close()`, archive], { encoding: 'utf8' });
+        assert.equal(made.status, 0, made.stderr);
+        // The part of the script that fetches and puts the archive in place, run with the download answered from the file made here
+        const script = readFileSync(join(root, 'scripts', 'fetch-data.sh'), 'utf8');
+        const part = script.slice(script.indexOf('# Extracted beside it'));
+        const bin = join(dir, 'bin');
+        mkdirSync(bin);
+        writeFileSync(join(bin, 'curl'), `#!/bin/sh\ncase "$*" in *-o*) out=$3; cp "${archive}" "$out";; esac\nexit 0\n`);
+        chmodSync(join(bin, 'curl'), 0o755);
+        const data = join(dir, 'data');
+        mkdirSync(data);
+        const ran = spawnSync('bash', ['-c', `set -euo pipefail\ncd "$1"\n${part}`, 'x', data], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' });
+        assert.equal(ran.status, 0, ran.stderr);
+        assert.equal(existsSync(join(data, 'mini_speech_commands', 'yes', 'a.wav')), true);
+        assert.equal(existsSync(join(data, 'mini_speech_commands.partial')), false);
+        assert.equal(existsSync(join(data, 'mini_speech_commands.zip')), false);
+    });
+});
+
+describe('image-check.sh', () => {
+    function stubs(connected: string): { dir: string; env: NodeJS.ProcessEnv } {
+        const dir = scratch();
+        const bin = join(dir, 'bin');
+        mkdirSync(bin);
+        const stub = (name: string, body: string) => {
+            writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+            chmodSync(join(bin, name), 0o755);
+        };
+        stub('docker', 'case "$1" in inspect) echo 1;; esac; exit 0');
+        stub('strace', 'exit 0');
+        stub('curl', 'exit 0');
+        stub('hostname', 'exit 0');
+        // The load generators end well (exit 0) and say how many people connected, as the real one does even when some could not join
+        stub('npx', `echo "${connected}" >&2; exit 0`);
+        return { dir, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } };
+    }
+    const run = (dir: string, env: NodeJS.ProcessEnv) => spawnSync('bash', [join(root, 'scripts', 'image-check.sh'), join(dir, 'data'), join(dir, 'out'), '1', '0'], { env, cwd: dir, encoding: 'utf8', timeout: 120000 });
+
+    it('says a run is not valid when the load generators ended well but not everyone connected', () => {
+        const bad = stubs('1 of 2 people connected');
+        const ran = run(bad.dir, bad.env);
+        assert.equal(ran.status, 1, ran.stdout + ran.stderr);
+        assert.match(ran.stdout, /RUN INVALID:.*not all people connected/);
+    });
+
+    it('does not call a run invalid when everyone connected', () => {
+        const good = stubs('2 of 2 people connected');
+        const ran = run(good.dir, good.env);
+        assert.doesNotMatch(ran.stdout, /RUN INVALID/);
+        assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+    });
+});
+
+describe('yield-report.ts', () => {
+    const outcome = (events: Array<[number, string]>, stopAt?: number) => ({ yieldAt: 1100, stopAt, pauses: 0, heldMs: 0, resumes: 0, continues: 0, spanMs: 9000, events, why: {} });
+    const row = (id: string, kind: 'speech' | 'noise', events: Array<[number, string]>, stopAt?: number) => {
+        const result = Object.fromEntries(['today', 'confirm', 'dip', 'strict', 'hold'].map((b) => [b, outcome(events, stopAt)]));
+        return { id, kind, set: 'unit', label: kind === 'speech' ? 'speech' : 'nonspeech', condition: 'quiet', split: 'tune', provider: 'empty', seconds: 10, onsetMs: 1000, offsetMs: 3000, result };
+    };
+    const yieldReport = (args: string[]) => tsx(['src/yield-report.ts', ...args]);
+
+    it('counts only the time at full volume as overlap: a second dip after the bot went back up closes it', () => {
+        const dir = scratch();
+        const rows = join(dir, 'rows.jsonl');
+        // dip at 1.1 s, back up at 1.6 s, down again at 2.0 s, stopped at 2.3 s: 0.4 s at full volume (it was turned down the rest of the time)
+        writeFileSync(rows, JSON.stringify(row('unit-speech-1', 'speech', [[1100, 'dip'], [1600, 'up'], [2000, 'dip'], [2300, 'stop']], 2300)) + '\n');
+        const ran = yieldReport(['report', rows, join(dir, 'out.md')]);
+        assert.equal(ran.status, 0, ran.stderr);
+        // The dip row of the overlap table: overlap per clip median / p95, then the total
+        const line = ran.stdout.split('\n').find((l) => l.startsWith('| turn down, then stop or back up |') && /\| [0-9.]+ s \|$/.test(l));
+        assert.ok(line, ran.stdout);
+        assert.match(line, /400 ms \/ 400 ms \| 0\.4 s \|$/);
+    });
+
+    it('refuses a sweep whose windows were not scored on the same clips as the 1500 ms run', () => {
+        const dir = scratch();
+        const clips = [row('unit-speech-1', 'speech', [[1100, 'pause']]), row('unit-speech-2', 'speech', [[1100, 'pause']]), row('unit-noise-1', 'noise', [])];
+        for (const w of [300, 600, 1000, 1500]) {
+            // The 300 ms run was made with REPLAY_LIMIT: one clip only
+            const held = w === 300 ? clips.slice(0, 1) : clips;
+            writeFileSync(join(dir, `yield-replay-tune-${w}.jsonl`), held.map((r) => JSON.stringify(r)).join('\n') + '\n');
+        }
+        const ran = yieldReport(['sweep', dir]);
+        assert.notEqual(ran.status, 0);
+        assert.match(ran.stderr, /the tune run for 300 ms was not scored on the same clips/);
+        assert.equal(existsSync(join(dir, 'yield-sweep.md')), false);
+    });
+});
+
 describe('worker-soak.sh', () => {
     it('does not leave what an earlier run of the same name left, when a new run is not valid', () => {
         const dir = scratch();

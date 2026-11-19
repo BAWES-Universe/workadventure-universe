@@ -15,9 +15,14 @@ function chatWithWords(over: Partial<GuestChat> = {}): GuestChat {
 
 /** A device after sign-in: the chat it kept as a guest, and what Orbit and the bot server say to it. */
 function device(initial: GuestChat | null = chatWithWords()) {
-    const state: { chat: GuestChat | undefined; clock: number } = { chat: initial ?? undefined, clock: 0 };
+    const state: { chat: GuestChat | undefined; clock: number; current: boolean } = {
+        chat: initial ?? undefined,
+        clock: 0,
+        current: true,
+    };
     const steps: CarrySteps & { calls: string[] } = {
         calls: [],
+        current: () => state.current,
         read: () => state.chat,
         keep: (chat) => {
             state.chat = chat;
@@ -330,15 +335,26 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
     it("sends a bot server from before only the lines it has not taken, after a line said while the message was on its way", async () => {
         const { state, steps } = device();
         steps.parts = vi.fn(() => Promise.resolve(false));
-        vi.mocked(steps.carry)
-            .mockImplementationOnce(() => {
+        // A bot server from before says a carry once per chat (it keeps the carry id): the same id asked again is "already", with nothing said
+        const said = new Set<string>([GUEST]);
+        const reached: string[] = [];
+        let first = true;
+        vi.mocked(steps.carry).mockImplementation((carryId, lines) => {
+            if (first) {
+                first = false;
                 state.chat = withLine(state.chat!, { from: "brick", text: "Late answer.", at: 4 });
-                return Promise.resolve("already");
-            })
-            .mockResolvedValue("sent");
+            }
+            if (said.has(carryId)) return Promise.resolve("already");
+            said.add(carryId);
+            reached.push(...lines.map((line) => line.text));
+            return Promise.resolve("sent");
+        });
         await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
         expect(steps.carry).toHaveBeenCalledTimes(2);
+        // Only the lines it had not taken are offered again, and nothing it had taken is said twice (a late answer cannot be
+        // said to a bot server that keeps one carry per chat: what that server does is its own)
         expect(vi.mocked(steps.carry).mock.calls[1][1].map((line) => line.text)).toEqual(["Late answer."]);
+        expect(reached).toEqual([]);
     });
 
     it("leaves another guest's chat alone when a refusal comes back after the chat was replaced", async () => {
@@ -358,6 +374,38 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         refuse("refused");
         await expect(carrying).resolves.toBe("none");
         expect(state.chat).toBe(other);
+    });
+
+    it("leaves the chat alone when another account is signed in by the time the question comes back", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.take).mockImplementation(() => {
+            state.current = false;
+            return Promise.resolve(false);
+        });
+        const before = state.chat;
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        // Orbit's "not handed to you" is about the account that asked, not the one signed in now: the chat is not dropped
+        expect(state.chat).toBe(before);
+        expect(steps.calls).toEqual([]);
+        expect(steps.carry).not.toHaveBeenCalled();
+    });
+
+    it("says nothing and drops nothing when the account changed while a part was on its way", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.carry).mockImplementation(() => {
+            state.current = false;
+            return Promise.resolve("refused");
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        expect(state.chat).toBeDefined();
+        expect(steps.calls).not.toContain("drop");
+    });
+
+    it("does not start for an account that is no longer the one signed in", async () => {
+        const { state, steps } = device();
+        state.current = false;
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        expect(steps.take).not.toHaveBeenCalled();
     });
 
     it("counts a chat the bot server already said as brought", async () => {

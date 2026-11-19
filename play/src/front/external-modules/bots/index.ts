@@ -896,9 +896,10 @@ export const registeredActionsByUuid = new Map<string, WokaMenuAction[]>();
 
 // Subscribe to wokaMenuStore to add our actions when menu is initialized
 let wokaMenuUnsubscriber: (() => void) | null = null;
-let lastProcessedMenu: { userUuid: string; actionCount: number } | null = null;
-// The card whose template button was asked for, and the opening it was asked under
-let templateAsked: { userUuid: string; opening: number } | null = null;
+let lastProcessedMenu: { userUuid: string; actionCount: number; shown: number } | null = null;
+// The card whose template button was asked for (`shown`: the store's own count of that card's opening, so the same person's card
+// replaced by another, a search card by the avatar's card, asks again), and the opening it was asked under
+let templateAsked: { userUuid: string; shown: number; opening: number } | null = null;
 
 // Counts the menus opened, so an answer that arrives after the card was closed (or reopened) adds nothing to it
 let wokaMenuOpening = 0;
@@ -927,19 +928,24 @@ export function setupWokaMenuHook() {
         // Only process if this is a fresh menu initialization
         // Fresh menu = actions array is empty (just initialized)
         // AND we haven't already processed this exact menu state
-        const currentState = { userUuid: menuData.userUuid, actionCount: menuData.actions.length };
+        const currentState = {
+            userUuid: menuData.userUuid,
+            actionCount: menuData.actions.length,
+            shown: menuData.opening,
+        };
         const isNewMenu =
             menuData.userUuid &&
             menuData.actions.length === 0 &&
             (!lastProcessedMenu ||
                 lastProcessedMenu.userUuid !== currentState.userUuid ||
+                lastProcessedMenu.shown !== currentState.shown ||
                 lastProcessedMenu.actionCount !== 0);
 
         if (isNewMenu) {
             // A bot that shares a template offers "Use template" on its card whether or not Summon was registered for it yet (a bot
             // can appear between two registration polls): asked once for each card that opens, under the opening of that card
-            if (templateAsked?.userUuid !== menuData.userUuid) {
-                const asked = { userUuid: menuData.userUuid, opening: ++wokaMenuOpening };
+            if (templateAsked?.userUuid !== menuData.userUuid || templateAsked.shown !== menuData.opening) {
+                const asked = { userUuid: menuData.userUuid, shown: menuData.opening, opening: ++wokaMenuOpening };
                 templateAsked = asked;
                 addTemplateAction(menuData.userUuid, () => asked.opening === wokaMenuOpening);
             }

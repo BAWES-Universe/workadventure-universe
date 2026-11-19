@@ -364,6 +364,28 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(all("templateRow")).toHaveLength(1);
         });
 
+        it("shows the try-again row, not Loading for good, when a star's read fails while the first read is still out", async () => {
+            let first: (value: unknown) => void = () => undefined;
+            game.getTemplateLists.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    first = resolve;
+                })
+            );
+            part = new TemplateList({ target, props: { isOpen: true } });
+            await settle();
+            expect(byId("templateListLoading")).not.toBeNull();
+            // A star was saved in a preview while the first read was out; the read it started fails
+            game.getTemplateLists.mockRejectedValueOnce(new Error("offline"));
+            game.starTemplate.mockResolvedValue({ starred: true });
+            await setTemplateStar("t1", true);
+            await settle();
+            // The first read comes back after, and is not shown: it was passed by the newer one
+            first({ starred: [], picks: [card("t2", "Shop greeter", "Sara")], met: [] });
+            await settle();
+            expect(byId("templateListLoading")).toBeNull();
+            expect(byId("templateListFailed")).not.toBeNull();
+        });
+
         it("says it is loading again, and then lists, when Try again is tapped after a read failed", async () => {
             game.getTemplateLists.mockRejectedValueOnce(new Error("offline"));
             part = new TemplateList({ target, props: { isOpen: true } });
@@ -729,6 +751,37 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(byId("brickTemplateUpdated")).toBeNull();
         });
 
+        it("takes the sheet's answer that this Brick is not made from a template any more as the end of the line, not as no change", async () => {
+            game.getMadeFrom.mockResolvedValueOnce(madeFrom({ update: UPDATE }));
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            expect(byId("brickMadeFrom")).not.toBeNull();
+            await click("brickTemplateReview");
+            const given = game.openModal.mock.calls.at(-1)![1] as {
+                onDone: (next: unknown, taken?: string[], noTemplate?: boolean) => void;
+            };
+            given.onDone(undefined, [], true);
+            await settle();
+            expect(byId("brickMadeFrom")).toBeNull();
+            // And it is not read again for it
+            expect(game.getMadeFrom).toHaveBeenCalledTimes(1);
+        });
+
+        it("reads the page again after the sheet's change, so a read that began after it is never lost", async () => {
+            game.getMadeFrom.mockResolvedValueOnce(madeFrom({ update: UPDATE }));
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            await click("brickTemplateReview");
+            const given = game.openModal.mock.calls.at(-1)![1] as {
+                onDone: (next: unknown, taken?: string[]) => void;
+            };
+            game.getMadeFrom.mockResolvedValue(madeFrom({ update: null }));
+            given.onDone({ ...madeFrom({ update: null }), update: null }, []);
+            await settle();
+            expect(game.getMadeFrom).toHaveBeenCalledTimes(2);
+            expect(byId("brickTemplateUpdated")).toBeNull();
+        });
+
         it("offers Review when the template was updated", async () => {
             game.getMadeFrom.mockResolvedValue(madeFrom({ update: UPDATE }));
             part = new BrickMadeFrom({ target, props: props() });
@@ -798,6 +851,17 @@ describe("Brick templates, the game half (#2008)", () => {
             await click("templateKeepMine");
             expect(game.closeModal).toHaveBeenCalled();
             expect(given.onDone).toHaveBeenCalled();
+        });
+
+        it("says the Brick has no template any more, not that nothing changed, when the reread says it is gone", async () => {
+            game.takeTemplateUpdate.mockRejectedValue(Object.assign(new Error("changed"), { status: 409 }));
+            game.getMadeFrom.mockRejectedValue(Object.assign(new Error("gone"), { status: 404 }));
+            const given = props();
+            part = new TemplateUpdateSheet({ target, props: given });
+            await settle();
+            await click("templateKeepMine");
+            expect(given.onDone).toHaveBeenCalledWith(undefined, [], true);
+            expect(game.closeModal).toHaveBeenCalled();
         });
 
         it("says the template changed again when Orbit answers 409, and keeps the sheet open", async () => {

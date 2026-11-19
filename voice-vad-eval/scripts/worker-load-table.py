@@ -10,7 +10,9 @@ for f in sorted(glob.glob(os.path.join(out, "*.container.txt"))):
     # A worker that did not last its run leaves no summary, only how its container ended and its memory curve
     name = os.path.basename(f)[: -len(".container.txt")]
     if not os.path.exists(os.path.join(out, name + ".worker.json")):
-        curve = [line.split("\t") for line in open(os.path.join(out, name + ".memory.tsv")).read().split("\n")[1:] if line]
+        # A worker that never became healthy has no memory curve at all
+        trace = os.path.join(out, name + ".memory.tsv")
+        curve = [line.split("\t") for line in open(trace).read().split("\n")[1:] if line] if os.path.exists(trace) else []
         died.append((name, open(f).read().strip(), curve))
 for f in sorted(glob.glob(os.path.join(out, "*.worker.json"))):
     name = os.path.basename(f)[: -len(".worker.json")]
@@ -67,4 +69,5 @@ print()
 print("In the runs above: OOM kills:", sum(r[3]["memory"]["oomKills"] for r in rows), "; load generator errors:", sum(len(r[4].get("errors", [])) for r in rows), "; joins that failed:", sum(r[4].get("joinFailures", 0) for r in rows), "; bridge links lost:", sum(r[4].get("linkDowns", 0) for r in rows))
 for name, how, curve in died:
     print()
-    print(f"Did not last its run: {name} ({how}). Memory as it went (seconds since start: container MB / process RSS MB / JavaScript heap MB): " + ", ".join(f"{c[0]}: {c[1]} / {c[3]} / {c[4]}" for c in curve))
+    memory = ", ".join(f"{c[0]}: {c[1]} / {c[3]} / {c[4]}" for c in curve) if curve else "no memory trace was written"
+    print(f"Did not last its run: {name} ({how}). Memory as it went (seconds since start: container MB / process RSS MB / JavaScript heap MB): " + memory)

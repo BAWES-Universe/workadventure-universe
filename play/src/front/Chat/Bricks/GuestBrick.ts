@@ -222,7 +222,23 @@ export function parseGuestChat(
         if (keepMs !== undefined && now - savedAt > keepMs) return undefined;
         const lines = readLines(saved.lines);
         if (lines.length === 0) return undefined;
-        const carrying = readCarrying(saved.carrying);
+        const reached = typeof carriedTo === "number" && Number.isInteger(carriedTo) && carriedTo > 0 ? carriedTo : 0;
+        // A chat saved mid-carry by the build before parts kept only where the part on its way ended (`carryingTo`): it is the same
+        // part, asked again as it was, so what the bot server has already said is not said twice
+        const carryingTo = saved.carryingTo;
+        const carrying =
+            readCarrying(saved.carrying) ??
+            (saved.carrying === undefined &&
+            typeof carryingTo === "number" &&
+            Number.isInteger(carryingTo) &&
+            carryingTo > reached &&
+            carryingTo <= lines.length
+                ? carriedPart(
+                      { guestId: owner, startedAt, savedAt, saidNeedsAccount: saidNeedsAccount === true, lines },
+                      reached,
+                      carryingTo
+                  )
+                : undefined);
         return {
             guestId: owner,
             startedAt,

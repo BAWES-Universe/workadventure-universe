@@ -181,6 +181,8 @@ async function join(s: Stream): Promise<void> {
     } catch (error) {
         tally.joinFailures++;
         tally.errors.push(`${String(error)} (had call before: ${before})`);
+        // A person who could not join is not in the roster for the rest of the run, as one who left is not
+        calls.spaceUserLeft(game.spaceName, id);
         game.humans.delete(id);
         await human.close().catch(() => undefined);
     }

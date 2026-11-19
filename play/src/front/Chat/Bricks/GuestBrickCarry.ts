@@ -10,6 +10,11 @@ import { carriedPart, carriedTail, type CarriedPart, type GuestChat } from "./Gu
  * own chat with their one Brick. It happens the first time that chat is opened, since that is when the chat exists.
  */
 export interface CarrySteps {
+    /**
+     * Whether the account this run is for is still the one signed in on this page. A run waits behind another's, and every answer
+     * takes time: when the account changed, nothing is dropped, kept or said for it (the chat stays for the next time it opens).
+     */
+    current: () => boolean;
     /** The chat this device kept as a guest, whoever it was kept for. Undefined when there is none. */
     read: () => GuestChat | undefined;
     /** Keeps the chat as it is now. */
@@ -37,6 +42,7 @@ export interface CarrySteps {
 export type CarryOutcome = "none" | "carried" | "later";
 
 export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutcome> {
+    if (!steps.current()) return "later";
     let chat = steps.read();
     if (!chat) return "none";
     if (!chat.carryTaken) {
@@ -47,6 +53,7 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             console.warn("Could not ask for the chat this device had as a guest", error);
             return "later";
         }
+        if (!steps.current()) return "later";
         // What the device holds now: signing out, or another guest's chat, can replace it while the question is open. What Orbit
         // answers is about the chat it was asked about, never about the one there now
         const current = steps.read();
@@ -71,10 +78,12 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
         console.warn("Could not ask how the chat this device had as a guest is brought", error);
         return "later";
     }
+    if (!steps.current()) return "later";
     let from = chat.carriedTo ?? 0;
     const waitUntil = steps.now() + ROOM_WAIT_MS;
     /* eslint-disable no-await-in-loop */
     for (;;) {
+        if (!steps.current()) return "later";
         const now = steps.read();
         // Signed out, or another guest's chat since: nothing more of this one to bring
         if (!now || now.guestId !== chat.guestId || now.startedAt !== chat.startedAt) return "none";
@@ -98,6 +107,7 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             console.warn("Could not bring the chat this device had as a guest", error);
             return "later";
         }
+        if (!steps.current()) return "later";
         // Signed out, or another guest's chat since the question went: what it answers is not about the chat there now
         const after = steps.read();
         if (!after || after.guestId !== chat.guestId || after.startedAt !== chat.startedAt) return "none";

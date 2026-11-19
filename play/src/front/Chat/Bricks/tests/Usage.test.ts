@@ -255,6 +255,19 @@ describe("real numbers (credits and grants)", () => {
         expect(read?.activity.map((one) => `${one.id}:${one.title}`)).toEqual(["same:First", "other:Other"]);
     });
 
+    it("does not let a row that is still being looked up take the place of the same task's settled row", () => {
+        const at = "2026-11-15T11:16:00.000Z";
+        const read = parseUsage(
+            real({
+                activity: [
+                    { id: "same", title: "Looking", at, state: "checking" },
+                    { id: "same", title: "Settled", at, state: "done" },
+                ],
+            })
+        );
+        expect(read?.activity.map((one) => `${one.id}:${one.title}`)).toEqual(["same:Settled"]);
+    });
+
     it("reads at most fifty tasks", () => {
         const many = Array.from({ length: 80 }, (_, i) => ({
             id: `a${i}`,
