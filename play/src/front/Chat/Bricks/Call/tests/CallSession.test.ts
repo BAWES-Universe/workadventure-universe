@@ -330,7 +330,7 @@ describe("whatever happens, in whatever order (every pairing of connecting, on, 
         // A fixed pseudo-random walk, so a failure can be replayed
         let seed = 12345;
         const next = (max: number) => {
-            seed = (seed * 1103515245 + 12345) % 2147483648;
+            seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
             return seed % max;
         };
         for (let run = 0; run < 300; run++) {

@@ -124,6 +124,10 @@
                 {#if changedNote}
                     <p class="tp-bad" role="alert" data-testid="templateLookChanged">{t.lookChanged()}</p>
                 {/if}
+                {#if look.blocked && secrets.length === 0}
+                    <!-- Share stays off, and the maker is told why even when no single finding can be shown -->
+                    <p class="tp-bad" role="alert" data-testid="templateLookBlocked">{t.lookBlocked()}</p>
+                {/if}
                 {#if secrets.length > 0}
                     <div class="bkg-cap gap">{t.takeOut()}</div>
                     {#each secrets as finding, i (i)}
@@ -203,6 +207,11 @@
                         <span class="bkg-ico"><IconCheck font-size="20" /></span>
                         <span class="bkg-mtx">
                             <span class="bkg-t">{routine.words}</span>
+                            {#if routine.condition}
+                                <span class="bkg-cn" data-testid="templateLookRoutineCondition"
+                                    >{routine.condition}</span
+                                >
+                            {/if}
                             <span class="bkg-cn">{t.routineGoesOff()}</span>
                         </span>
                     </div>

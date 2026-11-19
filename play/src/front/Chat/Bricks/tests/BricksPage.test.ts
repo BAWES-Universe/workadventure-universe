@@ -180,11 +180,13 @@ vi.mock("../../Stores/ChatStore", async () => {
 // Opening Usage from a chat leaves the chat first, which this test has no chat for: only the request is real
 vi.mock("../OpenUsage", async () => {
     const store = await import("svelte/store");
-    const requested = store.writable<{ receiptId: string | undefined } | undefined>(undefined);
+    const requested = store.writable<{ receiptId: string | undefined; request: number } | undefined>(undefined);
+    let requests = 0;
     return {
         usagePageRequest: { subscribe: requested.subscribe },
         takeUsagePageRequest: () => requested.set(undefined),
-        openUsagePage: (request: { receiptId: string | undefined }) => requested.set(request),
+        openUsagePage: (request: { receiptId: string | undefined }) =>
+            requested.set({ ...request, request: ++requests }),
     };
 });
 // Opening Goals and tasks from a chat leaves the chat first, as Usage does: only the request is real here
@@ -421,6 +423,25 @@ describe("the Bricks page (#1995)", () => {
         expect(byId("bricksLoading")).toBeNull();
         expect(rows()).toHaveLength(2);
         expect(game.ensureMyBrick).toHaveBeenCalledTimes(1);
+
+        // Opened again with what was read before still in the store (nothing reset): the list is shown at once, and the new
+        // list takes its place when it comes
+        page?.$destroy();
+        page = undefined;
+        let again: (value: unknown) => void = () => undefined;
+        game.listMyBricks.mockReturnValue(
+            new Promise((resolve) => {
+                again = resolve;
+            })
+        );
+        page = new BricksPage({ target });
+        await tick();
+        expect(rows()).toHaveLength(2);
+        expect(byId("bricksLoading")).toBeNull();
+        again({ bricks: [card(), made(), { ...made(), id: "third", name: "Third" }] });
+        await settle();
+        expect(rows()).toHaveLength(3);
+        expect(game.listMyBricks).toHaveBeenCalledTimes(2);
     });
 
     it("has the back arrow to Chats and nothing to tuck the page away with, on a phone too", async () => {
@@ -557,7 +578,7 @@ describe("the Bricks page (#1995)", () => {
                 isDefault: false,
                 enabled: false,
                 deletedAt: "2026-11-10T09:00:00.000Z",
-                goneAt: "2026-11-17T09:00:00.000Z",
+                goneAt: new Date(2026, 10, 17, 12).toISOString(),
                 ...over,
             });
         const click = async (id: string, index = 0) => {
@@ -1113,6 +1134,27 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("brickEndVisit")).toBeNull();
         });
 
+        it("does not offer Bring along while the Brick's home is still unknown, only once it is known to have none", async () => {
+            let answer: (value: unknown) => void = () => undefined;
+            game.getBrickHome.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+            );
+            await openMade();
+            // Orbit has said the Brick visits nowhere, and the home read is still out
+            expect(byId("brickBringAlong")).toBeNull();
+            answer({ home: null });
+            await settle();
+            expect(byId("brickBringAlong")).not.toBeNull();
+        });
+
+        it("does not offer Bring along when the home could not be read", async () => {
+            game.getBrickHome.mockRejectedValue(new Error("offline"));
+            await openMade();
+            expect(byId("brickBringAlong")).toBeNull();
+        });
+
         it("says nothing about visiting when Orbit could not be asked, or the Brick is switched off", async () => {
             game.getBrickVisit.mockRejectedValue(new Error("offline"));
             await openMade();
@@ -1406,6 +1448,32 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("usagePage")).not.toBeNull();
             expect(byId("usageReceipt")).not.toBeNull();
             expect(byId("bricksPage")).toBeNull();
+        });
+
+        it("opens the same receipt again when a link asks for it a second time while the page is open", async () => {
+            game.getMyUsage.mockResolvedValue({
+                chat: { left: 1, words: "plenty", fullAgainAt: null },
+                activity: [
+                    {
+                        id: "act_1",
+                        title: "Trip page",
+                        at: new Date().toISOString(),
+                        spentMicros: 60000,
+                        category: "apps",
+                        lines: [{ label: "Instant research", amountMicros: 60000 }],
+                    },
+                ],
+            });
+            await open();
+            openUsagePage({ receiptId: "act_1" });
+            await settle();
+            expect(byId("usageReceipt")).not.toBeNull();
+            byId("usageActivity")?.click();
+            await settle();
+            expect(byId("usageReceipt")).toBeNull();
+            openUsagePage({ receiptId: "act_1" });
+            await settle();
+            expect(byId("usageReceipt")).not.toBeNull();
         });
 
         it("still works when the usage could not be read", async () => {

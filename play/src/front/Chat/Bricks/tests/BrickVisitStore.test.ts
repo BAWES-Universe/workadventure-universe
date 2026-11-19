@@ -125,6 +125,8 @@ describe("what the Brick page knows about visiting (#2005)", () => {
 
     it("brings a Brick along from where the person stands", async () => {
         api.startBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+        // Its own answer from Orbit, so it does not depend on what an earlier test left set (and does not wait for a retry)
+        api.getBrickVisit.mockResolvedValueOnce({ state: "none", place: "Universe" });
         await loadBrickVisit(A);
         await expect(bringBrickAlong(A)).resolves.toBeUndefined();
         expect(api.startBrickVisit).toHaveBeenCalledWith(A, ROOM);
@@ -196,15 +198,23 @@ describe("what the Brick page knows about visiting (#2005)", () => {
 
     it("a refusal that comes late, after the page moved to another Brick, does not switch the page to the first one (CodeRabbit on #2055)", async () => {
         const mine = { roomUrl: "/@/team/universe/studio", roomName: "Studio", universeName: "Universe" };
-        api.startBrickVisit.mockRejectedValue(
-            Object.assign(new Error("conflict"), { status: 409, reason: "lives_in", place: "Library" })
+        // A is on the page, and its request to be brought along is on its way
+        let refuse: (error: unknown) => void = () => undefined;
+        api.startBrickVisit.mockReturnValue(
+            new Promise((_, reject) => {
+                refuse = reject;
+            })
         );
-        // B is on the page, with its own home
+        api.getBrickHome.mockResolvedValueOnce({ home: null });
+        await loadBrickHome(A);
+        const bringing = bringBrickAlong(A);
+        // The page moves to B, with its own home, before the refusal for A comes back
         api.getBrickHome.mockResolvedValueOnce({ home: mine });
         await loadBrickHome(B);
         api.getBrickHome.mockClear();
         api.getBrickHome.mockResolvedValue({ home: { ...mine, roomName: "Library" } });
-        await expect(bringBrickAlong(A)).resolves.toEqual({ livesIn: "Library" });
+        refuse(Object.assign(new Error("conflict"), { status: 409, reason: "lives_in", place: "Library" }));
+        await expect(bringing).resolves.toEqual({ livesIn: "Library" });
         expect(api.getBrickHome).not.toHaveBeenCalled();
         expect(get(brickHomeStore)).toEqual(mine);
     });
@@ -227,6 +237,17 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
         await expect(endBrickVisit(A)).resolves.toBe(true);
         expect(api.endBrickVisit).toHaveBeenCalledWith(A);
+        expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
+        expect(api.syncVisitingBrick).toHaveBeenCalledWith(undefined, { ending: true });
+    });
+
+    it("stops saying the Brick walks here once the visit is ended, even when reading the page's answer again fails", async () => {
+        api.endBrickVisit.mockResolvedValue({ state: "none", place: null });
+        api.getBrickVisit.mockResolvedValueOnce({ state: "visiting", place: "Universe" });
+        await loadBrickVisit(A);
+        expect(get(brickVisitStore)).toEqual({ state: "visiting", place: "Universe" });
+        api.getBrickVisit.mockRejectedValue(new Error("offline"));
+        await expect(endBrickVisit(A)).resolves.toBe(true);
         expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
         expect(api.syncVisitingBrick).toHaveBeenCalledWith(undefined, { ending: true });
     });

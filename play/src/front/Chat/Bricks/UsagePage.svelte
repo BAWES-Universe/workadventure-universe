@@ -36,6 +36,8 @@
     export let onBack: () => void;
     /** A task whose receipt opens first (the link under a Brick's answer) */
     export let receiptId: string | undefined = undefined;
+    /** Which request opened it: the same receipt asked for again is a new request, and opens it again */
+    export let receiptRequest = 0;
     /** What each of the person's Bricks looks like, by id, for By bot */
     export let looks: Record<string, string | null> = {};
 
@@ -47,11 +49,21 @@
     $: computer = usage?.computer ?? null;
     let asking: CreditCategory | undefined;
     let openId: string | undefined = receiptId;
-    let scrolledTo: string | undefined;
+    let handledRequest: number | undefined;
     let body: HTMLDivElement | undefined;
+    // Each task's button, by its id: what a link to a receipt puts the keyboard on
+    let activityButtons: Record<string, HTMLButtonElement | undefined> = {};
 
     // The legacy bar: words only, for an Orbit that does not send replies yet
-    $: chatTitle = chat ? (chat.words === "out" ? text.out() : chat.words === "low" ? text.low() : text.plenty()) : "";
+    $: chatTitle = chat
+        ? chat.words === "out"
+            ? text.out()
+            : chat.words === "low"
+            ? text.low()
+            : chat.words === "half"
+            ? text.half()
+            : text.plenty()
+        : "";
     $: chatHint = chat?.fullAgainAt ? text.fullAgain({ when: fullAgainWhen(chat.fullAgainAt, $locale) }) : undefined;
     $: computerTitle = computer
         ? computer.words === "out"
@@ -111,51 +123,53 @@
         return parts.length > 0 ? parts.join(" · ") : undefined;
     }
 
-    const coversText = (covers: CreditCategory[]) =>
+    // These take what they say it with (the words and the language) as arguments, so a row says itself again when either changes
+    type Words = typeof $LL.chat.brick.usage;
+    const coversText = (covers: CreditCategory[], text: Words) =>
         covers.length > 1 ? text.coversBoth() : covers[0] === "apps" ? text.coversApps() : text.coversComputers();
-    const creditHint = (credit: ExtraCredit) => {
+    const creditHint = (credit: ExtraCredit, text: Words, locale: string | undefined) => {
         const name = credit.fromName ?? text.extraCreditUniverse();
-        const covers = coversText(credit.covers);
+        const covers = coversText(credit.covers, text);
         return credit.until
-            ? text.extraCreditFrom({ name, covers, day: shortDay(credit.until, $locale) })
+            ? text.extraCreditFrom({ name, covers, day: shortDay(credit.until, locale) })
             : text.extraCreditFromNoDay({ name, covers });
     };
-    const botUses = (bot: BotSpend) =>
+    const botUses = (bot: BotSpend, text: Words) =>
         bot.uses.length > 1
             ? text.botUsesBoth()
             : bot.uses[0] === "computer"
             ? text.botUsesComputer()
             : text.botUsesApps();
 
-    function paidBy(item: ActivityItem): string {
+    function paidBy(item: ActivityItem, text: Words): string {
         if (item.payer === "you") return text.paidByYou();
         if (item.payer === "universe") return text.paidByUniverse();
         return text.paidByName({ name: item.payerName ?? text.extraCreditUniverse() });
     }
 
-    function activityWhen(at: string): string {
-        const when = whenLabel(at, $locale ?? "en");
+    function activityWhen(at: string, text: Words, locale: string | undefined): string {
+        const when = whenLabel(at, locale ?? "en");
         if (when.kind === "today") return text.activityToday({ time: when.text });
         return when.kind === "yesterday" ? text.activityYesterday() : when.text;
     }
 
-    function activityHint(item: ActivityItem): string {
-        const when = activityWhen(item.at);
+    function activityHint(item: ActivityItem, text: Words, locale: string | undefined): string {
+        const when = activityWhen(item.at, text, locale);
         if (item.state === "refunded") return `${when} · ${text.activityRefunded()}`;
-        if (item.payer !== "you") return `${when} · ${paidBy(item)}`;
+        if (item.payer !== "you") return `${when} · ${paidBy(item, text)}`;
         const what =
             item.category === "apps"
                 ? text.activityApps()
                 : item.category === "computer"
                 ? text.activityComputer()
                 : "";
-        return [when, item.spentMicros !== null ? spentText(item.spentMicros, $locale) : "", what]
+        return [when, item.spentMicros !== null ? spentText(item.spentMicros, locale) : "", what]
             .filter(Boolean)
             .join(" · ");
     }
 
-    function lineValue(amountMicros: number | null, note: string | null): string {
-        if (amountMicros !== null) return spentText(amountMicros, $locale);
+    function lineValue(amountMicros: number | null, note: string | null, text: Words, locale: string | undefined) {
+        if (amountMicros !== null) return spentText(amountMicros, locale);
         return note ?? text.activityNothingTaken();
     }
 
@@ -172,12 +186,23 @@
         loadMyUsage().catch((error) => console.error(error));
     }
 
-    // The task a link asked for scrolls into view once the page has it
-    $: if (receiptId && usage && scrolledTo !== receiptId && usage.activity.some((item) => item.id === receiptId)) {
-        scrolledTo = receiptId;
-        openId = receiptId;
+    // The task a link asked for opens, scrolls into view and takes the keyboard once the page has it, each time it is asked for
+    // (the same receipt asked for again, after it was closed, is a new request)
+    $: if (
+        receiptId &&
+        usage &&
+        handledRequest !== receiptRequest &&
+        usage.activity.some((item) => item.id === receiptId)
+    ) {
+        const wanted = receiptId;
+        handledRequest = receiptRequest;
+        openId = wanted;
         tick()
-            .then(() => body?.querySelector(`[data-activity="${receiptId}"]`)?.scrollIntoView?.({ block: "center" }))
+            .then(() => {
+                const button = activityButtons[wanted];
+                button?.scrollIntoView?.({ block: "center" });
+                button?.focus({ preventScroll: true });
+            })
             .catch((error) => console.error(error));
     }
 
@@ -230,6 +255,7 @@
                     money={apps}
                     note={text.instantNote()}
                     asking={asking === "apps"}
+                    busy={asking !== undefined}
                     onAsk={() => onAsk("apps")}
                 />
             {/if}
@@ -242,6 +268,7 @@
                         money={computer.money}
                         note={text.computerNote()}
                         asking={asking === "computer"}
+                        busy={asking !== undefined}
                         onAsk={() => onAsk("computer")}
                     />
                 {:else}
@@ -263,7 +290,7 @@
                             <PageButton
                                 tall
                                 go
-                                disabled={asking === "computer"}
+                                disabled={asking !== undefined}
                                 testId="usageAskForMore"
                                 on:click={() => onAsk("computer")}
                             >
@@ -285,7 +312,7 @@
                             available: availableText(credit.availableMicros, $locale),
                             total: availableText(credit.totalMicros, $locale),
                         })}
-                        hint={creditHint(credit)}
+                        hint={creditHint(credit, text, $locale)}
                         on
                     />
                     <PageNote>{credit.covers.length > 1 ? text.extraCreditBoth() : text.extraCreditOne()}</PageNote>
@@ -301,7 +328,10 @@
                             <div class="t">{bot.name}</div>
                             <div class="m">
                                 {bot.spentMicros > 0
-                                    ? text.botSpent({ amount: spentText(bot.spentMicros, $locale), uses: botUses(bot) })
+                                    ? text.botSpent({
+                                          amount: spentText(bot.spentMicros, $locale),
+                                          uses: botUses(bot, text),
+                                      })
                                     : text.botNone()}
                             </div>
                         </div>
@@ -318,12 +348,13 @@
                         class:open={openId === item.id}
                         aria-expanded={openId === item.id}
                         data-activity={item.id}
+                        bind:this={activityButtons[item.id]}
                         data-testid="usageActivity"
                         on:click={() => (openId = openId === item.id ? undefined : item.id)}
                     >
                         <div class="tx">
                             <div class="t">{item.title}</div>
-                            <div class="m">{activityHint(item)}</div>
+                            <div class="m">{activityHint(item, text, $locale)}</div>
                         </div>
                         <span class="chev"><IconChevronDown font-size="18" /></span>
                     </button>
@@ -331,14 +362,18 @@
                         <div class="receipt" data-testid="usageReceipt">
                             {#each item.lines as line, index (index)}
                                 <div class="rl">
-                                    <span>{line.label}</span><b>{lineValue(line.amountMicros, line.note)}</b>
+                                    <span>{line.label}</span><b
+                                        >{lineValue(line.amountMicros, line.note, text, $locale)}</b
+                                    >
                                 </div>
                             {/each}
                             {#if item.state === "refunded"}
                                 <p class="why" data-testid="usageReceiptWhy">{text.receiptRefundedWhy()}</p>
                             {/if}
                             <div class="rfoot">
-                                <span class="paid">{item.state === "refunded" ? text.refunded() : paidBy(item)}</span>
+                                <span class="paid"
+                                    >{item.state === "refunded" ? text.refunded() : paidBy(item, text)}</span
+                                >
                             </div>
                         </div>
                     {/if}

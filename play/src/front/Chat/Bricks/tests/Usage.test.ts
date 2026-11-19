@@ -239,6 +239,20 @@ describe("real numbers (credits and grants)", () => {
         expect(usage?.storagePaidByUniverse).toBe(true);
     });
 
+    it("has one row for a receipt: the same id twice is one task, the first", () => {
+        const at = "2026-11-15T11:16:00.000Z";
+        const read = parseUsage(
+            real({
+                activity: [
+                    { id: "same", title: "First", at },
+                    { id: "same", title: "Second", at },
+                    { id: "other", title: "Other", at },
+                ],
+            })
+        );
+        expect(read?.activity.map((one) => `${one.id}:${one.title}`)).toEqual(["same:First", "other:Other"]);
+    });
+
     it("reads at most fifty tasks", () => {
         const many = Array.from({ length: 80 }, (_, i) => ({
             id: `a${i}`,
