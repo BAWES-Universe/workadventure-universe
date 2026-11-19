@@ -578,7 +578,7 @@ describe("the Bricks page (#1995)", () => {
                 isDefault: false,
                 enabled: false,
                 deletedAt: "2026-11-10T09:00:00.000Z",
-                goneAt: "2026-11-17T09:00:00.000Z",
+                goneAt: new Date(2026, 10, 17, 12).toISOString(),
                 ...over,
             });
         const click = async (id: string, index = 0) => {

@@ -125,6 +125,8 @@ describe("what the Brick page knows about visiting (#2005)", () => {
 
     it("brings a Brick along from where the person stands", async () => {
         api.startBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+        // Its own answer from Orbit, so it does not depend on what an earlier test left set (and does not wait for a retry)
+        api.getBrickVisit.mockResolvedValueOnce({ state: "none", place: "Universe" });
         await loadBrickVisit(A);
         await expect(bringBrickAlong(A)).resolves.toBeUndefined();
         expect(api.startBrickVisit).toHaveBeenCalledWith(A, ROOM);

@@ -118,13 +118,31 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         let long = newGuestChat(GUEST, 1);
         for (let at = 1; at <= 300; at++) long = withLine(long, { from: "guest", text: `line ${at}`, at });
         const shared = device(long);
-        const other: CarrySteps = { ...shared.steps, carry: vi.fn<CarrySteps["carry"]>().mockResolvedValue("already") };
+        // Both tabs have sent their first part before either gets an answer: they really were at it together
+        let called = 0;
+        let openGate: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => {
+            openGate = resolve;
+        });
+        const hold = (answer: "sent" | "already") =>
+            vi.fn<CarrySteps["carry"]>(async () => {
+                called += 1;
+                if (called >= 2) openGate();
+                await gate;
+                return answer;
+            });
+        shared.steps.carry = hold("sent");
+        const other: CarrySteps = { ...shared.steps, carry: hold("already") };
         await Promise.all([carryGuestChatAlong(shared.steps), carryGuestChatAlong(other)]);
         const parts = (calls: Parameters<CarrySteps["carry"]>[]) =>
             calls.map(([, lines, part]) => ({ ids: lines.map((line) => line.id), part }));
         const mine = parts(vi.mocked(shared.steps.carry).mock.calls);
         const theirs = parts(vi.mocked(other.carry).mock.calls);
-        // Whatever each tab sent is a part the other made the same way: same lines, same names
+        // Both tabs sent, and the first part each sent is the very same one: same lines, same names
+        expect(mine.length).toBeGreaterThan(0);
+        expect(theirs.length).toBeGreaterThan(0);
+        expect(theirs[0]).toEqual(mine[0]);
+        // Whatever each tab sent is a part the other made the same way
         for (const part of theirs) expect(mine).toContainEqual(part);
         expect(shared.state.chat).toBeUndefined();
     });

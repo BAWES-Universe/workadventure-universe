@@ -351,7 +351,7 @@ describe("a Brick's computer on screen (#2000)", () => {
         await settle();
         // Brick puts the details in, then names the same ones again: the answer to the tap has not come yet
         game.getBrickComputer.mockResolvedValue(
-            computer({ machine: "working", job: job({ id: "j1", status: "working", control: "person" }) })
+            computer({ machine: "working", job: job({ id: "j1", status: "running", control: "person" }) })
         );
         await loadBrickComputer(BRICK);
         await settle();

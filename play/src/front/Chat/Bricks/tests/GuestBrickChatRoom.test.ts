@@ -15,6 +15,10 @@ const GUEST = "4f1d2c3b-aaaa-4bbb-8ccc-0123456789ab";
 const HOUR = 60 * 60 * 1000;
 const ROOM = "/@/bawes/universe/hq";
 
+/** Everything a room draws, with its content read: the messages hold their words and files in a store, not in the list. */
+const drawn = (room: GuestBrickChatRoom): string =>
+    JSON.stringify(get(room.messages).map((message) => get(message.content)));
+
 /** What a device holds, and what the bot server is asked, with the answers each test gives. */
 function setup(over: Partial<GuestBrickDeps> = {}) {
     const device = { saved: null as string | null, clock: 1_000_000, turns: 0 };
@@ -465,8 +469,8 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         await sending;
         await settle();
         expect(asked).toHaveLength(1);
-        expect(JSON.stringify(get(room.messages))).not.toContain("Old words");
-        expect(JSON.stringify(get(room.messages))).not.toContain("menu.png");
+        expect(drawn(room)).not.toContain("Old words");
+        expect(drawn(room)).not.toContain("menu.png");
     });
 
     it("never writes a new guest's words into the chat the last guest had, even when it was not looked at again", async () => {
@@ -484,7 +488,7 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         expect(asked).toHaveLength(2);
         expect(asked[1].message).toBe("Hi");
         expect(asked[1].history).toEqual([]);
-        expect(JSON.stringify(get(room.messages))).not.toContain("My secret plan");
+        expect(drawn(room)).not.toContain("My secret plan");
         expect(device.saved ?? "").not.toContain("My secret plan");
     });
 
