@@ -168,7 +168,12 @@ export class PersistentMemory extends ConversationMemory {
             this.queueSynced.pending.set(key, { json: JSON.stringify(entry), since: entry.since });
             if (letGoHere('pending', key, entry.since)) continue;
             const mine = this.unreportedItemForgets.get(key);
-            if (!mine || mine.since < entry.since) this.unreportedItemForgets.set(key, mine ? { ...entry, first: Math.min(entry.first, mine.first) } : entry);
+            if (!mine) this.unreportedItemForgets.set(key, entry);
+            else {
+                // The later ask stands (0 is the latest of all, as in the ledger); the first time it was asked is the earliest of the two
+                const later = rank(mine.since) < rank(entry.since) ? entry : mine;
+                this.unreportedItemForgets.set(key, { ...later, first: Math.min(entry.first, mine.first) });
+            }
         }
         for (const entry of kept.ledger) {
             const key = forgetKeyOf(entry);

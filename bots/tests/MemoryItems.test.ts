@@ -1096,6 +1096,27 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         clearTimeout(memory.unreportedRetryTimer);
     });
 
+    it('keeps the later ask when it takes in what the store holds, and counts 0 ("whenever it was said") as the latest of all (Sentry)', async () => {
+        const memory = await start();
+        const entry = (since: number, first: number) => ({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', since, first });
+        const key = forgetKeyOf(entry(0, 0) as never);
+        // Held here with no time, the store holds an older ask: this one stays, with the earliest first time
+        memory.unreportedItemForgets.set(key, entry(0, 9));
+        memory.mergeStored({ pending: [entry(5, 3)], ledger: [] });
+        expect(memory.unreportedItemForgets.get(key)).toMatchObject({ since: 0, first: 3 });
+        // Held here with a time, the store holds one with no time: that is the later ask
+        memory.unreportedItemForgets.set(key, entry(5, 3));
+        memory.mergeStored({ pending: [entry(0, 9)], ledger: [] });
+        expect(memory.unreportedItemForgets.get(key)).toMatchObject({ since: 0, first: 3 });
+        // Two with a time: the later stays
+        memory.unreportedItemForgets.set(key, entry(5, 3));
+        memory.mergeStored({ pending: [entry(8, 4)], ledger: [] });
+        expect(memory.unreportedItemForgets.get(key)).toMatchObject({ since: 8, first: 3 });
+        memory.mergeStored({ pending: [entry(6, 1)], ledger: [] });
+        expect(memory.unreportedItemForgets.get(key)).toMatchObject({ since: 8, first: 1 });
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
     it('writes a ledger entry again on the timer when the store was down, even when nothing is owed to Orbit', async () => {
         const memory = await start();
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
