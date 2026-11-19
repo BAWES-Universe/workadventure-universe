@@ -1621,6 +1621,31 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).not.toHaveBeenCalled();
     });
 
+    it('a bot deleted while someone waits: the goodbye is not thrown away when the room store is down for a moment, and comes at the next check', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false } as never);
+        await bridge.onEvent(message('Hola, ¿estás ahí?'));
+        deps.getBotConfig.mockResolvedValue(null as never);
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            await bridge.checkWaiting();
+            aMinuteLater();
+            await bridge.checkWaiting();
+            aMinuteLater();
+            // Orbit has said so three times, but the store that says which bot the room belongs to is reconnecting
+            (bridge as any).roomBots.clear();
+            deps.rooms!.getDmRoomBot.mockRejectedValueOnce(new Error('The shared store is down'));
+            await bridge.checkWaiting();
+            expect(client.leaveRoom).not.toHaveBeenCalled();
+            expect((bridge as any).localWaiting.get(BOT)?.size).toBe(1);
+            await bridge.checkWaiting();
+        } finally {
+            vi.useRealTimers();
+        }
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM, 'Brick deleted');
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+    });
+
     it('forgets the chat when the bot is removed from it after a restart', async () => {
         await bridge.onEvent(invite());
         const restarted = new MatrixDmBridge(config, client as never, deps);

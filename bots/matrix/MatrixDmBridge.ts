@@ -2128,7 +2128,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (config === null) {
                 // Deleted: whoever left a message gets the goodbye now, and the bot leaves that chat.
                 for (const event of this.readWaiting(await this.takeWaiting(botId))) {
-                    if ((await this.botForRoom(event.room_id)) !== botId) continue;
+                    let roomBot: string | null;
+                    try {
+                        roomBot = await this.botForRoom(event.room_id, true);
+                    } catch {
+                        // The room store is down for a moment (a reconnect, say): "no bot there" would throw the message away, so it waits for the next check
+                        await this.rememberWaiting(botId, event, attemptsOf(event));
+                        continue;
+                    }
+                    if (roomBot !== botId) continue;
                     await this.closeChat(botId, event.room_id, detectLanguage(String(event.content?.body ?? '')));
                 }
             } else {
