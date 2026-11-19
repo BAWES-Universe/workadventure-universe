@@ -382,6 +382,15 @@ describe('the two tools of a Brick for keys', () => {
         expect(await ask()).toMatchObject({ done: true });
     });
 
+    it('compares a long description as Orbit stores it: cut at 200 characters and trimmed, so a cut just after a space still matches', async () => {
+        // Cut at 200 it ends in a space, which Orbit's fitWords does not keep
+        const long = `${'a'.repeat(199)} and some more words after the cut`;
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: saved({ description: 'a'.repeat(199) }) } });
+        expect(await ask({ description: long })).toMatchObject({ done: true });
+        expect(http.post).toHaveBeenCalledTimes(1);
+    });
+
     it('takes the read-back as the answer when the write gave none that was whole: no second write either way', async () => {
         const unclear: unknown[] = [new Error('timeout of 15000ms exceeded'), { status: 502, data: {} }, { status: 200, data: {} }, { status: 200, data: { job: {} } }, { status: 200, data: { job: { amount: '4.500', currency: 'KWD', app: 'Example Pay' } } }, { status: 200, data: { job: null } }];
         for (const first of unclear) {
