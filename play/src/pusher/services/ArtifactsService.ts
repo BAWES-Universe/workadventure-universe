@@ -110,10 +110,10 @@ const PayAnswer = z.object({
     /** A start sent again found the order it had made */
     reused: z.boolean().optional(),
     /** What Orbit used for the person who asked (a real account, or the recovery code): the asking person's kind, not the order's */
-    // A word this does not know is dropped, never a reason to lose the rest of the answer (a paid status)
-    buyer: z.enum(["account", "guest"]).optional().catch(undefined),
+    // A word this does not know is dropped (see `pay`), never a reason to lose the rest of the answer (a paid status)
+    buyer: z.string().optional(),
 });
-export type ArtifactPayAnswer = z.infer<typeof PayAnswer>;
+export type ArtifactPayAnswer = Omit<z.infer<typeof PayAnswer>, "buyer"> & { buyer?: "account" | "guest" };
 
 /** What the window may ask of the payment side of a page: one of start, order, check or restore (see `pay`). */
 export interface ArtifactPayRequest {
@@ -229,8 +229,13 @@ export class ArtifactsService {
      * order it made); `order` asks where an order stands; `check` (with `intentId`) asks about the order that wish made;
      * `restore` asks for this buyer's purchase. A guest's window sends its `recoveryCode`.
      */
-    pay(id: string, request: ArtifactPayRequest, viewer: ArtifactViewer): Promise<ArtifactPayAnswer> {
-        return this.call(`/api/artifacts/${encodeURIComponent(id)}/pay`, { viewer, ...request }, PayAnswer);
+    async pay(id: string, request: ArtifactPayRequest, viewer: ArtifactViewer): Promise<ArtifactPayAnswer> {
+        const { buyer, ...answer } = await this.call(
+            `/api/artifacts/${encodeURIComponent(id)}/pay`,
+            { viewer, ...request },
+            PayAnswer
+        );
+        return buyer === "account" || buyer === "guest" ? { ...answer, buyer } : answer;
     }
 
     /** The code of one version, for the Code view. */
