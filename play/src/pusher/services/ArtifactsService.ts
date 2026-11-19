@@ -109,6 +109,9 @@ const PayAnswer = z.object({
     paidAt: z.string().nullable().optional(),
     /** A start sent again found the order it had made */
     reused: z.boolean().optional(),
+    /** What Orbit used for the person who asked (a real account, or the recovery code): the asking person's kind, not the order's */
+    // A word this does not know is dropped, never a reason to lose the rest of the answer (a paid status)
+    buyer: z.enum(["account", "guest"]).optional().catch(undefined),
 });
 export type ArtifactPayAnswer = z.infer<typeof PayAnswer>;
 

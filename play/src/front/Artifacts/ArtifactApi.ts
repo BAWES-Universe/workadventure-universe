@@ -177,6 +177,11 @@ export interface ArtifactPay {
     paidAt?: string | null;
     /** A start sent again found the order it had made, and made no second one */
     reused?: boolean;
+    /**
+     * What Orbit used for the person who ASKED: `account` for a real signed-in account, `guest` for the recovery code (a signed-in person
+     * whose Orbit account is a guest account is a guest). It is the asking person's kind, not the order's: never given to the page.
+     */
+    buyer?: "account" | "guest";
 }
 
 /** What the window asks of the payment side of a page: one of start, order, check or restore. */

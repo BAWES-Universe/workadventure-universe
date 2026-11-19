@@ -186,7 +186,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const random = options.randomId ?? defaultRandom;
     const storage = options.storage === undefined ? defaultStorage() : options.storage;
     const storageKey = `universe-pay-recovery:${options.artifactId}`;
-    const buyerKind = () => options.buyer?.() ?? "guest";
+    // What Orbit said it used for whoever asked last ("account" or "guest"): read first, the window's own sign-in only when no answer said
+    let askedAs: "account" | "guest" | undefined;
+    const buyerKind = () => askedAs ?? options.buyer?.() ?? "guest";
+    /**
+     * Who made the purchase of the checkout on show: what Orbit said for its start, kept with it. A guest who paid and signs in later is
+     * "account" to the questions that follow, but the purchase stays the guest's (it is kept under the recovery code): its receipt is still the guest's.
+     */
+    const purchaseBuyer = () => target?.buyer ?? buyerKind();
     const line = writable<PayLine>(NO_PAY_LINE);
     let current: PayLine = NO_PAY_LINE;
     let busy = false;
@@ -201,7 +208,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // The start that is waiting for its answer: its request is dropped when the window goes away, and its timers stop
     let startInFlight: { abort: AbortController; clear: () => void } | undefined;
     // What Check payment asks about: the wish of the last checkout (when there is one in this window), and who asked for it
-    let target: { intentId: string | null; request: string; from: number } | null = null;
+    let target: { intentId: string | null; request: string; from: number; buyer?: "account" | "guest" } | null = null;
     // The last restore the page itself asked for: a Restore purchase that finds the purchase is told to the page under it
     let lastRestore: { request: string; from: number } | null = null;
     // A page of another opening asked while a payment was on its way and was told so: Restore purchase is offered when this one ends
@@ -213,7 +220,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         line.set(next);
     };
     /** The buyer's line, with what holds whatever it says: who the buyer is, and the receipt to keep when it is a guest's */
-    const show = (update: Partial<PayLine>) => publish({ ...NO_PAY_LINE, buyer: buyerKind(), ...update });
+    const show = (update: Partial<PayLine>) =>
+        publish({ ...NO_PAY_LINE, buyer: update.paid ? purchaseBuyer() : buyerKind(), ...update });
 
     /** The recovery code of this browser for this page: made once, kept, and never given to the page. */
     const recoveryCode = (): string => {
@@ -234,7 +242,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     };
 
     const receiptLink = (): string | undefined => {
-        if (buyerKind() !== "guest") return undefined;
+        if (purchaseBuyer() !== "guest") return undefined;
         const page = options.pageUrl?.();
         return page ? `${page.split("#")[0]}#receipt=${recoveryCode()}` : undefined;
     };
@@ -242,9 +250,13 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     /** One question to the server: the guest's code goes with every wish, check and restore (never with a look at an order) */
     const ask = (request: ArtifactPayRequest, signal?: AbortSignal) => {
         const body = request.order ? request : { ...request, recoveryCode: recoveryCode() };
-        return signal
+        const asked = signal
             ? pay(options.artifactId, options.chat(), body, signal)
             : pay(options.artifactId, options.chat(), body);
+        return asked.then((answer) => {
+            if (answer?.buyer === "account" || answer?.buyer === "guest") askedAs = answer.buyer;
+            return answer;
+        });
     };
 
     /**
@@ -458,6 +470,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     answer = first;
                 }
                 mine.clear();
+                // Who made this purchase, as Orbit says for its start: kept with the checkout for its receipt
+                if (
+                    (answer.buyer === "account" || answer.buyer === "guest") &&
+                    target?.request === request &&
+                    target.from === from
+                ) {
+                    target.buyer = answer.buyer;
+                }
                 const url = safeCheckout(answer.checkoutUrl);
                 if (destroyed) {
                     popup?.close();

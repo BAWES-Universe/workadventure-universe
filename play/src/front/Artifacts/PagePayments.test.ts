@@ -1291,6 +1291,99 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         payments.destroy();
     });
 
+    describe("who the buyer is, as Orbit says it (buyer on the answers of the pay route)", () => {
+        const page = "https://orbit.test/a/a1";
+        const paidAs = (kind: string | undefined) => ({
+            status: "paid",
+            testPayment: false,
+            ...(kind ? { buyer: kind } : {}),
+        });
+        const startedAs = (kind: string | undefined) => ({ ...checkout, ...(kind ? { buyer: kind } : {}) });
+
+        it("gives the guest receipt line to a signed-in person whose Orbit account is a guest account, and none to one Orbit bound to an account", async () => {
+            const guest = make(vi.fn().mockResolvedValueOnce(startedAs("guest")).mockResolvedValue(paidAs("guest")), {
+                buyer: () => "account",
+                pageUrl: () => page,
+            });
+            ask(guest);
+            await flush();
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(get(guest.line)).toMatchObject({ paid: { test: false }, buyer: "guest" });
+            expect(get(guest.line).receipt).toBe(`${page}#receipt=${CODE(2)}`);
+            guest.destroy();
+            const account = make(
+                vi.fn().mockResolvedValueOnce(startedAs("account")).mockResolvedValue(paidAs("account")),
+                {
+                    buyer: () => "guest",
+                    pageUrl: () => page,
+                }
+            );
+            ask(account);
+            await flush();
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(get(account.line)).toMatchObject({ paid: { test: false }, buyer: "account", receipt: null });
+            account.destroy();
+        });
+
+        it("keeps the guest's receipt for a purchase made as a guest when the buyer signs in before Check payment (buyer is who asks, not the order's)", async () => {
+            let signedIn = false;
+            const pay = vi
+                .fn()
+                .mockResolvedValueOnce(startedAs("guest"))
+                .mockResolvedValueOnce({ status: "cant_confirm", buyer: "guest" })
+                // Signed in meanwhile: the same wish is answered for an account
+                .mockResolvedValue(paidAs("account"));
+            const payments = make(pay, { buyer: () => (signedIn ? "account" : "guest"), pageUrl: () => page });
+            ask(payments);
+            await flush();
+            signedIn = true;
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(get(payments.line)).toMatchObject({ problem: "cant_confirm", canCheck: true });
+            payments.checkPayment();
+            await flush();
+            // The purchase was made as a guest, so its receipt is the guest's, though Orbit now answers for an account
+            expect(get(payments.line)).toMatchObject({ paid: { test: false }, buyer: "guest" });
+            expect(get(payments.line).receipt).toBe(`${page}#receipt=${CODE(2)}`);
+            const asked = pay.mock.calls.map((call) => call[2] as Record<string, unknown>);
+            expect(asked.filter((body) => !body.order).every((body) => body.recoveryCode === CODE(2))).toBe(true);
+            payments.destroy();
+        });
+
+        it("reads the answer's word first and the window's own sign-in only when the answer has none", async () => {
+            const old = make(vi.fn().mockResolvedValueOnce(startedAs(undefined)).mockResolvedValue(paidAs(undefined)), {
+                buyer: () => "account",
+                pageUrl: () => page,
+            });
+            ask(old);
+            await flush();
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(get(old.line)).toMatchObject({ paid: { test: false }, buyer: "account", receipt: null });
+            old.destroy();
+            // A purchase that is back is never given a receipt, whoever asks; "none" is said for who asked
+            const none = make(vi.fn().mockResolvedValue({ status: "none", buyer: "account" }), {
+                buyer: () => "guest",
+            });
+            ask(none, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+            await flush();
+            expect(get(none.line)).toMatchObject({ offerRestore: true });
+            none.restorePurchase();
+            await flush();
+            expect(get(none.line)).toMatchObject({ problem: "none", buyer: "account" });
+            none.destroy();
+        });
+
+        it("never tells the page who the buyer is", async () => {
+            const payments = make(
+                vi.fn().mockResolvedValueOnce(startedAs("account")).mockResolvedValue(paidAs("account"))
+            );
+            ask(payments);
+            await flush();
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(JSON.stringify(heard())).not.toMatch(/buyer|account|guest/);
+            payments.destroy();
+        });
+    });
+
     it("gives a guest the receipt link to keep, with the code in the fragment, only for a live purchase made just now on a page shared by link", async () => {
         const storage = memoryStorage();
         const paying = () =>
