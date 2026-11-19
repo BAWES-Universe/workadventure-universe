@@ -17,7 +17,7 @@ function fakeRedis() {
     };
 }
 
-const registryWith = (redis: unknown) => Object.assign(new BotRegistry('test'), { redis });
+const registryWith = (redis: unknown): BotRegistry => Object.assign(new BotRegistry('test'), { redis }) as BotRegistry;
 
 describe('forgetting the direct chat of a bot and a person', () => {
     it('keeps a newer chat that was noted after the old one was seen to be gone', async () => {
