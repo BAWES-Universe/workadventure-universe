@@ -146,6 +146,7 @@ import {
     newInstantTask,
     instantTaskPending,
     openInstantReceipt,
+    renewInstantReceipt,
     type InstantTask,
     type InstantTurn,
     runInstantTool,
@@ -3930,6 +3931,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             let ran: Awaited<ReturnType<typeof runInstantTool>>;
             try {
                 const opened = await openInstantReceipt(admin, botId, userId, mine, instantReceiptTitle(tool));
+                // A second run of the task: its receipt is alive (opening it the first time already renewed it)
+                if (mine.ended.length > 0 || (mine.running ?? 0) > 1) void renewInstantReceipt(admin, botId, userId, mine);
                 ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: mine.key, receiptLink: opened?.link });
                 mine.ended.push(ran.ended);
             } finally {
@@ -3990,6 +3993,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const admin = adminApiService ?? this.adminApiService;
             if (!turn || !admin || !userId) return;
             turn.over = true;
+            // A run still in flight holds its receipt open past the turn's end: Orbit is told it is alive, so its lease does not lapse under it
+            for (const task of turn.tasks) if (task.running) void renewInstantReceipt(admin, botId, userId, task);
             // What an earlier turn still owes is asked again without holding this reply up; this turn's own is awaited
             for (const task of turn.owed ?? []) void endInstantTask(admin, botId, userId, task);
             for (const task of [...turn.tasks]) await endInstantTask(admin, botId, userId, task);

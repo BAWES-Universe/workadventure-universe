@@ -450,7 +450,20 @@ export interface TaskReceiptOpened {
     link: string | null;
     /** The words for who pays ("Paid by you"). */
     paidBy: string | null;
+    /** The turn the receipt is on: sent with every renew and close, so a word from an older turn changes nothing. Absent from an Orbit that gives none. */
+    generation?: number;
 }
+/** What Orbit says to a renewal: the generation the receipt is on now, and whether this one was too old to count. */
+export interface TaskReceiptRenewed {
+    generation?: number;
+    stale: boolean;
+}
+/** Orbit's answer to a close that came from an older generation: nothing changed, and this is the one the receipt is on now. */
+export interface TaskReceiptStale {
+    stale: true;
+    generation?: number;
+}
+const wholeGeneration = (value: unknown): number | undefined => (typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined);
 export type TaskReceiptState = 'done' | 'refunded' | 'checking';
 
 /** Orbit's own wait for the provider is a minute; the bot server waits a little longer so the answer comes back. */
@@ -1482,7 +1495,19 @@ export class AdminApiService {
         const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'open', taskKey: task.taskKey, title: task.title, category: task.category }, undefined, INSTANT_LIST_TIMEOUT_MS);
         if (answer.status !== 200 && answer.status !== 201) return null;
         const paid = answer.data.paidBy as { label?: unknown } | undefined;
-        return { link: asText(answer.data.link), paidBy: asText(paid?.label) };
+        const generation = wholeGeneration(answer.data.generation);
+        return { link: asText(answer.data.link), paidBy: asText(paid?.label), ...(generation === undefined ? {} : { generation }) };
+    }
+
+    /**
+     * Says a task's receipt is alive (a run starts, a turn ends): Orbit moves its lease on (`action: 'renew'`). A renewal never revives an ended receipt. A
+     * `generation` older than the receipt's changes nothing and the answer names the one it is on now. Null when Orbit cannot say: a lease that lapses is
+     * settled by Orbit's own sweep, so nothing waits on this. Never throws.
+     */
+    async renewTaskReceipt(botId: string, userId: string, task: { taskKey: string; generation?: number }): Promise<TaskReceiptRenewed | null> {
+        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'renew', taskKey: task.taskKey, ...(task.generation === undefined ? {} : { generation: task.generation }) }, undefined, INSTANT_LIST_TIMEOUT_MS);
+        if (answer.status !== 200) return null;
+        return { generation: wholeGeneration(answer.data.generation), stale: answer.data.stale === true };
     }
 
     /**
@@ -1491,10 +1516,18 @@ export class AdminApiService {
      * more to ask: Orbit took it, or said it never will (a receipt that is not this person's or does not exist, a guest without Activity, a request it
      * refuses: asking again will not change that). False when Orbit gave no answer (down, a server error, a timeout) or said to slow down (429), so it is worth asking again.
      */
-    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState }): Promise<boolean> {
-        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'close', taskKey: task.taskKey, state: task.state }, undefined, INSTANT_LIST_TIMEOUT_MS);
+    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState; generation?: number }): Promise<boolean | TaskReceiptStale> {
+        const answer = await this.instantCall(
+            'post',
+            `api/bots/${encodeURIComponent(botId)}/task-receipts`,
+            { userId, action: 'close', taskKey: task.taskKey, state: task.state, ...(task.generation === undefined ? {} : { generation: task.generation }) },
+            undefined,
+            INSTANT_LIST_TIMEOUT_MS
+        );
         // "Too many asks" (429) passes, so it is asked again; any other refusal of the request itself will not change
         if (answer.status === 'none') return answer.rejected === true && answer.http !== 429;
+        // A close from an older generation changed nothing: the caller says which one the receipt is on now, and decides whether it is still the closer
+        if (answer.status === 200 && answer.data.stale === true) return { stale: true, generation: wholeGeneration(answer.data.generation) };
         return answer.status === 200 || answer.status === 404;
     }
 

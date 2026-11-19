@@ -411,6 +411,8 @@ export interface InstantTask {
     running?: number;
     /** How many closes were sent for this task and not taken (Orbit down, or no answer): after a few it is let go, so a receipt Orbit never takes is not asked about forever. */
     attempts?: number;
+    /** The generation Orbit says the receipt is on: sent with every renew and close, so a word from an older turn changes nothing there. Unset for an Orbit that gives none. */
+    generation?: number;
     /** A close was sent (whether or not Orbit took it). A closed task is never used again: Orbit keeps a done or refunded receipt as it ended, so a run
      * that came after (a reply written again) goes under a task of its own, with its own key and receipt. */
     closed?: boolean;
@@ -445,9 +447,26 @@ export function openInstantReceipt(admin: Pick<AdminApiService, 'openTaskReceipt
         // No answer is not kept as the answer: the next run, or the end of the task, asks again
         void opening.then((opened) => {
             if (opened === null && task.receipt === opening) task.receipt = undefined;
+            if (opened?.generation !== undefined && task.receipt === opening) task.generation = opened.generation;
         });
     }
     return task.receipt;
+}
+
+/**
+ * Says the task's receipt is alive: a run starts, or the turn ends with a run still in flight. Orbit moves the lease of an open receipt on, and its own sweep
+ * settles one whose lease lapses, so this is a courtesy that keeps a long run from being settled early: never awaited by a reply, never throws.
+ * A receipt not opened yet has nothing to renew (opening it renews it).
+ */
+export async function renewInstantReceipt(admin: Pick<AdminApiService, 'renewTaskReceipt'>, botId: string, userId: string, task: InstantTask): Promise<void> {
+    try {
+        if (!task.receipt || !(await task.receipt)) return;
+        const renewed = await admin.renewTaskReceipt(botId, userId, { taskKey: task.key, ...(task.generation === undefined ? {} : { generation: task.generation }) });
+        // The generation Orbit names is the one to use from now on, whether this renewal counted or was too old
+        if (renewed?.generation !== undefined) task.generation = renewed.generation;
+    } catch {
+        // the lease is Orbit's to settle
+    }
 }
 
 /** What the receipt says the task ended as: it worked, or nothing came back yet, or nothing was taken. */
@@ -493,7 +512,19 @@ export function endInstantTask(
             const count = task.ended.length;
             // From here no run joins this task: what it is closed with may be final
             task.closed = true;
-            if (await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state: receiptStateOf(task.ended.slice(0, count)) })) task.reported = count;
+            const state = receiptStateOf(task.ended.slice(0, count));
+            let taken = await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state, ...(task.generation === undefined ? {} : { generation: task.generation }) });
+            // Orbit moved the receipt on to a later generation (a late run came under it): that close changed nothing. This task still holds the turn's
+            // end, so the same word goes again, once, under the generation it is on now
+            if (typeof taken === 'object') {
+                if (taken.generation !== undefined) task.generation = taken.generation;
+                taken = taken.generation === undefined ? false : await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state, generation: taken.generation });
+                if (typeof taken === 'object') {
+                    if (taken.generation !== undefined) task.generation = taken.generation;
+                    taken = false;
+                }
+            }
+            if (taken) task.reported = count;
             else task.attempts = (task.attempts ?? 0) + 1;
         } catch {
             // kept: the next end says it again (a few times)

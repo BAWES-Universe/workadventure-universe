@@ -28,6 +28,7 @@ import {
     newInstantTask,
     openInstantReceipt,
     receiptStateOf,
+    renewInstantReceipt,
     runInstantTool,
     stableJson,
 } from '../ai/InstantTools';
@@ -154,6 +155,30 @@ describe('Orbit’s Instant routes, from the bot server', () => {
         respond(200, { ok: true, id: 'act_1', state: 'done' });
         expect(await admin().closeTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'instant-1', state: 'done' })).toBe(true);
         expect(request.mock.calls[1][0].data).toEqual({ userId: 'uuid-alice', action: 'close', taskKey: 'instant-1', state: 'done' });
+    });
+
+    it('reads the generation a receipt is on, sends it with a close and a renew, and says so when Orbit calls a close stale', async () => {
+        respond(201, { id: 'act_1', link: null, paidBy: { label: 'Paid by you' }, created: true, generation: 1, leaseUntil: '2026-11-19T10:10:00.000Z' });
+        expect(await admin().openTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', title: 'Exa search', category: 'apps' })).toEqual({ link: null, paidBy: 'Paid by you', generation: 1 });
+        respond(200, { ok: true, id: 'act_1', state: 'running', generation: 1, leaseUntil: '2026-11-19T10:20:00.000Z', renewed: true });
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', generation: 1 })).toEqual({ generation: 1, stale: false });
+        expect(request.mock.calls[1][0].data).toEqual({ userId: 'uuid-alice', action: 'renew', taskKey: 'k', generation: 1 });
+        // A renewal from an older generation changes nothing and names the one the receipt is on
+        respond(200, { ok: true, id: 'act_1', state: 'running', generation: 2, leaseUntil: null, renewed: false, stale: true });
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', generation: 1 })).toEqual({ generation: 2, stale: true });
+        respond(200, { ok: true, id: 'act_1', state: 'done', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', state: 'done', generation: 1 })).toBe(true);
+        expect(request.mock.calls[3][0].data).toEqual({ userId: 'uuid-alice', action: 'close', taskKey: 'k', state: 'done', generation: 1 });
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 2, stale: true });
+        expect(await admin().closeTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', state: 'done', generation: 1 })).toEqual({ stale: true, generation: 2 });
+        // An Orbit that gives no generation, and one that cannot be reached, are never a reason to throw
+        respond(200, { ok: true, id: 'act_1', state: 'running', renewed: true });
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k' })).toEqual({ generation: undefined, stale: false });
+        expect(request.mock.calls[5][0].data).toEqual({ userId: 'uuid-alice', action: 'renew', taskKey: 'k' });
+        respond(500, {});
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k' })).toBeNull();
+        request.mockRejectedValueOnce(new Error('down'));
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k' })).toBeNull();
     });
 
     it('never throws for a receipt: Orbit down, a guest without Activity or a body it does not take is just "no receipt"', async () => {
@@ -542,6 +567,48 @@ describe('one task, one receipt', () => {
         expect(admin.closeTaskReceipt).toHaveBeenCalledTimes(1);
     });
 
+    it('closes under the generation the receipt was opened on, and when Orbit calls it stale says the same word once under the one it is on now', async () => {
+        const task = newInstantTask();
+        const admin = {
+            openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null, generation: 1 }),
+            closeTaskReceipt: vi.fn().mockResolvedValueOnce({ stale: true, generation: 2 }).mockResolvedValue(true),
+        };
+        await openInstantReceipt(admin, BRICK, 'u', task, 'x');
+        task.ended.push('worked');
+        await endInstantTask(admin, BRICK, 'u', task);
+        expect(admin.closeTaskReceipt.mock.calls.map((call) => call[2])).toEqual([
+            { taskKey: task.key, state: 'done', generation: 1 },
+            { taskKey: task.key, state: 'done', generation: 2 },
+        ]);
+        expect(task.reported).toBe(1);
+        expect(task.generation).toBe(2);
+
+        // Stale again right after: it is not asked a third time in this end, and is kept for the next
+        const again = newInstantTask();
+        const stale = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null, generation: 1 }), closeTaskReceipt: vi.fn().mockResolvedValue({ stale: true, generation: 5 }) };
+        await openInstantReceipt(stale, BRICK, 'u', again, 'x');
+        again.ended.push('unsure');
+        await endInstantTask(stale, BRICK, 'u', again);
+        expect(stale.closeTaskReceipt).toHaveBeenCalledTimes(2);
+        expect(again.reported).toBeUndefined();
+        expect(again.attempts).toBe(1);
+        expect(again.generation).toBe(5);
+    });
+
+    it('renews the lease of an opened receipt with its generation, takes the generation Orbit names, and never throws', async () => {
+        const task = newInstantTask();
+        const admin = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null, generation: 1 }), renewTaskReceipt: vi.fn().mockResolvedValue({ generation: 3, stale: true }) };
+        // Nothing opened yet: nothing to renew
+        await renewInstantReceipt(admin, BRICK, 'u', task);
+        expect(admin.renewTaskReceipt).not.toHaveBeenCalled();
+        await openInstantReceipt(admin, BRICK, 'u', task, 'x');
+        await renewInstantReceipt(admin, BRICK, 'u', task);
+        expect(admin.renewTaskReceipt).toHaveBeenCalledWith(BRICK, 'u', { taskKey: task.key, generation: 1 });
+        expect(task.generation).toBe(3);
+        admin.renewTaskReceipt.mockRejectedValue(new Error('down'));
+        await expect(renewInstantReceipt(admin, BRICK, 'u', task)).resolves.toBeUndefined();
+    });
+
     it('a close Orbit did not take is kept and said again at the next end, and a failure never throws', async () => {
         const task = newInstantTask();
         const admin = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null }), closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('down')).mockResolvedValue(true) };
@@ -603,6 +670,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
             instantRun: vi.fn().mockResolvedValue({ status: 'done', data: { r: 1 }, chargedMicros: 7000 } satisfies InstantRunAnswer),
             openTaskReceipt: vi.fn().mockResolvedValue({ link: '[What it used](#usage=act_1)', paidBy: 'Paid by you' }),
             closeTaskReceipt: vi.fn().mockResolvedValue(true),
+            renewTaskReceipt: vi.fn().mockResolvedValue({ generation: undefined, stale: false }),
             ...over,
         };
         const ai = Object.create(AIService.prototype) as AIService;
@@ -739,6 +807,26 @@ describe('in a Brick’s owner chat (AIService)', () => {
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'c' }, where);
         expect(orbit.instantRun.mock.calls[2][1].taskKey).not.toBe(key);
         expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(2);
+    });
+
+    it('renews the receipt when a later run of the task starts, and when the turn ends with a run still in flight', async () => {
+        const { ai, orbit, memory } = service({ openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: 'Paid by you', generation: 1 }) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        // The first run's open was its renewal
+        expect(orbit.renewTaskReceipt).not.toHaveBeenCalled();
+        let land: (answer: InstantRunAnswer) => void = () => undefined;
+        orbit.instantRun.mockImplementationOnce(() => new Promise<InstantRunAnswer>((resolve) => (land = resolve)));
+        const second = ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        await vi.waitFor(() => expect(orbit.renewTaskReceipt).toHaveBeenCalledTimes(1));
+        const key = orbit.instantRun.mock.calls[0][1].taskKey;
+        expect(orbit.renewTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: key, generation: 1 });
+        // The turn ends while that run is still out: its receipt is alive, and is not closed until the run has landed
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn as never);
+        await vi.waitFor(() => expect(orbit.renewTaskReceipt).toHaveBeenCalledTimes(2));
+        expect(orbit.closeTaskReceipt).not.toHaveBeenCalled();
+        land({ status: 'done', data: 2, chargedMicros: 1 });
+        await second;
     });
 
     it('never opens a receipt for a call that is not offered, and a receipt Orbit cannot open does not stop the run', async () => {
