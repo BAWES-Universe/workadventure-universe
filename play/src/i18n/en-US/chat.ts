@@ -1137,6 +1137,8 @@ const chat: BaseTranslation = {
             signInStopped: "{name} was not connected. Try again when you're ready.",
             signInBlocked: "The sign-in window did not open. Allow pop-ups for this page and try again.",
             couldNotLet: "{name} is connected, but this Brick could not be let use it. Choose it in Apps.",
+            // Connected and this Brick may use it, but the Brick could not be told to carry on: they ask it again
+            couldNotResume: "{name} is connected and this Brick may use it. Ask it again to carry on.",
         },
         // The starter that opens the Apps page (#2001)
         connectMyApps: "Connect my apps",

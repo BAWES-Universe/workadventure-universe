@@ -8,7 +8,8 @@ const game = vi.hoisted(() => ({
     connectListedApp: vi.fn<(key: string) => Promise<string>>(),
     connectReadyMadeApp: vi.fn<(key: string, returnUrl: string) => Promise<unknown>>(),
     getMyApps: vi.fn<() => Promise<unknown>>(),
-    signInInPopup: vi.fn<(id: string | Promise<string>) => Promise<"done" | "stopped" | "blocked">>(),
+    signInInPopup:
+        vi.fn<(id: string | Promise<string> | (() => Promise<string>)) => Promise<"done" | "stopped" | "blocked">>(),
 }));
 vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
     botApiService: {
@@ -21,7 +22,10 @@ vi.mock("../../../../Stores/MenuStore", async () => {
     const store = await import("svelte/store");
     return { userIsConnected: store.writable(true) };
 });
-vi.mock("../Reconnect", () => ({ signInInPopup: game.signInInPopup }));
+vi.mock("../Reconnect", () => ({
+    signInInPopup: game.signInInPopup,
+    newPopupName: () => "oauth-popup-test",
+}));
 
 import { connectApp } from "../ConnectApp";
 import { forgetMyApps } from "../AppsStore";
@@ -71,15 +75,33 @@ describe("Connect on an app (#2001)", () => {
     });
 
     const tell = (type: string) =>
-        window.dispatchEvent(new MessageEvent("message", { data: { type }, origin: window.location.origin }));
+        window.dispatchEvent(
+            new MessageEvent("message", {
+                data: { type },
+                origin: window.location.origin,
+                source: popup as unknown as Window,
+            })
+        );
 
     it("opens the sign-in window from a listed app and answers its connection once it signed in", async () => {
         game.connectListedApp.mockResolvedValue("c1");
-        game.signInInPopup.mockResolvedValue("done");
+        // The window opens, then asks for the connection to be made
+        game.signInInPopup.mockImplementation(async (toMake) => {
+            await (typeof toMake === "function" ? toMake() : toMake);
+            return "done";
+        });
         expect(await connectApp(listed)).toEqual({ status: "connected", appId: "c1" });
         expect(game.connectListedApp).toHaveBeenCalledWith("notion");
         // The connection is handed over as a promise, so the window can open before it is made
-        expect(game.signInInPopup.mock.calls[0][0]).toBeInstanceOf(Promise);
+        // Not made before the window is open: the connection is handed over to be made once it is
+        const toMake = game.signInInPopup.mock.calls[0][0];
+        expect(typeof toMake).toBe("function");
+    });
+
+    it("makes no connection when the browser blocks the window", async () => {
+        game.signInInPopup.mockResolvedValue("blocked");
+        expect(await connectApp(listed)).toEqual({ status: "blocked" });
+        expect(game.connectListedApp).not.toHaveBeenCalled();
     });
 
     it("says stopped when the window was closed or the sign-in failed, and blocked when it could not open", async () => {
@@ -98,6 +120,33 @@ describe("Connect on an app (#2001)", () => {
             "linear",
             `${window.location.origin}/oauth-popup-callback.html?oauth=success`
         );
+        tell("oauth-success");
+        expect(await result).toEqual({ status: "connected", appId: "c9" });
+    });
+
+    it("takes the return of its own window only, not another sign-in's", async () => {
+        game.connectReadyMadeApp.mockResolvedValue({ id: "c9", redirectUrl: "https://provider.test/sign-in" });
+        let settled = false;
+        const result = connectApp(ready).then((value) => {
+            settled = true;
+            return value;
+        });
+        await vi.waitFor(() => expect(popup.location.href).toBe("https://provider.test/sign-in"));
+        const foreign = { postMessage: vi.fn() } as unknown as Window;
+        // Another sign-in's success, and one with no window at all, say nothing about this one
+        window.dispatchEvent(
+            new MessageEvent("message", {
+                data: { type: "oauth-success" },
+                origin: window.location.origin,
+                source: foreign,
+            })
+        );
+        window.dispatchEvent(
+            new MessageEvent("message", { data: { type: "oauth-failure" }, origin: window.location.origin })
+        );
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        expect(game.getMyApps).not.toHaveBeenCalled();
         tell("oauth-success");
         expect(await result).toEqual({ status: "connected", appId: "c9" });
     });

@@ -750,7 +750,7 @@
         const text = $LL.chat.brick.appCard;
         return connectFromCard(offer, brickId, {
             connectListedApp: (key) => botApiService.connectListedApp(key),
-            signIn: (appId) => signInInPopup(appId),
+            signIn: (makeApp, alreadyConnected) => signInInPopup(makeApp, { alreadyConnected }),
             isConnected: async (appId) => {
                 const answer = (await botApiService.getMyApp(appId)) as { app?: { connected?: unknown } } | undefined;
                 return answer?.app?.connected === true;
@@ -761,7 +761,11 @@
         })
             .then((result) => {
                 if (result === "connected") closeBrickCard(tappedKey);
-                else if (result === "stopped")
+                // Connected and let use it, but the Brick could not be told to carry on: said, and only that is left to ask
+                else if (result === "not_resumed") {
+                    warningMessageStore.addWarningMessage(text.couldNotResume({ name: offer.name }));
+                    closeBrickCard(tappedKey);
+                } else if (result === "stopped")
                     warningMessageStore.addWarningMessage(text.signInStopped({ name: offer.name }));
                 else if (result === "blocked") warningMessageStore.addWarningMessage(text.signInBlocked());
                 else warningMessageStore.addWarningMessage(text.couldNotLet({ name: offer.name }));
