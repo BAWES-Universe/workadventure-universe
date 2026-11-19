@@ -173,6 +173,29 @@ describe("keepPrivate", () => {
         expect(event?.properties?.$snapshot_data).toEqual([{ type: 2, data: { node } }]);
     });
 
+    it("blanks an email in the path of a relative address in the replay, encoded once or many times, and keeps the rest of the path", () => {
+        const node = {
+            tagName: "a",
+            attributes: {
+                href: "/invite/sara%40example.test?token=secret",
+                src: "/files/sara%2540example.test/avatar.png#x",
+                action: "/u/sara%25252540example.test/room?y=1",
+                "data-href": "/plain/room?z=2",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const attributes = (
+            event?.properties?.$snapshot_data as Array<{ data: { node: { attributes: Record<string, string> } } }>
+        )[0].data.node.attributes;
+        expect(attributes).toEqual({
+            href: "/invite/[email]",
+            src: "/files/[email]/avatar.png",
+            action: "/u/[email]/room",
+            "data-href": "/plain/room",
+        });
+        expect(JSON.stringify(attributes)).not.toMatch(/sara|secret/);
+    });
+
     it("cleans the attributes of the replay's elements, however deep, and keeps the rest of the recording", () => {
         let node: Record<string, unknown> = {
             tagName: "a",

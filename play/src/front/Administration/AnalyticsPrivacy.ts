@@ -131,7 +131,8 @@ function cleanReplayValue(key: string, value: string): string {
     if (REPLAY_SECRET_KEYS.test(key) && !/^\*+$/.test(value)) return "[removed]";
     let cleaned = value;
     if (WEB_ADDRESS.test(cleaned)) cleaned = withoutQueryOrHash(cleaned);
-    else if (REPLAY_ADDRESS_KEYS.test(key)) cleaned = cleaned.replace(/[?#].*$/s, "");
+    // A relative address (/invite/sara%40example.test?token=x): its query and hash are cut, and an email in its path goes, encoded or not
+    else if (REPLAY_ADDRESS_KEYS.test(key)) cleaned = emailFreePath(cleaned.replace(/[?#].*$/s, ""));
     return cleaned.replace(EMAIL, "[email]");
 }
 
