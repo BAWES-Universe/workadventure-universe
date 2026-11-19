@@ -1511,6 +1511,38 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         later.destroy();
     });
 
+    it("offers Restore purchase once when Check payment ends a payment that turned another page away, and not again after", async () => {
+        const pay = vi.fn().mockResolvedValueOnce(checkout).mockResolvedValueOnce({ status: "not_paid" });
+        const payments = make(pay);
+        showing = 1;
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line)).toMatchObject({ problem: "not_paid", canCheck: true });
+        // Check payment is on its way when the version is opened again and its page asks
+        let release: (value: unknown) => void = () => undefined;
+        pay.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        payments.checkPayment();
+        await flush();
+        showing = 2;
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load", session: "s2" });
+        await flush();
+        release({ status: "not_paid" });
+        await flush();
+        expect(get(payments.line)).toMatchObject({ problem: "not_paid", offerRestore: true });
+        // What was owed was given once: the next check that ends badly does not offer it again
+        pay.mockResolvedValueOnce({ status: "not_paid" });
+        payments.checkPayment();
+        await flush();
+        expect(get(payments.line)).toMatchObject({ problem: "not_paid", offerRestore: false });
+        payments.destroy();
+    });
+
     it("says on its own line that the page needs an update when a request has no id of its own, answers the page nothing, and Check payment still works", async () => {
         const pay = vi
             .fn()
