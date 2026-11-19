@@ -29,7 +29,12 @@ const OpenBody = z.object({
     version: z.number().int().min(1).optional(),
 });
 const ViewerBody = z.object({ chat: Chat.optional() });
-const InChatBody = z.object({ chat: Chat, offset: z.number().int().min(0).max(1_000_000).optional() });
+const InChatBody = z.object({
+    chat: Chat,
+    offset: z.number().int().min(0).max(1_000_000).optional(),
+    /** The bot of a direct chat: its list also holds what that bot made for this person in other chats. */
+    botId: z.string().min(1).max(255).optional(),
+});
 const OwnedBody = z.object({ offset: z.number().int().min(0).max(1_000_000).optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
 const PayBody = z
@@ -139,7 +144,7 @@ export class ArtifactController extends BaseHttpController {
                 async (viewer) => {
                     const body = InChatBody.safeParse(req.body ?? {});
                     if (!body.success) throw new ArtifactsError("invalid_request", 400);
-                    return artifactsService.listInChat(viewer(body.data.chat), body.data.offset ?? 0);
+                    return artifactsService.listInChat(viewer(body.data.chat), body.data.offset ?? 0, body.data.botId);
                 },
                 true
             );

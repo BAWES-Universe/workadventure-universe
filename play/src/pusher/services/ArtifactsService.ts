@@ -218,10 +218,11 @@ export class ArtifactsService {
 
     /**
      * The artifacts made in this chat that the person may open, newest change first, a page at a time (the chat's
-     * Artifacts group and list). `offset` is where the page starts: the `next` of the page before.
+     * Artifacts group and list). `offset` is where the page starts: the `next` of the page before. In a direct chat
+     * with a bot, `botId` adds what that bot made for the person in their other chats, as the bot itself can send it.
      */
-    listInChat(viewer: ArtifactViewer, offset = 0): Promise<ChatArtifactPage> {
-        return this.call("/api/artifacts/chat", { viewer, offset }, ChatArtifactPage);
+    listInChat(viewer: ArtifactViewer, offset = 0, botId?: string): Promise<ChatArtifactPage> {
+        return this.call("/api/artifacts/chat", { viewer, offset, ...(botId ? { botId } : {}) }, ChatArtifactPage);
     }
 
     /**
