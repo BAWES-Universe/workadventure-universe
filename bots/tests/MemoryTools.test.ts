@@ -330,13 +330,13 @@ describe('forget_memory as the model calls it (GPT B2, B3, B4)', () => {
     });
 
     it('does not report success when nothing went, or only some went (B4)', async () => {
-        const none = await run({ about: 'my name' }, vi.fn(async () => 0));
+        const none = await run({ about: 'my name' }, vi.fn(async (_keys: ReadonlySet<string>) => 0));
         expect(none.answer.forgotten).toEqual([]);
         expect(none.answer.note).toContain('already gone');
         expect(none.answer.note).not.toContain('It is forgotten');
         const name = memoryItemKey('name', null, 'Sara');
         const birthday = memoryItemKey('birthday', null, 'June 5');
-        const some = await run({ ids: [name, birthday] }, vi.fn(async () => 1));
+        const some = await run({ ids: [name, birthday] }, vi.fn(async (_keys: ReadonlySet<string>) => 1));
         expect(some.answer.forgotten).toBeUndefined();
         expect(some.answer).toMatchObject({ count: 1, asked: 2 });
         expect(some.answer.note).toContain('do not say all of it');

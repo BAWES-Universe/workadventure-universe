@@ -620,6 +620,11 @@ describe('in a Brick’s owner chat (AIService)', () => {
         return { ai: ai as unknown as Ai, orbit, memory };
     }
     const where = { botId: BRICK, playerId: 1 };
+    /** A new message from the person, through the real start of a reply: it clears what the last turn kept (its tool calls), as a new turn does. */
+    const newMessage = async (ai: Ai) => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        await (ai as unknown as AIService).generateBotResponseStream(BRICK, 1, 'a new message', '', 'none', 'matrix-dm', '').next().catch(() => undefined);
+    };
 
     it('offers Instant only in a person’s own Brick, to its owner, and never in a bubble or without Orbit', async () => {
         const { ai, orbit } = service();
@@ -693,7 +698,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         // another question is another run, and a new turn clears what was kept
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'other' }, where);
         expect(orbit.instantRun).toHaveBeenCalledTimes(2);
-        (memory.instantCalls as Map<string, unknown>).clear();
+        await newMessage(ai);
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
         expect(orbit.instantRun).toHaveBeenCalledTimes(3);
         expect(new Set(orbit.instantRun.mock.calls.map((c) => c[1].callId)).size).toBe(3);
@@ -876,8 +881,14 @@ describe('in a Brick’s owner chat (AIService)', () => {
         const key = orbit.instantRun.mock.calls[0][1].taskKey;
         expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
         // the next turn begins: the old task is closed on its own and the memory is clear for the new one
-        ai.startInstantTurn(BRICK, memory);
-        expect(memory.instantTask).toBeUndefined();
+        const left = memory.instantTurn;
+        const next = ai.startInstantTurn(BRICK, memory);
+        // The new turn is its own object, with none of the old turn's tasks; the old one is still closed under its own key below
+        expect(next).toBeDefined();
+        expect(next).not.toBe(left);
+        expect(memory.instantTurn).toBe(next);
+        expect(next!.tasks).toEqual([]);
+        expect((left as { tasks: unknown[] }).tasks).toHaveLength(1);
         await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2));
         expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: key, state: 'done' });
         // one that was closed, or never ran, is not said again
@@ -1025,7 +1036,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         ai.noteBrick(BRICK, { isDefault: false });
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
         memory.instantTurn = undefined;
-        (memory.instantCalls as Map<string, unknown>).clear();
+        await newMessage(ai);
         expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where)).toMatchObject({ success: true });
         expect(orbit.instantRun).toHaveBeenCalledTimes(2);
     });
@@ -1083,7 +1094,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         const older = ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
         await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
         // the next turn begins and asks the same call: its own run
-        (memory.instantCalls as Map<string, unknown>).clear();
+        await newMessage(ai);
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
         expect(orbit.instantRun).toHaveBeenCalledTimes(2);
         // the older one now comes back refused before any run: it must not drop the newer one's entry
@@ -1182,7 +1193,8 @@ describe('in a Brick’s owner chat (AIService)', () => {
                 ['other_tool', { serverName: 'x' }],
             ]),
         });
-        const { ai } = service();
+        const { ai, orbit } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
         const built = (await ai.buildTools(BRICK, undefined, {}, 'dm', undefined, undefined, false, listing())) as unknown as { tools: Array<{ function: { name: string; description: string } }>; toolServerMap: Map<string, unknown> };
         const named = built.tools.filter((tool) => tool.function.name === 'instant_app_exa_search');
         expect(named).toHaveLength(1);
@@ -1190,6 +1202,24 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(built.toolServerMap.has('instant_app_exa_search')).toBe(false);
         expect(built.toolServerMap.has('other_tool')).toBe(true);
         expect(built.tools.some((tool) => tool.function.name === 'other_tool')).toBe(true);
+
+        // Dispatch with the map that was built: the call reaches Orbit's Instant run for EXA_SEARCH, and the tool server is never asked
+        const serverCall = vi.fn().mockResolvedValue({ content: 'from the tool server' });
+        (MCPConnector as unknown as { executeToolCall: unknown }).executeToolCall = serverCall;
+        const [ran] = await (ai as unknown as { executeToolCalls(...args: unknown[]): Promise<Array<{ result: Record<string, unknown> }>> }).executeToolCalls(
+            [{ id: 't1', name: 'instant_app_exa_search', arguments: '{"query":"ramen"}' }],
+            undefined,
+            orbit,
+            built.toolServerMap,
+            'uuid-alice',
+            'matrix-dm',
+            BRICK,
+            1
+        );
+        expect(serverCall).not.toHaveBeenCalled();
+        expect(orbit.instantRun).toHaveBeenCalledTimes(1);
+        expect(orbit.instantRun.mock.calls[0][1]).toMatchObject({ tool: 'EXA_SEARCH', arguments: { query: 'ramen' } });
+        expect(ran.result).toMatchObject({ success: true });
     });
 
     it('a tool server’s tool with an Instant-looking name is read as a tool server’s answer, not as an Instant result', () => {

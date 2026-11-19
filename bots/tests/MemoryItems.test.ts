@@ -19,6 +19,22 @@ import { heardInDm } from '../memory/Heard';
 const BOT = 'bot-1';
 const SARA = 7;
 
+/**
+ * The memory starts timers of its own (debounced saves, retries to tell Orbit). They are faked here and dropped when the test
+ * ends, even one whose assertion failed, so none runs on into another test. The clock itself (Date.now) is left real.
+ */
+function quietTimers() {
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    });
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        // Whatever a test set in the environment (the service token, Orbit's address) is put back as it was
+        vi.unstubAllEnvs();
+    });
+}
+
 /** Orbit tests these exact values too (`__tests__/lib/bot-memory-items.test.ts`). Change them on both sides together. */
 describe('memoryItemKey: the same key as Orbit', () => {
     it('makes the keys Orbit makes', () => {
@@ -293,10 +309,11 @@ describe('what Orbit says to forget', () => {
 });
 
 describe('PersistentMemory: Forget of one thing', () => {
+    quietTimers();
     beforeEach(() => {
         vi.clearAllMocks();
         hoisted.axios.post.mockReset().mockResolvedValue({ data: { success: true } });
-        process.env.BOT_SERVICE_TOKEN = 'service-secret';
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'service-secret');
     });
 
     function held() {
@@ -309,7 +326,8 @@ describe('PersistentMemory: Forget of one thing', () => {
         vi.mocked(Date.now).mockRestore();
         const record = memory.getMemory(BOT, SARA);
         memory.loadedMemoriesByUuid.set(`${BOT}_uuid-sara`, memory.cloneMemory(record));
-        memory.pendingSaves.set(`${BOT}_${SARA}`, record);
+        // A copy of its own, so the tests show that a forget reaches the save that is waiting and not only the active memory
+        memory.pendingSaves.set(`${BOT}_${SARA}`, memory.cloneMemory(record));
         // Typed loosely on purpose: the tests reach into its private maps and timers
         return memory;
     }
@@ -340,6 +358,24 @@ describe('PersistentMemory: Forget of one thing', () => {
         vi.mocked(Date.now).mockRestore();
         memory.forgetItems(BOT, [notice]);
         expect(memory.getMemory(BOT, SARA)!.personalInfo.preferences).toEqual(['lo-fi']);
+    });
+
+    it('applies a notice once by its id, even when its own time would take what was said since (clocks that differ)', () => {
+        const memory = held();
+        // Orbit's clock is ahead of this one: the forget carries 4000, and she says it again at 3000 by this clock
+        const notice = { id: 'f1', userUuid: 'uuid-sara', itemKey: lofi, at: 4000 };
+        memory.forgetItems(BOT, [notice]);
+        expect(memory.getMemory(BOT, SARA)!.personalInfo.preferences).toEqual([]);
+        vi.spyOn(Date, 'now').mockReturnValue(3000);
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        vi.mocked(Date.now).mockRestore();
+        expect(memory.getMemory(BOT, SARA)!.personalInfo.preferences).toEqual(['lo-fi']);
+        // The time alone would take it again (3000 is not after 4000): only the id says this notice was already applied
+        memory.forgetItems(BOT, [notice]);
+        expect(memory.getMemory(BOT, SARA)!.personalInfo.preferences).toEqual(['lo-fi']);
+        // A new notice with the same time is a different forget, and does take it
+        memory.forgetItems(BOT, [{ ...notice, id: 'f2' }]);
+        expect(memory.getMemory(BOT, SARA)!.personalInfo.preferences).toEqual([]);
     });
 
     it('keeps what was said after it was forgotten even when the notice arrives late', () => {
@@ -406,10 +442,18 @@ describe('PersistentMemory: Forget of one thing', () => {
         hoisted.axios.post.mockRejectedValueOnce(new Error('Orbit is down'));
         await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
         expect(memory.unreportedItemForgets.size).toBe(1);
-        await memory.reportUnreportedForgets(BOT);
+        // The next save goes through the same way a shutdown or a debounce does: Orbit is told again first, and only then saved to
+        hoisted.axios.post.mockClear();
+        await memory.flushAllPendingSaves();
+        const urls = hoisted.axios.post.mock.calls.map((call) => String(call[0]));
+        const retry = urls.findIndex((url) => url.endsWith('/items'));
+        const save = urls.findIndex((url) => !url.endsWith('/items') && !url.endsWith('/forgotten'));
+        expect(retry).toBeGreaterThanOrEqual(0);
+        expect(save).toBeGreaterThanOrEqual(0);
+        expect(retry).toBeLessThan(save);
         const told = hoisted.axios.post.mock.calls.filter((call) => String(call[0]).endsWith('/items'));
-        expect(told).toHaveLength(2);
-        expect(told[1][1]).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', at: expect.any(Number) });
+        expect(told).toHaveLength(1);
+        expect(told[0][1]).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', at: expect.any(Number) });
         expect(memory.unreportedItemForgets.size).toBe(0);
     });
 
@@ -441,6 +485,8 @@ describe('PersistentMemory: Forget of one thing', () => {
     });
 
     it('does not queue a forget to tell again when there is no Orbit to tell', async () => {
+        // Without an address of its own, the memory must not take one from the environment either
+        vi.stubEnv('ADMIN_API_URL', undefined);
         const memory: any = new PersistentMemory({});
         memory.useHeard(() => heardInDm());
         memory.setUserUuid(BOT, SARA, 'uuid-sara', true);
@@ -460,13 +506,12 @@ describe('PersistentMemory: Forget of one thing', () => {
         expect(await storage.reportForgottenItem(BOT, 'uuid-sara', '', 'pref')).toBe(true);
         expect(await storage.reportForgottenItem('', 'uuid-sara', lofi, 'pref')).toBe(true);
         // A URL with no service token cannot change while this runs (the process would have to be restarted, which empties the queue)
-        const saved = process.env.BOT_SERVICE_TOKEN;
-        delete process.env.BOT_SERVICE_TOKEN;
+        vi.stubEnv('BOT_SERVICE_TOKEN', undefined);
         try {
             const noToken: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local' });
             expect(await noToken.memoryStorage.reportForgottenItem(BOT, 'uuid-sara', lofi, 'pref')).toBe(true);
         } finally {
-            process.env.BOT_SERVICE_TOKEN = saved;
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'service-secret');
         }
         expect(hoisted.axios.post.mock.calls.filter((call) => String(call[0]).endsWith('/items'))).toEqual([]);
         // Orbit that could not be reached is still tried again
@@ -543,12 +588,13 @@ describe('PersistentMemory: Forget of one thing', () => {
 });
 
 describe('PersistentMemory: a forgotten thing is not brought back by a snapshot, a waiting save or a save that was waiting on Orbit', () => {
+    quietTimers();
     const lofi = memoryItemKey('pref', null, 'lo-fi');
 
     beforeEach(() => {
         vi.clearAllMocks();
         hoisted.axios.post.mockReset().mockResolvedValue({ data: { success: true } });
-        process.env.BOT_SERVICE_TOKEN = 'service-secret';
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'service-secret');
     });
 
     function held() {
@@ -638,7 +684,7 @@ describe('PersistentMemory: a forgotten thing is not brought back by a snapshot,
         const memory = held();
         const save = vi.spyOn(memory.memoryStorage, 'saveMemory').mockResolvedValue(undefined);
         // Saves that the earlier messages started are not what is counted
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await vi.advanceTimersByTimeAsync(10);
         save.mockClear();
         memory.scheduleDebouncedSave(BOT, SARA);
         await memory.flushDebouncedSave(BOT, SARA);
@@ -687,6 +733,7 @@ class FakeForgetStore implements ForgetQueueStore {
 }
 
 describe('PersistentMemory: a forget Orbit has not taken survives a restart (#2031)', () => {
+    quietTimers();
     let store: FakeForgetStore;
     const lofi = memoryItemKey('pref', null, 'lo-fi');
     const down = () => hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'down', response: { status: 503 } });
@@ -710,6 +757,8 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
 
     beforeEach(() => {
         store = new FakeForgetStore();
+        // Set here, not left over from another describe: these tests tell Orbit and need the service token
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'service-secret');
     });
 
     it('writes a forget Orbit did not take to the shared store, and a new process finds it and tells Orbit', async () => {
@@ -832,6 +881,7 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
 });
 
 describe('PersistentMemory: Forget is kept before it is promised, and stale data never brings it back (A31)', () => {
+    quietTimers();
     let store: FakeForgetStore;
     const lofi = memoryItemKey('pref', null, 'lo-fi');
     const jazz = memoryItemKey('pref', null, 'jazz');
@@ -861,6 +911,8 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
 
     beforeEach(() => {
         store = new FakeForgetStore();
+        // Set here, not left over from another describe: these tests tell Orbit and need the service token
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'service-secret');
     });
 
     it('writes the forget to the shared store before Orbit is told, so a crash while Orbit is being told still leaves it owed', async () => {
@@ -1073,8 +1125,7 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         clearTimeout(memory.unreportedRetryTimer);
         expect(store.contents().pending).toHaveLength(1);
         // Another server (here, a new process) started without the service token reads what is waiting
-        const saved = process.env.BOT_SERVICE_TOKEN;
-        delete process.env.BOT_SERVICE_TOKEN;
+        vi.stubEnv('BOT_SERVICE_TOKEN', undefined);
         try {
             const other: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueue: store });
             await other.forgetQueueReady;
@@ -1085,7 +1136,7 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
             expect(other.unreportedItemForgets.size).toBe(1);
             expect(store.contents().pending).toHaveLength(1);
         } finally {
-            process.env.BOT_SERVICE_TOKEN = saved;
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'service-secret');
         }
         up();
         await memory.reportUnreportedForgets();

@@ -432,16 +432,23 @@ describe('streaming', () => {
 
     it('stops the provider and counts what was used when Hermes goes away', async () => {
         let providerSawClose = false;
-        upstreamHandler = (req, res) => {
+        let providerResponse: { writableEnded: boolean; destroyed: boolean } | undefined;
+        upstreamHandler = (_req, res) => {
             res.setHeader('Content-Type', 'text/event-stream');
             res.write(data({ choices: [{ delta: { content: 'first' } }] }));
-            req.on('close', () => { providerSawClose = true; });
+            providerResponse = res;
+            // The provider's own response closing is what shows the relay let go of it
+            res.once('close', () => { providerSawClose = true; });
             // never ends on its own
         };
         const controller = new AbortController();
         const answer = await fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ messages, stream: true }), signal: controller.signal });
         const reader = answer.body!.getReader();
         await reader.read();
+        // Still open at the moment Hermes goes away: only the abort can close it
+        expect(providerResponse).toBeDefined();
+        expect(providerResponse!.writableEnded).toBe(false);
+        expect(providerSawClose).toBe(false);
         controller.abort();
         await vi.waitFor(() => expect(settled()).toHaveLength(1), { timeout: 3000 });
         expect(settled()[0]).toMatchObject({ sent: true, cutShort: true });

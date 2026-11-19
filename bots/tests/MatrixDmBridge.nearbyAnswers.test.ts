@@ -395,11 +395,21 @@ describe('MatrixDmBridge: an answer from nearby chat, kept once in direct messag
         expect((bridge as any).nearbyAnswers.size).toBe(0);
     });
 
-    it('lets an answer go when no direct chat turned up in time, and holds only the newest few', async () => {
+    it('lets an answer go when no direct chat turned up in time', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-11-11T10:00:00Z'));
         await bridge.keepNearbyAnswer(BOT, ALICE, 'An old one.');
         vi.setSystemTime(new Date('2026-11-11T12:00:01Z'));
+        // Only one fresh answer, so that only the time (never the cap) can be why the old one is not sent
+        await bridge.keepNearbyAnswer(BOT, ALICE, 'A fresh one.');
+
+        stores.rooms.set(ROOM, BOT);
+        await bridge.openedFromNearby(BOT, ALICE, ROOM);
+
+        expect(copies().map((copy: any[]) => copy[2])).toEqual(['A fresh one.']);
+    });
+
+    it('holds only the newest ten answers for a chat that has not turned up', async () => {
         for (let index = 1; index <= 12; index++) await bridge.keepNearbyAnswer(BOT, ALICE, `Answer ${index}.`);
 
         stores.rooms.set(ROOM, BOT);

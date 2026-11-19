@@ -224,6 +224,9 @@ const WAITING_CHECK_MS = 5 * 60 * 1000;
 const WAITING_BODY_MAX = 4000;
 /** A waiting message the bot fails to answer goes back in line this many times before the person is asked to resend it. */
 const WAITING_MAX_ATTEMPTS = 3;
+/** A message whose chat could not be looked up (the store was down) is tried again after this long, then twice as long, up to the cap. */
+const UNPLACED_RETRY_MS = 2000;
+const UNPLACED_RETRY_MAX_MS = 60_000;
 /**
  * Orbit must say "no such bot" this many times, each at least BOT_GONE_SPACING_MS after the last, before a chat is
  * closed as deleted: its proxy can answer "not found" for a while when Orbit restarts. The bot server's other "gone"
@@ -325,6 +328,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private drains = new Map<string, Promise<void>>();
     private stopping = false;
     private waitingTimer: NodeJS.Timeout | undefined;
+    /** The newest message of a chat whose bot could not be looked up because the store was unreachable: tried again, never lost. */
+    private unplaced = new Map<string, { event: MatrixEvent; at: number }>();
+    private unplacedTimer: NodeJS.Timeout | undefined;
+    private unplacedDelay = UNPLACED_RETRY_MS;
     private handledEvents = new Set<string>();
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
     private roomMembers = new Map<string, Set<string>>();
@@ -394,6 +401,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         this.stopping = true;
         clearInterval(this.waitingTimer);
         this.waitingTimer = undefined;
+        clearTimeout(this.unplacedTimer);
+        this.unplacedTimer = undefined;
         for (const [botId, queue] of this.drainQueues) {
             for (const event of queue.splice(0)) await this.rememberWaiting(botId, event, attemptsOf(event));
         }
@@ -1239,7 +1248,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
      */
     private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }): Promise<void> {
         const content = event.content ?? {};
-        const botId = await this.botForRoom(event.room_id);
+        let botId: string | null;
+        try {
+            botId = await this.botForRoom(event.room_id, true);
+        } catch (error: any) {
+            // The store that says which bot is in this chat is unreachable (a reconnect, say). That is not a chat without a
+            // bot, so the message is kept here and tried again, never dropped.
+            console.warn(`[MatrixDmBridge] Could not look up the bot for ${event.room_id}, will try again:`, error?.message ?? error);
+            this.keepUnplaced(event);
+            return;
+        }
         if (!botId) return;
         const botUserId = this.botUserId(botId);
 
@@ -1624,6 +1642,41 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (!sent) this.lastRestingLine.delete(roomId);
         }
         await this.sendNoteNowAndThen(botId, roomId, 'resting', language, config);
+    }
+
+    /** Keep a message whose chat could not be looked up, and try again soon. Only the newest of a chat is kept, as for waiting messages. */
+    private keepUnplaced(event: MatrixEvent): void {
+        if (this.stopping) return;
+        const kept = this.unplaced.get(event.room_id);
+        if (!kept || (event.origin_server_ts ?? 0) >= (kept.event.origin_server_ts ?? 0)) this.unplaced.set(event.room_id, { event, at: Date.now() });
+        this.scheduleUnplaced();
+    }
+
+    private scheduleUnplaced(): void {
+        if (this.unplacedTimer || this.stopping || this.unplaced.size === 0) return;
+        this.unplacedTimer = setTimeout(() => {
+            this.unplacedTimer = undefined;
+            void this.retryUnplaced();
+        }, this.unplacedDelay);
+        this.unplacedTimer.unref?.();
+    }
+
+    /** Try the kept messages again. Each goes through the same path as when it arrived, so it is answered or kept again. */
+    private async retryUnplaced(): Promise<void> {
+        const entries = [...this.unplaced.entries()];
+        this.unplaced.clear();
+        // Whatever fails again is kept again by handleMessage, and waits twice as long this time
+        this.unplacedDelay = Math.min(this.unplacedDelay * 2, UNPLACED_RETRY_MAX_MS);
+        for (const [roomId, { event, at }] of entries) {
+            if (this.stopping) return;
+            if (Date.now() - at >= WAITING_MAX_AGE_MS) continue;
+            // The person wrote again since and got an answer: only the newest message is answered, as when nothing failed.
+            if ((event.origin_server_ts ?? 0) <= (this.answeredLive.get(roomId) ?? -1)) continue;
+            await this.handleMessage(event, false).catch((error) =>
+                console.warn(`[MatrixDmBridge] Could not answer a message kept while the store was down in ${roomId}:`, error?.message ?? error)
+            );
+        }
+        if (this.unplaced.size === 0) this.unplacedDelay = UNPLACED_RETRY_MS;
     }
 
     /** Keep the latest message in this chat for the bot to answer once it is back on. `attempts` counts failed answers. */

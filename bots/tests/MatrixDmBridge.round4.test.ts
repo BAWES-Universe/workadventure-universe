@@ -176,3 +176,81 @@ describe('MatrixDmBridge after the full review', () => {
         });
     });
 });
+
+describe('a message that arrives while the store that knows the chat is down', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it('is kept and answered once the store is back, never dropped', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        // The bot server restarted: the chat is in the store, not yet in the bridge's memory
+        stores.rooms.set(ROOM, BOT);
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+
+        await bridge.onEvent(message('are you there?'));
+        expect(stores.deps.reply).not.toHaveBeenCalled();
+
+        down = false;
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        expect(client.sendText.mock.calls.map((call: any[]) => call[2])).toContain('Hello Alice!');
+        bridge.stop();
+    });
+
+    it('keeps trying, a little slower each time, while the store stays down', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+
+        await bridge.onEvent(message('hello?'));
+        await vi.advanceTimersByTimeAsync(2100); // first retry, still down
+        await vi.advanceTimersByTimeAsync(3000); // second retry is not due until four seconds after the first
+        expect(stores.deps.reply).not.toHaveBeenCalled();
+        down = false;
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        bridge.stop();
+    });
+
+    it('does not answer an older message after the person wrote again and was answered', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+
+        await bridge.onEvent({ ...message('first'), origin_server_ts: 1000 });
+        down = false;
+        // The next message finds the store back and is answered straight away
+        await bridge.onEvent({ ...message('second'), origin_server_ts: 2000 });
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        bridge.stop();
+    });
+});
