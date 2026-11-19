@@ -151,6 +151,8 @@ describe("ProximityChatRoom participants", () => {
         expect(get(room.spaceKind)).toBe("meeting");
         expect(participantIds()).toEqual(["room_2", "room_3"]);
         expect(get(room.participants).map((participant) => participant.name)).toEqual(["Me", "Sara"]);
+        // Each one carries their account's id, which is what tells another tab of your own account from someone who walked up
+        expect(get(room.participants).map((participant) => participant.uuid)).toEqual(["account-a", "account-b"]);
         expect(get(room.spaceJoinedAt)).toBeTypeOf("number");
     });
 
