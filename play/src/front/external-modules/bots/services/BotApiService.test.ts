@@ -507,7 +507,19 @@ describe("BotApiService when Orbit refuses a call after the session was renewed"
     });
 
     it("answers the retried call once the renewed session is taken", async () => {
-        orbit(new Response(JSON.stringify({ id: "app-1", name: "My app" }), { status: 200 }));
+        const fetchSpy = orbit(new Response(JSON.stringify({ id: "app-1", name: "My app" }), { status: 200 }));
         await expect(addApp()).resolves.toEqual({ id: "app-1", name: "My app" });
+        // The first request goes with the old session, then the session is exchanged, then the same request goes with the new one
+        const sent = fetchSpy.mock.calls.map(([input, init]) => ({
+            url: typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+            authorization: (init?.headers as Record<string, string> | undefined)?.Authorization,
+        }));
+        expect(sent.map((one) => one.url)).toEqual([
+            `${ADMIN}/api/me/apps`,
+            `${ADMIN}/api/auth/session`,
+            `${ADMIN}/api/me/apps`,
+        ]);
+        expect(sent[0].authorization).toBe(`Bearer ${OLD_SESSION}`);
+        expect(sent[2].authorization).toBe(`Bearer ${NEW_SESSION}`);
     });
 });

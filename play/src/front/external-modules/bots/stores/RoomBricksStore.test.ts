@@ -56,6 +56,25 @@ describe("the Bricks of the room being edited (#2005)", () => {
         expect(api.getRoomBricks).toHaveBeenCalledTimes(1);
     });
 
+    it("forgets the Bricks of the room before when there is no room any more, and a read still on its way for it puts nothing back", async () => {
+        api.getRoomBricks.mockResolvedValueOnce(answer());
+        await loadRoomBricks();
+        expect(get(roomBricksStore)).toBeDefined();
+        let late: (value: unknown) => void = () => undefined;
+        api.getRoomBricks.mockReturnValueOnce(
+            new Promise((resolve) => {
+                late = resolve;
+            })
+        );
+        const reading = loadRoomBricks();
+        api.getRoomId.mockReturnValue(null);
+        await loadRoomBricks();
+        expect(get(roomBricksStore)).toBeUndefined();
+        late(answer());
+        await reading;
+        expect(get(roomBricksStore)).toBeUndefined();
+    });
+
     it("never shows one room's Bricks in another room", async () => {
         api.getRoomBricks.mockResolvedValueOnce(answer());
         await loadRoomBricks();

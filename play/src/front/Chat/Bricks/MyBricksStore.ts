@@ -44,6 +44,9 @@ const listFailed = writable(false);
 export const myBricksListFailed: Readable<boolean> = { subscribe: listFailed.subscribe };
 
 let loading: Promise<void> | undefined;
+// Whether the last read of this sign-in ended with nothing read at all: it throws (and is only told in the console), so the
+// list's own "failed" flag does not say it
+let lastReadThrew = false;
 // Counts sign-outs: a read or a change that was asked for before the person signed out changes nothing when it ends.
 let generation = 0;
 // Counts changes made here (a switch, a save, a new Brick, a delete, an Undo): a list Orbit read before one of them is
@@ -116,8 +119,14 @@ export function loadMyBricks(): Promise<void> {
     if (!loading) {
         const asked = generation;
         const run: Promise<void> = load(asked)
+            .then(() => {
+                if (asked === generation) lastReadThrew = false;
+            })
             .catch((error: unknown) => {
-                if (asked === generation) console.warn("Could not read your Bricks", error);
+                if (asked !== generation) return;
+                // Nothing was read (the Brick everyone gets could not be made, the list could not be had, and nothing was known)
+                lastReadThrew = true;
+                console.warn("Could not read your Bricks", error);
             })
             .finally(() => {
                 if (loading === run) loading = undefined;
@@ -137,7 +146,7 @@ export async function loadMyBricksAfterPending(): Promise<boolean> {
     const pending = loading;
     if (pending) await pending;
     await loadMyBricks();
-    return !get(listFailed);
+    return !lastReadThrew && !get(listFailed);
 }
 
 /**
@@ -297,6 +306,7 @@ export function forgetMyBricks(): void {
     generation++;
     loading = undefined;
     switching = 0;
+    lastReadThrew = false;
     bricks.set(undefined);
     listFailed.set(false);
     deleted.set([]);

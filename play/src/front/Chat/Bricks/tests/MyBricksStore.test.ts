@@ -145,6 +145,19 @@ describe("a person's own Bricks", () => {
         expect(await loadMyBricksAfterPending()).toBe(false);
     });
 
+    it("say the read after the pending one could not list the Bricks when nothing at all was read (neither the Brick everyone gets nor the list), and ask again after", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        api.ensureMyBrick.mockRejectedValue(new Error("offline"));
+        api.listMyBricks.mockRejectedValue(new Error("offline"));
+        expect(await loadMyBricksAfterPending()).toBe(false);
+        expect(get(myBricksStore)).toBeUndefined();
+        // Orbit is back: the next ask reads, and says so
+        api.ensureMyBrick.mockResolvedValue({ brick: card() });
+        api.listMyBricks.mockResolvedValue({ bricks: [card()] });
+        expect(await loadMyBricksAfterPending()).toBe(true);
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK]);
+    });
+
     it("are never asked for on behalf of a guest", async () => {
         (userIsConnected as unknown as Writable<boolean>).set(false);
         await loadMyBricks();

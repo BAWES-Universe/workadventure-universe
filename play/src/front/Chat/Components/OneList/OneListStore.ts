@@ -38,9 +38,59 @@ function isBotChat(room: ChatRoom): boolean {
  * Whether a chat is found by a search: by its name, and, for "Bot" or "Brick", by being a direct chat with a bot whatever it is
  * named. The one list and a folder opened in it use the same rule.
  */
-export function roomMatchesSearch(room: ChatRoom, name: string, search: string): boolean {
+export function roomMatchesSearch(
+    room: ChatRoom,
+    name: string,
+    search: string,
+    /** The chats known to be with a bot (botChatIdsStore), for a list that is made again when one is found; else the members are read now. */
+    botChats?: ReadonlySet<string>
+): boolean {
     if (name.toLocaleLowerCase().includes(search.toLocaleLowerCase())) return true;
-    return searchesForBots(search) && room.type === "direct" && isBotChat(room);
+    if (!searchesForBots(search) || room.type !== "direct") return false;
+    return botChats ? botChats.has(room.id) : isBotChat(room);
+}
+
+/**
+ * The direct chats with a bot among these chats, kept current: a chat's members can arrive after the chat itself, so a bot that
+ * joins while a list is open is found when it does. A list that shows chats found by "Bot" or "Brick" follows this store.
+ */
+export function botChatIdsStore(rooms: Readable<ChatRoom[]>): Readable<string[]> {
+    return readable<string[]>([], (set) => {
+        let current: ChatRoom[] = [];
+        let watches: Unsubscriber[] = [];
+        let building = false;
+        // Unset until the first result: Svelte keeps the last published value across a restart, so one is published after it too
+        let last: string | undefined;
+        const update = () => {
+            if (building) return;
+            const next = current.filter((room) => room.type === "direct" && isBotChat(room)).map((room) => room.id);
+            const key = next.join("|");
+            if (key === last) return;
+            last = key;
+            set(next);
+        };
+        const stop = rooms.subscribe((value) => {
+            current = value;
+            watches.forEach((unsubscribe) => unsubscribe());
+            watches = [];
+            building = true;
+            try {
+                for (const room of value) {
+                    const members = (room as Partial<{ members: Readable<unknown> }>).members;
+                    if (members) watches.push(members.subscribe(update));
+                }
+            } finally {
+                building = false;
+            }
+            update();
+        });
+        return () => {
+            stop();
+            watches.forEach((unsubscribe) => unsubscribe());
+            watches = [];
+            last = undefined;
+        };
+    });
 }
 
 /**

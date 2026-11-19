@@ -27,7 +27,11 @@ let newest = 0;
 /** Reads the room's Bricks again. Resolves either way. */
 export async function loadRoomBricks(): Promise<void> {
     const roomUrl = botApiService.getRoomId();
-    if (!roomUrl) return;
+    if (!roomUrl) {
+        // No room now: the list of the room before is not shown, and a read still on its way for it puts nothing back
+        forgetRoomBricks();
+        return;
+    }
     if (forRoom !== roomUrl) {
         forRoom = roomUrl;
         bricks.set(undefined);

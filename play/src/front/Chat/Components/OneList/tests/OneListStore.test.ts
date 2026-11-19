@@ -6,6 +6,7 @@ import { InvitationClock } from "../OneListOrder";
 import type { OneListEntry } from "../OneListStore";
 import {
     OrderFreeze,
+    botChatIdsStore,
     brickEntry,
     createOneListStore,
     directRoomsWith,
@@ -600,5 +601,47 @@ describe("roomMatchesSearch", () => {
         expect(roomMatchesSearch(dm("@me:chat.test", "@sara:chat.test"), "Sara", "bot")).toBe(false);
         const group = { id: "!g", type: "multiple", members: writable([{ id: bot }]) } as unknown as ChatRoom;
         expect(roomMatchesSearch(group, "Team", "bot")).toBe(false);
+    });
+});
+
+describe("botChatIdsStore", () => {
+    const bot = "@bot_2d9e3f40-3333-4444-8555-b66677778888:chat.test";
+    const dmWith = (id: string, members: Writable<{ id: string }[]>) =>
+        ({ id, type: "direct", members } as unknown as ChatRoom);
+
+    it("finds a chat with a bot when the bot arrives as a member after the chat is there, and when the chat itself arrives", () => {
+        const members = writable<{ id: string }[]>([{ id: "@me:chat.test" }]);
+        const melody = dmWith("!melody", members);
+        const rooms = writable<ChatRoom[]>([melody]);
+        const ids = botChatIdsStore(rooms);
+        const seen: string[][] = [];
+        const stop = ids.subscribe((value) => seen.push(value));
+        expect(seen.at(-1)).toEqual([]);
+        members.set([{ id: "@me:chat.test" }, { id: bot }]);
+        expect(seen.at(-1)).toEqual(["!melody"]);
+        const sara = dmWith("!sara", writable([{ id: "@me:chat.test" }, { id: "@sara:chat.test" }]));
+        const late = dmWith("!late", writable([{ id: "@me:chat.test" }, { id: bot }]));
+        rooms.set([melody, sara, late]);
+        expect(seen.at(-1)).toEqual(["!melody", "!late"]);
+        stop();
+    });
+
+    it("lets go of the members it watched when nobody follows it any more, and publishes again after a restart", () => {
+        const members = writable<{ id: string }[]>([{ id: bot }]);
+        const room = dmWith("!melody", members);
+        const ids = botChatIdsStore(writable<ChatRoom[]>([room]));
+        const stop = ids.subscribe(() => undefined);
+        stop();
+        const seen: string[][] = [];
+        const again = ids.subscribe((value) => seen.push(value));
+        expect(seen.at(-1)).toEqual(["!melody"]);
+        again();
+    });
+
+    it("is what roomMatchesSearch reads when it is given", () => {
+        const members = writable<{ id: string }[]>([{ id: "@me:chat.test" }]);
+        const melody = dmWith("!melody", members);
+        expect(roomMatchesSearch(melody, "Melody", "bot", new Set())).toBe(false);
+        expect(roomMatchesSearch(melody, "Melody", "bot", new Set(["!melody"]))).toBe(true);
     });
 });

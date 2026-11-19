@@ -14,7 +14,7 @@
     import { formatRowTime, formatUnreadCount } from "./OneList/OneListOrder";
     import type { ActivitySummary } from "./OneList/OneListOrder";
     import { minuteClock } from "./OneList/MinuteClock";
-    import { directRoomsWithStore, roomMatchesSearch } from "./OneList/OneListStore";
+    import { botChatIdsStore, directRoomsWithStore, roomMatchesSearch } from "./OneList/OneListStore";
     import { IconChevronUp, IconFolder } from "@wa-icons";
 
     export let rootFolder: boolean;
@@ -34,8 +34,11 @@
     $: visibleRooms = withoutAreaChatRooms($rooms, $hiddenAreaRoomIds).filter(
         (room) => !$deletedBrickRoomIds.includes(room.id)
     );
+    // The chats with a bot, followed with their members: a bot that joins while the folder is open is found by "Bot" or "Brick" then
+    $: botChatIds = botChatIdsStore(rooms);
+    $: botChatIdSet = new Set($botChatIds);
     $: filteredRoom = visibleRooms
-        .filter((room) => roomMatchesSearch(room, get(room.name), $chatSearchBarValue))
+        .filter((room) => roomMatchesSearch(room, get(room.name), $chatSearchBarValue, botChatIdSet))
         .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
 
     $folders?.forEach((folder) => {
