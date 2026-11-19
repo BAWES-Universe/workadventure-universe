@@ -17,6 +17,7 @@ import { AIService } from '../ai/AIService';
 import { MCPConnector } from '../mcp/MCPConnector';
 import {
     InstantOffers,
+    NOT_CONFIRMED,
     carryOnCard,
     endInstantTask,
     formatInstantResult,
@@ -25,10 +26,12 @@ import {
     instantToolName,
     instantToolsNote,
     isInstantTool,
+    mixedTaskNote,
     newInstantTask,
     openInstantReceipt,
     receiptStateOf,
     renewInstantReceipt,
+    ruleStopResult,
     runInstantTool,
     stableJson,
 } from '../ai/InstantTools';
@@ -330,7 +333,7 @@ describe('one Instant run', () => {
         const lost = await go(never);
         expect(never).toHaveBeenCalledTimes(3);
         expect(lost.result).toMatchObject({ success: false, outcome: 'uncertain' });
-        expect(String(lost.result.note)).toMatch(/do not run it again/);
+        expect(String(lost.result.note)).toMatch(/Do not run it again in this reply/);
         expect(lost.notSent).toBe(false);
         expect(lost.ended).toBe('unsure');
         // a refused token is certain, and not asked again
@@ -373,6 +376,66 @@ describe('one Instant run', () => {
         expect(first).toMatchObject({ ended: 'not_sent', notSent: true });
     });
 
+    it('says every unsettled run in the approved words with a Check status link, and never says it will show in Usage', async () => {
+        const link = '[What it used](#usage=act_9)';
+        const ways: Array<[string, InstantRunAnswer[]]> = [
+            ['no answer', [{ status: 'unreachable', retry: false }]],
+            ['still checking', Array.from({ length: 6 }, () => ({ status: 'checking' }) as InstantRunAnswer)],
+            ['unclear failure', [{ status: 'failed', reason: 'unclear', message: 'Checking.' }]],
+            ['already checking', [{ status: 'refused', reason: 'already_checking', message: 'Checking.', stop: false } as InstantRunAnswer]],
+            ['refused after no answer', [{ status: 'unreachable', retry: true }, { status: 'rejected' }]],
+            ['not owner after still checking', [{ status: 'checking' }, { status: 'not_owner' }]],
+        ];
+        for (const [name, steps] of ways) {
+            const ran = await go(answers(...steps), { receiptLink: link });
+            expect(ran.ended, name).toBe('unsure');
+            const note = String(ran.result.note);
+            expect(note, name).toContain(`"${NOT_CONFIRMED}"`);
+            expect(NOT_CONFIRMED).toBe("I couldn't confirm whether it ran. I won't submit it again in this reply.");
+            expect(note, name).toContain('[Check status](#usage=act_9)');
+            expect(ran.result.receipt, name).toBe('[Check status](#usage=act_9)');
+            expect(note, name).not.toMatch(/Usage|settles by itself|will show/);
+            expect(JSON.stringify(ran.result), name).not.toContain('What it used');
+        }
+        // no real receipt link: no link is made up, and nothing points to Usage
+        for (const none of [null, undefined, '', 'https://evil.example', '[x](javascript:alert(1))']) {
+            const ran = await go(answers({ status: 'unreachable', retry: false }), { receiptLink: none });
+            expect(String(ran.result.note)).toContain(`"${NOT_CONFIRMED}"`);
+            expect(String(ran.result.note)).not.toMatch(/Check status|Usage|\]\(/);
+            expect(ran.result.receipt).toBeUndefined();
+        }
+    });
+
+    it('a rule that stops a task after a try nobody could settle says both facts, keeps the rule\'s own words, and stays stopped', async () => {
+        const link = '[What it used](#usage=act_4)';
+        const ran = await go(answers({ status: 'unreachable', retry: true }, { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true } as InstantRunAnswer), { receiptLink: link });
+        expect(ran).toMatchObject({ ended: 'unsure', stop: true, notSent: false });
+        const note = String(ran.result.note);
+        expect(note).toContain('"Your spending rule stopped further steps."');
+        expect(note).toContain('"I\'m still checking the earlier request."');
+        expect(note).toContain('You said no more than a dollar a day.');
+        expect(note).toContain('[Check status](#usage=act_4)');
+        expect(note).toMatch(/Do not run any Instant App for this again/);
+        expect(note).toMatch(/never suggest more credit, a top-up or asking for more/);
+        expect(note).not.toMatch(/Usage|settles by itself/);
+        expect(ran.result).toMatchObject({ success: false, outcome: 'uncertain', reason: 'rule', error: 'You said no more than a dollar a day.', receipt: '[Check status](#usage=act_4)' });
+        // the plain rule stop (nothing was tried before) is unchanged
+        expect(ruleStopResult('No.')).toMatchObject({ outcome: 'not_sent', reason: 'rule' });
+        expect(String(ruleStopResult('No.').note)).not.toMatch(/still checking/);
+    });
+
+    it('names what already worked in a task on its own when a later step is unsettled or failed, and never says the whole task worked or failed', () => {
+        expect(mixedTaskNote([], 'unsure')).toBe('');
+        expect(mixedTaskNote(['failed'], 'unsure')).toBe('');
+        expect(mixedTaskNote(['worked'], 'worked')).toBe('');
+        expect(mixedTaskNote(['worked'], 'not_sent')).toBe('');
+        for (const now of ['unsure', 'failed'] as const) {
+            expect(mixedTaskNote(['worked', 'failed'], now)).toMatch(/One earlier step of this task worked: say that on its own/);
+            expect(mixedTaskNote(['worked', 'worked'], now)).toMatch(/2 earlier steps of this task worked/);
+            expect(mixedTaskNote(['worked'], now)).toMatch(/Never say the whole task worked, and never that all of it failed/);
+        }
+    });
+
     it('sends nothing after the deadline: a wait that used the time up ends as unsure, without another asking', async () => {
         for (const first of [{ status: 'unreachable', retry: true }, { status: 'checking' }] as InstantRunAnswer[]) {
             const instantRun = answers(first, { status: 'done', data: 1, chargedMicros: 1 });
@@ -393,7 +456,7 @@ describe('one Instant run', () => {
         const stuck = answers(...Array.from({ length: 6 }, () => ({ status: 'checking' }) as InstantRunAnswer));
         const waited = await go(stuck, { receiptLink: '[What it used](#usage=act_3)' });
         expect(stuck).toHaveBeenCalledTimes(4);
-        expect(waited.result).toMatchObject({ success: false, outcome: 'uncertain', error: 'No answer came back, so I cannot tell whether it ran.', receipt: '[What it used](#usage=act_3)' });
+        expect(waited.result).toMatchObject({ success: false, outcome: 'uncertain', error: 'No answer came back, so I cannot tell whether it ran.', receipt: '[Check status](#usage=act_3)' });
         expect(waited.ended).toBe('unsure');
         // the step shows "no answer", never "didn't work"
         expect(resultOf('t1', waited.result)).toMatchObject({ ok: false, unknown: true });
@@ -865,6 +928,33 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(lost.orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ state: 'checking' }));
         // no person to end for
         await expect(lost.ai.endInstantTurn(BRICK, undefined, lost.memory.instantTurn)).resolves.toBeUndefined();
+    });
+
+    it('tells the model what already worked in the task when a later step could not be confirmed, and a rule after that keeps both facts for every later call', async () => {
+        const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: undefined, canAskForMore: undefined };
+        const { ai, orbit } = service({
+            instantRun: vi
+                .fn()
+                .mockResolvedValueOnce({ status: 'done', data: 1, chargedMicros: 1 })
+                .mockResolvedValueOnce({ status: 'unreachable', retry: false })
+                .mockResolvedValueOnce(rule)
+                .mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }),
+        });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const one = await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        expect(one).toMatchObject({ success: true });
+        expect(String(one.note)).not.toMatch(/earlier step/);
+        const two = await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        expect(two).toMatchObject({ success: false, outcome: 'uncertain' });
+        expect(String(two.note)).toContain(`"${NOT_CONFIRMED}"`);
+        expect(String(two.note)).toContain('[Check status](#usage=act_1)');
+        expect(String(two.note)).toMatch(/One earlier step of this task worked: say that on its own/);
+        const three = await ai.runInstantToolCall('instant_app_exa_search', { query: 'c' }, where);
+        expect(String(three.note)).toContain('"Your spending rule stopped further steps."');
+        expect(String(three.note)).toContain('"I\'m still checking the earlier request."');
+        const four = await ai.runInstantToolCall('instant_app_exa_search', { query: 'd' }, where);
+        expect(four).toBe(three);
+        expect(orbit.instantRun).toHaveBeenCalledTimes(3);
     });
 
     it('a rule that says no stops the task: Orbit’s words, no card for more credit, and no other Instant App is tried after it', async () => {

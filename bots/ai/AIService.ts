@@ -147,6 +147,7 @@ import {
     instantTaskPending,
     openInstantReceipt,
     renewInstantReceipt,
+    mixedTaskNote,
     type InstantTask,
     type InstantTurn,
     runInstantTool,
@@ -3933,7 +3934,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 const opened = await openInstantReceipt(admin, botId, userId, mine, instantReceiptTitle(tool));
                 // A second run of the task: its receipt is alive (opening it the first time already renewed it)
                 if (mine.ended.length > 0 || (mine.running ?? 0) > 1) void renewInstantReceipt(admin, botId, userId, mine);
-                ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: mine.key, receiptLink: opened?.link });
+                const earlier = [...mine.ended];
+                ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: mine.key, receiptLink: opened?.link, taskUnsure: earlier.includes('unsure') });
+                // Steps of this task that already worked can be named on their own; the task is not said to have worked or failed as a whole
+                const mixed = mixedTaskNote(earlier, ran.ended);
+                if (mixed && typeof ran.result.note === 'string') ran = { ...ran, result: { ...ran.result, note: ran.result.note + mixed } };
                 mine.ended.push(ran.ended);
             } finally {
                 mine.running--;
