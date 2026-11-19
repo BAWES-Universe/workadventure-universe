@@ -53,6 +53,8 @@ export interface BotInstance {
 interface LiveCall {
     client: BotClient;
     spaceName: string;
+    /** Which call this is, as its caller named it when it asked (the space's name carries it): an end request for another call leaves it alone. */
+    callId: string;
     /** Hangs the call up if its caller never joins the space; cleared when they do, or when the call ends. */
     joinTimer?: ReturnType<typeof setTimeout>;
 }
@@ -174,7 +176,7 @@ export class BotManager {
      * Calls being set up (before they are in `calls`): a hang-up or a newer start while the settings are fetched and the
      * client is built cancels the setup, so a caller who already hung up is never connected afterwards.
      */
-    private startingCalls: Map<string, { cancelled: boolean }> = new Map();
+    private startingCalls: Map<string, { cancelled: boolean; callId?: string }> = new Map();
     private adminApiService: AdminApiService;
     /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
     private accessGate: BotAccessGate;
@@ -1250,10 +1252,10 @@ export class BotManager {
         }
     }
 
-    async startCall(botId: string, callerUuid: string): Promise<{ spaceName: string }> {
+    async startCall(botId: string, callerUuid: string, callId?: string): Promise<{ spaceName: string }> {
         const key = callKey(botId, callerUuid);
         // Registered at once, before anything is awaited: a hang-up or a newer start cancels it
-        const starting = { cancelled: false };
+        const starting: { cancelled: boolean; callId?: string } = { cancelled: false, callId };
         const earlier = this.startingCalls.get(key);
         if (earlier) earlier.cancelled = true;
         this.startingCalls.set(key, starting);
@@ -1261,7 +1263,7 @@ export class BotManager {
         if (starting.cancelled) throw new BotUnavailableError('The call was ended before it started');
         const cancelledError = () => new BotUnavailableError('The call was ended before it started');
         try {
-            return await this.startCallSetUp(botId, callerUuid, key, starting, cancelledError);
+            return await this.startCallSetUp(botId, callerUuid, key, starting, cancelledError, callId ?? randomUUID());
         } finally {
             if (this.startingCalls.get(key) === starting) this.startingCalls.delete(key);
         }
@@ -1272,7 +1274,8 @@ export class BotManager {
         callerUuid: string,
         key: string,
         starting: { cancelled: boolean },
-        cancelledError: () => Error
+        cancelledError: () => Error,
+        callId: string
     ): Promise<{ spaceName: string }> {
         const config = await this.adminApiService.getBotConfiguration(botId);
         if (starting.cancelled) throw cancelledError();
@@ -1282,11 +1285,11 @@ export class BotManager {
         if (config.voiceEnabled !== true) {
             throw new BotCannotCallError();
         }
-        const spaceName = callSpaceName({ botId, callerUuid, callId: randomUUID() });
+        const spaceName = callSpaceName({ botId, callerUuid, callId });
         const client = await this.buildClient(botId, config, { callOnly: true });
         // Hung up while it was being built: nothing was connected, so nothing is left to end
         if (starting.cancelled) throw cancelledError();
-        const call: LiveCall = { client, spaceName };
+        const call: LiveCall = { client, spaceName, callId };
         // Two starts for the same person and bot can both be here: the one registered last wins, and the one that
         // was registered first (maybe already connected) is ended, so none is left running with no entry.
         // Registered before it connects: a later start for the same person ends this one instead of racing it.
@@ -1338,16 +1341,23 @@ export class BotManager {
         return { spaceName };
     }
 
-    /** The call is over (the caller hung up): the bot leaves its space and closes its connection. Never throws. */
-    async endCall(botId: string, callerUuid: string): Promise<boolean> {
+    /**
+     * The call is over (the caller hung up): the bot leaves its space and closes its connection. Never throws.
+     * With `callId` (the one the caller named when it asked) only that call is ended, whether it is live or still being set
+     * up: a late hang-up for an earlier call must not end the newer call that replaced it. Without one, whatever call this
+     * person has with this bot is ended.
+     */
+    async endCall(botId: string, callerUuid: string, callId?: string): Promise<boolean> {
         const key = callKey(botId, callerUuid);
         const starting = this.startingCalls.get(key);
-        if (starting) {
+        const cancelsStart = starting !== undefined && (callId === undefined || starting.callId === callId);
+        if (starting && cancelsStart) {
             starting.cancelled = true;
             this.startingCalls.delete(key);
         }
-        const ended = await this.endLiveCall(key);
-        return ended || starting !== undefined;
+        const live = this.calls.get(key);
+        const ended = !live || (callId !== undefined && live.callId !== callId) ? false : await this.endLiveCall(key);
+        return ended || cancelsStart;
     }
 
     private async endLiveCall(key: string): Promise<boolean> {

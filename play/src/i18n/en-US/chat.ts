@@ -2083,6 +2083,7 @@ const chat: BaseTranslation = {
         resume: "Resume call",
         end: "End call",
         microphone: "Microphone",
+        microphoneOff: "Microphone is off",
         stopSpeaking: "Stop speaking",
         walkUpTitle: "{name} walked up",
         walkUpHold: "Your call with {bot} goes on hold until you tap Resume call.",

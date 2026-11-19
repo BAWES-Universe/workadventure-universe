@@ -2553,11 +2553,11 @@ export class BotApiService {
      * and answers with the space's name for this browser to join. The owner's "Call" rule is checked there (Orbit).
      * Never throws: a refusal comes back as `failure`, so the caller can tell the person why.
      */
-    async startCall(botId: string, playerUuid: string): Promise<CallResult> {
+    async startCall(botId: string, playerUuid: string, callId?: string): Promise<CallResult> {
         try {
             const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call`, {
                 method: "POST",
-                body: JSON.stringify({ playerUuid }),
+                body: JSON.stringify({ playerUuid, callId }),
             });
             const body = (await response.json()) as { started?: unknown; spaceName?: unknown } | null;
             if (body?.started === true && typeof body.spaceName === "string" && body.spaceName !== "") {
@@ -2576,12 +2576,16 @@ export class BotApiService {
         }
     }
 
-    /** The person hangs up: the bot leaves the call. Never throws: the bot also leaves when this browser does. */
-    async endCall(botId: string, playerUuid: string): Promise<boolean> {
+    /**
+     * The person hangs up: the bot leaves the call. Never throws: the bot also leaves when this browser does.
+     * `callId` is the one the call was started with: only that call is ended, so a hang-up that arrives late cannot end
+     * a newer call of the same person with the same bot.
+     */
+    async endCall(botId: string, playerUuid: string, callId?: string): Promise<boolean> {
         try {
             const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call/end`, {
                 method: "POST",
-                body: JSON.stringify({ playerUuid }),
+                body: JSON.stringify({ playerUuid, callId }),
             });
             return ((await response.json()) as { ended?: unknown } | null)?.ended === true;
         } catch {
