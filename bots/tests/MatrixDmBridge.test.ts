@@ -371,6 +371,81 @@ describe('MatrixDmBridge', () => {
         expect(client.sendText).not.toHaveBeenCalled();
     });
 
+    it('sends the Reconnect card after the reply, for the game to pin above the message box (#1819)', async () => {
+        await bridge.onEvent(invite());
+        const toolSignIn = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
+        deps.reply.mockResolvedValueOnce({ text: 'I can\'t search right now.', media: [], toolSignIn });
+        await bridge.onEvent(message('news?'));
+        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'I can\'t search right now.');
+        const card = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => content?.['universe.tool_signin']);
+        // After the reply, not before it
+        const textAt = client.sendText.mock.invocationCallOrder[0];
+        const cardAt = client.sendMessage.mock.invocationCallOrder[client.sendMessage.mock.calls.findIndex((call: any[]) => call[2]?.['universe.tool_signin'])];
+        expect(textAt).toBeLessThan(cardAt);
+        expect(card).toEqual({
+            msgtype: 'm.notice',
+            body: 'Tavily needs signing in again. Guide answers without it until it is reconnected.',
+            'universe.tool_signin': toolSignIn,
+        });
+    });
+
+    it('sends an empty Reconnect notice to take the card back, so the game drops it (#1819)', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValueOnce({ text: 'Back to normal.', media: [], toolSignIn: { lost: [] } });
+        await bridge.onEvent(message('news?'));
+        const notice = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => content?.['universe.tool_signin']);
+        expect(notice).toEqual({
+            msgtype: 'm.notice',
+            body: 'Guide can use its Apps again.',
+            'universe.tool_signin': { lost: [] },
+        });
+    });
+
+    describe('the Reconnect card (#1819)', () => {
+        const toolSignIn = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
+        const cardsSent = () => client.sendMessage.mock.calls.filter((call: any[]) => call[2]?.['universe.tool_signin']);
+
+        it('tells how the send went: delivered when it got out', async () => {
+            await bridge.onEvent(invite());
+            const delivery = vi.fn();
+            deps.reply.mockResolvedValueOnce({ text: 'Not right now.', media: [], toolSignIn, toolSignInDelivery: delivery });
+            await bridge.onEvent(message('news?'));
+            expect(delivery).toHaveBeenCalledExactlyOnceWith(true);
+        });
+
+        it('tells it did not get out when Matrix refused it, so the next reply carries it again', async () => {
+            await bridge.onEvent(invite());
+            const delivery = vi.fn();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            client.sendMessage.mockRejectedValueOnce(new Error('M_UNKNOWN'));
+            deps.reply.mockResolvedValueOnce({ text: 'Not right now.', media: [], toolSignIn, toolSignInDelivery: delivery });
+            await bridge.onEvent(message('news?'));
+            expect(delivery).toHaveBeenCalledExactlyOnceWith(false);
+        });
+
+        it('is still sent when the model\'s reply is empty, after the fixed note', async () => {
+            await bridge.onEvent(invite());
+            const delivery = vi.fn();
+            deps.reply.mockResolvedValueOnce({ text: '', media: [], toolSignIn, toolSignInDelivery: delivery });
+            await bridge.onEvent(message('news?'));
+            expect(cardsSent()).toHaveLength(1);
+            expect(delivery).toHaveBeenCalledExactlyOnceWith(true);
+        });
+
+        it('is not sent into a room a third person joined meanwhile, and is shown again later', async () => {
+            await bridge.onEvent(invite());
+            const delivery = vi.fn();
+            deps.reply.mockImplementationOnce(async () => {
+                // Someone else joins while the reply is being made
+                await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: '@carol:matrix.test', state_key: '@carol:matrix.test', content: { membership: 'join' } } as any);
+                return { text: 'Not right now.', media: [], toolSignIn, toolSignInDelivery: delivery };
+            });
+            await bridge.onEvent(message('news?'));
+            expect(cardsSent()).toHaveLength(0);
+            expect(delivery).toHaveBeenCalledExactlyOnceWith(false);
+        });
+    });
+
     it('shows typing while a slow reply is on its way, then clears it', async () => {
         vi.useFakeTimers();
         try {
@@ -2081,6 +2156,32 @@ describe('DmReplyService history', () => {
         });
         const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
         expect(await (service as any).replyNow(BOT, person, 'one more', [], {})).toEqual({ text: '', media: [], replyLimit: limit });
+    });
+
+    it('hands back the Reconnect card the stream carried, with the reply (#1819)', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const card = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
+        const answering = vi.fn(async function* () {
+            yield { content: '', done: false, toolSignIn: card };
+            yield { content: 'Not right now.', done: false };
+            yield { content: '', done: true, metadata: { tokensUsed: 1 } };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: answering },
+            conversationMemory: new ConversationMemory(),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const reply = await (service as any).replyNow(BOT, person, 'news?', [], {});
+        expect(reply.toolSignIn).toEqual(card);
+        expect(reply.text).toBe('Not right now.');
     });
 
     it("names a first-time person by their uuid before the model or its tools see them", async () => {

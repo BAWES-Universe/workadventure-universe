@@ -1096,16 +1096,19 @@
                     onChange={(next) => apply(next)}
                     onEditRoute={editRoute}
                 />
-                <ToolsGroup
-                    bot={currentBot}
-                    open={openGroup === "tools"}
-                    onToggle={toggleGroup}
-                    onChange={(next) => apply(next)}
-                    wide={!$mobileLayoutStore}
-                    {onToolCount}
-                    {aiOptions}
-                    onOpenScreen={(screen) => (toolsScreen = screen)}
-                />
+                <!-- Its list of tool servers belongs to one bot: another bot starts it over (no old bot's sign-in lines) -->
+                {#key currentBot?.id}
+                    <ToolsGroup
+                        bot={currentBot}
+                        open={openGroup === "tools"}
+                        onToggle={toggleGroup}
+                        onChange={(next) => apply(next)}
+                        wide={!$mobileLayoutStore}
+                        {onToolCount}
+                        {aiOptions}
+                        onOpenScreen={(screen) => (toolsScreen = screen)}
+                    />
+                {/key}
                 {#if askLimit && currentBot}
                     <LimitSuggestion
                         name={currentBot.name || "Bot"}

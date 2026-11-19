@@ -1,4 +1,5 @@
 import type { AppOffer } from "../Brick";
+import type { ConnectResult } from "./ConnectApp";
 import type { ReconnectResult } from "./Reconnect";
 
 /**
@@ -10,12 +11,16 @@ import type { ReconnectResult } from "./Reconnect";
  * - A new one: its connection is made and the sign-in window opens in the same tap (the window is opened first, so the
  *   browser does not block it), then this Brick is let use it. Only this Brick: the Apps page is where the others are chosen.
  * - An App that needs no sign-in has its connection made and its window closed at once, with no sign-in started.
+ *   An App of Orbit's list (and GitHub, through Universe's own GitHub App) and a ready-made App sign in the two ways the Apps
+ *   page does: the offer says which (`connectKind`), so a card never connects through the wrong call.
  */
 export type ChatConnectResult =
     /** Connected, this Brick may use it, and the Brick was told to carry on. */
     | "connected"
     /** The window was closed, or the sign-in did not finish. Nothing is left half done that the person must undo. */
     | "stopped"
+    /** The sign-in finished, but Orbit could not be asked whether it counted. It may well be connected. */
+    | "unchecked"
     /** The window could not open, or the connection could not be made. */
     | "blocked"
     /** It is connected, but this Brick could not be let use it. */
@@ -34,6 +39,11 @@ export interface ChatConnectSteps {
         makeApp: () => Promise<string>,
         alreadyConnected: (appId: string) => Promise<boolean>
     ) => Promise<ReconnectResult>;
+    /**
+     * A ready-made App: makes the connection, opens the provider's own sign-in page in a window opened first, and ends when it
+     * ends, with the connection once Orbit confirms the sign-in (the same steps as "Connect" on the Apps page).
+     */
+    connectReadyMade: (app: { key: string; name: string }) => Promise<ConnectResult>;
     /** Whether the person's connection works without a window (an App that needs no sign-in). */
     isConnected: (appId: string) => Promise<boolean>;
     /** Lets one of the person's Bricks use their App. */
@@ -52,6 +62,15 @@ export async function connectFromCard(
     let appId: string;
     if (offer.state === "connected" && offer.connectionId) {
         appId = offer.connectionId;
+    } else if (offer.connectKind === "readyMade") {
+        // The window opens in this same tap: nothing is awaited before it
+        const made = await steps.connectReadyMade({ key: offer.app, name: offer.name });
+        if (made.status === "blocked") return "blocked";
+        if (made.status !== "connected") {
+            await steps.refresh();
+            return made.status;
+        }
+        appId = made.appId;
     } else {
         // The window opens straight from the tap; the connection is made behind it, and an App that needs no sign-in (Orbit does not
         // say which before it is made) closes that window at once instead of starting a sign-in

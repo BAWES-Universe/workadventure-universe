@@ -7,6 +7,7 @@ import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { readBotToolSignIn, type BotToolSignIn } from "../../Bots/BotToolSignIn";
 import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readAnsweredNearby } from "../../Bots/PrivateAnswer";
 import {
@@ -76,6 +77,7 @@ export class MatrixChatMessage implements ChatMessage {
     botStatusAt: number | undefined;
     roomLink: BotRoomLink | undefined;
     replyLimit: BotReplyLimit | undefined;
+    toolSignIn: BotToolSignIn | undefined;
     artifact: ArtifactCard | undefined;
     answeredNearby: boolean;
     /** A Brick's fixed "what I can do" answer (#1995): shown in the person's language, with its ideas under it. */
@@ -110,6 +112,7 @@ export class MatrixChatMessage implements ChatMessage {
         this.botStatusAt = cards.botStatusAt;
         this.roomLink = cards.roomLink;
         this.replyLimit = cards.replyLimit;
+        this.toolSignIn = cards.toolSignIn;
         this.artifact = cards.artifact;
         this.answeredNearby = cards.answeredNearby;
         this.brickIdeas = cards.brickIdeas;
@@ -215,6 +218,7 @@ export class MatrixChatMessage implements ChatMessage {
             botStatusAt: botStatus ? this.event.localTimestamp : undefined,
             roomLink: readBotRoomLink(sender, content, window.location.origin),
             replyLimit: readBotReplyLimit(sender, content, this.room.getMember(sender ?? "")?.name ?? ""),
+            toolSignIn: readBotToolSignIn(sender, content, this.room.getMember(sender ?? "")?.name ?? ""),
             artifact: readArtifactField(sender, content),
             answeredNearby: readAnsweredNearby(sender, content),
             brickIdeas: readBrickIdeas(sender, content),
@@ -249,6 +253,7 @@ export class MatrixChatMessage implements ChatMessage {
             botStatusAt: this.botStatusAt,
             roomLink: this.roomLink,
             replyLimit: this.replyLimit,
+            toolSignIn: this.toolSignIn,
             artifact: this.artifact,
             answeredNearby: this.answeredNearby,
             brickIdeas: this.brickIdeas,

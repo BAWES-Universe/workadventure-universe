@@ -106,8 +106,31 @@ export function endingOf(words: string): Ending {
     return last;
 }
 
+/**
+ * The one sentence the agent gave for why it could not go on: the last sentence before its `[[failed]]` marker, at most 300 characters. Orbit cleans it
+ * (no links or markup) before Brick says it, and says it apart from what the record proves. Null when it said nothing before the marker.
+ */
+export function whyOf(words: string): string | null {
+    const marker = /\[\[\s*failed\s*[^\]]*\]\]/gi;
+    let at = -1;
+    for (let match = marker.exec(words); match; match = marker.exec(words)) at = match.index;
+    if (at < 0) return null;
+    // A line of its own ends a sentence too, so it is split before the spaces are made one
+    const before = words.slice(0, at).replace(/\[\[[^\]]*\]\]/g, ' ');
+    // A stop inside a name or number ("passport.pdf", "3.5", "e.g. the form") is no end of a sentence: only a stop followed by a space and a capital, a digit or an opening quote is
+    const sentences = before.split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9“"'(])/).map((one) => one.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const last = sentences[sentences.length - 1] ?? '';
+    return last ? last.slice(-300) : null;
+}
+
+/**
+ * The folder, from the home folder, where a job saves what it makes for the person. It is the job's own (its id is in the name): Orbit hands over what is in it and
+ * nothing else, so which job made a file never depends on when the file was touched. Orbit uses the same name (`outputFolder` in lib/computer-file-cards).
+ */
+export const outputFolderOf = (jobId: string): string => `Outputs/${jobId}`;
+
 /** The first turn of a job: the job in the person's words, and how to say how it ended. */
-export function jobPrompt(job: { title: string; brief: string | null; writes: boolean }): string {
+export function jobPrompt(job: { jobId: string; title: string; brief: string | null; writes: boolean }): string {
     return [
         'You are working on a computer that belongs to a person. Do this job for them, in the browser and on this computer:',
         '',
@@ -118,6 +141,9 @@ export function jobPrompt(job: { title: string; brief: string | null; writes: bo
         'Rules:',
         '- Paying, submitting a form for good, and the person\'s own details (names, numbers, documents, passwords, card numbers) are never yours alone. Stop and ask for them.',
         '- When you need the person (their details, to sign in, to upload a file, to pay, to submit, or an answer), stop and end your reply with one line: [[handover KIND | what | where]]. KIND is one of details, signin, upload, pay, submit, answer. For details, say exactly what you are ready to put in and the site it goes on; for the rest `what` and `where` can be left out.',
+        ...(job.writes
+            ? [`- If the job makes a file for the person (a receipt, a report, a picture, a document), save it in the folder ${outputFolderOf(job.jobId)} in your home folder, and make that folder if it is not there. Only what is in that folder is given to the person, so put nothing else in it.`]
+            : []),
         '- When the job is finished, end your reply with [[done]].',
         '- If you cannot go on, say why in one plain sentence and end your reply with [[failed]].',
         '- Keep your replies short. Do not repeat what you did. Never write a password, key or number the person gave you in your reply.',
@@ -207,9 +233,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? error.message : '');
 
     /** Ends the job. 'stale' when Orbit says the turn this comes from is an old one: nothing was ended, and the job is to be read again. */
-    async function finish(job: RunnableJob, outcome: 'done' | 'failed', generation?: number): Promise<'ended' | 'stale'> {
+    async function finish(job: RunnableJob, outcome: 'done' | 'failed', generation?: number, why?: string | null): Promise<'ended' | 'stale'> {
         let stale = false;
-        await orbit.action(job.botId, job.jobId, fenced({ action: 'finish', outcome }, generation)).catch((error) => {
+        // The computer's own sentence about why it could not go on goes with a failure, for the message that tells the person: Orbit cleans it before it keeps it
+        const body = { action: 'finish', outcome, ...(outcome === 'failed' && why ? { why } : {}) };
+        await orbit.action(job.botId, job.jobId, fenced(body, generation)).catch((error) => {
             if (staleForOrbit(error)) stale = true;
             else say('Could not end a job:', error);
         });
@@ -475,7 +503,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
             const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
             if (ending.kind === 'done' || ending.kind === 'failed') {
-                if ((await finish(job, ending.kind, generation)) === 'stale') {
+                if ((await finish(job, ending.kind, generation, ending.kind === 'failed' ? whyOf(result.words) : undefined)) === 'stale') {
                     await readAgain();
                     continue;
                 }

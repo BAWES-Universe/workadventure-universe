@@ -6,7 +6,9 @@ import {
     RUNNER_GUARDS,
     createComputerRunner,
     endingOf,
+    whyOf,
     jobPrompt,
+    outputFolderOf,
     relayUrlFromEnv,
     runnerOrbitFor,
     type RunnableJob,
@@ -104,6 +106,16 @@ describe('how the agent says its turn ended', () => {
         expect(prompt).not.toContain('only to look');
         expect(jobPrompt({ ...JOB, writes: false, brief: null })).toContain('only to look');
     });
+
+    it('tells a job that writes the folder of its own to save what it makes in, and a look-only job none: the folder is what Orbit hands over', () => {
+        expect(outputFolderOf('job-1')).toBe('Outputs/job-1');
+        expect(jobPrompt(JOB)).toContain('save it in the folder Outputs/job-1 in your home folder');
+        expect(jobPrompt(JOB)).toContain('Only what is in that folder is given to the person');
+        // Another job has another folder
+        expect(jobPrompt({ ...JOB, jobId: 'job-2' })).toContain('Outputs/job-2');
+        expect(jobPrompt({ ...JOB, jobId: 'job-2' })).not.toContain('Outputs/job-1');
+        expect(jobPrompt({ ...JOB, writes: false })).not.toContain('Outputs/');
+    });
 });
 
 describe('a job that runs', () => {
@@ -118,6 +130,12 @@ describe('a job that runs', () => {
 
     it('ends failed when the agent says it cannot go on', async () => {
         const { orbit, seen } = fakeOrbit([done('The site is down. [[failed]]')]);
+        await runJob(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', why: 'The site is down.' }]);
+    });
+
+    it('says nothing about why when the agent gave no sentence before its marker, and never on a job that finished', async () => {
+        const { orbit, seen } = fakeOrbit([done('[[failed]]')]);
         await runJob(orbit);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
     });
@@ -824,5 +842,29 @@ describe('the bot server’s calls to Orbit', () => {
         expect(relayUrlFromEnv({ PUSHER_URL: 'http://play.example.test' } as never)).toBeNull();
         expect(relayUrlFromEnv({ PUSHER_URL: 'https://10.0.0.5' } as never)).toBeNull();
         expect(relayUrlFromEnv({ PUSHER_URL: 'nonsense' } as never)).toBeNull();
+    });
+});
+
+describe('whyOf: the one sentence the agent gave for why it could not go on', () => {
+    it('is the last sentence before the failed marker', () => {
+        expect(whyOf('I opened the form. The site stopped me at the passport upload and kept showing an error. [[failed]]')).toBe('The site stopped me at the passport upload and kept showing an error.');
+        expect(whyOf('First line\nThe site is down [[failed]]')).toBe('The site is down');
+        expect(whyOf('Tried twice. [[done]] Then the site is down. [[failed]]')).toBe('Then the site is down.');
+    });
+
+    it('does not cut a sentence at a stop inside a file name or a number', () => {
+        expect(whyOf('Tried the upload. The site rejected passport.pdf at version 3.5 and kept showing an error. [[failed]]')).toBe('The site rejected passport.pdf at version 3.5 and kept showing an error.');
+        expect(whyOf('The form wants e.g. a scan of the passport and I have none [[failed]]')).toBe('The form wants e.g. a scan of the passport and I have none');
+    });
+
+    it('is empty when nothing came before the marker, or there is no failed marker', () => {
+        expect(whyOf('[[failed]]')).toBeNull();
+        expect(whyOf('All good [[done]]')).toBeNull();
+        expect(whyOf('')).toBeNull();
+    });
+
+    it('is cut to the last 300 characters, so a runaway reply is not sent whole', () => {
+        const long = whyOf(`${'word '.repeat(200)}[[failed]]`);
+        expect(long && long.length).toBeLessThanOrEqual(300);
     });
 });

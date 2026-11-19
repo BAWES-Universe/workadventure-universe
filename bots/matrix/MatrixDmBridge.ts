@@ -26,11 +26,28 @@ import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
 import { tidyTranscript } from '../voice/NoteHearing';
 import type { NoteHearingService } from '../voice/NoteHearingWiring';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
+import { toolSignInContent } from '../mcp/ToolSignInCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
-import type { SpokeAnswer } from '../server/BrickRunner';
+import type { AttachedFile, ComputerSpoke, FilesAnswer } from '../server/ComputerReports';
 
 /** Marks what a Brick says on its own (a reminder, a goal's news), never an answer in a chat. Orbit reads it to show the news as the title on a locked phone; it counts only from our own bot. */
 export const OWN_INITIATIVE_KEY = 'net.bawes.universe.alone';
+
+/** How the chat shows a file a computer made: a picture, a sound or a video where the game has a player for it; anything else (a page, a script, an unknown type) is a file to download. */
+export function computerFileMsgtype(mime: string): 'm.image' | 'm.audio' | 'm.video' | 'm.file' {
+    if (/^image\/(png|jpeg|gif|webp)$/.test(mime)) return 'm.image';
+    if (mime.startsWith('audio/')) return 'm.audio';
+    if (mime.startsWith('video/')) return 'm.video';
+    return 'm.file';
+}
+
+/** The chat server (or the upload) turned a file down for what it is, so trying it again will not help: too big, not allowed, a bad request. A server that did not answer is not this. */
+export function chatRefusedForGood(error: unknown): boolean {
+    const failure = error as { response?: { status?: number }; code?: string } | null;
+    const status = failure?.response?.status;
+    // By the status the server gave, never by axios's own code (it calls every 4xx a bad request, a 429 or 408 that will work later included)
+    return status === 400 || status === 403 || status === 413 || failure?.code === 'ERR_FR_MAX_BODY_LENGTH_EXCEEDED';
+}
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
@@ -687,6 +704,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return joined.size === 2 && joined.has(botUserId) && joined.has(matrixUserId);
     }
 
+    /** Whether this room has exactly the bot and the person in it (asked afresh): null when that could not be looked at just now. */
+    private async isOnlyTheTwoOf(botId: string, matrixUserId: string, roomId: string): Promise<boolean | null> {
+        const botUserId = this.botUserId(botId);
+        const joined = await this.client.getJoinedMembers(botUserId, roomId).catch(() => null);
+        if (!joined) return null;
+        this.roomMembers.set(roomId, new Set(joined));
+        return joined.length === 2 && joined.includes(botUserId) && joined.includes(matrixUserId);
+    }
+
     private async noteDirectRoom(botId: string, matrixUserId: string, roomId: string): Promise<void> {
         const key = MatrixDmBridge.pair(botId, matrixUserId);
         // Known here and kept in the shared store: nothing to do. A chat the store could not take is written again the next time it is seen,
@@ -886,16 +912,91 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * the chat the two share alone, and only for someone Orbit says may message the bot. `transactionId` is the run's own id, so a
      * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
      */
-    async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer> {
-        const room = await this.roomToSpeakIn(botId, matrixUserId);
+    async speakInDirectChat(
+        botId: string,
+        matrixUserId: string,
+        text: string,
+        transactionId: string,
+        extra?: { steps?: { field: StepsField; text: string }; files?: AttachedFile[]; room?: string }
+    ): Promise<ComputerSpoke> {
+        // `room` is the conversation a computer job began in: what it made goes back there and nowhere else (never a chat made or picked for it)
+        const room = await this.roomFor(botId, matrixUserId, extra?.room);
         if ('reason' in room) return { ok: false, reason: room.reason };
         try {
+            // A "Worked on its computer" line above what is said (a computer job that finished): a notice, so it never notifies on its own, under its own
+            // transaction id so a retry is the same line. A lost line must not cost the person the message.
+            if (extra?.steps) {
+                try {
+                    await this.say(botId, () => this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.notice', body: extra.steps!.text, [STEPS_KEY]: extra.steps!.field }, `${transactionId}:steps`));
+                } catch (error: any) {
+                    console.warn(`[MatrixDmBridge] Could not show the steps line in the direct chat of bot ${botId}:`, error?.message ?? error);
+                }
+            }
+            // Asked again right before the message: someone may have joined while the line above was on its way, and then nothing goes there (the work's own chat is
+            // gone; for anything else the next try looks again)
+            if (!this.roomStillTheirs(botId, room.roomId, matrixUserId)) return { ok: false, reason: extra?.room ? 'origin_gone' : 'unsure' };
             const eventId = await this.say(botId, () => this.client.sendMessage(this.botUserId(botId), room.roomId, { msgtype: 'm.text', body: text, [OWN_INITIATIVE_KEY]: true }, transactionId));
-            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
+            if (!eventId) return { ok: false, reason: 'unsure' };
+            // The files follow the message as file cards (the file card of a finished computer job). The message is out either way: what did not go is said back
+            const files = extra?.files && extra.files.length > 0 ? await this.sendComputerFiles(botId, room.roomId, matrixUserId, transactionId, extra.files) : undefined;
+            return { ok: true, eventId, ...(files ? { files } : {}) };
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
-            return { ok: false, reason: 'unsure' };
+            // The chat turned the message down for good (the bot may no longer speak there): trying it again will not change that. A server that did not answer is not this.
+            return { ok: false, reason: chatRefusedForGood(error) ? 'refused' : 'unsure' };
         }
+    }
+
+    /**
+     * Puts files a computer job made in the chat, one at a time (each fetched only when its turn comes), as file messages under their own transaction ids so a
+     * second try of the same one is the same message to Matrix. A file that could not go is told back with whether another try may work: the file being
+     * gone from Orbit, or the chat refusing it for what it is (too big, not allowed), will not; a chat or Orbit that did not answer may. Nothing here
+     * says a file's name in a log.
+     */
+    private async sendComputerFiles(botId: string, roomId: string, matrixUserId: string, transactionId: string, files: AttachedFile[]): Promise<FilesAnswer> {
+        const botUserId = this.botUserId(botId);
+        const attached: string[] = [];
+        const missed: FilesAnswer['missed'] = [];
+        for (const file of files) {
+            let data: Buffer | null;
+            try {
+                data = await file.load();
+            } catch (error: any) {
+                console.warn(`[MatrixDmBridge] Could not fetch a computer file for the direct chat of bot ${botId}:`, error?.message ?? error);
+                missed.push({ id: file.id, name: file.name, again: true });
+                continue;
+            }
+            if (!data) {
+                // Orbit no longer keeps it (the person deleted it, or its days passed): nothing more to try
+                missed.push({ id: file.id, name: file.name, again: false, gone: true });
+                continue;
+            }
+            try {
+                const mxc = await this.client.uploadMedia(botUserId, data, file.mime, file.name);
+                if (!mxc) throw new Error('The chat server gave no address for the file');
+                // Each file waited for its fetch and upload: someone may have joined the chat meanwhile, and then no file goes there, now or on any later try
+                if (!this.roomStillTheirs(botId, roomId, matrixUserId)) {
+                    missed.push({ id: file.id, name: file.name, again: false });
+                    continue;
+                }
+                const sent = await this.say(botId, () =>
+                    this.client.sendMessage(
+                        botUserId,
+                        roomId,
+                        { msgtype: computerFileMsgtype(file.mime), body: file.name, filename: file.name, url: mxc, info: { mimetype: file.mime, size: data.length } },
+                        `${transactionId}:file:${file.id}`
+                    )
+                );
+                if (!sent) throw new Error('The chat server did not say the file was sent');
+                attached.push(file.id);
+                // Said at once, file by file: a restart between two files never uploads the first one again. A mark that is lost is made again when the report is done.
+                await file.delivered().catch((error: any) => console.warn(`[MatrixDmBridge] Could not keep that a computer file reached the chat of bot ${botId}:`, error?.message ?? error));
+            } catch (error: any) {
+                console.warn(`[MatrixDmBridge] Could not put a computer file in the direct chat of bot ${botId}:`, error?.message ?? error);
+                missed.push({ id: file.id, name: file.name, again: !chatRefusedForGood(error) });
+            }
+        }
+        return { attached, missed };
     }
 
     /**
@@ -904,6 +1005,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * said only when the answer was certain; a look that failed is "could not tell".
      */
     async roomToSpeakIn(botId: string, matrixUserId: string): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' }> {
+        const room = await this.roomFor(botId, matrixUserId);
+        // Without a conversation to hold to there is no "origin gone"
+        return 'reason' in room && room.reason === 'origin_gone' ? { ok: false, reason: 'unsure' } : (room as { ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' });
+    }
+
+    /**
+     * Like `roomToSpeakIn`, for something that belongs to the conversation it began in (a computer job's result): when `expectedRoomId` is given, only that
+     * chat will do. If the person's chat with the Brick is not that one any more (it was left and made again, or another one is the one they share now), the
+     * answer is `origin_gone`: nothing is said in a chat the work did not begin in.
+     */
+    private async roomFor(
+        botId: string,
+        matrixUserId: string,
+        expectedRoomId?: string
+    ): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' | 'origin_gone' }> {
         let looked: { roomId: string | null; unsure: boolean };
         try {
             looked = await this.lookUpDirectRoom(botId, matrixUserId);
@@ -911,7 +1027,27 @@ export class MatrixDmBridge implements MatrixEventHandler {
             console.warn(`[MatrixDmBridge] Could not look for the direct chat of bot ${botId}:`, error?.message ?? error);
             return { ok: false, reason: 'unsure' };
         }
+        if (!looked.roomId && !looked.unsure && expectedRoomId) {
+            // No record of a chat, but Orbit says which chat the work began in. A person only starts a computer job in their own chat with the Brick, so a missing record is
+            // a record that was lost (a restart, a store that was emptied), not a chat that was never there: when that chat is still the two of them alone it is the
+            // one, and it is noted again. Not theirs any more: the chat it began in is gone. Could not look: tried again.
+            const theirs = await this.isOnlyTheTwoOf(botId, matrixUserId, expectedRoomId);
+            if (theirs === null) return { ok: false, reason: 'unsure' };
+            if (!theirs) return { ok: false, reason: 'origin_gone' };
+            // Both records come back: which bot the room belongs to (without it the next message in the chat is not known to be the bot's), and the chat of this person
+            await this.rememberRoom(expectedRoomId, botId);
+            await this.noteDirectRoom(botId, matrixUserId, expectedRoomId);
+            looked = { roomId: expectedRoomId, unsure: false };
+        }
         if (!looked.roomId) return { ok: false, reason: looked.unsure ? 'unsure' : 'no_chat' };
+        if (expectedRoomId && looked.roomId !== expectedRoomId) {
+            // The chat kept for this person now is another one (a second chat was made, or the record moved). The chat the work began in is still the
+            // one to speak in when it is still the two of them alone; only when it is not theirs any more is it gone. Could not look: tried again.
+            const theirs = await this.isOnlyTheTwoOf(botId, matrixUserId, expectedRoomId);
+            if (theirs === null) return { ok: false, reason: 'unsure' };
+            if (!theirs) return { ok: false, reason: 'origin_gone' };
+            looked = { roomId: expectedRoomId, unsure: false };
+        }
         let access: DmAccessResult;
         try {
             access = await this.access(botId, matrixUserId, true);
@@ -1851,6 +1987,26 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     return stepsSent;
                 },
             });
+            // The Reconnect card for a manager (#1819): a notice after the reply. Its text is made first, and the room is checked
+            // right before it goes: a third person who joined meanwhile must not read App names meant for the manager. How the
+            // send went is told back, so a card that did not get out is shown again at the next reply.
+            const sendSignIn = async (): Promise<void> => {
+                if (!reply?.toolSignIn) return;
+                const notice = toolSignInContent(reply.toolSignIn, await this.botName(botId, config));
+                // Said like anything else a Brick says: nothing goes once its purge has begun, and a purge waits for a send under way
+                if (this.saysNothing(botId) || !this.stillTheirs(event.room_id, botUserId, person.matrixUserId)) {
+                    reply.toolSignInDelivery?.(false);
+                    return;
+                }
+                const sent = await out.sendMessage(botUserId, event.room_id, notice).then(
+                    () => true,
+                    (error) => {
+                        console.warn(`[MatrixDmBridge] Could not send the Reconnect card from bot ${botId}:`, error?.message ?? error);
+                        return false;
+                    }
+                );
+                reply.toolSignInDelivery?.(sent);
+            };
             // Answered together with the messages that waited with it (#1159): that one answer was sent for all of them
             if (reply?.answeredTogether !== undefined) {
                 answered = reply.answeredTogether;
@@ -1869,6 +2025,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 if (!reply) console.warn(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}: no AI service here`);
                 else if (!reply.failed) console.warn(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}: the answer was empty`);
                 await couldNotAnswer(config);
+                // An empty answer does not take the manager's Reconnect card with it
+                if (reply && !reply.failed) await sendSignIn();
                 return;
             }
             if (reply.roomLink && reply.text) {
@@ -1908,8 +2066,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const appOffer = reply.text ? reply.bricks?.find((note) => note.kind === 'app') : undefined;
             const appTopic = appOffer && appOffer.kind === 'app' && reply.claimApp ? await reply.claimApp() : null;
             if (appOffer && appOffer.kind === 'app' && appTopic) {
-                const { app, name, state, connectionId, ask, asked, other } = appOffer;
-                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, state, connectionId, ask, asked, other } };
+                const { app, name, connectKind, state, connectionId, ask, asked, other } = appOffer;
+                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, connectKind, state, connectionId, ask, asked, other } };
                 const txnId = randomUUID();
                 await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
@@ -1923,6 +2081,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not say what bot ${botId} may do with an App:`, error?.message ?? error));
             }
+            // A tool's sign-in expired and this person manages the bot (#1819): the game draws the Reconnect card from it
+            await sendSignIn();
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
                 const { body, field } = artifactDirectMessage(card);

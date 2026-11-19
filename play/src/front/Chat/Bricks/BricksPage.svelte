@@ -12,6 +12,7 @@
     import { shortDay, type BrickCard, type DeletedBrickCard } from "./Brick";
     import BrickPage from "./BrickPage.svelte";
     import BrickPicture from "./BrickPicture.svelte";
+    import DeletedBrickFiles from "./DeletedBrickFiles.svelte";
     import {
         loadMyBricks,
         myBricksListFailed,
@@ -328,6 +329,7 @@
                         </div>
                     {/each}
                 {/if}
+                <DeletedBrickFiles />
             </div>
             <div class="bk-use">
                 <div data-testid="bricksGoalsRow">

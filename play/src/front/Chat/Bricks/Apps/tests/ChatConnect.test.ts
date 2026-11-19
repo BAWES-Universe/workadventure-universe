@@ -6,6 +6,7 @@ const offer = (over: Partial<AppOffer> = {}): AppOffer => ({
     topic: "app notion",
     app: "notion",
     name: "Notion",
+    connectKind: "listed",
     state: "new",
     connectionId: null,
     ask: "",
@@ -27,6 +28,7 @@ describe("Connect from a Brick's card in a chat (#2001)", () => {
         steps = {
             connectListedApp: vi.fn().mockResolvedValue("c1"),
             signIn: signIn as unknown as ChatConnectSteps["signIn"],
+            connectReadyMade: vi.fn().mockResolvedValue({ status: "connected", appId: "rm1" }),
             isConnected: vi.fn().mockResolvedValue(false),
             letBrickUse: vi.fn().mockResolvedValue(undefined),
             carryOn: vi.fn().mockResolvedValue(undefined),
@@ -57,6 +59,20 @@ describe("Connect from a Brick's card in a chat (#2001)", () => {
         signIn.mockResolvedValue("blocked");
         expect(await connectFromCard(offer(), "b1", steps)).toBe("blocked");
         expect(steps.connectListedApp).not.toHaveBeenCalled();
+    });
+
+    it("connects a ready-made App through its own sign-in, and never through the listed one", async () => {
+        expect(await connectFromCard(offer({ connectKind: "readyMade" }), "b1", steps)).toBe("connected");
+        expect(steps.connectReadyMade).toHaveBeenCalledWith({ key: "notion", name: "Notion" });
+        expect(steps.connectListedApp).not.toHaveBeenCalled();
+        expect(signIn).not.toHaveBeenCalled();
+        expect(steps.letBrickUse).toHaveBeenCalledWith("rm1", "b1");
+        // A sign-in that did not finish leaves nothing to undo; a blocked window makes no connection
+        vi.mocked(steps.connectReadyMade).mockResolvedValue({ status: "stopped" });
+        expect(await connectFromCard(offer({ connectKind: "readyMade" }), "b1", steps)).toBe("stopped");
+        vi.mocked(steps.connectReadyMade).mockResolvedValue({ status: "blocked" });
+        expect(await connectFromCard(offer({ connectKind: "readyMade" }), "b1", steps)).toBe("blocked");
+        expect(steps.letBrickUse).toHaveBeenCalledTimes(1);
     });
 
     it("hands the window a way to tell an App that needs no sign-in, so it closes without starting one", async () => {

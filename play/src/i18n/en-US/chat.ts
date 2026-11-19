@@ -928,6 +928,26 @@ const chat: BaseTranslation = {
         useMyKey: "Use my AI key",
         onlyYou: "Only you see this",
     },
+    toolSignIn: {
+        titleOne: "{name} needs signing in again",
+        titleMany: "{count} Apps need signing in again",
+        titleBackOne: "{name} is connected again",
+        titleBackMany: "Connected again",
+        lineOne: "Since {time}. {bot} answers without {name} until it's reconnected.",
+        lineMany: "{bot} answers without them until they're reconnected.",
+        lineBack: "{bot} can use it from its next reply.",
+        reconnect: "Reconnect {name}",
+        pasteKey: "Paste a new {name} key",
+        waiting: "Waiting for {name}…",
+        reconnected: "Reconnected",
+        rowBack: "{name} reconnected",
+        rowBackLine: "Working again",
+        rowSince: "Since {time}",
+        blocked: "Couldn't open the sign-in window. Allow pop-ups and try again.",
+        keyFormFailed: "Couldn't open the key form. Try again.",
+        onlyYou: "Only you see this card. You can manage {bot}.",
+        close: "Close",
+    },
     botAsk: {
         needsAnswer: "{name} needs your answer",
         usesAccount: "Uses {account} account",
@@ -1135,6 +1155,9 @@ const chat: BaseTranslation = {
             notNowAsked: "Nothing is connected",
             // The sign-in window was closed, blocked or did not start; the card stays so they can try again
             signInStopped: "{name} was not connected. Try again when you're ready.",
+            // The sign-in finished but Orbit could not be asked whether it counted: it may well be connected
+            signInUnchecked:
+                "{name}'s sign-in finished, but we couldn't check it just now. Open Apps in a moment to see it.",
             signInBlocked: "The sign-in window did not open. Allow pop-ups for this page and try again.",
             couldNotLet: "{name} is connected, but this Brick could not be let use it. Choose it in Apps.",
             // Connected and this Brick may use it, but the Brick could not be told to carry on: they ask it again
@@ -1429,6 +1452,18 @@ const chat: BaseTranslation = {
             briefSize: "{count:number} {{file|files}} · {size}",
             briefNone: "Nothing yet",
             made: "Made for you",
+            // What its computer made: theirs here whether or not the chat took it
+            fromComputer: "Made on its computer",
+            resultDelivered: "In your chat with {name}",
+            resultWaiting: "Being sent to your chat",
+            resultNotDelivered: "Not in your chat. It's saved here.",
+            resultFailed: "Couldn't open that file. Try again.",
+            resultSent: "Sent to your chat",
+            // Results whose Brick was deleted: they are still yours
+            deletedBrickFiles: "Files from deleted Bricks",
+            deletedBrickFilesNote: "These are yours. They stay for a while, or until you delete them.",
+            deletedBrickFilesLoadFailed: "Couldn't read the files from deleted Bricks.",
+            deletedBrickFilesRetry: "Try again",
             sent: "You sent it",
             download: "Download",
             delete: "Delete",

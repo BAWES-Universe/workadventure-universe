@@ -106,6 +106,18 @@ describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R2
         expect(update).toHaveBeenCalledTimes(1);
     });
 
+    it('sends no Reconnect card once the purge began while the reply was being made, and says it did not get out', async () => {
+        const delivery = vi.fn();
+        const toolSignIn = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
+        deps.reply.mockImplementationOnce(async () => {
+            bridge.purgedBots.add(BOT);
+            return { text: 'Hello Alice!', media: [], toolSignIn, toolSignInDelivery: delivery };
+        });
+        await bridge.onEvent(message('$m1'));
+        expect(client.sendMessage.mock.calls.filter((call: any[]) => call[2]?.['universe.tool_signin'])).toHaveLength(0);
+        expect(delivery).not.toHaveBeenCalledWith(true);
+    });
+
     it('answers nothing for a Brick whose purge began while its configuration was loading', async () => {
         deps.getBotConfig.mockImplementation(async () => {
             bridge.purgedBots.add(BOT);

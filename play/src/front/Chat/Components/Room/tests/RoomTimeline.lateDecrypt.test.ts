@@ -67,6 +67,8 @@ vi.mock("../../../Bricks/MyBricksStore", async (importOriginal) => {
         loadMyBricksAfterPending: () => Promise.resolve(true),
     };
 });
+// A sign-in card is never used here, and the Bricks page it can open pulls in the native peer-to-peer module
+vi.mock("../../../../external-modules/bots/index", () => ({ openBotPage: vi.fn() }));
 vi.mock("../../../Connection/Matrix/MatrixMedia", () => ({ holdMatrixMedia: vi.fn() }));
 vi.mock("../../../Connection/Matrix/MatrixChatUser", () => ({ chatUserFactory: () => undefined }));
 

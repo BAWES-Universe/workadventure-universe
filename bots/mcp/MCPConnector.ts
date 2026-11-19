@@ -18,6 +18,15 @@ import { sanitizedError } from '../utils/sanitizedError';
 import { linkExternalAbort } from '../ai/providers/abortUtils';
 import { checkOutboundUrl, guardedLookup } from './outboundGuard';
 import {
+    ToolHealth,
+    type SeenServer,
+    credentialsKey,
+    isSignInRefusal,
+    reportToolState,
+    type ToolIssue,
+    type ToolIssueState,
+} from './ToolSignIn';
+import {
     MAX_TOOLS_PER_SERVER,
     fingerprintTool,
     keptTools,
@@ -51,6 +60,9 @@ export interface McpServerConfig {
     readyMade?: boolean;
     /** Where Orbit is, set when `readyMade`. Never sent anywhere else. */
     orbitUrl?: string;
+    /** When Orbit last saw this server's sign-in refused, or the server not answer (#1819); null when not */
+    signInLostAt?: string | null;
+    noAnswerAt?: string | null;
     /** The jobs its owner lets other people ask this Brick for, with the inputs people may fill in and what may come back (#2006). Only an App on a person's connection has any. */
     shared?: { jobs: SharedJob[] };
 }
@@ -108,6 +120,8 @@ interface CachedTools {
 
 /** Where a tool lives, for routing a call to it and for telling whether it is the tool a person confirmed. */
 export interface ToolServerEntry {
+    /** The bot this entry was found for, so a call that is refused can tell Orbit whose sign-in it was (#1819). */
+    botId?: string;
     serverId: string;
     serverUrl: string;
     authType: string;
@@ -306,10 +320,26 @@ interface JsonRpcOutcome {
     retryable: boolean;
     /** The server said, in its answer, that its list of tools changed */
     listChanged?: boolean;
+    /** The HTTP status of a refusal or failure, when the server gave one (#1819) */
+    status?: number;
 }
 
 /** Sent, or maybe sent, with no answer: the server may have run it */
 const NOT_ANSWERED: JsonRpcOutcome = { data: null, neverRan: false, retryable: false };
+/**
+ * What a failed read of a server's tools says about it (#1819): a refused sign-in, a server that did not answer (no status at
+ * all, or its own 5xx, also when it came before the request itself, as a ready-made App's link failing to open a session),
+ * or nothing worth a mark (a 404, a 429, a refused connection).
+ */
+function failureState(outcome: JsonRpcOutcome | undefined): ToolIssueState | null {
+    if (!outcome) return null;
+    const status = outcome.status;
+    if (isSignInRefusal(status)) return 'expired';
+    if (outcome.data) return null;
+    if (status === undefined) return outcome.neverRan ? null : 'no-answer';
+    return status >= 500 ? 'no-answer' : null;
+}
+
 /** Stopped before anything was sent, for a reason a second try would meet again */
 const NOT_SENT: JsonRpcOutcome = { data: null, neverRan: true, retryable: false };
 
@@ -320,12 +350,27 @@ const NOT_SENT: JsonRpcOutcome = { data: null, neverRan: true, retryable: false 
 export type ToolCallOutcome = 'not_sent' | 'failed' | 'uncertain';
 
 /**
+ * Which results the connector itself made for a refused sign-in, and the status the tool server refused with. Kept outside the
+ * result, so nothing a tool server sends back (a field of its own) can pass for a refusal (#1819).
+ */
+const signInRefusals = new WeakMap<object, 401 | 403>();
+
+/** The status a tool server refused the sign-in with, when this result is the connector's own answer to that refusal */
+export function signInRefusalOf(result: unknown): 401 | 403 | undefined {
+    return typeof result === 'object' && result !== null ? signInRefusals.get(result) : undefined;
+}
+
+/**
  * What a call that brought back no result reads as (#1692). The error is the short note the steps line shows under the
  * call, so it stays under about 30 characters; the hint tells the bot what that means for trying again. Only a call
  * that provably never reached the server is safe to send again.
  */
 const NOT_SENT_ERROR = "Couldn't reach it. Nothing ran";
 const NOT_SENT_HINT = 'The call never reached the tool server, so nothing was done. Trying again is safe.';
+const SIGN_IN_EXPIRED_ERROR = 'Sign-in expired. Nothing ran';
+const SIGN_IN_EXPIRED_HINT =
+    "The tool server turned this bot's sign-in away, so nothing was done. Do not call this tool again. Tell the person plainly " +
+    'that its sign-in expired and that the people who manage you can sign in again, then help with what you can without it.';
 const NO_ANSWER_ERROR = 'No answer. May have finished';
 const EMPTY_ANSWER_ERROR = 'Empty answer. May have finished';
 const MAY_HAVE_RUN_HINT =
@@ -414,7 +459,7 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
                 forgetUsed();
                 // Only "the link does not know this session" is answered by opening another; any other refusal (its key, an
                 // outage) means the call cannot go out now, and nothing was asked of the App
-                if (![400, 404, 410].includes(check.status)) return NOT_SENT;
+                if (![400, 404, 410].includes(check.status)) return { ...NOT_SENT, status: check.status };
                 cached = undefined;
             }
         }
@@ -425,11 +470,12 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
                 { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'workadventure-mcp-bot', version: '1.0.0', player_id: link.requesterKey || null } } },
                 undefined
             );
-            // The link refused to open a session (its key expired, say): nothing was asked of the App, so nothing is kept or sent
-            if (typeof opened.status === 'number' && opened.status >= 400) return NOT_SENT;
+            // The link refused to open a session (its key expired, say): nothing was asked of the App, so nothing is kept or sent. Its status
+            // goes with the answer, so a refused sign-in is told from an outage (#1819)
+            if (typeof opened.status === 'number' && opened.status >= 400) return { ...NOT_SENT, status: opened.status };
             sessionId = opened.sessionId || undefined;
             const told = await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId);
-            if (typeof told.status === 'number' && told.status >= 400) return NOT_SENT;
+            if (typeof told.status === 'number' && told.status >= 400) return { ...NOT_SENT, status: told.status };
             used = { sessionId, initializedAt: Date.now(), usedAt: Date.now() };
             mcpSessionInitCache.set(key, used);
         }
@@ -443,7 +489,7 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
             forgetUsed();
             // Not tried again: Orbit already counted this call id, and a second send would be refused as already made.
             // A session that went idle is caught before the call (see LINK_SESSION_IDLE_CHECK_MS), so this is only a race.
-            return { data: null, neverRan: answer.status === 404 && sessionId !== undefined, retryable: false };
+            return { data: null, neverRan: answer.status === 404 && sessionId !== undefined, retryable: false, status: answer.status };
         }
         const kept = mcpSessionInitCache.get(key);
         if (kept && kept === used) kept.usedAt = Date.now();
@@ -520,6 +566,8 @@ async function sendJsonRpc(
     // for spec compliance but skip caching — the generic session will never
     // be reused by a per-player tool call with a different cache key.
     let sessionId: string | undefined;
+    // A sign-in refused when opening the session (#1819): kept, as a server may then answer the request itself with another status
+    let initRefusal: number | undefined;
     const skipSessionCache = !playerUuid;
     if (method !== 'initialize') {
         const cachedSession = mcpSessionInitCache.get(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
@@ -586,8 +634,10 @@ async function sendJsonRpc(
                             initializedAt: Date.now(),
                         });
                     }
-                } catch {
+                } catch (initError: any) {
                     // Init timed out or failed: nothing is cached, so the next call initializes again
+                    const refused = axios.isAxiosError(initError) ? initError.response?.status : undefined;
+                    if (isSignInRefusal(refused)) initRefusal = refused;
                 } finally {
                     clearTimeout(initTimeoutId);
                 }
@@ -678,7 +728,10 @@ async function sendJsonRpc(
                 console.warn(`[MCPConnector] Request timed out after ${timeoutMs ?? REQUEST_TIMEOUT}ms for ${method}`);
             }
         } else if (axios.isAxiosError(error)) {
-            const status = error.response?.status;
+            // The server refused the sign-in when the session was opened and then turned the request itself away another way (a
+            // 400 for want of a session, say): it is the refusal that says what is wrong
+            const answered = error.response?.status;
+            const status = initRefusal !== undefined && !isSignInRefusal(answered) ? initRefusal : answered;
             const sanitizedUrl = (() => {
                 try {
                     const u = new URL(serverUrl);
@@ -689,9 +742,9 @@ async function sendJsonRpc(
             })();
             console.warn(
                 // No words from the answer or the error: they can quote what was asked of the tool (an email, a file)
-                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}`
+                `[MCPConnector] HTTP ${answered || 'error'} on ${method} at ${sanitizedUrl}`
             );
-            Sentry.captureException(sanitizedError(error, `MCPConnector HTTP ${status || 'error'} on ${method}`));
+            Sentry.captureException(sanitizedError(error, `MCPConnector HTTP ${answered || 'error'} on ${method}`));
             // Invalidate session cache on HTTP errors for non-initialize methods.
             // Handles server restarts, session expiry, and stale session reuse
             // after bot respawn — without this, a dead session is retried for up
@@ -700,7 +753,7 @@ async function sendJsonRpc(
                 mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
             }
             const neverRan = requestNeverRan(error, sessionId !== undefined);
-            return { data: null, neverRan, retryable: neverRan };
+            return { data: null, neverRan, retryable: neverRan, ...(typeof status === 'number' ? { status } : {}) };
         } else {
             // The error's words can quote what was asked of the tool: only the method and the kind of error are kept
             const kind = error instanceof Error ? error.name : 'Error';
@@ -791,12 +844,15 @@ export class MCPConnector {
      * saved to Orbit as if it were the whole one, so the tools of the pages that were not read can't look removed or
      * unconfirmed. The next read tries again.
      */
-    private static async listAllTools(server: McpServerConfig): Promise<{ tools: RawTool[]; cut: ToolListCut | null } | null> {
+    private static async listAllTools(
+        server: McpServerConfig,
+        failure?: { outcome?: JsonRpcOutcome }
+    ): Promise<{ tools: RawTool[]; cut: ToolListCut | null } | null> {
         const all: RawTool[] = [];
         let cursor: string | undefined;
         let moreLeft = false;
         for (let page = 0; page < MAX_TOOL_PAGES; page++) {
-            const response = await jsonRpcRequest(
+            const outcome = await sendJsonRpc(
                 server.serverUrl,
                 'tools/list',
                 cursor ? { cursor } : undefined,
@@ -808,7 +864,9 @@ export class MCPConnector {
                 undefined,
                 server.readyMade === true && server.orbitUrl ? { orbitUrl: server.orbitUrl, botId: server.botId, serverId: server.id, forOwner: true } : undefined
             );
+            const response = outcome.data;
             if (!response || !response.result || !Array.isArray(response.result.tools)) {
+                if (failure) failure.outcome = outcome;
                 return null;
             }
             for (const item of response.result.tools) {
@@ -862,10 +920,16 @@ export class MCPConnector {
     ): Promise<{
         tools: McpToolDefinition[];
         toolServerMap: Map<string, ToolServerEntry>;
+        /** Servers that are not working for the bot right now: a refused sign-in, or no answer (#1819). Left out when the
+         * server list could not be read: nothing is known then, and a card shown before stays as it is. */
+        issues?: ToolIssue[];
     }> {
         const toolServerMap = new Map<string, ToolServerEntry>();
+        const orbit = { adminApiUrl, adminApiToken };
+
         // Fetch MCP server configs from admin API
         let servers: McpServerConfig[] = [];
+        let listFailed = false;
         const loading = this.loadServers(botId, adminApiUrl, adminApiToken);
         // Asked at the same time as the servers (after their request is sent), so Apps with a key add no waiting of their own
         const keyApps = loadKeyApps(botId, adminApiUrl, botServiceToken);
@@ -883,9 +947,11 @@ export class MCPConnector {
                 Sentry.captureException(
                     error instanceof Error ? error : new Error(String(error))
                 );
+                listFailed = true;
             }
-            // Apps with a key come from another list: this one failing does not take them away
-            return this.withKeyApps(keyApps, { tools: [], toolServerMap });
+            // Apps with a key come from another list: this one failing does not take them away. When the list could not be read,
+            // nothing is known of the servers' state (no `issues`), so a card shown before stays as it is (#1819).
+            return this.withKeyApps(keyApps, { tools: [], toolServerMap, ...(listFailed ? {} : { issues: [] as ToolIssue[] }) });
         }
 
         // Query each enabled server and collect tools
@@ -898,6 +964,7 @@ export class MCPConnector {
         // The entry a tool of a server has in the map
         function entryFor(tool: McpToolDefinition, server: McpServerConfig, title: string | undefined, raw: RawTool | undefined): ToolServerEntry {
             return {
+                botId,
                 serverId: server.id,
                 serverUrl: server.serverUrl,
                 authType: server.authType,
@@ -933,9 +1000,18 @@ export class MCPConnector {
             server: McpServerConfig
         ): Promise<void> {
             const cacheKey = `${botId}:${server.id}`;
+            // A server that refused the sign-in, or did not answer, is left alone until its time is up (#1819); a new
+            // sign-in or key is tried at once
+            if (MCPConnector.health.shouldSkip(botId, server)) {
+                toolListCache.delete(cacheKey);
+                return;
+            }
             const cached = toolListCache.get(cacheKey);
 
             if (cached && Date.now() < cached.cachedAt + CACHE_TTL) {
+                // A list in the cache was read from a server that answered: a mark taken from Orbit's list while its
+                // `ok` was still on the way is old
+                MCPConnector.health.ok(botId, server.id);
                 const rawByName = new Map(cached.raw.map((tool) => [tool.name, tool]));
                 for (const tool of cached.tools) {
                     addUniqueTool(tool, server, cached.titles[tool.function.name], rawByName.get(tool.function.name));
@@ -943,34 +1019,58 @@ export class MCPConnector {
                 return;
             }
 
-            const read = await MCPConnector.listAllTools(server);
+            const failure: { outcome?: JsonRpcOutcome } = {};
+            // The credentials this read is made with: a mark made with newer ones is not undone by it
+            const credentials = credentialsKey(server);
+            const read = await MCPConnector.listAllTools(server, failure);
 
             if (read) {
                 const raw = read.tools;
                 const { tools: toolDefs, titles } = MCPConnector.toDefinitions(raw);
+                const rawByName = new Map(raw.map((tool) => [tool.name, tool]));
+                if (MCPConnector.health.isStale(botId, server.id, credentials)) {
+                    // Newer credentials failed while this read was on its way: this reply has the list it read, but neither
+                    // the mark nor the cache is touched by it
+                    for (const toolDef of toolDefs) addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
+                    return;
+                }
+                // It answers: any mark it had is gone, and Orbit is told
+                const told =
+                    MCPConnector.health.ok(botId, server.id, credentials) || server.signInLostAt || server.noAnswerAt
+                        ? reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString())
+                        : undefined;
 
                 // Cache the result
-                toolListCache.set(cacheKey, {
+                const entry = {
                     tools: toolDefs,
                     titles,
                     raw,
                     cachedAt: Date.now(),
                     serverId: server.id,
-                });
+                };
+                toolListCache.set(cacheKey, entry);
 
-                const rawByName = new Map(raw.map((tool) => [tool.name, tool]));
+                // Orbit did not hear it: forget the list, so the next read goes to the server again and tells Orbit again
+                // (Orbit's own mark brings it back). Only this list: one that replaced it since stays.
+                void told?.then((ok) => {
+                    if (!ok && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
+                });
                 for (const toolDef of toolDefs) {
                     addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
                 }
-                const cachedAt = toolListCache.get(cacheKey)?.cachedAt;
                 void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest, read.cut).then((outcome) => {
                     // Orbit did not get the list: forget it here too, so the next read tries to save it again (not in an hour)
-                    if (outcome.result === 'skipped' && toolListCache.get(cacheKey)?.cachedAt === cachedAt) toolListCache.delete(cacheKey);
+                    if (outcome.result === 'skipped' && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
                 });
             } else {
                 console.warn(
                     `[MCPConnector] Server ${server.name} (${server.id}) returned no tools or invalid response`
                 );
+                const state = failureState(failure.outcome);
+                if (MCPConnector.health.isStale(botId, server.id, credentials)) return;
+                if (state) MCPConnector.markFailed(botId, server, state, orbit, failure.outcome?.status);
+                // Any other failure (a 404, a 429, a refused connection) leaves the mark as it is, and its wait starts over
+                else MCPConnector.health.touch(botId, server.id);
             }
         }
 
@@ -986,14 +1086,15 @@ export class MCPConnector {
             }
         }
 
-        return this.withKeyApps(keyApps, { tools: allTools, toolServerMap });
+        const enabledIds = new Set(enabledServers.map((server) => server.id));
+        return this.withKeyApps(keyApps, { tools: allTools, toolServerMap, issues: MCPConnector.health.issuesFor(botId, enabledIds) });
     }
 
     /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner. */
-    private static async withKeyApps(
+    private static async withKeyApps<T extends { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }>(
         keyApps: Promise<KeyApp[]>,
-        found: { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }
-    ): Promise<{ tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }> {
+        found: T
+    ): Promise<T> {
         const keyed = keyAppTools(await keyApps);
         for (const tool of keyed.tools) {
             const name = tool.function.name;
@@ -1003,6 +1104,45 @@ export class MCPConnector {
             found.toolServerMap.set(name, entry);
         }
         return found;
+    }
+
+    /** What the bot server has seen of its tool servers: refused sign-ins and servers that did not answer (#1819). */
+    static health = new ToolHealth();
+
+    /** A server was tried and failed this way: remember it, and tell Orbit when the state is new. */
+    private static markFailed(
+        botId: string,
+        server: SeenServer,
+        state: ToolIssueState,
+        orbit: { adminApiUrl: string; adminApiToken: string },
+        status?: number
+    ): void {
+        if (!this.health.fail(botId, server, state)) return;
+        const since = this.health.issuesFor(botId, new Set([server.id])).find((issue) => issue.serverId === server.id)?.since;
+        // In the background: the reply does not wait for Orbit. A report that fails is sent again at the next failure.
+        // Acknowledged for this observation only: a report that finishes after the state moved on says nothing of the new one
+        const observation = this.health.observation(botId, server.id);
+        const sent = reportToolState(orbit, botId, server.id, state, since ?? new Date().toISOString(), status).then((told) => {
+            if (told) this.health.reported(botId, server.id, observation);
+        });
+        this.health.track(botId, server.id, sent);
+    }
+
+    /** A call came back refused while a reply was running (the sign-in ran out since the list was read): same as at the list. */
+    static noteRefused(
+        entry: Pick<ToolServerEntry, 'botId' | 'serverId' | 'serverName' | 'authType' | 'authConfig' | 'headers' | 'connectionId' | 'readyMade'>,
+        orbit: { adminApiUrl: string; adminApiToken: string },
+        status: number
+    ): void {
+        if (!entry.botId) return;
+        toolListCache.delete(`${entry.botId}:${entry.serverId}`);
+        this.markFailed(
+            entry.botId,
+            { id: entry.serverId, name: entry.serverName ?? 'This tool', authType: entry.authType, authConfig: entry.authConfig, headers: entry.headers, connectionId: entry.connectionId, readyMade: entry.readyMade },
+            'expired',
+            orbit,
+            status
+        );
     }
 
     /** Saves one server's list to Orbit in the background. A failure is logged; Orbit keeps what it had. */
@@ -1036,14 +1176,39 @@ export class MCPConnector {
     ): Promise<{ read: false; reason: string } | { read: true; tools: number; saved: SyncResult } | null> {
         const server = (await this.loadServers(botId, adminApiUrl, adminApiToken)).find((candidate) => candidate.id === serverId);
         if (!server) return null;
-        const read = await this.listAllTools(server);
-        if (!read) return { read: false, reason: 'The server did not answer with a list of tools' };
+        const failure: { outcome?: JsonRpcOutcome } = {};
+        const credentials = credentialsKey(server);
+        this.health.use(botId, server);
+        const read = await this.listAllTools(server, failure);
+        const orbit = { adminApiUrl, adminApiToken };
+        if (!read) {
+            // Test server finds out the same as a reply does (#1819)
+            const state = failureState(failure.outcome);
+            if (state && !this.health.isStale(botId, server.id, credentials)) this.markFailed(botId, server, state, orbit, failure.outcome?.status);
+            return { read: false, reason: 'The server did not answer with a list of tools' };
+        }
+        // Newer credentials were tried while this read was on its way: it says nothing about the server as it is now. It
+        // clears no mark, tells Orbit nothing of the server answering, keeps no list here and saves none to Orbit.
+        if (this.health.isStale(botId, server.id, credentials)) {
+            return { read: true, tools: read.tools.length, saved: { result: 'skipped', reason: 'Newer credentials were tried while this was read' } };
+        }
+        // It answers: any mark it had is gone, and Orbit is told
+        const told =
+            this.health.ok(botId, server.id, credentials) || server.signInLostAt || server.noAnswerAt
+                ? reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString())
+                : undefined;
         const raw = read.tools;
         const { tools, titles } = this.toDefinitions(raw);
-        toolListCache.set(`${botId}:${server.id}`, { tools, titles, raw, cachedAt: Date.now(), serverId: server.id });
+        const cacheKey = `${botId}:${server.id}`;
+        const entry = { tools, titles, raw, cachedAt: Date.now(), serverId: server.id };
+        toolListCache.set(cacheKey, entry);
+        // Orbit did not hear it: the next read goes to the server again and tells Orbit again (this list only: one that replaced it stays)
+        void told?.then((ok) => {
+            if (!ok && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
+        });
         const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest, read.cut);
         // Orbit did not get it: the next read tries to save it again
-        if (saved.result === 'skipped') toolListCache.delete(`${botId}:${server.id}`);
+        if (saved.result === 'skipped' && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
         return { read: true, tools: raw.length, saved };
     }
 
@@ -1108,6 +1273,15 @@ export class MCPConnector {
                 );
                 response = attempt.data;
             }
+        }
+
+        // The tool server turned the sign-in away (401 or 403): nothing ran, and trying again is no use (#1819)
+        if (!response && isSignInRefusal(attempt.status)) {
+            const refusal = { error: SIGN_IN_EXPIRED_ERROR, outcome: 'failed' satisfies ToolCallOutcome, hint: SIGN_IN_EXPIRED_HINT };
+            // Only a 401 says the whole sign-in is gone. A 403 on one call can be a permission for that one thing or a firewall:
+            // the call is told it did not run, but the server is not marked or kept from its other tools because of it.
+            if (attempt.status === 401) signInRefusals.set(refusal, 401);
+            return refusal;
         }
 
         if (!response) {
@@ -1180,6 +1354,8 @@ export class MCPConnector {
      * Useful on bot respawn.
      */
     static clearCache(botId?: string): void {
+        // What was seen of the bot's tool servers goes too: Orbit's marks bring back whatever still holds (#1819)
+        this.health.forgetBot(botId);
         if (botId) {
             const prefix = `${botId}:`;
             for (const key of toolListCache.keys()) {
