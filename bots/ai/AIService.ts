@@ -727,15 +727,17 @@ export class AIService {
             if (!answer && forOthers && forOthers.asker !== this.ownerRefOf(botId) && !orbitServedThemAsOwner) return { resting: true, line: KEY_NOT_LENT_LINE };
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
-                // The Brick moved rooms (or changed hands) while Orbit was answering: that answer serves this one reply only
-                if ((this.botCredentialVersion.get(botId) ?? 0) === versionAtAsk) {
+                // The Brick moved rooms (or changed hands) while Orbit was answering: that answer serves this one reply only, and
+                // sets nothing the next replies read (the cache, the limits, the history window)
+                const current = (this.botCredentialVersion.get(botId) ?? 0) === versionAtAsk;
+                if (current) {
                     this.botCredentialCache.set(cacheKey, {
                         resolved,
                         expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
                         staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
                     });
                 }
-                if (!resolved.resting && resolved.config.limits) {
+                if (current && !resolved.resting && resolved.config.limits) {
                     this.botLimits.set(botId, resolved.config.limits);
                     if (this.botLimits.get(botId)?.files === true) this.orbitKeepsFiles = true;
                     this.conversationMemory?.setHistoryWindow?.(botId, resolved.config.limits.messages);
@@ -4093,7 +4095,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     for (const call of chunk.toolCalls ?? []) {
                         const known = call.id ? calls.get(call.id) : Array.from(calls.values()).pop();
                         if (known) {
-                            if (call.arguments && call.arguments !== '{}') known.arguments += call.arguments;
+                            // Every continuation is part of the arguments, a `{}` among them; only the placeholder a call is opened with is skipped
+                            if (call.arguments) known.arguments += call.arguments;
                             if (call.name) known.name = call.name;
                         } else if (call.id) {
                             calls.set(call.id, { id: call.id, name: call.name || '', arguments: call.arguments && call.arguments !== '{}' ? call.arguments : '' });

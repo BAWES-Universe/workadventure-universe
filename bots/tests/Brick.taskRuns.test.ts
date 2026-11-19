@@ -641,6 +641,21 @@ describe('each model call of a run is on the books, one row each, under the runâ
         expect(tracked.map((args) => args[2].tokensUsed)).toEqual([100, 150]);
     });
 
+    it('keeps a `{}` that arrives in the middle of a call\'s streamed arguments, and skips only the placeholder it opens with', async () => {
+        const { ai } = service([
+            [
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '{}' }] },
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: '', arguments: '{"result":"tell_them","extra":' }] },
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: '', arguments: '{}' }] },
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: '', arguments: '}' }] },
+                done(100),
+            ],
+        ]);
+        const runTool = vi.fn(async (_name: string, _args?: Record<string, unknown>) => '{"ok":true}');
+        await ai.runBrickTask({ ...base, permit: async () => true, runTool });
+        expect(runTool.mock.calls[0][1]).toEqual({ result: 'tell_them', extra: {} });
+    });
+
     it('does not go on when the finish was refused: the model is told and calls it again', async () => {
         const { ai } = service([
             [{ content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '{"result":"nothing_new"}' }] }, done(100)],
