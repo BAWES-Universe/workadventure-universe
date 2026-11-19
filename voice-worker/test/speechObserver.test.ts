@@ -512,6 +512,36 @@ describe('by the clock', () => {
         expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0 });
     });
 
+    it('turns an obsolete frame away before it changes the person\'s path: a late lane frame after the room took over is not counted as a lane baseline', async () => {
+        const o = observing('at once');
+        await o.observer.ready();
+        const frame = (epoch: number, path: 'lane' | 'room') => o.session.frame({ participantId: 'p1', epoch, pcm16k: new Int16Array(512).fill(5), droppedMs: 0 }, path);
+        // The room (epoch 2) is the person's path now
+        frame(2, 'room');
+        await settle();
+        // A delayed frame of the old lane (epoch 1) arrives: it is obsolete
+        frame(1, 'lane');
+        o.session.baseline('p1', false);
+        expect(o.counters.get('observer_stale_dropped')).toBe(1);
+        expect(o.counters.get('observer_baseline_room')).toBe(1);
+        expect(o.counters.get('observer_baseline_lane')).toBe(0);
+    });
+
+    it('gives a newly heard person a measurement mark when the places are full of people whose streams have ended', async () => {
+        const o = observing('at once', { maxStreams: 3 });
+        await o.observer.ready();
+        for (const id of ['p1', 'p2', 'p3']) o.feed(32, id, 1, 512);
+        await settle();
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        // A fourth person, once all the places were used by people no longer heard: their baseline is counted
+        o.feed(32, 'p4', 1, 512);
+        await settle();
+        o.session.baseline('p4', false);
+        expect(o.counters.get('observer_baseline')).toBe(1);
+        expect(o.counters.get('observer_streams_refused')).toBe(0);
+    });
+
     it('audio left waiting goes by the clock even if no more ever arrives: a held-up line, and a last bit shorter than a window', async () => {
         const o = observing('held');
         await o.observer.ready();

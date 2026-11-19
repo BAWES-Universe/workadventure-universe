@@ -580,6 +580,14 @@ export class SpeechObserver {
         const mark = owner.marks.get(frame.participantId);
         // The newest path this person was on before this piece: kept after their stream ended, so an older one can never open a new stream
         const newestBefore = mark?.epoch;
+        const key = `${owner.id}\n${frame.participantId}`;
+        let stream = this.streams.get(key);
+        // An obsolete frame is turned away before it changes anything: a delayed lane frame must not move the person's path (and so what
+        // the next baseline is counted against) once the room has a newer one
+        if ((stream && frame.epoch < stream.epoch) || (!stream && newestBefore !== undefined && frame.epoch < newestBefore)) {
+            c.inc('observer_stale_dropped');
+            return;
+        }
         if (mark) {
             mark.path = path;
             mark.epoch = Math.max(mark.epoch, frame.epoch);
@@ -597,12 +605,6 @@ export class SpeechObserver {
                 }
             }
             if (owner.marks.size < this.maxStreams) owner.marks.set(frame.participantId, { path, epoch: frame.epoch, firingAt: -Infinity, baselineAt: -Infinity });
-        }
-        const key = `${owner.id}\n${frame.participantId}`;
-        let stream = this.streams.get(key);
-        if ((stream && frame.epoch < stream.epoch) || (!stream && newestBefore !== undefined && frame.epoch < newestBefore)) {
-            c.inc('observer_stale_dropped');
-            return;
         }
         // A newer path, or audio known to be missing: what was heard before must not colour what comes next
         if (stream && frame.epoch > stream.epoch) {
