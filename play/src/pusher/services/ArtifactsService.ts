@@ -8,7 +8,8 @@ import { ADMIN_API_TOKEN, ADMIN_API_URL } from "../enums/EnvironmentVariable";
  * `code` is Orbit's error code (not_found, version_not_found...); `status` is the HTTP status the browser gets.
  */
 export class ArtifactsError extends Error {
-    constructor(public readonly code: string, public readonly status: number) {
+    /** `unsure`: a start's refusal that may still have made an order (Orbit says so), so the buyer can be offered Check payment */
+    constructor(public readonly code: string, public readonly status: number, public readonly unsure = false) {
         super(code);
         this.name = "ArtifactsError";
     }
@@ -157,7 +158,11 @@ const VersionList = z.object({ versions: z.array(VersionView) });
 const VersionCode = z.object({ version: VersionView, content: z.string() });
 export type ArtifactVersionCode = z.infer<typeof VersionCode>;
 
-const OrbitErrorBody = z.object({ error: z.string() });
+const OrbitErrorBody = z.object({
+    error: z.string(),
+    // Only a real `true` counts (see `call`); any other value never costs the error its code
+    unsure: z.unknown().optional(),
+});
 
 /**
  * Orbit cannot keep files private as it is set up (it does not know its own address). Not a breakdown: the browser is
@@ -277,7 +282,11 @@ export class ArtifactsService {
             if (isAxiosError(e) && e.response) {
                 const error = OrbitErrorBody.safeParse(e.response.data);
                 if (e.response.status >= 400 && e.response.status < 500) {
-                    throw new ArtifactsError(error.success ? error.data.error : "refused", e.response.status);
+                    throw new ArtifactsError(
+                        error.success ? error.data.error : "refused",
+                        e.response.status,
+                        error.success && error.data.unsure === true
+                    );
                 }
                 if (error.success && error.data.error === PRIVATE_FILES_OFF) {
                     throw new ArtifactsError(PRIVATE_FILES_OFF, e.response.status);

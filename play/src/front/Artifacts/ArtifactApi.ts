@@ -69,7 +69,8 @@ export interface ChatArtifactPage {
 
 /** An artifact request the game's server refused or could not make. */
 export class ArtifactRequestError extends Error {
-    constructor(public readonly status: number, public readonly code: string) {
+    /** `unsure`: a payment start that was refused may still have made an order; Check payment stays offered for that wish */
+    constructor(public readonly status: number, public readonly code: string, public readonly unsure = false) {
         super(code);
         this.name = "ArtifactRequestError";
     }
@@ -92,8 +93,14 @@ async function post<T>(path: string, body: Record<string, unknown>, signal?: Abo
         throw new ArtifactRequestError(0, "offline");
     }
     if (!response.ok) {
-        const answer = (await response.json().catch(() => undefined)) as { error?: unknown } | undefined;
-        throw new ArtifactRequestError(response.status, typeof answer?.error === "string" ? answer.error : "failed");
+        const answer = (await response.json().catch(() => undefined)) as
+            | { error?: unknown; unsure?: unknown }
+            | undefined;
+        throw new ArtifactRequestError(
+            response.status,
+            typeof answer?.error === "string" ? answer.error : "failed",
+            answer?.unsure === true
+        );
     }
     return (await response.json()) as T;
 }

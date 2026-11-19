@@ -77,6 +77,22 @@ describe("ArtifactsService", () => {
         await expect(service.pay(ID, { start: true }, viewer)).rejects.toEqual(new ArtifactsError("limit", 429));
     });
 
+    it("keeps Orbit's 'unsure' on a start's 409 refusal (an order may have been made), and nothing else about a plain refusal", async () => {
+        const http = { put: vi.fn(), post: vi.fn() };
+        const service = new ArtifactsService("http://orbit", "token", http);
+        http.post.mockRejectedValueOnce(orbitError(409, { error: "unavailable", unsure: true }));
+        await expect(service.pay(ID, { start: true, intentId: "w1234567890" }, viewer)).rejects.toEqual(
+            new ArtifactsError("unavailable", 409, true)
+        );
+        http.post.mockRejectedValueOnce(orbitError(409, { error: "unavailable" }));
+        const clear = await service.pay(ID, { start: true, intentId: "w1234567890" }, viewer).catch((e) => e);
+        expect(clear).toMatchObject({ code: "unavailable", status: 409, unsure: false });
+        // Only a real true counts
+        http.post.mockRejectedValueOnce(orbitError(409, { error: "unavailable", unsure: "yes" }));
+        const odd = await service.pay(ID, { start: true, intentId: "w1234567890" }, viewer).catch((e) => e);
+        expect(odd).toMatchObject({ code: "unavailable", status: 409, unsure: false });
+    });
+
     it("sends a wish, a check, a restore and a guest's code to Orbit, and keeps what a window needs of the answer (pollAfterMs, none, paidAt)", async () => {
         const http = { put: vi.fn(), post: vi.fn() };
         const service = new ArtifactsService("https://orbit.test", "secret", http);

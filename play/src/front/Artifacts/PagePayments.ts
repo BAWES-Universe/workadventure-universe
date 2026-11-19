@@ -501,7 +501,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (destroyed) return;
                 const limit = error instanceof ArtifactRequestError && (error.code === "limit" || error.status === 429);
                 // No answer ever came (not even after the same wish was sent again): an order may or may not have been made, and the wish can be asked about
-                const lost = gotNoAnswer(error);
+                // Orbit says "unsure" when it refused a start that may still have made an order: Check payment stays; without it the refusal is clear
+                const lost = gotNoAnswer(error) || (error instanceof ArtifactRequestError && error.unsure);
                 end(
                     { problem: limit ? "limit" : "unavailable", ...(lost ? { canCheck: true } : {}) },
                     limit ? "limit" : "unavailable",

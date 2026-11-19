@@ -92,7 +92,7 @@ export function viewerOf(
 
 function sendError(res: Response, error: unknown, what: string): void {
     if (error instanceof ArtifactsError) {
-        res.status(error.status).json({ error: error.code });
+        res.status(error.status).json({ error: error.code, ...(error.unsure ? { unsure: true } : {}) });
         return;
     }
     // Never the artifact or the person: only that it broke

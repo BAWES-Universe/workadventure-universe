@@ -6,7 +6,7 @@ import { pagePayments, safeCheckout } from "./PagePayments";
 
 vi.mock("./ArtifactApi", () => {
     class ArtifactRequestError extends Error {
-        constructor(public readonly status: number, public readonly code: string) {
+        constructor(public readonly status: number, public readonly code: string, public readonly unsure = false) {
             super(code);
         }
     }
@@ -212,6 +212,19 @@ describe("a page that takes payments, in the game's window", () => {
         expect(close).toHaveBeenCalled();
         expect(get(payments.line).problem).toBe("unavailable");
         expect(told()).toEqual(["unavailable"]);
+    });
+
+    it("keeps Check payment for a refused start only when Orbit says an order may have been made ('unsure'); a clear refusal offers none", async () => {
+        const unsure = make(vi.fn().mockRejectedValueOnce(new ArtifactRequestError(409, "unavailable", true)));
+        ask(unsure);
+        await flush();
+        expect(get(unsure.line)).toMatchObject({ problem: "unavailable", canCheck: true });
+        unsure.destroy();
+        const clear = make(vi.fn().mockRejectedValueOnce(new ArtifactRequestError(409, "unavailable")));
+        ask(clear);
+        await flush();
+        expect(get(clear.line)).toMatchObject({ problem: "unavailable", canCheck: false });
+        clear.destroy();
     });
 
     it("says it is too many tries on the server's own rate limit (429), however it words it", async () => {
