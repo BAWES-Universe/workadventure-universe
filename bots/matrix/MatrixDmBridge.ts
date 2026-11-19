@@ -1749,11 +1749,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const sendSignIn = async (): Promise<void> => {
                 if (!reply?.toolSignIn) return;
                 const notice = toolSignInContent(reply.toolSignIn, await this.botName(botId, config));
-                if (!this.stillTheirs(event.room_id, botUserId, person.matrixUserId)) {
+                // Said like anything else a Brick says: nothing goes once its purge has begun, and a purge waits for a send under way
+                if (this.saysNothing(botId) || !this.stillTheirs(event.room_id, botUserId, person.matrixUserId)) {
                     reply.toolSignInDelivery?.(false);
                     return;
                 }
-                const sent = await this.client.sendMessage(botUserId, event.room_id, notice).then(
+                const sent = await out.sendMessage(botUserId, event.room_id, notice).then(
                     () => true,
                     (error) => {
                         console.warn(`[MatrixDmBridge] Could not send the Reconnect card from bot ${botId}:`, error?.message ?? error);
