@@ -1,0 +1,1081 @@
+run,lane,kind,counted,clip,startAt,finals,split,eosToTurnMs,turnToFirstAudioMs,sayToFirstAudioMs,stopMs,staleMs,playedMs,interrupted,droppedAudioMs,timeout,note
+pipecat-local-N1-r1,0,normal,false,en_ls_halt,1793479308929.028,1,false,318.097,362.503,61.503,,,,,0,false,
+pipecat-local-N1-r1,0,normal,false,en_ls_power,1793479315766.299,1,false,345.865,362.383,62.383,,,,,0,false,
+pipecat-local-N1-r1,0,talkover,true,en_ls_power,1793479322240.268,1,false,304.306,344.616,44.616,377.21,0,2180,true,0,false,
+pipecat-local-N1-r1,0,normal,true,en_ls_halt,1793479328714.134,1,false,333.545,347.633,47.633,,,,,0,false,
+pipecat-local-N1-r1,0,normal,true,en_ls_halt,1793479335550.927,1,false,314.961,346.432,46.432,,,,,0,false,
+pipecat-local-N1-r1,0,normal,true,en_ls_power,1793479342388.471,1,false,308.175,360.558,60.558,,,,,0,false,
+pipecat-local-N1-r1,0,normal,true,en_ls_power,1793479348863.814,1,false,322.082,347.21,47.21,,,,,0,false,
+pipecat-local-N1-r1,0,normal,true,en_ls_halt,1793479355338.279,1,false,311.219,349.025,48.025,,,,,0,false,
+pipecat-local-N1-r1,0,normal,true,en_ls_power,1793479362175.225,1,false,326.703,362.605,62.605,,,,,0,false,
+pipecat-local-N1-r1,0,normal,true,en_ls_halt,1793479368649.723,1,false,319.756,361.59,61.59,,,,,0,false,
+pipecat-local-N1-r1,0,normal,true,en_ls_halt,1793479375487.734,1,false,326.854,354.524,54.524,,,,,0,false,
+pipecat-local-N5-r1,4,normal,false,en_ls_power,1793479390396.466,1,false,340.451,406.611,105.611,,,,,0,false,
+pipecat-local-N5-r1,0,normal,false,en_ls_experience,1793479391130.199,1,false,408.502,373.586,73.586,,,,,0,false,
+pipecat-local-N5-r1,1,normal,false,en_ls_halt,1793479390726.116,1,false,492.376,359.295,59.295,,,,,0,false,
+pipecat-local-N5-r1,3,normal,false,en_ls_halt,1793479390806.63,1,false,454.656,364.082,63.082,,,,,0,false,
+pipecat-local-N5-r1,2,normal,false,en_ls_halt,1793479390885.135,1,false,433.044,357.594,57.594,,,,,0,false,
+pipecat-local-N5-r1,0,normal,false,en_ls_power,1793479396066.975,1,false,379.485,353.992,53.992,,,,,0,false,
+pipecat-local-N5-r1,4,normal,false,en_ls_power,1793479396871.415,1,false,353.44,352.555,52.555,,,,,0,false,
+pipecat-local-N5-r1,1,normal,false,en_ls_halt,1793479397563.423,1,false,359.63,349.711,48.711,,,,,0,false,
+pipecat-local-N5-r1,2,normal,false,en_ls_halt,1793479397721.68,1,false,421.724,369.081,69.081,,,,,0,false,
+pipecat-local-N5-r1,3,talkover,false,en_ls_halt,1793479397644.009,1,false,441.769,358.395,58.395,385.097,0,2180,true,0,false,
+pipecat-local-N5-r1,4,normal,true,en_ls_experience,1793479403346.97,1,false,406.047,355.25,55.25,,,,,0,false,
+pipecat-local-N5-r1,0,normal,false,en_ls_halt,1793479402541.885,1,false,387.226,361.75,61.75,,,,,0,false,
+pipecat-local-N5-r1,3,normal,true,en_ls_experience,1793479404481.57,1,false,389.598,402.412,102.412,,,,,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_power,1793479404400.46,1,false,384.443,353.362,53.362,,,,,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_power,1793479404558.49,1,false,367.646,368.622,68.622,,,,,0,false,
+pipecat-local-N5-r1,4,normal,true,en_ls_experience,1793479408284.167,1,false,381.795,362.29,62.29,,,,,0,false,
+pipecat-local-N5-r1,3,normal,true,en_ls_power,1793479409419.024,1,false,365.317,360.838,60.838,,,,,0,false,
+pipecat-local-N5-r1,0,talkover,true,en_ls_experience,1793479409378.404,1,false,328.083,361.941,61.941,324.421,0,1960,true,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_power,1793479410875.022,1,false,328.854,350.612,49.612,,,,,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_power,1793479411033.747,1,false,379.146,355.395,55.395,,,,,0,false,
+pipecat-local-N5-r1,4,talkover,true,en_ls_experience,1793479413221.791,1,false,329.218,387.907,86.907,316.695,0,1920,true,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_experience,1793479414750.442,1,false,326.091,363.336,62.336,,,,,0,false,
+pipecat-local-N5-r1,3,normal,true,en_ls_experience,1793479415893.366,1,false,397.875,363.939,62.939,,,,,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_power,1793479417350.031,1,false,379.923,358.045,56.045,,,,,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_power,1793479417508.511,1,false,407.172,367.23,67.23,,,,,0,false,
+pipecat-local-N5-r1,4,normal,true,en_ls_halt,1793479418544.146,1,false,410.697,347.112,47.112,,,,,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_halt,1793479419687.848,1,false,393.665,353.783,53.783,,,,,0,false,
+pipecat-local-N5-r1,3,normal,true,en_ls_power,1793479420830.402,1,false,352.47,375.398,75.398,,,,,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_halt,1793479423824.206,1,false,377.827,353.453,51.453,,,,,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_halt,1793479423983.385,1,false,399.69,380.724,80.724,,,,,0,false,
+pipecat-local-N5-r1,4,normal,true,en_ls_power,1793479425381.907,1,false,411.376,353.957,52.957,,,,,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_experience,1793479426524.162,1,false,340.28,371.727,70.727,,,,,0,false,
+pipecat-local-N5-r1,3,normal,true,en_ls_power,1793479427305.435,1,false,335.122,350.763,50.763,,,,,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_experience,1793479430660.302,1,false,339.63,354.813,55.813,,,,,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_power,1793479430820.989,1,false,415.997,360.564,60.564,,,,,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_power,1793479431461.77,1,false,361.437,399.914,97.914,,,,,0,false,
+pipecat-local-N5-r1,4,normal,true,en_ls_power,1793479431856.812,1,false,363.142,360.812,60.812,,,,,0,false,
+pipecat-local-N5-r1,3,talkover,true,en_ls_halt,1793479433780.717,1,false,333.355,365.98,65.98,383.818,0,2160,true,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_power,1793479435597.742,1,false,367.372,363.535,62.535,,,,,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_halt,1793479437295.38,1,false,372.56,353.688,52.688,,,,,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_halt,1793479437936.219,1,false,351.411,354.213,54.213,,,,,0,false,
+pipecat-local-N5-r1,4,talkover,true,en_ls_power,1793479438331.424,1,false,329.973,354.833,54.833,372.347,0,2180,true,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_power,1793479442071.975,1,false,364.426,352.208,52.208,,,,,0,false,
+pipecat-local-N5-r1,3,talkover,true,en_ls_halt,1793479440617.349,1,false,390.09,346.861,45.861,363.474,0,2140,true,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_halt,1793479444132.093,1,false,374.167,357.731,56.731,,,,,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_halt,1793479444773.687,1,false,427.773,355.828,54.828,,,,,0,false,
+pipecat-local-N5-r1,4,talkover,true,en_ls_halt,1793479444806.346,1,false,359.343,360.941,59.941,388.142,0,2180,true,0,false,
+pipecat-local-N5-r1,3,normal,true,en_ls_halt,1793479447454.812,1,false,371.241,349.334,49.334,,,,,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_experience,1793479448546.556,1,false,338.194,354.206,54.206,,,,,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_power,1793479450969.855,1,false,333.15,380.931,80.931,,,,,0,false,
+pipecat-local-N5-r1,4,normal,true,en_ls_experience,1793479451643.86,1,false,405.096,390.22,90.22,,,,,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_power,1793479451611.897,1,false,331.372,364.378,63.378,,,,,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_halt,1793479453484.765,1,false,363.633,347.284,47.284,,,,,0,false,
+pipecat-local-N5-r1,3,normal,true,en_ls_halt,1793479454291.464,1,false,410.234,367.495,67.495,,,,,0,false,
+pipecat-local-N5-r1,2,normal,true,en_ls_power,1793479457444.163,1,false,348.753,392.992,90.992,,,,,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_experience,1793479458086.418,1,false,358.446,352.124,52.124,,,,,0,false,
+pipecat-local-N5-r1,4,talkover,true,en_ls_power,1793479456581.068,1,false,358.901,343.863,43.863,391.474,0,2180,true,0,false,
+pipecat-local-N5-r1,3,normal,true,en_ls_experience,1793479461128.69,1,false,370.635,352.19,52.19,,,,,0,false,
+pipecat-local-N5-r1,1,normal,true,en_ls_halt,1793479460322.14,1,false,459.277,351.067,51.067,,,,,0,false,
+pipecat-local-N5-r1,0,normal,true,en_ls_power,1793479463024.022,1,false,340.248,353.668,53.668,,,,,0,false,
+pipecat-local-N5-r1,4,normal,true,en_ls_halt,1793479463056.789,1,false,375.111,368.208,67.208,,,,,0,false,
+pipecat-local-N10-r1,4,normal,false,en_ls_experience,1793479475285.682,1,false,522.798,445.241,145.241,,,,,0,false,
+pipecat-local-N10-r1,5,normal,false,en_ls_experience,1793479476208.128,1,false,467.671,608.283,308.283,,,,,0,false,
+pipecat-local-N10-r1,7,normal,false,en_ls_power,1793479476076.33,1,false,801.625,464.321,164.321,,,,,0,false,
+pipecat-local-N10-r1,3,normal,false,en_ls_power,1793479477050.041,1,false,575.929,486.566,186.566,,,,,0,false,
+pipecat-local-N10-r1,6,talkover,false,en_ls_experience,1793479476290.073,1,false,714.768,484.104,184.104,563.187,0,1780,true,0,false,
+pipecat-local-N10-r1,0,normal,false,en_ls_halt,1793479477379.66,1,false,787.672,464.199,164.199,,,,,0,false,
+pipecat-local-N10-r1,2,normal,false,en_ls_halt,1793479477459.022,1,false,763.328,458.115,158.115,,,,,0,false,
+pipecat-local-N10-r1,8,normal,false,en_ls_power,1793479477827.511,1,false,879.416,457.488,157.488,,,,,0,false,
+pipecat-local-N10-r1,9,normal,false,en_ls_halt,1793479477399.384,1,false,1013.734,451.208,151.208,,,,,0,false,
+pipecat-local-N10-r1,1,normal,false,en_ls_halt,1793479477538.456,1,false,912.8,449.691,149.691,,,,,0,false,
+pipecat-local-N10-r1,4,normal,false,en_ls_experience,1793479480277.192,1,false,1042.222,456.879,155.879,,,,,0,false,
+pipecat-local-N10-r1,5,normal,false,en_ls_halt,1793479481539.618,1,false,975.459,552.802,252.802,,,,,0,false,
+pipecat-local-N10-r1,7,normal,false,en_ls_experience,1793479482550.9,1,false,1192.955,479.56,178.56,,,,,0,false,
+pipecat-local-N10-r1,3,normal,false,en_ls_power,1793479483524.812,1,false,1076.112,559.849,258.849,,,,,0,false,
+pipecat-local-N10-r1,6,normal,false,en_ls_halt,1793479483219.15,1,false,1201.219,681.385,381.385,,,,,0,false,
+pipecat-local-N10-r1,8,normal,false,en_ls_experience,1793479484302.604,1,false,1474.086,500.73,200.73,,,,,0,false,
+pipecat-local-N10-r1,9,normal,false,en_ls_experience,1793479484236.525,1,false,1692.31,435.767,135.767,,,,,0,false,
+pipecat-local-N10-r1,0,normal,false,en_ls_halt,1793479484216.853,1,false,1667.772,490.111,190.111,,,,,0,false,
+pipecat-local-N10-r1,1,normal,false,en_ls_halt,1793479484375.452,1,false,1739.595,498.233,197.233,,,,,0,false,
+pipecat-local-N10-r1,2,talkover,false,en_ls_halt,1793479484295.948,1,false,1787.677,454.123,153.123,1577.754,60,1960,true,0,false,
+pipecat-local-N10-r1,4,talkover,false,en_ls_halt,1793479485616.489,1,false,1733.396,474.635,173.635,-6.971,20,1920,true,0,false,
+pipecat-local-N10-r1,7,normal,false,en_ls_experience,1793479488928.464,1,false,1839.978,453.954,153.954,,,,,0,false,
+pipecat-local-N10-r1,5,normal,false,en_ls_halt,1793479488376.189,1,false,1641.687,441.163,141.163,,,,,0,false,
+pipecat-local-N10-r1,3,normal,true,en_ls_experience,1793479490006.118,1,false,1607.614,471.976,171.976,,,,,0,false,
+pipecat-local-N10-r1,6,normal,true,en_ls_power,1793479490234.826,1,false,1614.298,560.754,260.754,,,,,0,false,
+pipecat-local-N10-r1,9,normal,true,en_ls_power,1793479490545.248,1,false,1886.889,568.556,268.556,,,,,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_halt,1793479490417.901,1,false,1639.551,532.81,232.81,,,,,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_power,1793479491130.877,1,false,1806.168,465.216,165.216,,,,,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_power,1793479491381.214,1,false,1842.622,535.034,235.034,,,,,0,false,
+pipecat-local-N10-r1,2,normal,true,en_ls_experience,1793479492336.302,1,false,1804.586,462.798,161.798,,,,,0,false,
+pipecat-local-N10-r1,4,normal,true,en_ls_experience,1793479493815.484,1,false,1640.971,475.544,175.544,,,,,0,false,
+pipecat-local-N10-r1,3,normal,true,en_ls_experience,1793479496309.704,1,false,1506.772,459.385,158.385,,,,,0,false,
+pipecat-local-N10-r1,5,normal,true,en_ls_halt,1793479495491.457,1,false,1534.823,434.392,134.392,,,,,0,false,
+pipecat-local-N10-r1,7,normal,true,en_ls_halt,1793479495386.675,1,false,1853.775,487.452,187.452,,,,,0,false,
+pipecat-local-N10-r1,6,normal,true,en_ls_power,1793479496855.236,1,false,1753.813,518.51,215.51,,,,,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_experience,1793479497447.287,1,false,1660.634,498.802,198.802,,,,,0,false,
+pipecat-local-N10-r1,9,normal,true,en_ls_experience,1793479497407.233,1,false,1963.593,454.911,154.911,,,,,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_power,1793479497687.356,1,false,2006.735,477.202,177.202,,,,,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_power,1793479497940,1,false,1954.822,547.305,247.305,,,,,0,false,
+pipecat-local-N10-r1,2,normal,true,en_ls_power,1793479498411.171,1,false,1985.256,452.16,152.16,,,,,0,false,
+pipecat-local-N10-r1,4,normal,true,en_ls_halt,1793479499883.281,1,false,1955.593,430.222,129.222,,,,,0,false,
+pipecat-local-N10-r1,7,normal,true,en_ls_experience,1793479502943.609,1,false,1816.032,593.466,292.466,,,,,0,false,
+pipecat-local-N10-r1,5,normal,true,en_ls_power,1793479502748.487,1,false,1587.299,557.344,257.344,,,,,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_experience,1793479503666.648,1,false,1679.78,452.644,152.644,,,,,0,false,
+pipecat-local-N10-r1,3,talkover,true,en_ls_experience,1793479502625.912,1,false,1805.527,489.242,189.242,1741.058,20,2500,true,0,false,
+pipecat-local-N10-r1,9,normal,true,en_ls_power,1793479503907.942,1,false,2006.85,616.946,316.946,,,,,0,false,
+pipecat-local-N10-r1,6,normal,true,en_ls_halt,1793479503604.353,1,false,1866.103,686.5,386.5,,,,,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_power,1793479504521.92,1,false,1856.177,479.539,179.539,,,,,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_power,1793479504697.508,1,false,1888.808,460.838,160.838,,,,,0,false,
+pipecat-local-N10-r1,2,normal,true,en_ls_experience,1793479505052.349,1,false,1901.747,472.892,172.892,,,,,0,false,
+pipecat-local-N10-r1,4,normal,true,en_ls_power,1793479506906.981,1,false,1694.688,440.393,139.393,,,,,0,false,
+pipecat-local-N10-r1,5,normal,true,en_ls_experience,1793479509441.129,1,false,1263.175,444.339,144.339,,,,,0,false,
+pipecat-local-N10-r1,7,normal,true,en_ls_power,1793479509432.699,1,false,1533.143,427.029,127.029,,,,,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_halt,1793479509848.56,1,false,1288.667,511.916,211.916,,,,,0,false,
+pipecat-local-N10-r1,6,normal,true,en_ls_experience,1793479510733.718,1,false,1523.783,472.625,172.625,,,,,0,false,
+pipecat-local-N10-r1,3,normal,true,en_ls_halt,1793479510203.615,1,false,1538.434,496.897,196.897,,,,,0,false,
+pipecat-local-N10-r1,2,normal,true,en_ls_power,1793479511161.822,1,false,1635.49,509.773,209.773,,,,,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_halt,1793479510998.474,1,false,1601.689,491.409,186.409,,,,,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_halt,1793479511171.869,1,false,1557.909,486.495,186.495,,,,,0,false,
+pipecat-local-N10-r1,9,talkover,true,en_ls_experience,1793479510733.303,1,false,1908.228,442.837,142.837,661.496,20,2420,true,0,false,
+pipecat-local-N10-r1,4,normal,true,en_ls_power,1793479513382.463,1,false,1755.195,475.885,173.885,,,,,0,false,
+pipecat-local-N10-r1,5,normal,true,en_ls_experience,1793479515385.738,1,false,1431.959,458.463,157.463,,,,,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_experience,1793479516685.465,1,false,1254.146,498.516,198.516,,,,,0,false,
+pipecat-local-N10-r1,7,normal,true,en_ls_power,1793479516122.714,1,false,1617.313,494.181,194.181,,,,,0,false,
+pipecat-local-N10-r1,3,normal,true,en_ls_power,1793479517216.694,1,false,1461.823,485.932,185.932,,,,,0,false,
+pipecat-local-N10-r1,6,normal,true,en_ls_halt,1793479516768.992,1,false,1610.327,537.109,237.109,,,,,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_experience,1793479517865.175,1,false,1608.427,603.064,303.064,,,,,0,false,
+pipecat-local-N10-r1,2,normal,true,en_ls_power,1793479517672.446,1,false,1723.24,485.886,184.886,,,,,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_power,1793479518009.569,1,false,1587.855,584.062,284.062,,,,,0,false,
+pipecat-local-N10-r1,9,normal,true,en_ls_power,1793479518164.589,1,false,2016.19,485.836,184.836,,,,,0,false,
+pipecat-local-N10-r1,4,normal,true,en_ls_halt,1793479519857.519,1,false,1862.48,528.579,228.579,,,,,0,false,
+pipecat-local-N10-r1,5,normal,true,en_ls_experience,1793479521405.897,1,false,1840.797,484.181,183.181,,,,,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_experience,1793479522827.776,1,false,1718.146,508.071,207.071,,,,,0,false,
+pipecat-local-N10-r1,7,normal,true,en_ls_experience,1793479523092.825,1,false,2100.661,462.615,162.615,,,,,0,false,
+pipecat-local-N10-r1,3,normal,true,en_ls_power,1793479523873.057,1,false,1994.463,512.381,212.381,,,,,0,false,
+pipecat-local-N10-r1,6,normal,true,en_ls_power,1793479524037.261,1,false,2098.678,444.892,144.892,,,,,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_power,1793479524187.387,1,false,2118.826,533.699,233.699,,,,,0,false,
+pipecat-local-N10-r1,9,normal,true,en_ls_experience,1793479525150.126,1,false,2232.598,459.001,159.001,,,,,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_halt,1793479524599.161,1,false,2059.165,449.476,149.476,,,,,0,false,
+pipecat-local-N10-r1,2,talkover,true,en_ls_halt,1793479524387.671,1,false,2300.802,487.456,186.456,2286.734,40,2640,true,0,false,
+pipecat-local-N10-r1,4,normal,true,en_ls_halt,1793479527159.405,1,false,2111.464,484.685,183.685,,,,,0,false,
+pipecat-local-N10-r1,5,talkover,true,en_ls_experience,1793479527742.509,1,false,2042.634,466.065,166.065,1050.177,40,2380,true,0,false,
+pipecat-local-N10-r1,7,normal,true,en_ls_experience,1793479529841.84,1,false,2307.582,480.018,180.018,,,,,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_halt,1793479529390.992,1,false,2190.472,460.142,160.142,,,,,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_power,1793479531219.895,1,false,2286.991,491.488,191.488,,,,,0,false,
+pipecat-local-N10-r1,3,talkover,true,en_ls_power,1793479530845.323,1,false,2265.596,547.141,247.141,2276.993,20,2740,true,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_halt,1793479531907.195,1,false,2191.638,621.836,320.836,,,,,0,false,
+pipecat-local-N10-r1,9,talkover,true,en_ls_experience,1793479531694.55,1,false,2486.22,487.482,187.482,2341.375,40,2560,true,0,false,
+pipecat-local-N10-r1,6,talkover,true,en_ls_halt,1793479530979.514,1,false,2597.698,513.155,213.155,2262.895,20,2700,true,0,false,
+pipecat-local-N10-r1,4,normal,true,en_ls_halt,1793479534653.2,1,false,2429.438,477.142,177.142,,,,,0,false,
+pipecat-local-N10-r1,2,talkover,true,en_ls_halt,1793479533367.102,1,false,2608.604,428.243,128.243,2772.99,20,2840,true,0,false,
+pipecat-local-N10-r1,5,normal,true,en_ls_power,1793479535452.815,1,false,2362.569,450.492,150.492,,,,,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_power,1793479537155.942,1,false,2246.196,466.938,166.938,,,,,0,false,
+pipecat-local-N10-r1,7,talkover,true,en_ls_experience,1793479536690.002,1,false,2575.58,518.717,218.717,2567.693,0,2860,true,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_experience,1793479538640.15,1,false,2498.381,490.519,190.519,,,,,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_power,1793479539406.208,1,false,2388.161,486.53,185.53,,,,,0,false,
+pipecat-local-N10-r1,6,normal,true,en_ls_experience,1793479540212.923,1,false,2567.302,524.971,223.971,,,,,0,false,
+pipecat-local-N10-r1,9,normal,true,en_ls_halt,1793479539742.71,1,false,2658.037,517.917,217.917,,,,,0,false,
+pipecat-local-N10-r1,3,talkover,true,en_ls_halt,1793479539251.344,1,false,2528.983,544.195,244.195,2538.977,20,2920,true,0,false,
+pipecat-local-N10-r1,5,normal,true,en_ls_halt,1793479542576.401,1,false,3294.398,561.851,261.851,,,,,0,false,
+pipecat-local-N10-r1,2,normal,true,en_ls_halt,1793479542294.453,1,false,3783.659,511.44,211.44,,,,,0,false,
+pipecat-local-N10-r1,4,talkover,true,en_ls_halt,1793479542092.931,1,false,3779.063,484.466,184.466,960.328,40,2840,true,0,false,
+pipecat-local-N10-r1,8,normal,true,en_ls_experience,1793479544474.138,1,false,3754.614,453.266,153.266,,,,,0,false,
+pipecat-local-N10-r1,7,normal,true,en_ls_halt,1793479545086.371,1,false,3863.899,561.85,260.85,,,,,0,false,
+pipecat-local-N10-r1,0,normal,true,en_ls_halt,1793479545631.632,1,false,3760.724,462.618,162.618,,,,,0,false,
+pipecat-local-N10-r1,1,normal,true,en_ls_power,1793479547146.375,1,false,3597.151,449.821,149.821,,,,,0,false,
+pipecat-local-N10-r1,6,normal,true,en_ls_halt,1793479547920.345,1,false,3635.728,483.152,182.152,,,,,0,false,
+pipecat-local-N10-r1,9,normal,true,en_ls_power,1793479548954.472,1,false,3643.616,479.959,179.959,,,,,0,false,
+pipecat-local-N10-r1,3,normal,true,en_ls_experience,1793479549464.009,1,false,3577.892,489.426,189.426,,,,,0,false,
+pipecat-local-N20-r1,3,normal,false,en_ls_experience,1793479574287.919,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,4,normal,false,en_ls_experience,1793479575210.617,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,9,normal,false,en_ls_experience,1793479575435.936,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,18,normal,false,en_ls_experience,1793479575549.995,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,6,normal,false,en_ls_power,1793479575078.44,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,15,normal,false,en_ls_power,1793479575233.775,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,10,normal,false,en_ls_halt,1793479575141.929,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,16,normal,false,en_ls_power,1793479575483.855,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,14,normal,false,en_ls_experience,1793479576529.268,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,13,normal,false,en_ls_power,1793479576029.876,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,2,normal,false,en_ls_power,1793479576051.815,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,5,talkover,false,en_ls_experience,1793479575291.994,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,17,normal,false,en_ls_halt,1793479576159.637,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,8,normal,false,en_ls_halt,1793479576401.217,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,1,normal,false,en_ls_halt,1793479576461.611,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,19,normal,false,en_ls_halt,1793479576479.177,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,0,normal,false,en_ls_halt,1793479576540.157,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,11,talkover,false,en_ls_experience,1793479575670.932,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,7,normal,false,en_ls_power,1793479576829.569,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,12,talkover,false,en_ls_power,1793479576193.156,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,3,normal,false,en_ls_experience,1793479582286.401,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,6,normal,false,en_ls_experience,1793479583674.396,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,10,normal,false,en_ls_experience,1793479583868.641,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,4,normal,false,en_ls_halt,1793479583191.479,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,18,normal,false,en_ls_halt,1793479583550.904,1,false,-1105.283,711.509,410.509,,,,,0,false,
+pipecat-local-N20-r1,9,normal,false,en_ls_power,1793479583424.824,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,14,normal,false,en_ls_experience,1793479584534.195,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,8,normal,false,en_ls_experience,1793479585148.082,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,2,normal,false,en_ls_power,1793479584673.032,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,13,normal,false,en_ls_halt,1793479584632.338,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,7,normal,false,en_ls_experience,1793479585452.249,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,5,normal,false,en_ls_halt,1793479584889.379,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,19,normal,false,en_ls_halt,1793479585214.046,1,false,379.308,761.715,460.715,,,,,0,false,
+pipecat-local-N20-r1,0,normal,false,en_ls_halt,1793479585291.878,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,12,normal,false,en_ls_halt,1793479586351.027,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,11,talkover,false,en_ls_halt,1793479585292.497,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,16,normal,false,en_ls_halt,1793479584070.198,1,false,2773.993,839.874,539.874,,,,,0,false,
+pipecat-local-N20-r1,1,talkover,false,en_ls_halt,1793479585191.177,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,15,normal,false,en_ls_halt,1793479583851.998,1,false,3820.688,761.802,461.802,,,,,0,false,
+pipecat-local-N20-r1,17,normal,false,en_ls_experience,1793479584914.482,1,false,4308.88,694.445,394.445,,,,,0,false,
+pipecat-local-N20-r1,3,talkover,true,en_ls_halt,1793479590271.546,1,false,-1568.203,287.678,-12.322,1299.228,,,false,0,false,no-progress-for-interrupted 
+pipecat-local-N20-r1,4,normal,true,en_ls_halt,1793479591937.994,1,false,1117.855,885.732,584.732,,,,,0,false,
+pipecat-local-N20-r1,18,normal,true,en_ls_power,1793479591983.059,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,14,normal,true,en_ls_halt,1793479592516.597,1,false,-1147.101,775.365,475.365,,,,,0,false,
+pipecat-local-N20-r1,13,normal,true,en_ls_experience,1793479593375.56,1,false,178.372,788.912,487.912,,,,,0,false,
+pipecat-local-N20-r1,2,normal,true,en_ls_experience,1793479593284.846,1,false,4319.22,760.293,460.293,,,,,0,false,
+pipecat-local-N20-r1,9,normal,true,en_ls_power,1793479592030.912,1,false,2248.416,809.071,509.071,,,,,0,false,
+pipecat-local-N20-r1,8,normal,true,en_ls_power,1793479593149.772,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,10,normal,true,en_ls_power,1793479591860.815,1,false,3446.357,741.529,440.529,,,,,0,false,
+pipecat-local-N20-r1,6,normal,true,en_ls_experience,1793479591660.706,1,false,3199.207,854.233,554.233,,,,,0,false,
+pipecat-local-N20-r1,19,normal,true,en_ls_halt,1793479594046.261,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,16,normal,true,en_ls_experience,1793479595357.131,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,1,normal,true,en_ls_experience,1793479595529.361,1,false,4232.11,612.506,311.506,,,,,0,false,
+pipecat-local-N20-r1,7,normal,true,en_ls_halt,1793479593450.38,1,false,5757.263,542.177,241.177,,,,,0,false,
+pipecat-local-N20-r1,11,normal,true,en_ls_halt,1793479595274.605,1,false,2262.597,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,15,normal,true,en_ls_experience,1793479596124.149,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,5,normal,true,en_ls_power,1793479593651.367,1,false,4676.942,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,0,normal,true,en_ls_power,1793479594051.703,1,false,5429.513,583.51,283.51,,,,,0,false,
+pipecat-local-N20-r1,12,normal,true,en_ls_power,1793479595112.432,1,false,4113.419,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,18,normal,true,en_ls_halt,1793479600590.912,1,false,2302.978,525.36,225.36,,,,,0,false,
+pipecat-local-N20-r1,19,normal,true,en_ls_power,1793479602797.549,1,false,1628.065,479.85,179.85,,,,,0,false,
+pipecat-local-N20-r1,4,normal,true,en_ls_halt,1793479600338.046,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,12,talkover,true,en_ls_experience,1793479605172.433,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,2,normal,true,en_ls_experience,1793479601435.978,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,8,normal,true,en_ls_experience,1793479601758.523,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,17,talkover,true,en_ls_power,1793479596770.939,1,false,6303.767,,,2126.789,0,2640,true,0,true,reply not heard 
+pipecat-local-N20-r1,16,normal,true,en_ls_power,1793479603330.283,1,false,2034.205,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,3,normal,true,en_ls_experience,1793479600310.619,1,false,5678.132,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,15,normal,true,en_ls_halt,1793479604093.489,1,false,1234.817,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,14,talkover,true,en_ls_experience,1793479600999.772,1,false,4299.959,,,,0,240,true,0,true,no-stop-found reply not heard 
+pipecat-local-N20-r1,10,normal,true,en_ls_experience,1793479602240.14,1,false,5018.227,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,6,normal,true,en_ls_halt,1793479602520.585,1,false,3947.884,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,9,normal,true,en_ls_halt,1793479601593.26,1,false,4927.419,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,13,normal,true,en_ls_halt,1793479601079.397,1,false,5780.012,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,2,talkover,true,en_ls_experience,1793479609429.004,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,7,normal,true,en_ls_experience,1793479603893.857,1,false,4958.571,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,5,normal,true,en_ls_power,1793479604257.284,1,false,4388.51,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,0,normal,true,en_ls_power,1793479605060.921,1,false,3876.853,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,11,normal,true,en_ls_halt,1793479603918.62,1,false,4945.74,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,1,normal,true,en_ls_power,1793479603610.614,1,false,6230.62,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,8,normal,true,en_ls_power,1793479609732.938,1,false,-1591.205,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,18,normal,true,en_ls_halt,1793479607954.535,1,false,1916.475,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,12,normal,true,en_ls_halt,1793479610190.395,1,false,-1578.629,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,19,normal,true,en_ls_power,1793479609271.45,1,false,2094.658,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,4,normal,true,en_ls_power,1793479609069.087,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,17,normal,true,en_ls_experience,1793479610541.492,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,6,normal,true,en_ls_experience,1793479612850.095,1,false,-698.246,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r1,16,normal,true,en_ls_halt,1793479611279.998,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,8,talkover,true,en_ls_experience,1793479616039.893,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,3,normal,true,en_ls_halt,1793479611502.602,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,15,normal,true,en_ls_power,1793479611709.593,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,14,normal,true,en_ls_power,1793479612137.338,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,10,normal,true,en_ls_power,1793479612746.108,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,19,talkover,true,en_ls_experience,1793479617318.045,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,9,normal,true,en_ls_power,1793479612892.047,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,13,normal,true,en_ls_halt,1793479613215.34,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,7,normal,true,en_ls_experience,1793479614372.041,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,2,normal,true,en_ls_halt,1793479614449.305,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,11,normal,true,en_ls_experience,1793479615250.67,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,5,normal,true,en_ls_halt,1793479614581.488,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,0,normal,true,en_ls_power,1793479614885.435,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,1,normal,true,en_ls_experience,1793479615775.339,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,18,normal,true,en_ls_experience,1793479616283.282,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,14,talkover,true,en_ls_power,1793479620749.502,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,12,normal,true,en_ls_halt,1793479616645.856,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,4,normal,true,en_ls_experience,1793479617692.895,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,6,normal,true,en_ls_power,1793479618542.664,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,17,normal,true,en_ls_halt,1793479618526.877,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,16,normal,true,en_ls_experience,1793479620015.817,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,15,normal,true,en_ls_experience,1793479620322.647,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,3,normal,true,en_ls_power,1793479620244.121,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,9,normal,true,en_ls_experience,1793479621490.605,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,8,normal,true,en_ls_power,1793479621062.169,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,10,normal,true,en_ls_power,1793479621333.266,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,13,normal,true,en_ls_power,1793479621961.879,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,19,normal,true,en_ls_halt,1793479622340.777,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,7,normal,true,en_ls_halt,1793479622352.023,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,5,normal,true,en_ls_experience,1793479623327.166,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,2,normal,true,en_ls_power,1793479623201.609,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,11,normal,true,en_ls_halt,1793479623231.892,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,0,normal,true,en_ls_halt,1793479623504.107,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,18,normal,true,en_ls_experience,1793479624262.672,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,1,normal,true,en_ls_power,1793479623765.683,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,12,normal,true,en_ls_experience,1793479625383.141,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,4,normal,true,en_ls_experience,1793479625686.499,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,14,normal,true,en_ls_experience,1793479625773.094,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,6,normal,true,en_ls_power,1793479627143.992,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,17,normal,true,en_ls_power,1793479627250.978,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,15,normal,true,en_ls_experience,1793479628303.917,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,16,normal,true,en_ls_halt,1793479628005.182,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,3,normal,true,en_ls_power,1793479628864.975,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,8,normal,true,en_ls_experience,1793479629655.944,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,9,normal,true,en_ls_halt,1793479629475.992,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,10,normal,true,en_ls_power,1793479629942.13,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,7,normal,true,en_ls_experience,1793479631092.08,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,13,normal,true,en_ls_power,1793479630559.746,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,19,normal,true,en_ls_halt,1793479631079.745,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,5,normal,true,en_ls_halt,1793479631311.955,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,2,normal,true,en_ls_power,1793479631793,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,11,normal,true,en_ls_halt,1793479631970.977,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,0,normal,true,en_ls_power,1793479632234.732,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,1,normal,true,en_ls_power,1793479632349.682,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,18,normal,true,en_ls_halt,1793479632243.181,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,4,normal,true,en_ls_experience,1793479633681.684,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,8,talkover,true,en_ls_experience,1793479637647.033,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,12,normal,true,en_ls_halt,1793479633361.594,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,14,normal,true,en_ls_halt,1793479633768.119,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,13,talkover,true,en_ls_power,1793479639167.414,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,6,normal,true,en_ls_experience,1793479635741.485,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,17,normal,true,en_ls_experience,1793479635859.685,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,15,normal,true,en_ls_experience,1793479636286.429,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,2,talkover,true,en_ls_power,1793479640406.915,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,16,normal,true,en_ls_experience,1793479636744.331,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,1,talkover,true,en_ls_halt,1793479640959.934,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,4,talkover,true,en_ls_experience,1793479641658.929,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,3,normal,true,en_ls_halt,1793479637465.387,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,9,normal,true,en_ls_power,1793479638230.497,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,7,normal,true,en_ls_experience,1793479639090.54,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,10,normal,true,en_ls_halt,1793479638542.901,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,19,normal,true,en_ls_halt,1793479639825.27,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,5,normal,true,en_ls_power,1793479640067.168,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,11,normal,true,en_ls_experience,1793479640723.444,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,2,talkover,true,en_ls_halt,1793479645432.685,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,0,normal,true,en_ls_halt,1793479640845.394,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,18,normal,true,en_ls_power,1793479640985.062,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,1,talkover,true,en_ls_halt,1793479645982.217,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,12,normal,true,en_ls_power,1793479642100.269,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,14,normal,true,en_ls_halt,1793479642528.326,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,10,talkover,true,en_ls_halt,1793479647275.362,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,8,normal,true,en_ls_halt,1793479642673.059,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,6,normal,true,en_ls_experience,1793479643718.249,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,17,normal,true,en_ls_experience,1793479643843.453,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,15,normal,true,en_ls_experience,1793479644251.701,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,5,talkover,true,en_ls_halt,1793479648660.369,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r1,16,normal,true,en_ls_experience,1793479644730.623,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,13,normal,true,en_ls_power,1793479644192.181,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,3,normal,true,en_ls_halt,1793479646197.629,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,4,normal,true,en_ls_power,1793479646675.232,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,9,normal,true,en_ls_power,1793479646834.946,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,7,normal,true,en_ls_halt,1793479647072.584,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,19,normal,true,en_ls_power,1793479648560.325,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r1,11,normal,true,en_ls_power,1793479648695.908,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N1-r2,0,normal,false,en_ls_halt,1793479663515.086,1,false,325.325,354.671,54.671,,,,,0,false,
+pipecat-local-N1-r2,0,talkover,false,en_ls_halt,1793479670352.025,1,false,319.945,359.461,58.461,367.438,0,2160,true,0,false,
+pipecat-local-N1-r2,0,normal,true,en_ls_experience,1793479677189.995,1,false,331.166,353.549,53.549,,,,,0,false,
+pipecat-local-N1-r2,0,normal,true,en_ls_power,1793479682126.301,1,false,304.517,344.514,44.514,,,,,0,false,
+pipecat-local-N1-r2,0,normal,true,en_ls_experience,1793479688600.848,1,false,277.162,349.107,49.107,,,,,0,false,
+pipecat-local-N1-r2,0,normal,true,en_ls_power,1793479693538.843,1,false,298.175,351.127,51.127,,,,,0,false,
+pipecat-local-N1-r2,0,normal,true,en_ls_power,1793479700013.757,1,false,324.921,362.649,62.649,,,,,0,false,
+pipecat-local-N1-r2,0,talkover,true,en_ls_halt,1793479706487.157,1,false,318.444,363.852,62.852,389.779,0,2180,true,0,false,
+pipecat-local-N1-r2,0,talkover,true,en_ls_halt,1793479713324.17,1,false,314.106,346.993,46.993,369.058,0,2160,true,0,false,
+pipecat-local-N1-r2,0,normal,true,en_ls_halt,1793479720161.203,1,false,316.013,344.463,44.463,,,,,0,false,
+pipecat-local-N1-r2,0,normal,true,en_ls_halt,1793479726998.502,1,false,327.467,353.519,52.519,,,,,0,false,
+pipecat-local-N1-r2,0,normal,true,en_ls_experience,1793479733835.161,1,false,293.74,351.282,51.282,,,,,0,false,
+pipecat-local-N5-r2,1,normal,false,en_ls_experience,1793479742704.397,1,false,398.875,361.504,61.504,,,,,0,false,
+pipecat-local-N5-r2,2,normal,false,en_ls_experience,1793479743627.777,1,false,342.98,381.504,80.504,,,,,0,false,
+pipecat-local-N5-r2,4,normal,false,en_ls_power,1793479743495.119,1,false,402.834,356.27,56.27,,,,,0,false,
+pipecat-local-N5-r2,0,normal,false,en_ls_power,1793479744468.329,1,false,351.08,364.177,64.177,,,,,0,false,
+pipecat-local-N5-r2,3,talkover,false,en_ls_experience,1793479743708.929,1,false,389.914,347.047,46.047,312.163,0,1940,true,0,false,
+pipecat-local-N5-r2,1,normal,false,en_ls_experience,1793479747641.106,1,false,339.01,357.331,56.331,,,,,0,false,
+pipecat-local-N5-r2,2,normal,false,en_ls_halt,1793479748564.151,1,false,367.787,358.39,57.39,,,,,0,false,
+pipecat-local-N5-r2,3,normal,false,en_ls_halt,1793479749065.096,1,false,400.237,351.842,51.842,,,,,0,false,
+pipecat-local-N5-r2,4,normal,false,en_ls_experience,1793479749969.172,1,false,385.769,351.962,51.962,,,,,0,false,
+pipecat-local-N5-r2,0,normal,false,en_ls_power,1793479750943.865,1,false,319.87,355.04,55.04,,,,,0,false,
+pipecat-local-N5-r2,1,talkover,false,en_ls_halt,1793479752577.116,1,false,377.923,355.438,55.438,340.094,0,2180,true,0,false,
+pipecat-local-N5-r2,4,normal,false,en_ls_experience,1793479754906.074,1,false,386.164,350.256,50.256,,,,,0,false,
+pipecat-local-N5-r2,2,normal,false,en_ls_halt,1793479755401.685,1,false,353.997,352.775,52.775,,,,,0,false,
+pipecat-local-N5-r2,3,normal,false,en_ls_power,1793479755902.652,1,false,392.604,349.888,49.888,,,,,0,false,
+pipecat-local-N5-r2,0,normal,true,en_ls_experience,1793479757418.438,1,false,311.374,357.829,57.829,,,,,0,false,
+pipecat-local-N5-r2,1,normal,true,en_ls_experience,1793479759413.764,1,false,350.979,346.472,46.472,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_halt,1793479759843.012,1,false,359.713,351.733,51.733,,,,,0,false,
+pipecat-local-N5-r2,0,normal,true,en_ls_experience,1793479762355.962,1,false,345.05,366.409,65.409,,,,,0,false,
+pipecat-local-N5-r2,3,normal,true,en_ls_power,1793479762376.226,1,false,383.54,370.377,70.377,,,,,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_halt,1793479762238.47,1,false,366.428,357.504,57.504,,,,,0,false,
+pipecat-local-N5-r2,1,normal,true,en_ls_halt,1793479764351.092,1,false,379.627,353.407,53.407,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_experience,1793479766680.171,1,false,384.229,352.277,52.277,,,,,0,false,
+pipecat-local-N5-r2,0,talkover,true,en_ls_experience,1793479767297.019,1,false,389.675,361.066,60.066,325.719,0,1960,true,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_power,1793479769075.57,1,false,409.151,362.469,61.469,,,,,0,false,
+pipecat-local-N5-r2,3,normal,true,en_ls_halt,1793479768850.002,1,false,363.838,348.411,48.411,,,,,0,false,
+pipecat-local-N5-r2,1,normal,true,en_ls_power,1793479771188.856,1,false,358.496,367.171,67.171,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_power,1793479771617.979,1,false,400.035,359.464,59.464,,,,,0,false,
+pipecat-local-N5-r2,0,normal,true,en_ls_halt,1793479772671.471,1,false,362.724,363.383,63.383,,,,,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_experience,1793479775550.428,1,false,373.258,354.361,54.361,,,,,0,false,
+pipecat-local-N5-r2,3,normal,true,en_ls_experience,1793479775686.034,1,false,384.271,352.475,52.475,,,,,0,false,
+pipecat-local-N5-r2,1,normal,true,en_ls_power,1793479777663.179,1,false,373.769,372.148,71.148,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_power,1793479778093.004,1,false,367.928,352.668,52.668,,,,,0,false,
+pipecat-local-N5-r2,0,normal,true,en_ls_power,1793479779508.884,1,false,375.651,358.162,58.162,,,,,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_experience,1793479780487.403,1,false,356.575,352.601,52.601,,,,,0,false,
+pipecat-local-N5-r2,3,normal,true,en_ls_halt,1793479780623.765,1,false,361.768,352.058,52.058,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_experience,1793479784567.954,1,false,347.292,349.711,48.711,,,,,0,false,
+pipecat-local-N5-r2,1,normal,true,en_ls_halt,1793479784137.367,1,false,397.277,379.8,78.8,,,,,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_experience,1793479785424.42,1,false,319.213,369.609,69.609,,,,,0,false,
+pipecat-local-N5-r2,0,normal,true,en_ls_power,1793479785983.142,1,false,325.738,369.925,69.925,,,,,0,false,
+pipecat-local-N5-r2,3,normal,true,en_ls_power,1793479787460.132,1,false,423.713,359.715,58.715,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_experience,1793479789504.704,1,false,440.099,372.337,72.337,,,,,0,false,
+pipecat-local-N5-r2,2,talkover,true,en_ls_experience,1793479790361.663,1,false,445.815,386.779,86.779,348.813,0,1940,true,0,false,
+pipecat-local-N5-r2,1,normal,true,en_ls_halt,1793479790974.309,1,false,422.448,406.077,105.077,,,,,0,false,
+pipecat-local-N5-r2,0,talkover,true,en_ls_power,1793479792457.361,1,false,401.987,368.01,67.01,372.624,0,2180,true,0,false,
+pipecat-local-N5-r2,4,talkover,true,en_ls_experience,1793479794441.641,1,false,345.748,368.57,68.57,330.303,0,1940,true,0,false,
+pipecat-local-N5-r2,3,talkover,true,en_ls_halt,1793479793935.19,1,false,349.793,362.56,62.56,381.395,0,2180,true,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_power,1793479795789.122,1,false,345.226,369.531,69.531,,,,,0,false,
+pipecat-local-N5-r2,1,normal,true,en_ls_halt,1793479797810.321,1,false,371.735,360.087,59.087,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_halt,1793479799821.551,1,false,371.373,394.836,94.836,,,,,0,false,
+pipecat-local-N5-r2,3,normal,true,en_ls_experience,1793479800772.573,1,false,414.004,363.41,63.41,,,,,0,false,
+pipecat-local-N5-r2,0,talkover,true,en_ls_halt,1793479798932.489,1,false,391.125,354.867,54.867,374.186,0,2140,true,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_halt,1793479802264.246,1,false,453.971,355.356,55.356,,,,,0,false,
+pipecat-local-N5-r2,0,normal,true,en_ls_experience,1793479805769.649,1,false,317.958,352.104,52.104,,,,,0,false,
+pipecat-local-N5-r2,3,normal,true,en_ls_halt,1793479805709.609,1,false,399.713,352.852,52.852,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_experience,1793479806658.898,1,false,479.778,356.048,56.048,,,,,0,false,
+pipecat-local-N5-r2,1,talkover,true,en_ls_halt,1793479804647.319,1,false,459.668,353.592,52.592,381.68,0,2140,true,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_experience,1793479809101.062,1,false,318.679,372.961,71.961,,,,,0,false,
+pipecat-local-N5-r2,1,normal,true,en_ls_power,1793479811484.937,1,false,351.653,349.634,48.634,,,,,0,false,
+pipecat-local-N5-r2,4,normal,true,en_ls_power,1793479811595.631,1,false,411.46,358.484,58.484,,,,,0,false,
+pipecat-local-N5-r2,0,talkover,true,en_ls_power,1793479810706.337,1,false,401.692,356.661,56.661,382.72,0,2200,true,0,false,
+pipecat-local-N5-r2,3,talkover,true,en_ls_power,1793479812546.791,1,false,340.833,359.588,59.588,368.184,0,2180,true,0,false,
+pipecat-local-N5-r2,2,normal,true,en_ls_halt,1793479814038.764,1,false,416.846,365.855,65.855,,,,,0,false,
+pipecat-local-N5-r2,0,normal,true,en_ls_halt,1793479817180.534,1,false,325.011,360.003,59.003,,,,,0,false,
+pipecat-local-N10-r2,0,normal,false,en_ls_experience,1793479889810.916,1,false,592.444,538.035,238.035,,,,,0,false,
+pipecat-local-N10-r2,1,normal,false,en_ls_experience,1793479890733.527,1,false,697.259,495.246,192.246,,,,,0,false,
+pipecat-local-N10-r2,6,normal,false,en_ls_experience,1793479890958.405,1,false,791.997,554.072,254.072,,,,,0,false,
+pipecat-local-N10-r2,3,normal,false,en_ls_power,1793479890601.644,1,false,724.756,529.163,229.163,,,,,0,false,
+pipecat-local-N10-r2,7,normal,false,en_ls_halt,1793479890664.445,1,false,819.813,493.294,192.294,,,,,0,false,
+pipecat-local-N10-r2,2,talkover,false,en_ls_experience,1793479890814.798,1,false,1004.471,584.893,284.893,709.834,0,1680,true,0,false,
+pipecat-local-N10-r2,5,normal,false,en_ls_halt,1793479891924.277,1,false,1066.79,487.524,187.524,,,,,0,false,
+pipecat-local-N10-r2,8,talkover,false,en_ls_experience,1793479891193.436,1,false,1317.084,516.264,216.264,955.307,20,1780,true,0,false,
+pipecat-local-N10-r2,4,normal,false,en_ls_power,1793479892352.28,1,false,1360.591,470.7,170.7,,,,,0,false,
+pipecat-local-N10-r2,9,talkover,false,en_ls_power,1793479891716.983,1,false,1500.464,441.135,141.135,1304.766,40,1840,true,0,false,
+pipecat-local-N10-r2,0,normal,false,en_ls_experience,1793479895269.791,1,false,1173.982,438.958,138.958,,,,,0,false,
+pipecat-local-N10-r2,3,normal,false,en_ls_experience,1793479897076.374,1,false,1082.103,518.978,218.978,,,,,0,false,
+pipecat-local-N10-r2,6,normal,false,en_ls_power,1793479896634.059,1,false,1216.462,514.766,211.766,,,,,0,false,
+pipecat-local-N10-r2,1,normal,false,en_ls_halt,1793479896326.7,1,false,1147.949,480.336,179.336,,,,,0,false,
+pipecat-local-N10-r2,7,normal,false,en_ls_experience,1793479897501.103,1,false,1200.808,487.583,187.583,,,,,0,false,
+pipecat-local-N10-r2,2,normal,false,en_ls_halt,1793479897777.329,1,false,1258.004,585.025,283.025,,,,,0,false,
+pipecat-local-N10-r2,5,normal,false,en_ls_experience,1793479898761.799,1,false,1362.335,491.459,190.459,,,,,0,false,
+pipecat-local-N10-r2,4,normal,false,en_ls_experience,1793479898826.82,1,false,1527.51,474.598,174.598,,,,,0,false,
+pipecat-local-N10-r2,9,normal,false,en_ls_halt,1793479899257.577,1,false,1617.909,513.233,213.233,,,,,0,false,
+pipecat-local-N10-r2,8,talkover,false,en_ls_halt,1793479898290.783,1,false,1725.665,459.065,159.065,1397.741,0,2200,true,0,false,
+pipecat-local-N10-r2,3,normal,false,en_ls_experience,1793479902921.1,1,false,1343.196,478.759,177.759,,,,,0,false,
+pipecat-local-N10-r2,0,talkover,false,en_ls_halt,1793479900880.089,1,false,1495.771,480.336,179.336,918.711,20,2100,true,0,false,
+pipecat-local-N10-r2,6,normal,false,en_ls_power,1793479903108.135,1,false,1783.742,564.156,264.156,,,,,0,false,
+pipecat-local-N10-r2,7,normal,false,en_ls_power,1793479903348.579,1,false,1734.701,534.529,234.529,,,,,0,false,
+pipecat-local-N10-r2,1,normal,false,en_ls_halt,1793479903163.661,1,false,1849.917,496.614,196.614,,,,,0,false,
+pipecat-local-N10-r2,2,normal,true,en_ls_power,1793479904614.486,1,false,1989.112,500.314,200.314,,,,,0,false,
+pipecat-local-N10-r2,5,normal,true,en_ls_power,1793479904628.823,1,false,2008.965,455.563,155.563,,,,,0,false,
+pipecat-local-N10-r2,4,normal,true,en_ls_halt,1793479904791.913,1,false,2250.909,461.068,161.068,,,,,0,false,
+pipecat-local-N10-r2,9,normal,true,en_ls_power,1793479906094.096,1,false,2306.739,464.138,163.138,,,,,0,false,
+pipecat-local-N10-r2,8,normal,true,en_ls_halt,1793479906226.463,1,false,2381.666,469.616,168.616,,,,,0,false,
+pipecat-local-N10-r2,0,normal,true,en_ls_experience,1793479909469.11,1,false,2249.2,480.736,180.736,,,,,0,false,
+pipecat-local-N10-r2,3,normal,true,en_ls_halt,1793479909282.428,1,false,2296.082,479.109,178.109,,,,,0,false,
+pipecat-local-N10-r2,7,normal,true,en_ls_experience,1793479910210.922,1,false,2467.432,462.679,162.679,,,,,0,false,
+pipecat-local-N10-r2,6,normal,true,en_ls_halt,1793479910086.252,1,false,2687.763,506.639,205.639,,,,,0,false,
+pipecat-local-N10-r2,1,normal,true,en_ls_halt,1793479910567.98,1,false,2504.659,561.65,260.65,,,,,0,false,
+pipecat-local-N10-r2,5,normal,true,en_ls_experience,1793479911530.302,1,false,2540.341,541.797,237.797,,,,,0,false,
+pipecat-local-N10-r2,2,normal,true,en_ls_power,1793479911507.442,1,false,2589.296,495.046,195.046,,,,,0,false,
+pipecat-local-N10-r2,4,normal,true,en_ls_experience,1793479912351.472,1,false,2740.99,485.913,185.913,,,,,0,false,
+pipecat-local-N10-r2,9,talkover,true,en_ls_experience,1793479913395.183,1,false,2939.671,706.164,405.164,2947.418,20,2780,true,0,false,
+pipecat-local-N10-r2,8,normal,true,en_ls_halt,1793479914181.268,1,false,2986.074,498.449,198.449,,,,,0,false,
+pipecat-local-N10-r2,3,normal,true,en_ls_experience,1793479917028.864,1,false,2969.408,572.948,272.948,,,,,0,false,
+pipecat-local-N10-r2,0,normal,true,en_ls_halt,1793479916506.208,1,false,3149.42,496.252,196.252,,,,,0,false,
+pipecat-local-N10-r2,7,normal,true,en_ls_power,1793479917317.975,1,false,3157.999,526.11,226.11,,,,,0,false,
+pipecat-local-N10-r2,6,normal,true,en_ls_power,1793479918280.204,1,false,3440.39,578.386,277.386,,,,,0,false,
+pipecat-local-N10-r2,1,normal,true,en_ls_power,1793479918524.425,1,false,3330.593,476.284,176.284,,,,,0,false,
+pipecat-local-N10-r2,5,normal,true,en_ls_power,1793479918670.361,1,false,3399.818,465.214,164.214,,,,,0,false,
+pipecat-local-N10-r2,4,normal,true,en_ls_experience,1793479919681.038,1,false,3561.755,557.825,257.825,,,,,0,false,
+pipecat-local-N10-r2,2,normal,true,en_ls_halt,1793479919070.674,1,false,3645.51,492.562,192.562,,,,,0,false,
+pipecat-local-N10-r2,8,normal,true,en_ls_experience,1793479922579.613,1,false,3892.67,470.497,170.497,,,,,0,false,
+pipecat-local-N10-r2,9,normal,true,en_ls_halt,1793479922358.414,1,false,3998.108,466.317,166.317,,,,,0,false,
+pipecat-local-N10-r2,3,normal,true,en_ls_power,1793479924869.791,1,false,3547.614,487.052,186.052,,,,,0,false,
+pipecat-local-N10-r2,0,normal,true,en_ls_power,1793479925567.275,1,false,3752.233,615.115,314.115,,,,,0,false,
+pipecat-local-N10-r2,7,normal,true,en_ls_power,1793479925989.722,1,false,3774.885,461.197,161.197,,,,,0,false,
+pipecat-local-N10-r2,1,normal,true,en_ls_experience,1793479927023.809,1,false,3849.188,457.914,157.914,,,,,0,false,
+pipecat-local-N10-r2,6,normal,true,en_ls_experience,1793479926921.009,1,false,4098.518,496.149,196.149,,,,,0,false,
+pipecat-local-N10-r2,2,normal,true,en_ls_experience,1793479927936.042,1,false,3884.232,566.795,266.795,,,,,0,false,
+pipecat-local-N10-r2,5,talkover,true,en_ls_experience,1793479927167.916,1,false,4041.66,469.119,169.119,3996.098,40,3640,true,0,false,
+pipecat-local-N10-r2,4,normal,true,en_ls_halt,1793479927706.262,1,false,4204.688,483.847,183.847,,,,,0,false,
+pipecat-local-N10-r2,8,normal,true,en_ls_halt,1793479930854.564,1,false,4065.274,511.54,211.54,,,,,0,false,
+pipecat-local-N10-r2,9,normal,true,en_ls_halt,1793479931401.464,1,false,3987.311,472.513,172.513,,,,,0,false,
+pipecat-local-N10-r2,3,normal,true,en_ls_power,1793479933605.951,1,false,3498.976,457.997,157.997,,,,,0,false,
+pipecat-local-N10-r2,0,normal,true,en_ls_power,1793479934625.555,1,false,3442.32,514.528,214.528,,,,,0,false,
+pipecat-local-N10-r2,7,normal,true,en_ls_power,1793479934903.249,1,false,3503.413,425.914,124.914,,,,,0,false,
+pipecat-local-N10-r2,1,normal,true,en_ls_experience,1793479935409.299,1,false,3462.562,453.28,153.28,,,,,0,false,
+pipecat-local-N10-r2,6,normal,true,en_ls_halt,1793479935533.528,1,false,3510.557,601.57,301.57,,,,,0,false,
+pipecat-local-N10-r2,2,normal,true,en_ls_halt,1793479936269.065,1,false,3269.889,478.768,178.768,,,,,0,false,
+pipecat-local-N10-r2,5,normal,true,en_ls_power,1793479936590.252,1,false,3441.826,485.631,185.631,,,,,0,false,
+pipecat-local-N10-r2,4,normal,true,en_ls_experience,1793479936889.839,1,false,3539.68,495.362,195.362,,,,,0,false,
+pipecat-local-N10-r2,9,normal,true,en_ls_experience,1793479940422.766,1,false,3611.515,553.179,253.179,,,,,0,false,
+pipecat-local-N10-r2,8,normal,true,en_ls_halt,1793479939892.281,1,false,3854.737,576.637,276.637,,,,,0,false,
+pipecat-local-N10-r2,3,normal,true,en_ls_experience,1793479941760.965,1,false,3344.825,526.392,226.392,,,,,0,false,
+pipecat-local-N10-r2,1,normal,true,en_ls_experience,1793479943179.768,1,false,3501.8,527.161,227.161,,,,,0,false,
+pipecat-local-N10-r2,0,normal,true,en_ls_halt,1793479942821.056,1,false,3684.612,545.033,240.033,,,,,0,false,
+pipecat-local-N10-r2,7,normal,true,en_ls_halt,1793479943128.552,1,false,3833.447,509.948,209.948,,,,,0,false,
+pipecat-local-N10-r2,5,normal,true,en_ls_experience,1793479944782.052,1,false,3911.072,496.268,195.268,,,,,0,false,
+pipecat-local-N10-r2,4,normal,true,en_ls_experience,1793479944782.893,1,false,3971.103,472.654,171.654,,,,,0,false,
+pipecat-local-N10-r2,6,normal,true,en_ls_power,1793479944324.832,1,false,4061.83,464.454,164.454,,,,,0,false,
+pipecat-local-N10-r2,2,normal,true,en_ls_power,1793479944760.371,1,false,3838.85,458.574,158.574,,,,,0,false,
+pipecat-local-N10-r2,3,normal,true,en_ls_experience,1793479949669.82,1,false,3582.368,550.712,249.712,,,,,0,false,
+pipecat-local-N10-r2,8,normal,true,en_ls_experience,1793479949233.384,1,false,4021.617,575.444,270.444,,,,,0,false,
+pipecat-local-N10-r2,9,normal,true,en_ls_halt,1793479948649.768,1,false,4171.775,470.588,170.588,,,,,0,false,
+pipecat-local-N10-r2,1,talkover,true,en_ls_experience,1793479951616.059,1,false,3844.746,488.278,188.278,3805.76,20,3960,true,0,false,
+pipecat-local-N10-r2,0,normal,true,en_ls_halt,1793479951970.063,1,false,3862.705,453.793,153.793,,,,,0,false,
+pipecat-local-N10-r2,6,normal,true,en_ls_power,1793479952931.217,1,false,3964.946,549.206,249.206,,,,,0,false,
+pipecat-local-N10-r2,4,normal,true,en_ls_halt,1793479952880.233,1,false,4005.159,511.563,208.563,,,,,0,false,
+pipecat-local-N10-r2,5,talkover,true,en_ls_experience,1793479952858.625,1,false,4012.24,522.98,221.98,3896.3,40,3800,true,0,false,
+pipecat-local-N10-r2,7,talkover,true,en_ls_halt,1793479952352.769,1,false,4054.427,466.58,166.58,518.502,40,4060,true,0,false,
+pipecat-local-N10-r2,2,talkover,true,en_ls_halt,1793479953146.235,1,false,3854.181,469.058,169.058,3755.897,40,3800,true,0,false,
+pipecat-local-N10-r2,8,normal,true,en_ls_power,1793479957562.196,1,false,4035.905,593.612,293.612,,,,,0,false,
+pipecat-local-N10-r2,3,talkover,true,en_ls_experience,1793479957546.453,1,false,3559.415,493.772,193.772,3651.344,20,3600,true,0,false,
+pipecat-local-N10-r2,9,normal,true,en_ls_power,1793479957932.649,1,false,4240.23,498.045,198.045,,,,,0,false,
+pipecat-local-N10-r2,1,normal,true,en_ls_power,1793479961249.232,1,false,3906.576,477.007,177.007,,,,,0,false,
+pipecat-local-N10-r2,0,normal,true,en_ls_halt,1793479961278.363,1,false,4117.599,535.917,235.917,,,,,0,false,
+pipecat-local-N10-r2,4,normal,true,en_ls_power,1793479962170.104,1,false,4254.004,642.616,342.616,,,,,0,false,
+pipecat-local-N10-r2,6,normal,true,en_ls_halt,1793479961810.289,1,false,4351.557,625.665,325.665,,,,,0,false,
+pipecat-local-N10-r2,2,normal,true,en_ls_experience,1793479963292.78,1,false,4208.826,516.085,215.085,,,,,0,false,
+pipecat-local-N10-r2,7,normal,true,en_ls_power,1793479962724.708,1,false,4451.183,502.31,202.31,,,,,0,false,
+pipecat-local-N10-r2,5,normal,true,en_ls_halt,1793479962402.897,1,false,4570.426,472.892,172.892,,,,,0,false,
+pipecat-local-N20-r2,16,normal,false,en_ls_power,1793479988912.838,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,0,normal,false,en_ls_experience,1793479989807.152,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,5,normal,false,en_ls_experience,1793479990032.335,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,14,normal,false,en_ls_experience,1793479990146.854,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,2,normal,false,en_ls_power,1793479989675.514,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,11,normal,false,en_ls_power,1793479989830.783,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,6,normal,false,en_ls_halt,1793479989738.115,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,12,normal,false,en_ls_power,1793479990080.04,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,17,talkover,false,en_ls_power,1793479988623.263,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,10,normal,false,en_ls_experience,1793479991126.394,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,9,normal,false,en_ls_power,1793479990626.519,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,1,talkover,false,en_ls_experience,1793479989888.166,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,13,normal,false,en_ls_halt,1793479990756.47,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,4,normal,false,en_ls_halt,1793479990998.762,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,7,talkover,false,en_ls_experience,1793479990267.55,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,15,normal,false,en_ls_halt,1793479991075.999,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,3,normal,false,en_ls_power,1793479991427.04,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,8,talkover,false,en_ls_power,1793479990790.13,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,18,normal,false,en_ls_experience,1793479988638.755,1,false,5247.723,668.558,367.558,,,,,0,false,
+pipecat-local-N20-r2,19,normal,false,en_ls_experience,1793479990199.07,1,false,5936.368,685.17,385.17,,,,,0,false,
+pipecat-local-N20-r2,2,normal,false,en_ls_experience,1793479998299.565,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,6,normal,false,en_ls_experience,1793479998499.262,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,0,normal,false,en_ls_halt,1793479997782.282,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,5,normal,false,en_ls_power,1793479998018.662,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,10,normal,false,en_ls_experience,1793479999120.925,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,11,normal,false,en_ls_halt,1793479998438.357,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,13,normal,false,en_ls_experience,1793479999518.726,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,17,normal,false,en_ls_halt,1793479998817.907,1,false,387.669,641.718,341.718,,,,,0,false,
+pipecat-local-N20-r2,16,talkover,false,en_ls_halt,1793479997499.814,1,false,-1754.746,362.818,62.818,819.544,,,false,0,false,no-progress-for-interrupted 
+pipecat-local-N20-r2,4,normal,false,en_ls_experience,1793479999760.153,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,9,normal,false,en_ls_halt,1793479999241.222,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,3,normal,false,en_ls_experience,1793480000030.808,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,1,normal,false,en_ls_halt,1793479999418.016,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,18,normal,false,en_ls_experience,1793480001431.327,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,8,normal,false,en_ls_halt,1793480001000.922,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,14,normal,false,en_ls_halt,1793479998137.11,1,false,3328.555,703.739,402.739,,,,,0,false,
+pipecat-local-N20-r2,7,talkover,false,en_ls_halt,1793479999802.231,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,19,normal,true,en_ls_power,1793480003660.326,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,12,normal,false,en_ls_halt,1793479998700.853,1,false,5763.548,713.796,413.796,,,,,0,false,
+pipecat-local-N20-r2,15,normal,false,en_ls_halt,1793479999835.14,1,false,4949.93,740.073,440.073,,,,,0,false,
+pipecat-local-N20-r2,2,normal,true,en_ls_experience,1793480006299.751,1,false,-401.087,690.87,390.87,,,,,0,false,
+pipecat-local-N20-r2,5,normal,true,en_ls_power,1793480006633.92,1,false,-1431.171,676.964,375.964,,,,,0,false,
+pipecat-local-N20-r2,3,normal,true,en_ls_halt,1793480008016.563,1,false,1639.869,823.662,523.662,,,,,0,false,
+pipecat-local-N20-r2,11,normal,true,en_ls_experience,1793480007184.78,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,6,normal,true,en_ls_power,1793480006481.398,1,false,754.228,811.22,511.22,,,,,0,false,
+pipecat-local-N20-r2,0,normal,true,en_ls_halt,1793480006535.97,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,10,normal,true,en_ls_halt,1793480007104.4,1,false,286.634,824.944,523.944,,,,,0,false,
+pipecat-local-N20-r2,17,normal,true,en_ls_power,1793480007617.896,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,9,normal,true,en_ls_experience,1793480007991.715,1,false,668.771,862.42,562.42,,,,,0,false,
+pipecat-local-N20-r2,16,talkover,true,en_ls_experience,1793480007634.238,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,1,normal,true,en_ls_power,1793480008167.258,1,false,716.272,797.566,497.566,,,,,0,false,
+pipecat-local-N20-r2,4,normal,true,en_ls_power,1793480007739.524,1,false,2576.718,755.072,455.072,,,,,0,false,
+pipecat-local-N20-r2,13,talkover,true,en_ls_power,1793480007511.934,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,7,normal,true,en_ls_halt,1793480010059.909,1,false,195.798,765.753,465.753,,,,,0,false,
+pipecat-local-N20-r2,14,normal,true,en_ls_power,1793480009863.191,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,8,normal,true,en_ls_power,1793480009756.2,1,false,3396.281,737.035,436.035,,,,,0,false,
+pipecat-local-N20-r2,18,talkover,true,en_ls_power,1793480009406.161,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,12,normal,true,en_ls_experience,1793480012892.223,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,15,normal,true,en_ls_halt,1793480013195.101,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,19,talkover,true,en_ls_halt,1793480012263.547,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,3,normal,true,en_ls_experience,1793480014853.559,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,17,normal,true,en_ls_experience,1793480016234.542,1,false,2900.516,460.535,160.535,,,,,0,false,
+pipecat-local-N20-r2,8,talkover,true,en_ls_experience,1793480018958.981,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,14,normal,true,en_ls_halt,1793480018459.444,1,false,485.338,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,16,normal,true,en_ls_halt,1793480016888.979,1,false,2155.564,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,18,normal,true,en_ls_experience,1793480019496.818,1,false,491.451,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,2,normal,true,en_ls_halt,1793480014003.063,1,false,5653.277,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,5,normal,true,en_ls_halt,1793480014345.044,1,false,5342.329,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,13,normal,true,en_ls_experience,1793480017684.803,1,false,3074.495,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,0,normal,true,en_ls_halt,1793480015294.077,1,false,4823.198,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,6,normal,true,en_ls_experience,1793480015269.533,1,false,5719.821,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,17,talkover,true,en_ls_halt,1793480022886.028,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,11,normal,true,en_ls_halt,1793480015167.176,1,false,5431.148,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,10,talkover,true,en_ls_experience,1793480015944.757,1,false,4257.994,,,,0,360,true,0,true,no-stop-found reply not heard 
+pipecat-local-N20-r2,12,normal,true,en_ls_power,1793480020857.281,1,false,-176.674,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,4,normal,true,en_ls_experience,1793480017086.27,1,false,4815.827,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,9,normal,true,en_ls_halt,1793480016333.079,1,false,5196.599,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,1,normal,true,en_ls_power,1793480016894.724,1,false,5154.807,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,15,normal,true,en_ls_power,1793480021958.917,1,false,-1402.314,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,3,normal,true,en_ls_experience,1793480022827.345,1,false,-680.242,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,19,normal,true,en_ls_halt,1793480022701.087,1,false,-1445.522,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,7,normal,true,en_ls_halt,1793480018244.939,1,false,4817.583,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,18,talkover,true,en_ls_experience,1793480025526.99,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,8,normal,true,en_ls_halt,1793480023977.027,1,false,-1203.771,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,16,normal,true,en_ls_experience,1793480025446.021,1,false,1112.747,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,5,normal,true,en_ls_power,1793480026079.742,1,false,332.819,,,,,,,0,true,no reply say 
+pipecat-local-N20-r2,2,normal,true,en_ls_experience,1793480026033.541,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,14,normal,true,en_ls_halt,1793480025354.243,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,9,normal,true,en_ls_halt,1793480027910.083,1,false,-1377.562,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,1,normal,true,en_ls_halt,1793480027970.567,1,false,-1246.598,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r2,13,normal,true,en_ls_halt,1793480026284.931,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,0,normal,true,en_ls_power,1793480026469.026,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,6,normal,true,en_ls_power,1793480026517.586,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,10,normal,true,en_ls_power,1793480026966.444,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,11,normal,true,en_ls_power,1793480026965.917,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,17,normal,true,en_ls_experience,1793480027909.327,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,12,normal,true,en_ls_halt,1793480027157.453,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,4,normal,true,en_ls_power,1793480027413.621,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,15,normal,true,en_ls_power,1793480028274.132,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,3,normal,true,en_ls_halt,1793480028517.116,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,7,normal,true,en_ls_experience,1793480029434.572,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,19,normal,true,en_ls_halt,1793480029146.014,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,8,normal,true,en_ls_halt,1793480030434.265,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,18,normal,true,en_ls_power,1793480030540.01,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,10,talkover,true,en_ls_power,1793480035579.543,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,4,talkover,true,en_ls_experience,1793480036011.159,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,16,normal,true,en_ls_halt,1793480032071.76,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,15,talkover,true,en_ls_experience,1793480036901.397,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,5,normal,true,en_ls_experience,1793480033378.517,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,14,normal,true,en_ls_experience,1793480034093.935,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,1,normal,true,en_ls_experience,1793480034407.38,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,2,normal,true,en_ls_power,1793480034017.358,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,9,normal,true,en_ls_power,1793480034347.07,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,0,normal,true,en_ls_experience,1793480035075.318,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,18,talkover,true,en_ls_power,1793480039159.407,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,11,normal,true,en_ls_experience,1793480035580.171,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,13,normal,true,en_ls_power,1793480035018.596,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,6,normal,true,en_ls_power,1793480035139.148,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,12,normal,true,en_ls_experience,1793480035912.112,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,17,normal,true,en_ls_power,1793480035888.323,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,3,normal,true,en_ls_experience,1793480037280.661,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,7,normal,true,en_ls_halt,1793480037434.135,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,19,normal,true,en_ls_power,1793480037901.113,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,8,normal,true,en_ls_experience,1793480039158.607,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,10,normal,true,en_ls_experience,1793480040595.328,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,16,normal,true,en_ls_experience,1793480040807.389,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,4,normal,true,en_ls_power,1793480041020.549,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,14,normal,true,en_ls_experience,1793480042077.934,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,5,normal,true,en_ls_halt,1793480041366.476,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,15,normal,true,en_ls_halt,1793480041904.059,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,0,normal,true,en_ls_experience,1793480043069.165,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,1,normal,true,en_ls_halt,1793480042399.074,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,2,normal,true,en_ls_power,1793480042637.021,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,9,normal,true,en_ls_power,1793480042954.741,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,11,normal,true,en_ls_experience,1793480043574.418,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,13,normal,true,en_ls_experience,1793480043628.286,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,6,normal,true,en_ls_power,1793480043749.972,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,12,normal,true,en_ls_halt,1793480043892.841,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,18,normal,true,en_ls_halt,1793480044191.852,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,17,normal,true,en_ls_power,1793480044486.541,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,3,normal,true,en_ls_experience,1793480045268.004,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,7,normal,true,en_ls_halt,1793480046182.285,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,19,normal,true,en_ls_power,1793480046498.476,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,9,talkover,true,en_ls_power,1793480051555.582,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,8,normal,true,en_ls_halt,1793480047139.813,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,16,normal,true,en_ls_experience,1793480048797.646,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,10,normal,true,en_ls_halt,1793480048595.619,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,4,normal,true,en_ls_experience,1793480049633.655,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,5,normal,true,en_ls_power,1793480050112.4,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,14,normal,true,en_ls_halt,1793480050079.113,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,0,normal,true,en_ls_experience,1793480051059.272,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,2,normal,true,en_ls_experience,1793480051249.719,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,15,normal,true,en_ls_halt,1793480050654.335,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,11,normal,true,en_ls_experience,1793480051556.157,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,13,normal,true,en_ls_experience,1793480051615.034,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,1,normal,true,en_ls_power,1793480051160.977,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,12,normal,true,en_ls_experience,1793480052632.729,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,18,normal,true,en_ls_experience,1793480052935.012,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,17,normal,true,en_ls_experience,1793480053087.649,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,6,normal,true,en_ls_halt,1793480052354.589,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,4,talkover,true,en_ls_experience,1793480057632.374,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,3,normal,true,en_ls_halt,1793480053249.369,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,7,normal,true,en_ls_experience,1793480054932.019,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,0,talkover,true,en_ls_experience,1793480059048.405,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,13,talkover,true,en_ls_halt,1793480059599.443,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,1,talkover,true,en_ls_halt,1793480059777.151,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,19,normal,true,en_ls_halt,1793480055112.152,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,8,normal,true,en_ls_power,1793480055893.496,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,17,talkover,true,en_ls_halt,1793480061071.202,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,6,talkover,true,en_ls_halt,1793480061097.841,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r2,9,normal,true,en_ls_power,1793480056583.93,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,16,normal,true,en_ls_halt,1793480056785.562,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,10,normal,true,en_ls_halt,1793480057351.883,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,2,normal,true,en_ls_experience,1793480059232.931,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,5,normal,true,en_ls_power,1793480058712.61,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,14,normal,true,en_ls_power,1793480058831.107,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,11,normal,true,en_ls_experience,1793480059552.276,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,15,normal,true,en_ls_halt,1793480059395.965,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,12,normal,true,en_ls_experience,1793480060617.137,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,18,normal,true,en_ls_power,1793480060931.035,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,3,normal,true,en_ls_power,1793480061992.084,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,4,normal,true,en_ls_halt,1793480062652.516,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r2,7,normal,true,en_ls_power,1793480062913.518,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N1-r3,0,talkover,false,en_ls_experience,1793480076350.041,1,false,305.233,359.564,59.564,301.924,0,1940,true,0,false,
+pipecat-local-N1-r3,0,normal,false,en_ls_halt,1793480081653.108,1,false,325.367,356.699,56.699,,,,,0,false,
+pipecat-local-N1-r3,0,normal,false,en_ls_power,1793480088490.669,1,false,317.69,351.671,51.671,,,,,0,false,
+pipecat-local-N1-r3,0,normal,true,en_ls_power,1793480094965.768,1,false,304.329,364.42,63.42,,,,,0,false,
+pipecat-local-N1-r3,0,normal,true,en_ls_halt,1793480101440.386,1,false,328.97,352.336,51.336,,,,,0,false,
+pipecat-local-N1-r3,0,normal,true,en_ls_experience,1793480108277.325,1,false,325.904,360.15,59.15,,,,,0,false,
+pipecat-local-N1-r3,0,normal,true,en_ls_halt,1793480113214.62,1,false,321.409,360.692,60.692,,,,,0,false,
+pipecat-local-N1-r3,0,normal,true,en_ls_power,1793480120051.285,1,false,316.159,354.752,53.752,,,,,0,false,
+pipecat-local-N1-r3,0,talkover,true,en_ls_halt,1793480126525.539,1,false,312.831,348.859,48.859,350.157,0,2160,true,0,false,
+pipecat-local-N1-r3,0,normal,true,en_ls_experience,1793480133361.987,1,false,316.192,350.213,49.213,,,,,0,false,
+pipecat-local-N1-r3,0,normal,true,en_ls_halt,1793480138299.797,1,false,335.384,347.416,47.416,,,,,0,false,
+pipecat-local-N1-r3,0,talkover,true,en_ls_power,1793480145136.866,1,false,303.935,345.039,45.039,376.903,0,2180,true,0,false,
+pipecat-local-N5-r3,3,normal,false,en_ls_experience,1793480156787.204,1,false,365.203,357.832,56.832,,,,,0,false,
+pipecat-local-N5-r3,0,normal,false,en_ls_power,1793480156430.616,1,false,409.395,362.282,61.282,,,,,0,false,
+pipecat-local-N5-r3,4,normal,false,en_ls_halt,1793480156493.46,1,false,575.504,354.564,54.564,,,,,0,false,
+pipecat-local-N5-r3,1,normal,false,en_ls_power,1793480158182.002,1,false,318,355.809,55.809,,,,,0,false,
+pipecat-local-N5-r3,2,normal,false,en_ls_halt,1793480157753.123,1,false,452.918,356.514,56.514,,,,,0,false,
+pipecat-local-N5-r3,3,normal,false,en_ls_power,1793480161723.658,1,false,418.155,350.732,50.732,,,,,0,false,
+pipecat-local-N5-r3,0,normal,false,en_ls_experience,1793480162904.73,1,false,369.861,359.828,59.828,,,,,0,false,
+pipecat-local-N5-r3,4,normal,false,en_ls_experience,1793480163330.757,1,false,549.128,345.066,45.066,,,,,0,false,
+pipecat-local-N5-r3,2,normal,false,en_ls_experience,1793480164590.617,1,false,351.481,360.622,60.622,,,,,0,false,
+pipecat-local-N5-r3,1,normal,false,en_ls_experience,1793480164656.662,1,false,429.875,360.607,60.607,,,,,0,false,
+pipecat-local-N5-r3,0,normal,false,en_ls_experience,1793480167841.659,1,false,361.104,368.45,68.45,,,,,0,false,
+pipecat-local-N5-r3,3,normal,false,en_ls_power,1793480168197.048,1,false,403.489,362.944,62.944,,,,,0,false,
+pipecat-local-N5-r3,4,normal,false,en_ls_power,1793480168267.588,1,false,587.329,351.51,51.51,,,,,0,false,
+pipecat-local-N5-r3,2,normal,false,en_ls_power,1793480169529.026,1,false,333.864,362.864,62.864,,,,,0,false,
+pipecat-local-N5-r3,1,normal,false,en_ls_halt,1793480169593.923,1,false,340.642,348.19,48.19,,,,,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_halt,1793480172778.324,1,false,352.776,353.675,53.675,,,,,0,false,
+pipecat-local-N5-r3,4,normal,true,en_ls_experience,1793480174742.611,1,false,562.336,352.45,52.45,,,,,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_halt,1793480174672.046,1,false,332.244,346.63,45.63,,,,,0,false,
+pipecat-local-N5-r3,2,normal,true,en_ls_experience,1793480176003.766,1,false,345.506,347.581,47.581,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_experience,1793480176432.046,1,false,330.831,359.338,59.338,,,,,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_experience,1793480179615.531,1,false,291.53,357.828,57.828,,,,,0,false,
+pipecat-local-N5-r3,4,normal,true,en_ls_power,1793480179679.642,1,false,563.885,354.41,54.41,,,,,0,false,
+pipecat-local-N5-r3,2,normal,true,en_ls_power,1793480180941.56,1,false,388.903,349.265,48.265,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_experience,1793480181370.022,1,false,380.962,352.969,52.969,,,,,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_power,1793480181509.774,1,false,323.995,362.681,62.681,,,,,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_power,1793480184553.103,1,false,338.082,355.003,55.003,,,,,0,false,
+pipecat-local-N5-r3,4,normal,true,en_ls_power,1793480186154.591,1,false,552.675,386.126,85.126,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_halt,1793480186308.117,1,false,343.711,366.729,66.729,,,,,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_experience,1793480187984.13,1,false,328.425,352.387,52.387,,,,,0,false,
+pipecat-local-N5-r3,2,talkover,true,en_ls_experience,1793480187415.056,1,false,346.607,346.11,45.11,349.259,0,1940,true,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_power,1793480191027.661,1,false,353.493,363.932,63.932,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_experience,1793480193145.377,1,false,385.762,347.264,46.264,,,,,0,false,
+pipecat-local-N5-r3,2,normal,true,en_ls_power,1793480192734.279,1,false,455.372,383.348,59.348,,,,,0,false,
+pipecat-local-N5-r3,4,normal,true,en_ls_power,1793480192629.563,1,false,672.303,346.053,45.053,,,,,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_halt,1793480192920.863,1,false,358.311,360.067,60.067,,,,,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_experience,1793480197502.207,1,false,330.393,360.969,59.969,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_experience,1793480198083.135,1,false,342.61,348.985,48.985,,,,,0,false,
+pipecat-local-N5-r3,2,normal,true,en_ls_experience,1793480199209.007,1,false,337.294,355.691,55.691,,,,,0,false,
+pipecat-local-N5-r3,4,normal,true,en_ls_halt,1793480199104.533,1,false,634.698,356.937,56.937,,,,,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_power,1793480199758.04,1,false,420.892,365.472,65.472,,,,,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_experience,1793480202439.657,1,false,346.017,367.634,67.634,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_halt,1793480203020.926,1,false,335.29,352.851,51.851,,,,,0,false,
+pipecat-local-N5-r3,2,talkover,true,en_ls_experience,1793480204146.787,1,false,349.565,363.511,63.511,329.123,0,1900,true,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_power,1793480206232.757,1,false,348.716,355.895,55.895,,,,,0,false,
+pipecat-local-N5-r3,4,talkover,true,en_ls_halt,1793480205941.289,1,false,539.826,369.427,68.427,516.896,0,2420,true,0,false,
+pipecat-local-N5-r3,0,talkover,true,en_ls_experience,1793480207377.184,1,false,323.751,364.708,62.708,325.778,0,1920,true,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_power,1793480209858.609,1,false,331.437,365.452,65.452,,,,,0,false,
+pipecat-local-N5-r3,2,normal,true,en_ls_halt,1793480209454.815,1,false,403.172,347.539,46.539,,,,,0,false,
+pipecat-local-N5-r3,4,normal,true,en_ls_power,1793480212778.471,1,false,560.647,357.571,56.571,,,,,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_halt,1793480212682.282,1,false,344.438,358.197,58.197,,,,,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_halt,1793480212706.999,1,false,396.306,360.83,60.83,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_experience,1793480216333.017,1,false,333.812,388.942,88.942,,,,,0,false,
+pipecat-local-N5-r3,2,normal,true,en_ls_power,1793480216291.502,1,false,357.34,359.548,58.548,,,,,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_experience,1793480219518.492,1,false,334.605,391.882,91.882,,,,,0,false,
+pipecat-local-N5-r3,4,normal,true,en_ls_power,1793480219253.551,1,false,540.512,358.13,57.13,,,,,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_power,1793480219543.607,1,false,434.792,357.59,57.59,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_experience,1793480221270.402,1,false,313.965,357.023,56.023,,,,,0,false,
+pipecat-local-N5-r3,2,normal,true,en_ls_experience,1793480222766.459,1,false,301.612,351.97,51.97,,,,,0,false,
+pipecat-local-N5-r3,0,normal,true,en_ls_power,1793480224455.995,1,false,342.211,350.086,49.086,,,,,0,false,
+pipecat-local-N5-r3,3,normal,true,en_ls_halt,1793480226017.531,1,false,362.503,355.337,55.337,,,,,0,false,
+pipecat-local-N5-r3,1,normal,true,en_ls_halt,1793480226207.748,1,false,339.935,345.83,45.83,,,,,0,false,
+pipecat-local-N5-r3,2,normal,true,en_ls_experience,1793480227703.943,1,false,356.824,364.139,64.139,,,,,0,false,
+pipecat-local-N5-r3,4,talkover,true,en_ls_halt,1793480225728.626,1,false,557.821,352.558,52.558,557.682,0,2360,true,0,false,
+pipecat-local-N10-r3,2,normal,false,en_ls_experience,1793480239995.244,1,false,545.586,547.548,246.548,,,,,0,false,
+pipecat-local-N10-r3,8,normal,false,en_ls_power,1793480239793.335,1,false,839.604,470.636,169.636,,,,,0,false,
+pipecat-local-N10-r3,3,normal,false,en_ls_halt,1793480239701.939,1,false,762.691,519.344,219.344,,,,,0,false,
+pipecat-local-N10-r3,9,normal,false,en_ls_power,1793480240043.923,1,false,972.25,612.205,312.205,,,,,0,false,
+pipecat-local-N10-r3,6,normal,false,en_ls_power,1793480240589.994,1,false,830.489,515.216,215.216,,,,,0,false,
+pipecat-local-N10-r3,7,normal,false,en_ls_experience,1793480241089.278,1,false,932.337,558.128,257.128,,,,,0,false,
+pipecat-local-N10-r3,4,talkover,false,en_ls_experience,1793480240230.483,1,false,1000.145,507.575,207.575,600.571,0,1880,true,0,false,
+pipecat-local-N10-r3,0,normal,false,en_ls_power,1793480241389.706,1,false,1091.147,461.564,161.564,,,,,0,false,
+pipecat-local-N10-r3,1,normal,false,en_ls_halt,1793480240961.467,1,false,1152.417,457.347,157.347,,,,,0,false,
+pipecat-local-N10-r3,5,talkover,false,en_ls_power,1793480240753.946,1,false,1205.758,473.943,173.943,1011.025,60,1920,true,0,false,
+pipecat-local-N10-r3,2,normal,false,en_ls_power,1793480245578.245,1,false,984.779,476.329,176.329,,,,,0,false,
+pipecat-local-N10-r3,3,normal,false,en_ls_experience,1793480246539.227,1,false,1095.158,524.032,224.032,,,,,0,false,
+pipecat-local-N10-r3,7,normal,false,en_ls_experience,1793480246653.203,1,false,1205.97,483.54,183.54,,,,,0,false,
+pipecat-local-N10-r3,8,normal,false,en_ls_halt,1793480246268.739,1,false,1416.603,607.859,307.859,,,,,0,false,
+pipecat-local-N10-r3,9,normal,false,en_ls_halt,1793480246518.133,1,false,1613.908,584.669,283.669,,,,,0,false,
+pipecat-local-N10-r3,1,normal,false,en_ls_experience,1793480247798.381,1,false,1411.123,503.773,203.773,,,,,0,false,
+pipecat-local-N10-r3,0,normal,false,en_ls_experience,1793480247864.695,1,false,1631.589,487.599,187.599,,,,,0,false,
+pipecat-local-N10-r3,6,normal,false,en_ls_halt,1793480247065.018,1,false,1633.511,483.077,183.077,,,,,0,false,
+pipecat-local-N10-r3,5,normal,false,en_ls_halt,1793480248081.059,1,false,1848.169,462.543,161.543,,,,,0,false,
+pipecat-local-N10-r3,4,talkover,false,en_ls_halt,1793480247049.784,1,false,1838.317,511.795,211.795,1356.596,40,2000,true,0,false,
+pipecat-local-N10-r3,2,normal,false,en_ls_power,1793480252056.724,1,false,1824.405,481.04,181.04,,,,,0,false,
+pipecat-local-N10-r3,3,normal,false,en_ls_power,1793480252751.025,1,false,1906.197,444.378,144.378,,,,,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_experience,1793480253582.007,1,false,2233.556,509.307,208.307,,,,,0,false,
+pipecat-local-N10-r3,7,normal,false,en_ls_halt,1793480252941.366,1,false,2033.607,478.763,178.763,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_experience,1793480253906.095,1,false,2277.2,561.065,261.065,,,,,0,false,
+pipecat-local-N10-r3,6,normal,true,en_ls_experience,1793480254309.439,1,false,2261.427,493.256,192.256,,,,,0,false,
+pipecat-local-N10-r3,1,normal,true,en_ls_power,1793480254016.804,1,false,2190.612,512.786,212.786,,,,,0,false,
+pipecat-local-N10-r3,0,normal,true,en_ls_halt,1793480254269.711,1,false,2494.296,603.51,303.51,,,,,0,false,
+pipecat-local-N10-r3,5,normal,true,en_ls_power,1793480255163.063,1,false,2520.154,505.2,205.2,,,,,0,false,
+pipecat-local-N10-r3,4,normal,true,en_ls_halt,1793480255317.827,1,false,2593.657,489.658,189.658,,,,,0,false,
+pipecat-local-N10-r3,3,normal,true,en_ls_experience,1793480260136.045,1,false,2148.698,487.911,187.911,,,,,0,false,
+pipecat-local-N10-r3,2,normal,true,en_ls_halt,1793480259237.122,1,false,2159.599,493.878,193.878,,,,,0,false,
+pipecat-local-N10-r3,1,normal,true,en_ls_experience,1793480261348.146,1,false,2097.103,596.854,294.854,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_power,1793480261068.228,1,false,2359.642,571.788,271.788,,,,,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_halt,1793480260787.893,1,false,2408.742,539.141,238.141,,,,,0,false,
+pipecat-local-N10-r3,7,talkover,true,en_ls_experience,1793480260827.821,1,false,2230.098,493.24,192.24,2075.482,40,2900,true,0,false,
+pipecat-local-N10-r3,0,normal,true,en_ls_experience,1793480261950.196,1,false,2406.454,465.946,165.946,,,,,0,false,
+pipecat-local-N10-r3,6,normal,true,en_ls_halt,1793480261324.461,1,false,2492.176,481.043,181.043,,,,,0,false,
+pipecat-local-N10-r3,5,talkover,true,en_ls_experience,1793480262246.086,1,false,2498.845,438.171,137.171,1017.967,20,2780,true,0,false,
+pipecat-local-N10-r3,4,normal,true,en_ls_halt,1793480262781.47,1,false,2573.545,526.367,226.367,,,,,0,false,
+pipecat-local-N10-r3,2,normal,true,en_ls_power,1793480266957.74,1,false,2363.641,455.387,154.387,,,,,0,false,
+pipecat-local-N10-r3,3,normal,true,en_ls_power,1793480266932.349,1,false,2377.256,480.996,180.996,,,,,0,false,
+pipecat-local-N10-r3,1,normal,true,en_ls_power,1793480268241.633,1,false,2258.98,553.883,253.883,,,,,0,false,
+pipecat-local-N10-r3,0,normal,true,en_ls_experience,1793480268967.43,1,false,2411.122,502.375,202.375,,,,,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_power,1793480268734.309,1,false,2626.58,472.231,171.231,,,,,0,false,
+pipecat-local-N10-r3,7,normal,true,en_ls_power,1793480268933.787,1,false,2366.204,540.08,240.08,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_halt,1793480268538.549,1,false,2743.915,484.691,184.691,,,,,0,false,
+pipecat-local-N10-r3,6,normal,true,en_ls_halt,1793480269314.008,1,false,2664.802,457.182,157.182,,,,,0,false,
+pipecat-local-N10-r3,4,normal,true,en_ls_experience,1793480270552.875,1,false,2558.906,472.126,172.126,,,,,0,false,
+pipecat-local-N10-r3,5,normal,true,en_ls_halt,1793480270305.083,1,false,2695.348,476.145,175.145,,,,,0,false,
+pipecat-local-N10-r3,2,normal,true,en_ls_experience,1793480274224.799,1,false,2268.589,455.841,155.841,,,,,0,false,
+pipecat-local-N10-r3,3,normal,true,en_ls_power,1793480274225.535,1,false,2172.573,446.531,145.531,,,,,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_experience,1793480276176.275,1,false,2326.33,705.379,405.379,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_experience,1793480276481.217,1,false,2420.222,607.011,307.011,,,,,0,false,
+pipecat-local-N10-r3,1,talkover,true,en_ls_experience,1793480275527.919,1,false,2340.691,623.033,323.033,2127.318,40,2920,true,0,false,
+pipecat-local-N10-r3,0,normal,true,en_ls_halt,1793480275927.011,1,false,2426.813,593.256,293.256,,,,,0,false,
+pipecat-local-N10-r3,6,normal,true,en_ls_power,1793480277070.271,1,false,3017.575,594.837,294.837,,,,,0,false,
+pipecat-local-N10-r3,7,talkover,true,en_ls_power,1793480276205.07,1,false,2906.188,593.635,293.635,2164.342,40,2980,true,0,false,
+pipecat-local-N10-r3,4,normal,true,en_ls_halt,1793480277312.093,1,false,3526.669,557.963,256.963,,,,,0,false,
+pipecat-local-N10-r3,5,normal,true,en_ls_halt,1793480277872.117,1,false,3844.634,557.849,257.849,,,,,0,false,
+pipecat-local-N10-r3,2,normal,true,en_ls_halt,1793480281292.131,1,false,3596.579,473.843,173.843,,,,,0,false,
+pipecat-local-N10-r3,3,normal,true,en_ls_power,1793480281854.953,1,false,3582.51,483.238,183.238,,,,,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_experience,1793480284802.064,1,false,3246.408,483.355,183.355,,,,,0,false,
+pipecat-local-N10-r3,0,normal,true,en_ls_experience,1793480285264.074,1,false,3146.516,541.154,241.154,,,,,0,false,
+pipecat-local-N10-r3,1,normal,true,en_ls_power,1793480285253.876,1,false,3161.447,562.48,262.48,,,,,0,false,
+pipecat-local-N10-r3,7,normal,true,en_ls_experience,1793480285894.272,1,false,3146.917,547.385,247.385,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_halt,1793480285050.629,1,false,3488.423,485.791,184.791,,,,,0,false,
+pipecat-local-N10-r3,6,normal,true,en_ls_power,1793480285803.946,1,false,3291.133,496.826,196.826,,,,,0,false,
+pipecat-local-N10-r3,5,normal,true,en_ls_experience,1793480286561.58,1,false,3295.501,497.114,196.114,,,,,0,false,
+pipecat-local-N10-r3,4,normal,true,en_ls_halt,1793480286240.484,1,false,3305.223,508.146,207.146,,,,,0,false,
+pipecat-local-N10-r3,2,normal,true,en_ls_power,1793480289620.287,1,false,2868.404,471.426,171.426,,,,,0,false,
+pipecat-local-N10-r3,3,normal,true,en_ls_halt,1793480289760.062,1,false,2773.894,453.277,153.277,,,,,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_experience,1793480292564.101,1,false,2608.965,497.458,197.458,,,,,0,false,
+pipecat-local-N10-r3,0,normal,true,en_ls_experience,1793480292858.43,1,false,2416.42,506.732,206.732,,,,,0,false,
+pipecat-local-N10-r3,1,normal,true,en_ls_experience,1793480293156.892,1,false,2552.277,515.103,214.103,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_experience,1793480293583.129,1,false,2669.149,526.93,225.93,,,,,0,false,
+pipecat-local-N10-r3,7,normal,true,en_ls_halt,1793480293316.498,1,false,2516.262,451.292,151.292,,,,,0,false,
+pipecat-local-N10-r3,4,normal,true,en_ls_experience,1793480294455.053,1,false,2508.821,559.702,259.702,,,,,0,false,
+pipecat-local-N10-r3,5,normal,true,en_ls_halt,1793480293952.74,1,false,2653.787,545.398,244.398,,,,,0,false,
+pipecat-local-N10-r3,6,talkover,true,en_ls_power,1793480293671.287,1,false,2661.655,439.833,139.833,2633.195,40,3480,true,0,false,
+pipecat-local-N10-r3,2,normal,true,en_ls_power,1793480296807.421,1,false,2355.691,467.542,167.542,,,,,0,false,
+pipecat-local-N10-r3,3,talkover,true,en_ls_halt,1793480297569.245,1,false,1994.976,475.018,175.018,2300.548,0,3040,true,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_experience,1793480299661.562,1,false,2293.618,438.947,138.947,,,,,0,false,
+pipecat-local-N10-r3,0,normal,true,en_ls_halt,1793480299829.516,1,false,2117.275,454.9,151.9,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_experience,1793480300664.756,1,false,2269.045,456.884,156.884,,,,,0,false,
+pipecat-local-N10-r3,1,talkover,true,en_ls_experience,1793480300240.615,1,false,2219.159,566.654,266.654,2172.079,0,3000,true,0,false,
+pipecat-local-N10-r3,4,normal,true,en_ls_power,1793480301164.748,1,false,2098.712,525.332,225.332,,,,,0,false,
+pipecat-local-N10-r3,7,normal,true,en_ls_halt,1793480300923.309,1,false,2238.999,476.042,176.042,,,,,0,false,
+pipecat-local-N10-r3,5,normal,true,en_ls_power,1793480301596.855,1,false,2283.325,520.76,217.76,,,,,0,false,
+pipecat-local-N10-r3,6,normal,true,en_ls_power,1793480302037.687,1,false,2273.379,461.325,161.325,,,,,0,false,
+pipecat-local-N10-r3,2,normal,true,en_ls_halt,1793480303776.525,1,false,1963.493,457.803,156.803,,,,,0,false,
+pipecat-local-N10-r3,3,normal,true,en_ls_power,1793480306222.025,1,false,1443.966,452.565,152.565,,,,,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_experience,1793480306524.719,1,false,1782.212,484.828,184.828,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_experience,1793480307363.603,1,false,1736.399,458.447,158.447,,,,,0,false,
+pipecat-local-N10-r3,0,normal,true,en_ls_power,1793480307295.925,1,false,1641.247,454.426,154.426,,,,,0,false,
+pipecat-local-N10-r3,1,normal,true,en_ls_halt,1793480307823.27,1,false,1697.794,515.385,215.385,,,,,0,false,
+pipecat-local-N10-r3,7,normal,true,en_ls_halt,1793480308050.007,1,false,1547.162,452.516,151.516,,,,,0,false,
+pipecat-local-N10-r3,5,normal,true,en_ls_halt,1793480308309.324,1,false,1607.836,482.519,181.519,,,,,0,false,
+pipecat-local-N10-r3,4,talkover,true,en_ls_halt,1793480307834.473,1,false,1523.498,441.525,140.525,1682.531,40,2640,true,0,false,
+pipecat-local-N10-r3,6,talkover,true,en_ls_halt,1793480308712.834,1,false,1443.942,477.515,177.515,1640.168,40,2560,true,0,false,
+pipecat-local-N10-r3,2,normal,true,en_ls_power,1793480310708.095,1,false,1537.671,470.915,170.915,,,,,0,false,
+pipecat-local-N10-r3,3,normal,true,en_ls_power,1793480312697.021,1,false,974.395,446.58,146.58,,,,,0,false,
+pipecat-local-N10-r3,8,normal,true,en_ls_halt,1793480312701.965,1,false,1230.237,436.801,136.801,,,,,0,false,
+pipecat-local-N10-r3,9,normal,true,en_ls_power,1793480313402.554,1,false,1247.382,491.696,191.696,,,,,0,false,
+pipecat-local-N20-r3,14,normal,false,en_ls_experience,1793480333676.05,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,17,normal,false,en_ls_experience,1793480334403.475,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,12,normal,false,en_ls_power,1793480333950.452,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,16,normal,false,en_ls_halt,1793480334258.823,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,18,normal,false,en_ls_experience,1793480335058.581,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,1,normal,false,en_ls_experience,1793480335070.171,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,10,normal,false,en_ls_experience,1793480335184.719,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,15,normal,false,en_ls_experience,1793480335237.27,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,7,normal,false,en_ls_power,1793480334868.671,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,2,normal,false,en_ls_halt,1793480334776.263,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,8,normal,false,en_ls_power,1793480335118.942,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,13,talkover,false,en_ls_power,1793480333661.388,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,6,normal,false,en_ls_experience,1793480336164.901,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,19,normal,false,en_ls_halt,1793480335431.265,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,5,normal,false,en_ls_power,1793480335664.744,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,9,normal,false,en_ls_halt,1793480335794.309,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,0,normal,false,en_ls_halt,1793480336036.807,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,3,talkover,false,en_ls_experience,1793480335305.513,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,normal,false,en_ls_halt,1793480336114.191,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,4,talkover,false,en_ls_power,1793480335828.871,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,17,normal,false,en_ls_power,1793480342384.098,1,false,-631.55,672.461,371.461,,,,,0,false,
+pipecat-local-N20-r3,14,normal,false,en_ls_experience,1793480341643.368,1,false,1777.286,757.513,455.513,,,,,0,false,
+pipecat-local-N20-r3,18,normal,false,en_ls_power,1793480343041.524,1,false,-948.226,684.667,384.667,,,,,0,false,
+pipecat-local-N20-r3,2,normal,false,en_ls_experience,1793480343520.04,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,6,normal,false,en_ls_experience,1793480344144.965,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,19,normal,false,en_ls_power,1793480344164.119,1,false,-455.667,715.724,414.724,,,,,0,false,
+pipecat-local-N20-r3,9,normal,false,en_ls_experience,1793480344538.507,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,16,normal,false,en_ls_experience,1793480342983.404,1,false,2174.174,674.467,374.467,,,,,0,false,
+pipecat-local-N20-r3,0,normal,false,en_ls_experience,1793480344764.693,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,normal,false,en_ls_halt,1793480344852.21,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,12,talkover,false,en_ls_halt,1793480342559.218,1,false,1464.596,706.516,406.516,,40,440,true,0,false,no-stop-found 
+pipecat-local-N20-r3,15,normal,false,en_ls_power,1793480343218.541,1,false,2883.24,718.75,418.75,,,,,0,false,
+pipecat-local-N20-r3,4,normal,false,en_ls_halt,1793480345991.27,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,3,talkover,false,en_ls_halt,1793480344851.755,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,1,normal,false,en_ls_power,1793480343064.722,1,false,4826.726,850.387,550.387,,,,,0,false,
+pipecat-local-N20-r3,7,normal,false,en_ls_halt,1793480343462.77,1,false,4631.25,708.657,408.657,,,,,0,false,
+pipecat-local-N20-r3,10,normal,false,en_ls_halt,1793480343164.374,1,false,5234.561,792.347,492.347,,,,,0,false,
+pipecat-local-N20-r3,13,normal,false,en_ls_halt,1793480343831.429,1,false,4643.586,764.064,464.064,,,,,0,false,
+pipecat-local-N20-r3,8,normal,false,en_ls_halt,1793480343705.085,1,false,5156.656,785.883,485.883,,,,,0,false,
+pipecat-local-N20-r3,17,normal,true,en_ls_experience,1793480350504.215,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,5,normal,false,en_ls_halt,1793480344264.478,1,false,6037.468,694.459,394.459,,,,,0,false,
+pipecat-local-N20-r3,6,normal,true,en_ls_halt,1793480352132.808,1,false,-1533.979,672.018,371.018,,,,,0,false,
+pipecat-local-N20-r3,18,normal,true,en_ls_halt,1793480351003.809,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,2,normal,true,en_ls_power,1793480351514.588,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,16,normal,true,en_ls_experience,1793480352683.573,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,14,talkover,true,en_ls_power,1793480350985.424,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,0,normal,true,en_ls_power,1793480352759.324,1,false,133.836,695.425,395.425,,,,,0,false,
+pipecat-local-N20-r3,19,normal,true,en_ls_halt,1793480352495.398,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,normal,true,en_ls_halt,1793480353597.463,1,false,-721.258,753.03,453.03,,,,,0,false,
+pipecat-local-N20-r3,9,talkover,true,en_ls_power,1793480352509.756,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,4,normal,true,en_ls_power,1793480354732.969,1,false,307.113,650.614,350.614,,,,,0,false,
+pipecat-local-N20-r3,12,talkover,true,en_ls_experience,1793480354017.13,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,3,normal,true,en_ls_halt,1793480354859.705,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,15,talkover,true,en_ls_halt,1793480354058.066,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,7,normal,true,en_ls_experience,1793480356511.639,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,1,normal,true,en_ls_power,1793480355950.638,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,8,normal,true,en_ls_experience,1793480357322.615,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,10,normal,true,en_ls_power,1793480356874.577,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,13,normal,true,en_ls_power,1793480356914.172,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,17,normal,true,en_ls_power,1793480358484.987,1,false,3965.834,575.895,274.895,,,,,0,false,
+pipecat-local-N20-r3,5,normal,true,en_ls_experience,1793480358687.795,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,18,normal,true,en_ls_power,1793480359762.902,1,false,2916.469,598.58,298.58,,,,,0,false,
+pipecat-local-N20-r3,16,normal,true,en_ls_power,1793480360663.065,1,false,2983.546,567.454,267.454,,,,,0,false,
+pipecat-local-N20-r3,19,normal,true,en_ls_halt,1793480361243.876,1,false,2007.653,550.805,250.805,,,,,0,false,
+pipecat-local-N20-r3,2,normal,true,en_ls_experience,1793480360125.056,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,14,normal,true,en_ls_experience,1793480360823.469,1,false,2218.7,577.719,277.719,,,,,0,false,
+pipecat-local-N20-r3,6,talkover,true,en_ls_experience,1793480359376.3,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,0,normal,true,en_ls_experience,1793480361041.556,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,normal,true,en_ls_power,1793480361437.092,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,15,normal,true,en_ls_halt,1793480364080.629,1,false,562.897,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,1,normal,true,en_ls_halt,1793480364559.297,1,false,909.936,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,10,normal,true,en_ls_halt,1793480365461.284,1,false,742.49,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,13,normal,true,en_ls_experience,1793480365514.328,1,false,1786.56,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,7,normal,true,en_ls_halt,1793480364503.246,1,false,1918.974,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,8,normal,true,en_ls_power,1793480365311.705,1,false,1851.514,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,9,normal,true,en_ls_experience,1793480362842.981,1,false,4774.647,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,12,normal,true,en_ls_halt,1793480363302.219,1,false,3778.842,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,5,normal,true,en_ls_halt,1793480366679.576,1,false,651.713,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,4,talkover,true,en_ls_experience,1793480363045.027,1,false,4923.735,,,620.092,0,1620,true,0,true,reply not heard 
+pipecat-local-N20-r3,3,normal,true,en_ls_halt,1793480363623.568,1,false,4882.496,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,17,normal,true,en_ls_power,1793480366675.81,1,false,3355.517,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,18,normal,true,en_ls_halt,1793480366903.075,1,false,3285.475,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,13,talkover,true,en_ls_halt,1793480372810.922,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,19,normal,true,en_ls_power,1793480368083.707,1,false,3375.491,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,16,normal,true,en_ls_power,1793480367870.529,1,false,4194.545,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,2,normal,true,en_ls_power,1793480368111.389,1,false,4220.834,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,14,talkover,true,en_ls_experience,1793480368294.918,1,false,3446.185,,,,0,520,true,0,true,no-stop-found reply not heard 
+pipecat-local-N20-r3,6,normal,true,en_ls_power,1793480368591.604,1,false,4300.428,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,0,normal,true,en_ls_power,1793480369047.028,1,false,4356.065,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,15,normal,true,en_ls_halt,1793480371017.98,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,normal,true,en_ls_power,1793480370041.468,1,false,4054.635,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,12,normal,true,en_ls_experience,1793480373475.484,1,false,1304.853,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,3,normal,true,en_ls_experience,1793480374892.107,1,false,169.401,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,1,normal,true,en_ls_power,1793480371851.176,1,false,2997.655,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,9,normal,true,en_ls_halt,1793480373153.337,1,false,494.499,,,,,,,0,true,no reply say 
+pipecat-local-N20-r3,4,normal,true,en_ls_halt,1793480374753.394,1,false,-1111.637,,,,,,,0,true,reply not heard 
+pipecat-local-N20-r3,10,normal,true,en_ls_halt,1793480372604.653,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,7,normal,true,en_ls_power,1793480372814.286,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,8,normal,true,en_ls_halt,1793480373115.846,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,5,normal,true,en_ls_halt,1793480373702.18,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,6,talkover,true,en_ls_power,1793480378801.484,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,0,talkover,true,en_ls_experience,1793480379325.597,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,17,normal,true,en_ls_experience,1793480375979.888,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,talkover,true,en_ls_experience,1793480380055.33,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,18,normal,true,en_ls_power,1793480376556.399,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,19,normal,true,en_ls_experience,1793480377394.71,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,13,normal,true,en_ls_experience,1793480377835.174,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,16,normal,true,en_ls_halt,1793480377984.864,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,2,normal,true,en_ls_power,1793480378264.929,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,14,normal,true,en_ls_power,1793480378517.465,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,15,normal,true,en_ls_power,1793480379766.046,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,1,normal,true,en_ls_experience,1793480380774.856,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,12,normal,true,en_ls_halt,1793480380315.138,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,18,talkover,true,en_ls_power,1793480385158.748,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,3,normal,true,en_ls_halt,1793480380599.107,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,10,normal,true,en_ls_experience,1793480381362.592,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,7,normal,true,en_ls_experience,1793480381415.103,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,9,normal,true,en_ls_power,1793480381045.117,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,8,normal,true,en_ls_experience,1793480381846.373,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,4,normal,true,en_ls_halt,1793480381198.617,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,5,normal,true,en_ls_power,1793480382453.925,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,14,talkover,true,en_ls_power,1793480387114.057,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,6,normal,true,en_ls_experience,1793480383824.28,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,17,normal,true,en_ls_power,1793480383970.741,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,0,normal,true,en_ls_power,1793480384346.756,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,normal,true,en_ls_halt,1793480385080.678,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,19,normal,true,en_ls_halt,1793480385381.581,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,13,normal,true,en_ls_power,1793480385812.209,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,2,normal,true,en_ls_power,1793480386869.162,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,16,normal,true,en_ls_halt,1793480386732.341,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,15,normal,true,en_ls_power,1793480388381.072,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,12,normal,true,en_ls_experience,1793480389056.997,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,10,normal,true,en_ls_experience,1793480389359.717,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,7,normal,true,en_ls_experience,1793480389394.673,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,1,normal,true,en_ls_halt,1793480388762.335,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,9,normal,true,en_ls_experience,1793480389648.894,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,4,normal,true,en_ls_experience,1793480389951.813,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,3,normal,true,en_ls_halt,1793480389350.096,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,8,normal,true,en_ls_halt,1793480389837.118,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,18,normal,true,en_ls_power,1793480390177.641,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,5,normal,true,en_ls_power,1793480391043.862,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,6,normal,true,en_ls_halt,1793480391824.675,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,14,normal,true,en_ls_halt,1793480392128.289,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,0,normal,true,en_ls_experience,1793480392964.043,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,17,normal,true,en_ls_halt,1793480392586.124,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,19,normal,true,en_ls_experience,1793480394126.863,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,normal,true,en_ls_halt,1793480393833.937,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,13,normal,true,en_ls_power,1793480394416.814,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,5,talkover,true,en_ls_power,1793480399656.388,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,2,normal,true,en_ls_halt,1793480395477.199,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,16,normal,true,en_ls_halt,1793480395477.559,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,0,talkover,true,en_ls_experience,1793480400963.768,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,12,normal,true,en_ls_experience,1793480397043.197,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,7,normal,true,en_ls_experience,1793480397379.783,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,9,normal,true,en_ls_experience,1793480397632.807,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,15,normal,true,en_ls_halt,1793480396994.31,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,3,normal,true,en_ls_experience,1793480398093.188,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,10,normal,true,en_ls_halt,1793480397330.224,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,1,normal,true,en_ls_power,1793480397522.729,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,8,normal,true,en_ls_experience,1793480398582.534,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,4,normal,true,en_ls_halt,1793480397936.575,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,18,normal,true,en_ls_power,1793480398794.342,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,2,talkover,true,en_ls_halt,1793480404224.102,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,14,normal,true,en_ls_experience,1793480400870.641,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,17,normal,true,en_ls_experience,1793480401325.105,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,6,normal,true,en_ls_halt,1793480400586.089,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,9,talkover,true,en_ls_halt,1793480405603.142,0,false,,,,,,,,0,true,bot not heard before talk-over
+pipecat-local-N20-r3,19,normal,true,en_ls_halt,1793480402108.169,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,13,normal,true,en_ls_experience,1793480403015.844,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,11,normal,true,en_ls_halt,1793480402583.635,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,16,normal,true,en_ls_halt,1793480404224.59,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,5,normal,true,en_ls_power,1793480404669.902,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,7,normal,true,en_ls_experience,1793480405342.381,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,12,normal,true,en_ls_halt,1793480405041.991,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,15,normal,true,en_ls_power,1793480405721.6,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,8,normal,true,en_ls_experience,1793480406565.118,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,3,normal,true,en_ls_power,1793480406084.864,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,10,normal,true,en_ls_power,1793480406085.456,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,0,normal,true,en_ls_halt,1793480405985.159,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,1,normal,true,en_ls_power,1793480406141.783,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,4,normal,true,en_ls_power,1793480406663.796,0,false,,,,,,,,0,true,no final user.turn
+pipecat-local-N20-r3,18,normal,true,en_ls_experience,1793480407401.057,0,false,,,,,,,,0,true,no final user.turn
