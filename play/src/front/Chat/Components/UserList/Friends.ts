@@ -98,6 +98,15 @@ export function placeFriends(
 }
 
 /**
+ * Whether a friend can be found on the map you are on: online, in this room, and where they are is known. The same
+ * condition gives the row its Walk to button, and lets tapping their Woka or name show them on the map with their
+ * visit card, as in Everyone. Friends elsewhere (in this world or another) have no map here to show: they get Go.
+ */
+export function canLocateOnThisMap(entry: PlacedFriend): boolean {
+    return isOnline(entry.status) && !!entry.session && !entry.locationUnknown && entry.group === "here";
+}
+
+/**
  * View profile gets the first button spot (and leaves ⋯) on rows that have neither Walk to nor Go, so Message stays
  * in the same place on every row. Rows with Walk to or Go keep it in ⋯.
  */
