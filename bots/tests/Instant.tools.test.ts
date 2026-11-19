@@ -957,6 +957,41 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(orbit.instantRun).toHaveBeenCalledTimes(3);
     });
 
+    it('counts steps of the same task that landed while this run was in flight, for what it says about earlier steps and for a rule (Sentry)', async () => {
+        const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: undefined, canAskForMore: undefined };
+        const { ai, orbit } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        // Run a is sent first and is slow; run b is sent after it and lands first
+        let landA: (answer: InstantRunAnswer) => void = () => undefined;
+        orbit.instantRun
+            .mockImplementationOnce(() => new Promise<InstantRunAnswer>((resolve) => (landA = resolve)))
+            .mockResolvedValueOnce({ status: 'done', data: 2, chargedMicros: 1 });
+        const a = ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
+        const b = await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        expect(b).toMatchObject({ success: true });
+        landA({ status: 'unreachable', retry: false });
+        const late = await a;
+        expect(late).toMatchObject({ success: false, outcome: 'uncertain' });
+        // b worked while a was still out: a says so, though b was not there when a was sent
+        expect(String(late.note)).toMatch(/One earlier step of this task worked: say that on its own/);
+
+        // The same for a rule: c could not be settled while d was out, and d is then stopped by the rule: both facts
+        const second = service();
+        second.ai.noteBrick(BRICK, { isDefault: false });
+        let landD: (answer: InstantRunAnswer) => void = () => undefined;
+        second.orbit.instantRun
+            .mockImplementationOnce(() => new Promise<InstantRunAnswer>((resolve) => (landD = resolve)))
+            .mockResolvedValueOnce({ status: 'unreachable', retry: false });
+        const d = second.ai.runInstantToolCall('instant_app_exa_search', { query: 'd' }, where);
+        await vi.waitFor(() => expect(second.orbit.instantRun).toHaveBeenCalledTimes(1));
+        await second.ai.runInstantToolCall('instant_app_exa_search', { query: 'c' }, where);
+        landD(rule);
+        const stopped = await d;
+        expect(String(stopped.note)).toContain('"Your spending rule stopped further steps."');
+        expect(String(stopped.note)).toContain('"I\'m still checking the earlier request."');
+    });
+
     it('a rule that says no stops the task: Orbit’s words, no card for more credit, and no other Instant App is tried after it', async () => {
         const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: '2026-12-01T00:00:00Z', canAskForMore: true };
         const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValueOnce(rule).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });

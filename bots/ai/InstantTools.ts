@@ -146,8 +146,8 @@ export interface InstantRunContext {
     taskKey?: string;
     /** The link to this task's receipt, put under what the model reads when it is useful. */
     receiptLink?: string | null;
-    /** An earlier run of this task could not be settled. A rule that stops this one then says both facts: the rule, and that the earlier one is still being checked. */
-    taskUnsure?: boolean;
+    /** An earlier run of this task could not be settled (a function is asked when the answer comes, so a run that ended meanwhile counts). A rule that stops this one then says both facts: the rule, and that the earlier one is still being checked. */
+    taskUnsure?: boolean | (() => boolean);
     /** This attempt's own id. Made here when not given; the same id for every ask about this attempt. */
     callId?: string;
     sleep?: (ms: number) => Promise<void>;
@@ -366,7 +366,7 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                 if (earlierAttempt()) return answer.stop || answer.reason === 'rule' ? { ...unsure(), stop: true, result: ruleStopResult(words, { link: check }) } : unsure();
                 // A rule they said in chat: final. Never tried again for this task, and never answered with an offer of more credit
                 if (answer.stop || answer.reason === 'rule') {
-                    return { ...base, ended: 'not_sent', notSent: true, stop: true, result: ruleStopResult(words, context.taskUnsure ? { link: check } : undefined) };
+                    return { ...base, ended: 'not_sent', notSent: true, stop: true, result: ruleStopResult(words, (typeof context.taskUnsure === 'function' ? context.taskUnsure() : context.taskUnsure) ? { link: check } : undefined) };
                 }
                 if (answer.reason === 'credit_used_up') {
                     const carryOn = carryOnCard(answer);
