@@ -48,9 +48,10 @@
                 if (mine === reads && (read.ok || read.why === "gone")) answered = true;
                 // Orbit did not say: the page is as it was. It said it is not made from a template (a Brick that was, and no longer is):
                 // the card it had goes, so the page never keeps showing an update that is not there
-                // eslint-disable-next-line svelte/infinite-reactive-loop
                 if (!gone && mine === reads) {
+                    // eslint-disable-next-line svelte/infinite-reactive-loop
                     if (read.ok) view = read.value;
+                    // eslint-disable-next-line svelte/infinite-reactive-loop
                     else if (read.why === "gone") view = undefined;
                 }
             })
