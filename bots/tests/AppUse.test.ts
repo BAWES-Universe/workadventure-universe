@@ -273,6 +273,38 @@ describe('a ready-made App', () => {
             return { data: { status: 200, contentType: 'application/json', sessionId: null, body: JSON.stringify(json({ content: [{ type: 'text', text: 'sent' }] })) } };
         };
 
+        it('is not dropped by a late failure of an older request that used another session under the same key', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            MCPConnector.clearCache();
+            const sessions = { live: new Set<string>(), made: [] as string[] };
+            const sent: any[] = [];
+            const base = link(sessions, sent);
+            let failA!: (error: Error) => void;
+            vi.spyOn(axios, 'post').mockImplementation((async (url: string, body: any, config: any) => {
+                if (body.message.method === 'tools/call' && body.callId === 'A') {
+                    sent.push(body);
+                    return new Promise((_resolve, reject) => void (failA = reject));
+                }
+                return base(url, body);
+            }) as never);
+            const ai = service(async () => ({ allowed: true }));
+            expect((await callWith(ai, 'first')).result).toEqual([{ type: 'text', text: 'sent' }]);
+            // A request on the first session is still on its way when another installs a second one under the same key
+            const late = callWith(ai, 'A');
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            MCPConnector.clearCache();
+            expect((await callWith(ai, 'B')).result).toEqual([{ type: 'text', text: 'sent' }]);
+            expect(sessions.made).toEqual(['sess-1', 'sess-2']);
+            failA(Object.assign(new Error('socket hang up'), { isAxiosError: true }));
+            await late;
+            // The second session was healthy: the next call goes out on it without opening another
+            sent.length = 0;
+            await callWith(ai, 'D');
+            expect(sent.map((b) => b.message.method)).toEqual(['tools/call']);
+            expect(sent[0]).toMatchObject({ sessionId: 'sess-2' });
+            expect(sessions.made).toEqual(['sess-1', 'sess-2']);
+        });
+
         it('is checked before the call and replaced when the link dropped it, so the call goes out once', async () => {
             vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
             MCPConnector.clearCache();

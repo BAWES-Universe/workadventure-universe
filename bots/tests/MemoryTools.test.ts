@@ -495,7 +495,7 @@ describe('CodeRabbit on #2020: a thing with "and" in it, and a keep that says it
     });
 
     it('shows a forget that removed nothing as a step that did not run', () => {
-        expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false, done: 'Forgot nothing yet' });
+        expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false, noChange: true, done: 'Forgot nothing yet' });
         expect(resultOf('a', { forgotten: ['They like coffee'], count: 1 })).toEqual({ id: 'a', ok: true });
         expect(resultOf('a', { things: [] })).toEqual({ id: 'a', ok: true });
     });

@@ -11,8 +11,11 @@ describe('a forget that removed nothing, as the line shows it (CodeRabbit)', () 
         expect(steps.field().steps[0].done).toBe('Forgot');
         steps.finish([resultOf('f', { forgotten: [], unclear: true })]);
         const step = steps.field().steps[0];
-        expect(step).toMatchObject({ state: 'failed', done: 'Forgot nothing yet' });
+        // Asking which memory is meant changed nothing, and is not a failed step
+        expect(step).toMatchObject({ state: 'done', done: 'Forgot nothing yet' });
         expect(step.note).toContain('Nothing forgotten');
+        steps.end(1000);
+        expect(steps.text()).not.toContain("didn't work");
         // Forgot for real: the label stays
         const again = new ReplySteps(0);
         again.start([describeStep({ id: 'g', name: 'forget_memory', arguments: { about: 'coffee' } })]);

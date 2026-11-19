@@ -52,6 +52,8 @@ export interface ToolStepResult {
     note?: string;
     /** When the call settled, so a quick call is not timed with the slowest one it ran beside (#2061). */
     at?: number;
+    /** The call asked a question or changed nothing: neither done nor failed, so it never counts as "didn't work" (the step's own words say what happened). */
+    noChange?: boolean;
     /** What the step says once it has ended, when "Forgot" or "Read a page" would be untrue ("Didn't forget anything"). */
     done?: string;
 }
@@ -210,7 +212,7 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         // Forgetting that removed nothing (asked which memory they mean, a question, already gone): the step must not read
         // "Forgot" while the memory is still there (game #2020)
         if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
-            return { id, ok: false, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
+            return { id, ok: false, noChange: true, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
         }
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
@@ -263,7 +265,7 @@ export class ReplySteps {
         for (const result of results) {
             const step = this.steps.find((s) => s.id === result.id && s.state === 'running');
             if (!step) continue;
-            step.state = result.ok ? 'done' : result.waiting ? 'waiting' : result.unknown ? 'unknown' : 'failed';
+            step.state = result.ok || result.noChange ? 'done' : result.waiting ? 'waiting' : result.unknown ? 'unknown' : 'failed';
             step.secs = secondsBetween(step.began, result.at ?? now);
             if (result.shows?.length) step.shows = result.shows;
             if (result.note) step.note = result.note;
