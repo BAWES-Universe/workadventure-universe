@@ -115,6 +115,25 @@ describe('MatrixDmBridge after the full review', () => {
             expect(client.sendMessage).not.toHaveBeenCalled();
         });
 
+        it('is not sent when the room was forgotten while the chat was being looked at, so its members are not known', async () => {
+            await bridge.onEvent(invite());
+            stores.roomsOf.set(`${BOT}|${ALICE}`, ROOM);
+            bridge = new MatrixDmBridge(config, client as never, stores.deps);
+            await bridge.onEvent(message('hi'));
+            client.sendMessage.mockClear();
+            const fresh = new MatrixDmBridge(config, client as never, stores.deps);
+            await fresh.onEvent(message('hi again'));
+            // Noting the chat takes a moment, and the bot is removed from the room meanwhile: the room's members are forgotten with it
+            stores.deps.rooms.rememberDmRoomOf.mockImplementation(async () => {
+                await fresh.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$leave', state_key: BOT_USER, content: { membership: 'leave' } });
+            });
+            fresh['directRooms'].clear();
+            const result = await fresh.carryGuestChat(BOT, ALICE, 'carry-gone', [{ from: 'guest', text: 'hello', at: 1 }]);
+            expect(fresh['roomMembers'].has(ROOM)).toBe(false);
+            expect(result).toBe('wait');
+            expect(client.sendMessage).not.toHaveBeenCalled();
+        });
+
         it('never carries a guest\'s upload receipt into the chat', async () => {
             await bridge.onEvent(invite());
             client.sendMessage.mockClear();

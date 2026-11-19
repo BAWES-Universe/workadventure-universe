@@ -909,12 +909,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /**
-     * Whether, by what the bot was last told, only the bot and this person are in the room. A room it was told nothing
-     * about counts as theirs: the caller has just read its members, and a membership event is what would say otherwise.
+     * Whether, by what the bot was last told, only the bot and this person are in the room. A room whose members are not known is NOT
+     * theirs: every caller has read the members just before (which keeps them), so a room with none was forgotten meanwhile (the bot left it,
+     * or it was removed) while an await was pending, and nothing may be sent into a room whose roster is not confirmed.
      */
     private stillTheirs(roomId: string, botUserId: string, matrixUserId: string): boolean {
         const members = this.roomMembers.get(roomId);
-        if (!members) return true;
+        if (!members) return false;
         return members.size === 2 && members.has(botUserId) && members.has(matrixUserId);
     }
 
