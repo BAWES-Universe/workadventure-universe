@@ -117,6 +117,8 @@
      */
     let addressEndsAt: number | undefined;
     let renewTimer: ReturnType<typeof setTimeout> | undefined;
+    /** When the renewal set up by watchAddress is due: kept while an opening drops the timer, so a dropped renewal is not late. */
+    let renewDueAt: number | undefined;
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
     /** A renewal was asked for while another opening was on its way, and is still wanted if that one does not come on show. */
@@ -349,6 +351,7 @@
 
     function forgetAddress() {
         renewIn(undefined);
+        renewDueAt = undefined;
         addressEndsAt = undefined;
         addressOver = false;
     }
@@ -358,8 +361,11 @@
         // Nothing was dropped (the opening came on show, or the version was never opened again): the timer in place is the right one
         if (!renewalDropped) return;
         renewalDropped = false;
-        if (opened && (renewWhenFree || (opened.version.url !== null && opened.version.urlHasMedia)))
-            renewIn(RENEW_RETRY_MS);
+        if (opened && (renewWhenFree || (opened.version.url !== null && opened.version.urlHasMedia))) {
+            // One that had a time is renewed at that time (at once when it has passed), never later: its address stops then.
+            // Only a renewal that was asked for without a time waits the quick retry.
+            renewIn(renewDueAt === undefined ? RENEW_RETRY_MS : Math.max(0, renewDueAt - Date.now()));
+        }
         renewWhenFree = false;
     }
 
@@ -380,7 +386,10 @@
         addressEndsAt = Date.now() + life;
         if (!version.urlHasMedia) return;
         const wait = Math.max(RENEW_MIN_WAIT_MS, life - Math.min(RENEW_LEAD_MS, life / 10));
-        if (wait <= MAX_TIMER_MS) renewIn(wait);
+        if (wait <= MAX_TIMER_MS) {
+            renewDueAt = Date.now() + wait;
+            renewIn(wait);
+        }
     }
 
     function addressStopped(): boolean {
@@ -396,6 +405,8 @@
             renewWhenFree = true;
             return;
         }
+        // Its time has come: whatever is set up next brings its own time
+        renewDueAt = undefined;
         const turn = ++renewal;
         const number = shownNumber;
         // Dropped when another version came on show meanwhile, it was put away, or it was asked for again

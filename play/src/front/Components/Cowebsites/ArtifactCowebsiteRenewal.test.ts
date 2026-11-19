@@ -246,8 +246,9 @@ describe("an artifact window's renewals of the address on show", () => {
         await settle();
         expect(asked).toBe(2);
         expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/1-first");
-        // The renewal that was dropped when 2 started to open is asked for again, and the page is shown at its new address
-        await vi.advanceTimersByTimeAsync(31_000);
+        // The renewal that was dropped when 2 started to open is asked for again at its original time (270 s), and the page
+        // is shown at its new address
+        await vi.advanceTimersByTimeAsync(271_000);
         expect(asked).toBe(3);
         expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/1-renewed");
         view.$destroy();
@@ -292,6 +293,58 @@ describe("an artifact window's renewals of the address on show", () => {
         // Its own address renews after its own wait
         await vi.advanceTimersByTimeAsync(215_000);
         expect(asked).toBe(3);
+        view.$destroy();
+    });
+
+    const failingTwo = () => {
+        let failTwo: () => void = () => {};
+        let asked = 0;
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, wanted: number | undefined) => {
+            asked++;
+            if (asked === 1) return Promise.resolve(opened(1, "https://files.test/1-first"));
+            if (wanted === 2)
+                return new Promise((_resolve, reject) => {
+                    failTwo = () => reject(new Error("offline"));
+                });
+            return Promise.resolve(opened(1, `https://files.test/1-renewed-${asked}`));
+        });
+        return { failTwo: () => failTwo(), asked: () => asked };
+    };
+
+    it("renews version 1 at its original time when the opening of version 2 fails after that time has passed", async () => {
+        vi.useFakeTimers();
+        const run = failingTwo();
+        const { version, view } = mount();
+        await settle();
+        // The address lasts 300 s and is renewed at 270 s: version 2 starts to open at 260 s and fails at 280 s
+        await vi.advanceTimersByTimeAsync(260_000);
+        version.set(2);
+        await settle();
+        await vi.advanceTimersByTimeAsync(20_000);
+        run.failTwo();
+        await settle();
+        // Renewed at once (its time has gone), not 30 s later: the address stops at 300 s
+        expect(run.asked()).toBe(3);
+        view.$destroy();
+    });
+
+    it("renews version 1 at its original time, not 30 s after a failed opening of version 2 that ends sooner", async () => {
+        vi.useFakeTimers();
+        const run = failingTwo();
+        const { version, view } = mount();
+        await settle();
+        await vi.advanceTimersByTimeAsync(70_000);
+        version.set(2);
+        await settle();
+        await vi.advanceTimersByTimeAsync(30_000);
+        run.failTwo();
+        await settle();
+        expect(run.asked()).toBe(2);
+        // 100 s: the old code asked again at 130 s; its time is 270 s
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(run.asked()).toBe(2);
+        await vi.advanceTimersByTimeAsync(111_000);
+        expect(run.asked()).toBe(3);
         view.$destroy();
     });
 });
