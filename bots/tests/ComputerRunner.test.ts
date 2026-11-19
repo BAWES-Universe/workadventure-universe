@@ -16,7 +16,7 @@ import {
     type RunnerOrbit,
     type TurnOpened,
 } from '../server/ComputerRunner';
-import { readRunnerEvents, runnerEventOf } from '../server/ComputerTurnStream';
+import { readRunnerEvents, runnerEventOf, streamLimits } from '../server/ComputerTurnStream';
 
 const JOB: RunnableJob = { jobId: 'job-1', botId: 'brick-1', title: 'Visa form', brief: 'Two people, Kuwait', writes: true, hasTurn: false };
 const RELAY = 'https://bot-server.example.test';
@@ -27,7 +27,7 @@ const done = (words: string): RunnerEvent[] => [{ type: 'created', id: 'r', sess
 const stream = (events: RunnerEvent[]): TurnOpened => ({ ok: true, events: (async function* () { for (const event of events) yield event; })() });
 
 /** A scripted Orbit: each turn answers with the next script, and `look` says how the job stands each time the runner asks. */
-function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string } | null = () => ({ status: 'running', control: 'brick' })) {
+function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number } | null = () => ({ status: 'running', control: 'brick' })) {
     const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
     let renewAnswer: (n: number) => Record<string, unknown> = () => ({ ok: true, renewInSeconds: 240 });
     let handoverFails = 0;
@@ -448,6 +448,155 @@ describe('a turn that is lost, or room that is gone', () => {
         }
     });
 
+    describe('the control generation of a job (an action from an older turn changes nothing)', () => {
+        const stale = (generation: number) => Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true, response: { status: 409, data: { ok: false, reason: 'stale', generation } } });
+
+        it('sends the generation it read when the turn started with every action of that turn: renew, progress, finish', async () => {
+            const { orbit, seen } = fakeOrbit(
+                [[{ type: 'created', id: 'r', sessionId: 's' }, { type: 'tool', state: 'completed', tool: 'click' }, { type: 'text', text: 'Done. [[done]]' }, { type: 'completed', outputText: 'Done. [[done]]', usage: null }]],
+                () => ({ status: 'running', control: 'brick', generation: 7 })
+            );
+            await runJob(orbit);
+            const kinds = ['renew', 'progress', 'finish'];
+            for (const kind of kinds) {
+                const sent = seen.actions.filter((a) => a.action === kind);
+                expect(sent.length, kind).toBeGreaterThan(0);
+                for (const body of sent) expect(body.generation, kind).toBe(7);
+            }
+        });
+
+        it('sends the generation with a handover too', async () => {
+            const { orbit, seen } = fakeOrbit([done('Sign in please. [[handover signin]]'), done('Done. [[done]]')]);
+            // Brick's before and after the turn, the person's while they sign in, then Brick's again
+            let looks = 0;
+            orbit.job = async () => {
+                const at = looks++;
+                return { status: 'running', control: at === 2 ? 'person' : 'brick', generation: 3 };
+            };
+            await runJob(orbit);
+            const handover = seen.actions.find((a) => a.action === 'handover');
+            expect(handover).toMatchObject({ action: 'handover', waitingFor: 'signin', generation: 3 });
+        });
+
+        it('sends no generation when Orbit gave none (an older Orbit works as before)', async () => {
+            const { orbit, seen } = fakeOrbit([done('Done. [[done]]')]);
+            await runJob(orbit);
+            expect(seen.actions.length).toBeGreaterThan(0);
+            for (const body of seen.actions) expect('generation' in body).toBe(false);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('a finish refused as stale ends nothing: the job is read again, and finished with the generation it has now', async () => {
+            let generation = 1;
+            const { orbit, seen } = fakeOrbit([done('Old turn done. [[done]]'), done('New turn done. [[done]]')], () => ({ status: 'running', control: 'brick', generation }));
+            const original = orbit.action;
+            let refused = false;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'finish' && !refused) {
+                    refused = true;
+                    seen.actions.push(body);
+                    generation = 2;
+                    throw stale(2);
+                }
+                return original(botId, jobId, body);
+            };
+            await runJob(orbit);
+            const finishes = finished(seen);
+            expect(finishes).toEqual([
+                { action: 'finish', outcome: 'done', generation: 1 },
+                { action: 'finish', outcome: 'done', generation: 2 },
+            ]);
+            // The old turn's words were not the end: another turn was asked for, with the words that tell the agent to look where things stand
+            expect(seen.turns).toHaveLength(2);
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
+        });
+
+        it('a handover refused as stale is not a failure to hand over: the job is not ended, and the next turn decides', async () => {
+            let generation = 1;
+            const { orbit, seen } = fakeOrbit([done('Sign in please. [[handover signin]]'), done('All done. [[done]]')], () => ({ status: 'running', control: 'brick', generation }));
+            const original = orbit.action;
+            let refused = false;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'handover' && !refused) {
+                    refused = true;
+                    seen.actions.push(body);
+                    generation = 2;
+                    throw stale(2);
+                }
+                return original(botId, jobId, body);
+            };
+            await runJob(orbit);
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 2 }]);
+        });
+
+        it('a renewal refused as stale stops the old turn and reads the job again', async () => {
+            let generation = 1;
+            const { orbit, seen } = fakeOrbit([done('old'), done('Done. [[done]]')], () => ({ status: 'running', control: 'brick', generation }));
+            const original = orbit.action;
+            let refused = false;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'renew' && !refused) {
+                    refused = true;
+                    seen.actions.push(body);
+                    generation = 2;
+                    throw stale(2);
+                }
+                return original(botId, jobId, body);
+            };
+            await runJob(orbit);
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 2 }]);
+        });
+
+        it('a progress report refused as stale stops the old turn: its words are not acted on', async () => {
+            let generation = 1;
+            const stepped: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'tool', state: 'completed', tool: 'click' }, { type: 'text', text: 'Old words. [[done]]' }, { type: 'completed', outputText: 'Old words. [[done]]', usage: null }];
+            const { orbit, seen } = fakeOrbit([stepped, done('New words. [[done]]')], () => ({ status: 'running', control: 'brick', generation }));
+            const original = orbit.action;
+            let refused = false;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'progress' && !refused) {
+                    refused = true;
+                    seen.actions.push(body);
+                    generation = 2;
+                    throw stale(2);
+                }
+                return original(botId, jobId, body);
+            };
+            await runJob(orbit);
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 2 }]);
+            // The stopped turn is not reconnected to: the agent is told to look at the page again, not just to carry on (Sentry)
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
+        });
+
+        it('a turn the job moved on from while it went (taken and given back) is not acted on, even though the job is Brick\'s again', async () => {
+            const generations = [1, 2, 2, 2, 2, 2];
+            let at = 0;
+            const { orbit, seen } = fakeOrbit([done('Old words. [[done]]'), done('New words. [[done]]')], () => ({ status: 'running', control: 'brick', generation: generations[Math.min(at++, generations.length - 1)] }));
+            await runJob(orbit);
+            // The first turn started on 1 and was over on 2: no finish was sent for it
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 2 }]);
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
+        });
+
+        it('getComputerJob passes the generation on, and leaves it out when Orbit gives none or something that is no generation', async () => {
+            const service = Object.create(AdminApiService.prototype) as { getComputerJob: AdminApiService['getComputerJob']; brickCall: unknown };
+            const answer = (job: Record<string, unknown>) => {
+                service.brickCall = vi.fn(async () => ({ data: { job: { id: 'j', status: 'running', control: 'brick', ...job } } }));
+            };
+            answer({ generation: 4 });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', generation: 4 });
+            answer({});
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
+            for (const bad of ['4', -1, 1.5, null]) {
+                answer({ generation: bad });
+                expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
+            }
+        });
+    });
+
     it('stops the agent and ends nothing itself when Orbit says the room is gone', async () => {
         const { orbit, seen, setRenew } = fakeOrbit([done('working')], () => ({ status: 'running', control: 'brick' }));
         setRenew(() => ({ ok: false, reason: 'allowance' }));
@@ -568,6 +717,29 @@ describe('reading Orbit’s events', () => {
         expect((await all(body(frame({ type: 'failed', code: 'fenced', message: 'x' }), frame({ type: 'text', text: 'after' })))).map((e) => e.type)).toEqual(['failed']);
         expect((await all(body(frame({ type: 'text', text: 'half' }))).then((list) => list.at(-1)))).toMatchObject({ type: 'failed', code: 'stream_ended' });
         expect(await all(body(`event: completed\ndata: ${JSON.stringify({ type: 'completed', outputText: 'end', usage: null })}`))).toEqual([{ type: 'completed', outputText: 'end', usage: null }]);
+    });
+
+    it('drops a stream that sends too much without a newline, or too many data lines without a blank one', async () => {
+        const chunk = 'x'.repeat(256 * 1024);
+        const noNewline = await all(body(frame({ type: 'created', id: 'r', sessionId: 's' }), ...Array.from({ length: 6 }, () => chunk)));
+        expect(noNewline.map((e) => e.type)).toEqual(['created', 'failed']);
+        expect(noNewline.at(-1)).toMatchObject({ type: 'failed', code: 'stream_broke' });
+        const line = `data: ${'y'.repeat(streamLimits.line / 2)}\n`;
+        const noBlank = await all(body(frame({ type: 'created', id: 'r', sessionId: 's' }), ...Array.from({ length: 12 }, () => line)));
+        expect(noBlank.map((e) => e.type)).toEqual(['created', 'failed']);
+        expect(noBlank.at(-1)).toMatchObject({ code: 'stream_broke' });
+    });
+
+    it('drops a stream whose unfinished last line is too big, however much came before it in the same piece, or that pushes an event past its bound at the end', async () => {
+        const big = 'x'.repeat(streamLimits.line + 10);
+        const afterHeader = await all(body(frame({ type: 'created', id: 'r', sessionId: 's' }), `event: text\ndata: ${big}`));
+        expect(afterHeader.map((e) => e.type)).toEqual(['created', 'failed']);
+        expect(afterHeader.at(-1)).toMatchObject({ code: 'stream_broke' });
+        // Seven lines of about half a megabyte fit an event; an eighth, with no newline at the end of the stream, does not
+        const line = `data: ${'y'.repeat(streamLimits.line / 2)}`;
+        const atTheEnd = await all(body(frame({ type: 'created', id: 'r', sessionId: 's' }), ...Array.from({ length: 7 }, () => `${line}\n`), line));
+        expect(atTheEnd.map((e) => e.type)).toEqual(['created', 'failed']);
+        expect(atTheEnd.at(-1)).toMatchObject({ code: 'stream_broke' });
     });
 
     it('keeps the end of a reply that is too long, where the marker that says how it ended is', () => {

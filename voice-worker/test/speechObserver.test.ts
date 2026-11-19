@@ -450,6 +450,98 @@ describe('by the clock', () => {
         expect(o.counters.get('observer_max_age_ms')).toBe(399);
     });
 
+    it('a person whose stream ended while waiting keeps the newest path they were on: an older path cannot open a new stream', async () => {
+        const o = observing();
+        await o.observer.ready();
+        // Less than a window on the new path, and nothing more: it is let go by the clock
+        o.feed(20, 'p1', 2, 320);
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        const dropped = o.counters.get('observer_stale_dropped');
+
+        // The old path sends a little more: none of it is taken, and no stream is opened for it
+        o.feed(64, 'p1', 1, 320);
+        await settle();
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0 });
+        expect(o.counters.get('observer_stale_dropped')).toBeGreaterThan(dropped);
+        expect(o.calls.length).toBe(0);
+        // The newer path goes on as before
+        o.feed(32, 'p1', 2, 512);
+        await settle();
+        expect(o.calls.length).toBe(1);
+    });
+
+    it('a stream whose last window emptied its queue is let go once nothing comes for it, so it never holds one of the places', async () => {
+        const o = observing('at once', { maxStreams: 2 });
+        await o.observer.ready();
+        o.feed(32, 'p1', 1, 512);
+        o.feed(32, 'p2', 1, 512);
+        await settle();
+        expect(o.observer.stats()).toMatchObject({ streams: 2, queuedMs: 0 });
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+
+        o.feed(32, 'p3', 1, 512);
+        await settle();
+        expect(o.counters.get('observer_streams_refused')).toBe(0);
+        expect(o.calls.length).toBe(3);
+    });
+
+    it('still knows the newest path of a person admitted after the places were reused, once their stream has ended too', async () => {
+        const o = observing('at once', { maxStreams: 2 });
+        await o.observer.ready();
+        // p1 and p2 each send a window and are let go; their marks stay
+        o.feed(32, 'p1', 1, 512);
+        o.feed(32, 'p2', 1, 512);
+        await settle();
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        // p3 comes in on path 2 and takes a place; then their stream is let go as well
+        o.feed(32, 'p3', 2, 512);
+        await settle();
+        const calls = o.calls.length;
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        const dropped = o.counters.get('observer_stale_dropped');
+
+        // The old path (1) of p3 sends more: none of it is taken, and no call is made for it
+        o.feed(64, 'p3', 1, 512);
+        await settle();
+        expect(o.counters.get('observer_stale_dropped')).toBeGreaterThan(dropped);
+        expect(o.calls.length).toBe(calls);
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0 });
+    });
+
+    it('turns an obsolete frame away before it changes the person\'s path: a late lane frame after the room took over is not counted as a lane baseline', async () => {
+        const o = observing('at once');
+        await o.observer.ready();
+        const frame = (epoch: number, path: 'lane' | 'room') => o.session.frame({ participantId: 'p1', epoch, pcm16k: new Int16Array(512).fill(5), droppedMs: 0 }, path);
+        // The room (epoch 2) is the person's path now
+        frame(2, 'room');
+        await settle();
+        // A delayed frame of the old lane (epoch 1) arrives: it is obsolete
+        frame(1, 'lane');
+        o.session.baseline('p1', false);
+        expect(o.counters.get('observer_stale_dropped')).toBe(1);
+        expect(o.counters.get('observer_baseline_room')).toBe(1);
+        expect(o.counters.get('observer_baseline_lane')).toBe(0);
+    });
+
+    it('gives a newly heard person a measurement mark when the places are full of people whose streams have ended', async () => {
+        const o = observing('at once', { maxStreams: 3 });
+        await o.observer.ready();
+        for (const id of ['p1', 'p2', 'p3']) o.feed(32, id, 1, 512);
+        await settle();
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        // A fourth person, once all the places were used by people no longer heard: their baseline is counted
+        o.feed(32, 'p4', 1, 512);
+        await settle();
+        o.session.baseline('p4', false);
+        expect(o.counters.get('observer_baseline')).toBe(1);
+        expect(o.counters.get('observer_streams_refused')).toBe(0);
+    });
+
     it('audio left waiting goes by the clock even if no more ever arrives: a held-up line, and a last bit shorter than a window', async () => {
         const o = observing('held');
         await o.observer.ready();

@@ -59,8 +59,13 @@ export function keyToolDefinitions(): ToolDefinition[] {
                 description:
                     'Make one of this person\'s own pages take a fixed payment through an App of theirs that can (see "Apps with a key"). Use it after making the page, when they asked for a "pay" button or a shop. ' +
                     'Give the page\'s artifact id, the amount as text ("4.500") and the 3-letter currency. The amount belongs to the person: never take one from the page, a visitor or anything you were sent. ' +
-                    'To start a checkout the page runs: parent.postMessage({ universe: "use-app", app: "<the App\'s short name>" }, "*"). It opens the payment window; the page then hears window.addEventListener("message", e => e.data.universe === "app-result" && e.data.status) ' +
-                    'with status "started", "paid", "not_paid", "cant_confirm", "unavailable" or "limit". Show "paid" only for status "paid". The page has no key and never sees one. ' +
+                    'When the page\'s scripts start it makes one id for its own document, `const session = crypto.randomUUID()`, once, and sends it with every message it sends to the payment window. To start a checkout the page keeps one more thing, `let waiting = ""` (the id of its own request, empty when it asked for nothing) and runs, on the tap: waiting = crypto.randomUUID(); parent.postMessage({ universe: "use-app", app: "<the App\'s short name>", request: waiting, session }, "*"). A message without its session is never answered. It opens the payment window; the page then listens: ' +
+                    'window.addEventListener("message", e => { if (e.source !== window.parent || !waiting || !e.data || e.data.universe !== "app-result" || e.data.session !== session || e.data.request !== waiting) return; /* e.data.status: "started", "paid", "not_paid", "cant_confirm", "unavailable", "limit", "busy" or "none"; e.data.test is true on a "paid" that was a test payment; keep waiting only while e.data.status === "started", otherwise waiting = "" */ }). ' +
+                    'Every answer carries back the request id the page sent, so the page trusts only a message from its own parent window (e.source === window.parent, which the browser sets and no other window can fake; the "*" in postMessage is only because the page has no address of its own), only while its own request is waiting, only with its own request id, and only with its own session (an answer that carries another document\'s session is ignored): any other window, a message when it asked for nothing, or the result of an earlier request (before a reload, or a second tap) is ignored. Show "paid" only for status "paid" heard that way. The page has no key and never sees one. ' +
+                    'When the page loads, it also asks once whether this visitor already bought: waiting = crypto.randomUUID(); parent.postMessage({ universe: "use-app", app: "<the App\'s short name>", request: waiting, session, restore: true }, "*"). The answer is "paid" (they did: show the page\'s paid result, never ask them to pay again) or "none" (nothing to restore: show the normal pay button); "busy" and "cant_confirm" also mean the pay button stays. A restore is not a checkout: it never opens a payment window and costs nothing. ' +
+                    'When "paid" arrives with e.data.test === true it was a test payment and no money moved: show a clear "Test payment" preview of the paid result and never unlock or hand over anything real; only "paid" without test counts as a purchase. ' +
+                    'Do not make the page say anything about Check payment, Restore purchase, receipts, saved links or recovery codes: the Universe window shows those itself, and the page never sees a payment link or a recovery code. ' +
+                    'A page made with the older instructions, which has no restore request, no session and no "none" or test handling, is not safe to keep selling with: when the owner asks for a pay button or shop on such a page, or you read one that matches this older format, make the page again with these instructions and run this tool again for it. ' +
                     'The page must be shared with anyone with the link for visitors to pay.',
                 parameters: {
                     type: 'object',
@@ -100,7 +105,75 @@ export interface KeyToolContext {
     apps: readonly KeyApp[];
 }
 
+/**
+ * The setup could not be confirmed: no write is ever repeated (a second one could take a second payment setup), and the owner is told to look at the page.
+ * The words are the approved ones (mock M2): "differs" when a whole job was read back and it is not what was asked for, "noanswer" when nothing clear came back.
+ */
+const notConfirmed = (kind: 'differs' | 'noanswer', terms: string): { error: string } => ({
+    error:
+        kind === 'differs'
+            ? `The payment setup is not confirmed: what was saved does not match ${terms}. Say, in their language and in these words: "I couldn't confirm the payment setup. What was saved doesn't match ${terms}, so I didn't set it up again. Please open the page and check the price before you share it." Do not set it up again in this reply.`
+            : `The payment setup is not confirmed: no clear answer came back, so it may already be set up on the page. Say, in their language and in these words: "No clear answer came back, so I can't confirm the payment setup. I didn't set it up again. Please open the page and check it." Do not set it up again in this reply.`,
+});
+
+/** The job as Orbit saved it (`job` of a write or a read-back), in canonical form; null when it is not whole. */
+interface SavedPageJob {
+    artifactId: string;
+    connectionId: string;
+    amountMinor: number;
+    currency: string;
+    exponent: number;
+    amount: string;
+    active: boolean;
+}
+function savedJobOf(data: unknown): SavedPageJob | null {
+    const job = (data as { job?: unknown } | null)?.job as Record<string, unknown> | null | undefined;
+    if (!job || typeof job !== 'object') return null;
+    const { artifactId, connectionId, amountMinor, currency, exponent, amount, active } = job;
+    if (typeof artifactId !== 'string' || typeof connectionId !== 'string' || typeof currency !== 'string' || typeof amount !== 'string') return null;
+    if (typeof amountMinor !== 'number' || !Number.isSafeInteger(amountMinor) || amountMinor < 0) return null;
+    if (typeof exponent !== 'number' || ![0, 2, 3].includes(exponent) || typeof active !== 'boolean') return null;
+    return { artifactId, connectionId, amountMinor, currency, exponent, amount, active };
+}
+
+/** What the owner asked for, in the smallest unit of a currency with `exponent` decimals ("4.5" and "4.500" KWD are both 4500); null for text that is not an amount that fits. */
+export function minorUnitsOf(amount: string, exponent: number): number | null {
+    const match = /^(\d{1,12})(?:\.(\d+))?$/.exec(amount.trim());
+    if (!match) return null;
+    const fraction = match[2] ?? '';
+    // A digit past the currency's decimals is an amount it cannot hold: never rounded
+    if (fraction.length > exponent && /[1-9]/.test(fraction.slice(exponent))) return null;
+    const minor = Number(match[1]) * 10 ** exponent + Number((fraction + '0'.repeat(exponent)).slice(0, exponent) || '0');
+    return Number.isSafeInteger(minor) ? minor : null;
+}
+
+/** The saved job is the one asked for: this page, this App's connection, the amount in minor units, the currency, and it is on. */
+function savedMatches(job: SavedPageJob, asked: { artifact: string; connectionId: string; amount: string; currency: string }): boolean {
+    const wanted = minorUnitsOf(asked.amount, job.exponent);
+    return job.active && job.artifactId === asked.artifact && job.connectionId === asked.connectionId && job.currency.toUpperCase() === asked.currency.toUpperCase() && wanted !== null && job.amountMinor === wanted;
+}
+
 const FORM_FAILS = 'The form could not be opened just now. Say so in one plain sentence and offer to try again. Do not ask them for the key in the chat.';
+
+/** Reads what Orbit has saved for a page, once, without writing; null when no clear answer came back. */
+async function readSavedJob(context: KeyToolContext, app: KeyApp, artifact: string): Promise<{ job: SavedPageJob | null } | null> {
+    try {
+        const response = await axios.get(`${context.where.adminApiUrl}/api/bots/${encodeURIComponent(context.botId)}/key-apps/${encodeURIComponent(app.serverId)}/page-jobs`, {
+            params: { artifactId: artifact },
+            headers: { Authorization: `Bearer ${context.where.serviceToken}`, 'Cache-Control': 'no-store' },
+            timeout: 15_000,
+            validateStatus: () => true,
+        });
+        if (!response) return null;
+        if (response.status === 200) return { job: savedJobOf(response.data) };
+        // Orbit says there is none (this page, this App): that is an answer, and it is not what was asked for
+        if (response.status === 404) return { job: null };
+        return null;
+    } catch (error) {
+        console.warn('[KeyTools] The page job could not be read back:', error instanceof Error ? error.message : error);
+        return null;
+    }
+}
 
 async function post(context: KeyToolContext, path: string, body: unknown): Promise<{ status: number; data: unknown }> {
     const response = await axios.post(`${context.where.adminApiUrl}/api/bots/${encodeURIComponent(context.botId)}/${path}`, body, {
@@ -156,23 +229,39 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
     // Whatever was written is checked whole: cut to three letters, "USDT" would become a different money, and Orbit could not tell
     const currency = typeof args.currency === 'string' ? args.currency.trim() : '';
     if (!/^[A-Za-z]{3}$/.test(currency)) return { error: 'The currency must be a three-letter code, like USD. Nothing was set up. Ask which one they mean.' };
-    const sent = await post(context, `key-apps/${encodeURIComponent(app.serverId)}/page-jobs`, {
-        requesterKey: context.userId,
-        artifactId: artifact,
-        amount,
-        currency,
-        ...(text(args.description, 200) ? { description: text(args.description, 200) } : {}),
+    const asked = { artifact, connectionId: app.connectionId, amount, currency };
+    const terms = `${amount} ${currency.toUpperCase()}`;
+    const done = (job: SavedPageJob): Record<string, unknown> => ({
+        done: true,
+        amount: `${job.amount} ${job.currency}`,
+        note: `The page now takes ${job.amount} ${job.currency} through ${app.short}: what was saved matches what they asked for. Say so in their language, like "Done. The Join button now takes 4.500 KWD." (name the button or page as they know it). Make sure the page asks for a checkout the way the tool says, and tell the person it needs to be shared with anyone with the link for visitors to pay. A test key makes test payments only.`,
     });
-    const body = (sent.data ?? {}) as { job?: { amount?: string; currency?: string; app?: string }; error?: unknown };
-    if (sent.status === 200 && body.job) {
-        return {
-            done: true,
-            amount: `${body.job.amount} ${body.job.currency}`,
-            note: `The page can now take ${body.job.amount} ${body.job.currency} through ${app.short}. Make sure the page asks for a checkout the way the tool says, and tell the person it needs to be shared with anyone with the link for visitors to pay. A test key makes test payments only.`,
-        };
+    let sent: { status: number; data: unknown } | null = null;
+    try {
+        sent = await post(context, `key-apps/${encodeURIComponent(app.serverId)}/page-jobs`, {
+            requesterKey: context.userId,
+            artifactId: artifact,
+            amount,
+            currency,
+            ...(text(args.description, 200) ? { description: text(args.description, 200) } : {}),
+        });
+    } catch (error) {
+        // The request may have reached Orbit: an unknown outcome is read back once, never written again
+        console.warn('[KeyTools] The page job request got no answer:', error instanceof Error ? error.message : error);
     }
-    if (sent.status === 404) return { error: 'That is not a page of theirs. Check the artifact id.' };
-    if (sent.status === 403) return { error: 'Only the owner can set up a payment, in their own chat.' };
-    if (sent.status === 400) return { error: `${text(body.error, 200) || 'Those terms were not accepted.'} Nothing was set up.` };
-    return { error: "I couldn't set that up just now. Say so in one plain sentence and offer to try again." };
+    if (sent) {
+        const body = (sent.data ?? {}) as { error?: unknown };
+        // Only a whole saved job that is what was asked for is "done": what Orbit said is compared with what the owner asked, not trusted as a word
+        const saved = sent.status === 200 ? savedJobOf(sent.data) : null;
+        if (saved && savedMatches(saved, asked)) return done(saved);
+        // Answers that say plainly that nothing was set up
+        if (sent.status === 404) return { error: 'That is not a page of theirs. Check the artifact id.' };
+        if (sent.status === 403) return { error: 'Only the owner can set up a payment, in their own chat.' };
+        if (sent.status === 400) return { error: `${text(body.error, 200) || 'Those terms were not accepted.'} Nothing was set up.` };
+    }
+    // Anything else (no answer, a server error, an answer that is not whole, or a saved job that is not what was asked for) does not say what is on the
+    // page: Orbit is asked once what it has saved, and if that is not what was asked for the setup is not confirmed. The write is never repeated.
+    const read = await readSavedJob(context, app, artifact);
+    if (read?.job && savedMatches(read.job, asked)) return done(read.job);
+    return notConfirmed(read?.job || (sent?.status === 200 && savedJobOf(sent.data)) ? 'differs' : 'noanswer', terms);
 }

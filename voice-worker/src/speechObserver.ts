@@ -182,6 +182,10 @@ class Stream {
     ended?: Ended;
     /** Audio of theirs the observer itself had to skip since the last piece it took. */
     missingMs = 0;
+    /** When the last piece of theirs was taken: a stream that nothing has come for in a while is let go, however empty its queue. */
+    lastAt = 0;
+    /** A window of theirs is with the detector: the answer is still to come, so the stream is not let go for being quiet. */
+    inCall = false;
     /** When the newest audio of the last answer kept arrived. */
     answeredAt = -Infinity;
     /** Audio missing within this run, lost on the way or skipped here (less than GAP_RESET_MS at a time, or it would have ended the run). Only grows. */
@@ -574,17 +578,33 @@ export class SpeechObserver {
         const pending = owner.pending.get(frame.participantId);
         if (pending && pending.epoch === frame.epoch) pending.offeredMs += ms;
         const mark = owner.marks.get(frame.participantId);
+        // The newest path this person was on before this piece: kept after their stream ended, so an older one can never open a new stream
+        const newestBefore = mark?.epoch;
+        const key = `${owner.id}\n${frame.participantId}`;
+        let stream = this.streams.get(key);
+        // An obsolete frame is turned away before it changes anything: a delayed lane frame must not move the person's path (and so what
+        // the next baseline is counted against) once the room has a newer one
+        if ((stream && frame.epoch < stream.epoch) || (!stream && newestBefore !== undefined && frame.epoch < newestBefore)) {
+            c.inc('observer_stale_dropped');
+            return;
+        }
         if (mark) {
             mark.path = path;
             mark.epoch = Math.max(mark.epoch, frame.epoch);
-        } else if (owner.marks.size < this.maxStreams) {
-            owner.marks.set(frame.participantId, { path, epoch: frame.epoch, firingAt: -Infinity, baselineAt: -Infinity });
-        }
-        const key = `${owner.id}\n${frame.participantId}`;
-        let stream = this.streams.get(key);
-        if (stream && frame.epoch < stream.epoch) {
-            c.inc('observer_stale_dropped');
-            return;
+            // Most recently heard last, so the one let go to make room is the one heard from longest ago
+            owner.marks.delete(frame.participantId);
+            owner.marks.set(frame.participantId, mark);
+        } else {
+            // Full of people whose streams have ended: the one heard from longest ago makes room, so a person admitted after the places
+            // were reused is still known by the newest path they were on (a person with a stream is never let go: they are all within `maxStreams`)
+            if (owner.marks.size >= this.maxStreams) {
+                for (const known of owner.marks.keys()) {
+                    if (this.streams.has(`${owner.id}\n${known}`)) continue;
+                    owner.marks.delete(known);
+                    break;
+                }
+            }
+            if (owner.marks.size < this.maxStreams) owner.marks.set(frame.participantId, { path, epoch: frame.epoch, firingAt: -Infinity, baselineAt: -Infinity });
         }
         // A newer path, or audio known to be missing: what was heard before must not colour what comes next
         if (stream && frame.epoch > stream.epoch) {
@@ -639,6 +659,7 @@ export class SpeechObserver {
             c.max('observer_peak_streams', this.streams.size);
         }
         stream.missingMs = 0;
+        stream.lastAt = now;
         // Its own copy: the transport may reuse its buffer, and nothing here may alter what the session was given
         stream.waiting.push({ pcm: frame.pcm16k.slice(), at: now });
         stream.samples += length;
@@ -655,10 +676,14 @@ export class SpeechObserver {
 
     /** While anything waits, a timer set for the moment the oldest of it has waited too long: audio expires by the clock even if no more arrives. */
     private watch(): void {
-        if (this.sweepTimer || this.status !== 'on' || this.queuedSamples <= 0) return;
+        if (this.sweepTimer || this.status !== 'on' || this.streams.size === 0) return;
         const now = performance.now();
         let due = Infinity;
-        for (const stream of this.streams.values()) if (stream.waiting.length > 0) due = Math.min(due, stream.waiting[0].at + this.maxAge - now);
+        for (const stream of this.streams.values()) {
+            // A stream with nothing waiting is still let go once nothing has come for it for that long
+            if (!stream.inCall) due = Math.min(due, stream.lastAt + this.maxAge - now);
+            if (stream.waiting.length > 0) due = Math.min(due, stream.waiting[0].at + this.maxAge - now);
+        }
         if (due === Infinity) return;
         this.sweepTimer = setTimeout(() => {
             this.sweepTimer = undefined;
@@ -670,7 +695,11 @@ export class SpeechObserver {
     private sweep(): void {
         if (this.status !== 'on') return;
         const now = performance.now();
-        for (const stream of [...this.streams.values()]) if (stream.waiting.length > 0 && now - stream.waiting[0].at > this.maxAge) this.end(stream, stream.samples < WINDOW ? 'idle' : 'expired');
+        for (const stream of [...this.streams.values()]) {
+            if (stream.waiting.length > 0 && now - stream.waiting[0].at > this.maxAge) this.end(stream, stream.samples < WINDOW ? 'idle' : 'expired');
+            // Its last window emptied the queue and nothing has come since: it still holds one of the places for streams
+            else if (stream.waiting.length === 0 && !stream.inCall && now - stream.lastAt > this.maxAge) this.end(stream, 'idle');
+        }
         this.watch();
     }
 
@@ -704,6 +733,7 @@ export class SpeechObserver {
                     }
                     const { input, oldestAt, newestAt } = stream.take();
                     this.queuedSamples -= WINDOW;
+                    stream.inCall = true;
                     batch.push({ stream, input, oldestAt, newestAt, state: stream.state });
                 }
                 if (batch.length === 0) break;
@@ -721,6 +751,9 @@ export class SpeechObserver {
                 this.inFlight += n;
                 const outcome = await this.within(call, this.inferenceTimeout);
                 this.inFlight -= n;
+                for (const { stream } of batch) stream.inCall = false;
+                // Streams that were not let go for being quiet while their window was out are watched again now
+                this.watch();
                 const now = performance.now();
                 if (outcome.kind === 'late') {
                     // The detector did not answer in time. The call cannot be taken back, so nothing more is ever sent

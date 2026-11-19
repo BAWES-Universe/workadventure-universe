@@ -113,7 +113,8 @@ function speechStats(rows: Row[], b: string) {
                 if (GOING_ON.has(e) && !talking) {
                     talking = true;
                     from = t;
-                } else if ((e === 'pause' || e === 'stop') && talking) {
+                } else if ((e === 'pause' || e === 'dip' || e === 'stop') && talking) {
+                    // Turned down is not at full volume: a second dip after the bot went back up closes that stretch too
                     talking = false;
                     total += t - from;
                 }
@@ -206,6 +207,19 @@ function sweep(dir: string): void {
         const rows = read(join(dir, file));
         if (rows.some((r) => r.split !== 'tune')) throw new Error(`${file} holds clips outside the tune half`);
         runs.set(w, rows);
+    }
+    // Every window is scored on the very same clips as the 1500 ms run, or the comparison is of different things: a run made with
+    // REPLAY_LIMIT, or one that stopped early, is refused
+    const keysOf = (rows: Row[]) => new Set(rows.map((r) => `${r.id}\u0000${r.provider}`));
+    const refKeys = keysOf(runs.get(1500)!);
+    if (refKeys.size === 0 || !runs.get(1500)!.some((r) => r.kind === 'speech') || !runs.get(1500)!.some((r) => r.kind !== 'speech' && r.provider === 'empty')) {
+        throw new Error('the tune run for 1500 ms holds no speech clips, or no noise clips the criteria use');
+    }
+    for (const [w, rows] of runs) {
+        const keys = keysOf(rows);
+        if (rows.length !== keys.size || keys.size !== refKeys.size || [...keys].some((k) => !refKeys.has(k))) {
+            throw new Error(`the tune run for ${w} ms was not scored on the same clips as the one for 1500 ms (${keys.size} of ${rows.length} rows are different clips, ${refKeys.size} in the 1500 ms run): run it again without REPLAY_LIMIT`);
+        }
     }
     const stat = new Map<number, { s: ReturnType<typeof speechStats>; overlap: number; noiseStopped: number; heldPerMin: number; knockHold: number; today: ReturnType<typeof speechStats> }>();
     for (const [w, rows] of runs) {

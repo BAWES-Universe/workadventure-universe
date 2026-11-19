@@ -2,6 +2,7 @@ import { tick } from "svelte";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const game = vi.hoisted(() => ({
+    identityChanged: [] as Array<() => void>,
     getMyUsage: vi.fn<() => Promise<unknown>>(),
     askForMoreUsage: vi.fn<(category?: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
@@ -13,6 +14,10 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
     botApiService: {
         getMyUsage: game.getMyUsage,
         askForMoreUsage: game.askForMoreUsage,
+        onIdentityChange: (listener: () => void) => {
+            game.identityChanged.push(listener);
+            return () => undefined;
+        },
     },
 }));
 // The pictures are not what these tests are about
@@ -303,7 +308,7 @@ describe("the Usage page (#1999)", () => {
         expect(byId("usageChatBar")).toBeNull();
     });
 
-    it("shows Instant Apps and computers in dollars, with when a monthly one renews", async () => {
+    it("shows Apps and computers in dollars, with when a monthly one renews", async () => {
         game.getMyUsage.mockResolvedValue(
             live(
                 {},
@@ -314,7 +319,7 @@ describe("the Usage page (#1999)", () => {
             )
         );
         await open();
-        expect(text()).toContain("Instant Apps");
+        expect(text()).toContain("Apps");
         expect(text()).toContain("$3.20 of $5 available");
         expect(text()).toMatch(/Renews 1 Dec at /);
         expect(text()).toContain("Computers");
@@ -362,10 +367,10 @@ describe("the Usage page (#1999)", () => {
     it("leaves work already running out of what is available, and says it", async () => {
         game.getMyUsage.mockResolvedValue(live({}, { apps: money({ inProgressMicros: 1_200_000 }) }));
         await open();
-        expect(text()).toContain("$1.20 in progress");
+        expect(text()).toContain("$1.20 held, not taken yet");
     });
 
-    it("asks for more Instant Apps credit, naming the category, and shows it asked", async () => {
+    it("asks for more Apps credit, naming the category, and shows it asked", async () => {
         game.getMyUsage.mockResolvedValue(
             live({}, { apps: money({ kind: "oneoff", availableMicros: 0, renewsAt: null, canAskForMore: true }) })
         );
@@ -422,7 +427,7 @@ describe("the Usage page (#1999)", () => {
         await open();
         expect(text()).toContain("Extra credit");
         expect(text()).toContain("$3.10 of $5 available");
-        expect(text()).toContain("From Universe, for Instant Apps and computers · until 31 Dec");
+        expect(text()).toContain("From Universe, for Apps and computers · until 31 Dec");
         expect(text()).toContain("Used first, because it ends soonest. One amount for both.");
     });
 
@@ -441,8 +446,8 @@ describe("the Usage page (#1999)", () => {
         await open({ looks: { "11": "brick-orange" } });
         expect(text()).toContain("By bot");
         expect(text()).toContain("Brick");
-        expect(text()).toContain("$1.39 this month · Instant Apps and computer");
-        expect(text()).toContain("$0.18 this month · Instant Apps");
+        expect(text()).toContain("$1.39 this month · Apps and computer");
+        expect(text()).toContain("$0.18 this month · Apps");
     });
 
     const task = (over: Record<string, unknown> = {}) => ({
@@ -481,7 +486,7 @@ describe("the Usage page (#1999)", () => {
         await open();
         expect(text()).toContain("Activity");
         expect(text()).toContain("Trip page: Web Summit Qatar");
-        expect(text()).toMatch(/Today, .+ · \$0\.06 · Instant Apps/);
+        expect(text()).toMatch(/Today, .+ · \$0\.06 · Apps/);
         expect(text()).toMatch(/Today, .+ · Paid by BAWES Universe/);
         expect(byId("usageReceipt")).toBeNull();
         target.querySelector<HTMLElement>('[data-activity="act_1"]')?.click();
@@ -497,6 +502,235 @@ describe("the Usage page (#1999)", () => {
         target.querySelector<HTMLElement>('[data-activity="act_1"]')?.click();
         await settle();
         expect(byId("usageReceipt")).toBeNull();
+    });
+
+    it("says each amount under a cent, a true zero and a balance under a cent in the words of the mock, never as $0.01 or $0", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    apps: money({ availableMicros: 5_000, totalMicros: 5_000_000 }),
+                    computer: computer({ money: undefined }),
+                    activity: [
+                        task({
+                            id: "act_tiny",
+                            title: "Find flights",
+                            spentMicros: 4_000,
+                            lines: [
+                                { label: "Search flights", amountMicros: 4_000 },
+                                { label: "Read one page", amountMicros: 0 },
+                            ],
+                        }),
+                    ],
+                }
+            )
+        );
+        await open();
+        expect(text()).toContain("Less than $0.01 of $5 available");
+        expect(text()).toMatch(/Today, .+ · Less than \$0\.01 · Apps/);
+        target.querySelector<HTMLElement>('[data-activity="act_tiny"]')?.click();
+        await settle();
+        const receipt = byId("usageReceipt")?.textContent?.replace(/\s+/g, " ") ?? "";
+        expect(receipt).toContain("Search flightsless than $0.01");
+        expect(receipt).toContain("Read one page$0");
+    });
+
+    const partly = (over: Record<string, unknown> = {}) =>
+        task({
+            id: "act_partly",
+            title: "Invoices to 3 clients",
+            spentMicros: 40_000,
+            outcome: "partial",
+            outcomeNote: "Two steps worked and one didn't. Nothing was taken for the one that didn't.",
+            actions: [
+                { label: "gmail", outcome: "worked", text: "Gmail · worked", takenText: null },
+                { label: "gmail", outcome: "worked", text: "Gmail · worked", takenText: null },
+                { label: "gmail", outcome: "failed", text: "Gmail · didn't work", takenText: "Nothing taken" },
+            ],
+            lines: [{ label: "Instant Gmail, 3 uses", amountMicros: 40_000 }],
+            ...over,
+        });
+
+    it("c3: says a partly done task as partly done, each step and how it ended, what was not taken, and why (the approved mock)", async () => {
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [partly()] }));
+        await open();
+        expect(text()).toMatch(/Today, .+ · Partly done · \$0\.04 · Apps/);
+        target.querySelector<HTMLElement>('[data-activity="act_partly"]')?.click();
+        await settle();
+        const rows = [...target.querySelectorAll('[data-testid="usageReceiptAction"]')].map((row) =>
+            row.textContent?.replace(/\s+/g, " ").trim()
+        );
+        expect(rows).toEqual(["Gmail · worked", "Gmail · worked", "Gmail · didn't work Nothing taken"]);
+        const receipt = byId("usageReceipt")?.textContent?.replace(/\s+/g, " ") ?? "";
+        // What it took, from Orbit's own lines, is still there
+        expect(receipt).toContain("Instant Gmail, 3 uses$0.04");
+        expect(byId("usageReceiptWhy")?.textContent).toBe(
+            "Two steps worked and one didn't. Nothing was taken for the one that didn't."
+        );
+        expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+        expect(receipt).toMatch(/Partly done\s*Paid by you$/);
+        // The task still counts as one that was paid for: it is not "Refunded"
+        expect(receipt).not.toContain("Refunded");
+        expect(receipt).not.toContain("This didn't go through on our side");
+    });
+
+    it("shows each step with its own amount, and no separate lines, when Orbit says what each step took", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    activity: [
+                        partly({
+                            actions: [
+                                {
+                                    label: "gmail",
+                                    outcome: "worked",
+                                    text: "Gmail · worked",
+                                    takenText: null,
+                                    amountMicros: 20_000,
+                                },
+                                {
+                                    label: "gmail",
+                                    outcome: "worked",
+                                    text: "Gmail · worked",
+                                    takenText: null,
+                                    amountMicros: 20_000,
+                                },
+                                {
+                                    label: "gmail",
+                                    outcome: "failed",
+                                    text: "Gmail · didn't work",
+                                    takenText: "Nothing taken",
+                                },
+                            ],
+                        }),
+                    ],
+                }
+            )
+        );
+        await open();
+        target.querySelector<HTMLElement>('[data-activity="act_partly"]')?.click();
+        await settle();
+        const rows = [...target.querySelectorAll('[data-testid="usageReceiptAction"]')].map((row) =>
+            row.textContent?.replace(/\s+/g, " ").trim()
+        );
+        expect(rows).toEqual(["Gmail · worked $0.02", "Gmail · worked $0.02", "Gmail · didn't work Nothing taken"]);
+        expect(byId("usageReceipt")?.textContent).not.toContain("Instant Gmail, 3 uses");
+    });
+
+    const worked = (amountMicros?: number) => ({
+        label: "gmail",
+        outcome: "worked",
+        text: "Gmail · worked",
+        takenText: null,
+        ...(amountMicros === undefined ? {} : { amountMicros }),
+    });
+    const failedStep = { label: "gmail", outcome: "failed", text: "Gmail · didn't work", takenText: "Nothing taken" };
+    const stepRows = () =>
+        [...target.querySelectorAll('[data-testid="usageReceiptAction"]')].map((row) =>
+            row.textContent?.replace(/\s+/g, " ").trim()
+        );
+    const openPartly = async (over: Record<string, unknown>) => {
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [partly(over)] }));
+        await open();
+        target.querySelector<HTMLElement>('[data-activity="act_partly"]')?.click();
+        await settle();
+    };
+
+    it("draws the amount of each worked step (Orbit's amountMicros), under a cent as less than $0.01, and zero as $0", async () => {
+        await openPartly({ actions: [worked(20_000), worked(4_000), worked(0), failedStep] });
+        expect(stepRows()).toEqual([
+            "Gmail · worked $0.02",
+            "Gmail · worked less than $0.01",
+            "Gmail · worked $0",
+            "Gmail · didn't work Nothing taken",
+        ]);
+        // The steps are the lines: Orbit's own lines are not shown under them
+        expect(byId("usageReceipt")?.textContent).not.toContain("Instant Gmail, 3 uses");
+    });
+
+    it("shows a worked step with no amount without one, and Orbit's lines when no worked step has an amount", async () => {
+        await openPartly({ actions: [worked(), worked(), failedStep] });
+        expect(stepRows()).toEqual(["Gmail · worked", "Gmail · worked", "Gmail · didn't work Nothing taken"]);
+        expect(byId("usageReceipt")?.textContent?.replace(/\s+/g, " ")).toContain("Instant Gmail, 3 uses$0.04");
+    });
+
+    it("mixes a step with a known amount and one whose price is not known yet: amount unavailable only where Orbit says so", async () => {
+        await openPartly({
+            actions: [worked(20_000), worked(), failedStep],
+            lines: [{ label: "Instant Gmail, 2 uses", note: "Price not known yet" }],
+        });
+        expect(stepRows()).toEqual([
+            "Gmail · worked $0.02",
+            "Gmail · worked amount unavailable",
+            "Gmail · didn't work Nothing taken",
+        ]);
+        expect(byId("usageReceipt")?.textContent).not.toContain("Instant Gmail, 2 uses");
+        // With no such word from Orbit, the step with no amount carries none
+        game.getMyUsage.mockResolvedValue(
+            live({}, { activity: [partly({ actions: [worked(20_000), worked(), failedStep] })] })
+        );
+        await open();
+        expect(stepRows()).toEqual(["Gmail · worked $0.02", "Gmail · worked", "Gmail · didn't work Nothing taken"]);
+    });
+
+    it("never gives a failed step an amount, whatever it carries", async () => {
+        await openPartly({ actions: [worked(20_000), { ...failedStep, amountMicros: 50_000 }] });
+        expect(stepRows()).toEqual(["Gmail · worked $0.02", "Gmail · didn't work Nothing taken"]);
+    });
+
+    it("only calls a task partly done when Orbit says so and a step worked and one did not; otherwise it reads as before", async () => {
+        const noFailure = partly({
+            id: "act_a",
+            title: "All worked",
+            actions: [{ label: "gmail", outcome: "worked", text: "Gmail · worked", takenText: null }],
+        });
+        const noWord = partly({ id: "act_b", title: "Older Orbit", outcome: undefined, outcomeNote: undefined });
+        const refunded = partly({ id: "act_c", title: "Refunded one", state: "refunded", spentMicros: null });
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [noFailure, noWord, refunded] }));
+        await open();
+        expect(text()).not.toContain("Partly done");
+        expect(text()).toMatch(/Refunded one[^]*Refunded, nothing taken/);
+        for (const id of ["act_a", "act_b", "act_c"]) {
+            target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+            expect(byId("usageReceiptPartly")).toBeNull();
+            target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+        }
+        // A task with no actions at all (an older Orbit, a computer's) is exactly as before
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
+    });
+
+    it("says amount unavailable when nobody can tell what a task took yet, never a number and never Nothing", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    activity: [
+                        task({
+                            id: "act_unknown",
+                            title: "Set a price alert",
+                            spentMicros: null,
+                            lines: [
+                                { label: "Instant Alerts, 1 use", note: "Price not known yet" },
+                                { label: "Made a page", note: "Nothing" },
+                            ],
+                        }),
+                    ],
+                }
+            )
+        );
+        await open();
+        expect(text()).toMatch(/Today, .+ · amount unavailable · Apps/);
+        target.querySelector<HTMLElement>('[data-activity="act_unknown"]')?.click();
+        await settle();
+        const receipt = byId("usageReceipt")?.textContent?.replace(/\s+/g, " ") ?? "";
+        expect(receipt).toContain("Instant Alerts, 1 useamount unavailable");
+        expect(receipt).toContain("Made a pageNothing");
+        expect(receipt).not.toContain("Price not known yet");
     });
 
     it("opens the receipt a link asked for", async () => {
@@ -562,6 +796,9 @@ describe("the Usage page (#1999)", () => {
 
     it("says the reset time again in the new language when the language changes while the page is open", async () => {
         game.getMyUsage.mockResolvedValue(live({ fullAgainAt: "2026-11-25T15:40:00" }));
+        // The clock is on another local day than the reset, so the date is in the words whatever day the test runs
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date("2026-11-10T12:00:00"));
         try {
             await open();
             expect(text()).toContain("25 Nov, 3:40 PM");
@@ -571,8 +808,127 @@ describe("the Usage page (#1999)", () => {
             expect(text()).toContain("15:40");
             expect(text()).not.toContain("3:40 PM");
         } finally {
+            vi.useRealTimers();
             setLocale("en-US");
         }
+    });
+
+    it("says the rows of tasks and credit again in the new language, an open receipt included, with no new read", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    activity: [task()],
+                    credit: [
+                        {
+                            covers: ["apps"],
+                            availableMicros: 3_100_000,
+                            totalMicros: 5_000_000,
+                            until: "2026-12-31T12:00:00",
+                        },
+                    ],
+                }
+            )
+        );
+        try {
+            await open({ receiptId: "act_1" });
+            expect(byId("usageReceipt")?.textContent).toContain("$0.06");
+            expect(byId("usageActivity")?.textContent).toContain("$0.06");
+            expect(text()).toContain("$3.10 of $5");
+            loadLocale("fr-FR");
+            setLocale("fr-FR");
+            await settle();
+            expect(game.getMyUsage).toHaveBeenCalledTimes(1);
+            // Every figure is written the way the new language writes it, with nothing read again
+            expect(byId("usageReceipt")?.textContent).toContain("0,06");
+            expect(byId("usageReceipt")?.textContent).not.toContain("$0.06");
+            expect(byId("usageActivity")?.textContent).toContain("0,06");
+            expect(text()).not.toContain("$3.10");
+        } finally {
+            setLocale("en-US");
+        }
+    });
+
+    it("opens a receipt again, and puts the keyboard on it, each time a link asks for it, even the same one", async () => {
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
+        await open({ receiptId: "act_1", receiptRequest: 1 });
+        expect(byId("usageReceipt")).not.toBeNull();
+        expect(document.activeElement).toBe(byId("usageActivity"));
+        // The person closes it, and the same link is followed again
+        byId("usageActivity")?.click();
+        await settle();
+        expect(byId("usageReceipt")).toBeNull();
+        (page as unknown as { $set: (props: object) => void }).$set({ receiptRequest: 2 });
+        await settle();
+        expect(byId("usageReceipt")).not.toBeNull();
+        expect(document.activeElement).toBe(byId("usageActivity"));
+    });
+
+    it("leaves a receipt closed that was closed, when nothing asks for it again", async () => {
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
+        await open({ receiptId: "act_1", receiptRequest: 1 });
+        byId("usageActivity")?.click();
+        await settle();
+        expect(byId("usageReceipt")).toBeNull();
+        (page as unknown as { $set: (props: object) => void }).$set({ receiptRequest: 1 });
+        await settle();
+        expect(byId("usageReceipt")).toBeNull();
+    });
+
+    it("waits on both request buttons while one request is out, and gives them back when it is done", async () => {
+        let taken: (value: unknown) => void = () => undefined;
+        game.askForMoreUsage.mockReturnValue(
+            new Promise((resolve) => {
+                taken = resolve;
+            })
+        );
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    apps: money({ availableMicros: 0, canAskForMore: true }),
+                    computer: computer({
+                        kind: "monthly",
+                        availableMicros: 0,
+                        totalMicros: 1_000_000,
+                        canAskForMore: true,
+                    }),
+                }
+            )
+        );
+        await open();
+        const buttons = () =>
+            [byId("usageAskForMoreApps"), byId("usageAskForMoreComputer")].filter(Boolean) as HTMLButtonElement[];
+        expect(buttons()).toHaveLength(2);
+        buttons()[0].click();
+        await settle();
+        expect(buttons().every((button) => button.disabled)).toBe(true);
+        taken({ asked: true });
+        await settle();
+        // The one that was asked shows it was; the other is available again
+        expect(byId("usageAskForMoreApps")).toBeNull();
+        expect((byId("usageAskForMoreComputer") as HTMLButtonElement | null)?.disabled).toBe(false);
+    });
+
+    it("says less than a cent in progress, not $0, for a reservation below one cent", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live({}, { apps: money({ inProgressMicros: 5_000 }), computer: computer({ money: undefined }) })
+        );
+        await open();
+        expect(text()).toContain("Less than $0.01 held, not taken yet");
+        expect(text()).not.toContain("$0 held");
+        page?.$destroy();
+        forgetMyUsage();
+        game.getMyUsage.mockResolvedValue(live({}, { apps: money({ inProgressMicros: 250_000 }) }));
+        await open();
+        expect(text()).toContain("$0.25 held, not taken yet");
+    });
+
+    it("says 'about half left' for the old half bar, not 'plenty'", async () => {
+        game.getMyUsage.mockResolvedValue(usage({ chat: { left: 0.4, words: "half", fullAgainAt: null } }));
+        await open();
+        expect(text()).toContain("About half left");
+        expect(text()).not.toContain("Plenty left");
     });
 
     it("says who pays for storage when Orbit says Universe does", async () => {

@@ -12,7 +12,7 @@ import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
 import { computerReportOf, type ComputerReport, type UndeliverableWhy } from './ComputerReports';
-import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
+import { dueRunOf, failedNoticeOf, heldNoticeOf, type DueRun, type FailedNotice, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -451,7 +451,27 @@ export interface TaskReceiptOpened {
     link: string | null;
     /** The words for who pays ("Paid by you"). */
     paidBy: string | null;
+    /** The turn the receipt is on: sent with every renew and close, so a word from an older turn changes nothing. Absent from an Orbit that gives none. */
+    generation?: number;
 }
+/** What Orbit says to a renewal: the generation the receipt is on now, and whether this one was too old to count. */
+export interface TaskReceiptRenewed {
+    generation?: number;
+    stale: boolean;
+}
+/** Orbit's answer to a close that came from an older generation: nothing changed, and this is the one the receipt is on now. */
+export interface TaskReceiptStale {
+    stale: true;
+    generation?: number;
+}
+/**
+ * Orbit's answer to a close of done or refunded for a task that is not over (a computer's job is still running, or a run of the task has not ended):
+ * the receipt waits in "checking" and ends with the job. The close is not taken yet: it is said again later, and settles at once when the job is over.
+ */
+export interface TaskReceiptWaiting {
+    waiting: true;
+}
+const wholeGeneration = (value: unknown): number | undefined => (typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined);
 export type TaskReceiptState = 'done' | 'refunded' | 'checking';
 
 /** Orbit's own wait for the provider is a minute; the bot server waits a little longer so the answer comes back. */
@@ -1094,7 +1114,7 @@ export class AdminApiService {
         };
     }
 
-    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS): Promise<AxiosResponse<T>> {
+    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1277,13 +1297,16 @@ export class AdminApiService {
      * retry never share one, and a run that was handed out and never reported, again with the same run id. Throws when Orbit cannot
      * be asked: nothing is lost, the runs are handed out again.
      */
-    async claimDueItems(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[] }> {
-        const response = await this.brickCall<{ runs?: unknown; held?: unknown }>('post', 'api/bricks/items/due', { kinds });
+    async claimDueItems(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[]; failed: FailedNotice[] }> {
+        const response = await this.brickCall<{ runs?: unknown; held?: unknown; failed?: unknown }>('post', 'api/bricks/items/due', { kinds });
         const runs = Array.isArray(response.data?.runs) ? response.data.runs : [];
         const held = Array.isArray(response.data?.held) ? response.data.held : [];
+        // An Orbit from before has no `failed`: none
+        const failed = Array.isArray(response.data?.failed) ? response.data.failed : [];
         return {
             runs: runs.map(dueRunOf).filter((run): run is DueRun => run !== null),
             held: held.map(heldNoticeOf).filter((notice): notice is HeldNotice => notice !== null),
+            failed: failed.map(failedNoticeOf).filter((notice): notice is FailedNotice => notice !== null),
         };
     }
 
@@ -1302,7 +1325,7 @@ export class AdminApiService {
 
     /**
      * Keeps the chat event a run's message got, and with it how the run is to be reported (a goal that reached its outcome, its progress).
-     * True when Orbit kept it (or already had this one). An Orbit from before the report is kept refuses the call that carries one: the
+     * True when Orbit kept it (or already had this one). An Orbit from before the report is kept refuses (4xx) the call that carries one: the
      * event id is then kept alone, because where the message went matters more than how the run is reported.
      */
     async keepItemDelivered(runId: string, eventId: string, report?: { outcome?: string; result?: string; progress?: unknown; reached?: boolean }): Promise<boolean> {
@@ -1313,6 +1336,10 @@ export class AdminApiService {
                 return true;
             } catch (error) {
                 console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+                // Only a refusal (4xx, but not "too early" or "too many") says the call that carries the report is not understood. A 503 or a
+                // timeout says nothing: the whole delivery is tried again, so the report is not dropped
+                const status = (error as { response?: { status?: number } })?.response?.status;
+                if (!(typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429)) return false;
             }
         }
         return false;
@@ -1560,7 +1587,19 @@ export class AdminApiService {
         const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'open', taskKey: task.taskKey, title: task.title, category: task.category }, undefined, INSTANT_LIST_TIMEOUT_MS);
         if (answer.status !== 200 && answer.status !== 201) return null;
         const paid = answer.data.paidBy as { label?: unknown } | undefined;
-        return { link: asText(answer.data.link), paidBy: asText(paid?.label) };
+        const generation = wholeGeneration(answer.data.generation);
+        return { link: asText(answer.data.link), paidBy: asText(paid?.label), ...(generation === undefined ? {} : { generation }) };
+    }
+
+    /**
+     * Says a task's receipt is alive (a run starts, a turn ends): Orbit moves its lease on (`action: 'renew'`). A renewal never revives an ended receipt. A
+     * `generation` older than the receipt's changes nothing and the answer names the one it is on now. Null when Orbit cannot say: a lease that lapses is
+     * settled by Orbit's own sweep, so nothing waits on this. Never throws.
+     */
+    async renewTaskReceipt(botId: string, userId: string, task: { taskKey: string; generation?: number }): Promise<TaskReceiptRenewed | null> {
+        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'renew', taskKey: task.taskKey, ...(task.generation === undefined ? {} : { generation: task.generation }) }, undefined, INSTANT_LIST_TIMEOUT_MS);
+        if (answer.status !== 200) return null;
+        return { generation: wholeGeneration(answer.data.generation), stale: answer.data.stale === true };
     }
 
     /**
@@ -1569,10 +1608,21 @@ export class AdminApiService {
      * more to ask: Orbit took it, or said it never will (a receipt that is not this person's or does not exist, a guest without Activity, a request it
      * refuses: asking again will not change that). False when Orbit gave no answer (down, a server error, a timeout) or said to slow down (429), so it is worth asking again.
      */
-    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState }): Promise<boolean> {
-        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'close', taskKey: task.taskKey, state: task.state }, undefined, INSTANT_LIST_TIMEOUT_MS);
+    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState; generation?: number }): Promise<boolean | TaskReceiptStale | TaskReceiptWaiting> {
+        const answer = await this.instantCall(
+            'post',
+            `api/bots/${encodeURIComponent(botId)}/task-receipts`,
+            { userId, action: 'close', taskKey: task.taskKey, state: task.state, ...(task.generation === undefined ? {} : { generation: task.generation }) },
+            undefined,
+            INSTANT_LIST_TIMEOUT_MS
+        );
         // "Too many asks" (429) passes, so it is asked again; any other refusal of the request itself will not change
         if (answer.status === 'none') return answer.rejected === true && answer.http !== 429;
+        // A close from an older generation changed nothing: the caller says which one the receipt is on now, and decides whether it is still the closer
+        if (answer.status === 200 && answer.data.stale === true) return { stale: true, generation: wholeGeneration(answer.data.generation) };
+        // A done or a refunded that Orbit answers with "checking": the task is not over (its job is still running), so the receipt waits for it. It is
+        // not ended, and not a failure: the close goes again later. When the word sent was "checking" itself, "checking" is the answer it asked for
+        if (answer.status === 200 && task.state !== 'checking' && answer.data.state === 'checking') return { waiting: true };
         return answer.status === 200 || answer.status === 404;
     }
 
@@ -1612,13 +1662,16 @@ export class AdminApiService {
         return response.data?.review === true;
     }
 
-    /** A job as it stands (#2000), or null when it is not there. */
-    /** The job as Orbit has it; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string } | null> {
+    /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number } | null> {
         try {
-            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
-            if (job && typeof job.id === 'string' && typeof job.status === 'string') return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' };
+            if (job && typeof job.id === 'string' && typeof job.status === 'string') {
+                // The control generation, when Orbit gives one (an Orbit that does not is not asked to fence)
+                const generation = typeof job.generation === 'number' && Number.isInteger(job.generation) && job.generation >= 0 ? job.generation : undefined;
+                return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick', ...(generation === undefined ? {} : { generation }) };
+            }
             throw new Error('Orbit gave no job');
         } catch (error) {
             if (axios.isAxiosError(error) && error.response?.status === 404) return null;

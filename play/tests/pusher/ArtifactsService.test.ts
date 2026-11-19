@@ -68,9 +68,132 @@ describe("ArtifactsService", () => {
         );
         expect(started).toEqual({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" });
         http.post.mockResolvedValueOnce({ data: { status: "paid", checkoutUrl: null, testPayment: true } } as never);
-        expect(await service.pay(ID, { order: "o1" }, viewer)).toEqual({ status: "paid", checkoutUrl: null, testPayment: true });
+        expect(await service.pay(ID, { order: "o1" }, viewer)).toEqual({
+            status: "paid",
+            checkoutUrl: null,
+            testPayment: true,
+        });
         http.post.mockRejectedValueOnce(orbitError(429, { error: "limit" }));
         await expect(service.pay(ID, { start: true }, viewer)).rejects.toEqual(new ArtifactsError("limit", 429));
+    });
+
+    it("keeps whether a restore found the buyer's own order or a receipt's (via), and drops a word it does not know", async () => {
+        const http = { put: vi.fn(), post: vi.fn() };
+        const service = new ArtifactsService("http://orbit", "token", http);
+        http.post.mockResolvedValueOnce({ data: { status: "checking", via: "own", pollAfterMs: 2000 } });
+        expect(await service.pay(ID, { restore: true }, viewer)).toEqual({
+            status: "checking",
+            via: "own",
+            pollAfterMs: 2000,
+        });
+        http.post.mockResolvedValueOnce({ data: { status: "checking", via: "receipt", orderId: "o1" } });
+        expect(await service.pay(ID, { restore: true }, viewer)).toMatchObject({ via: "receipt", orderId: "o1" });
+        http.post.mockResolvedValueOnce({ data: { status: "checking", via: "somebody" } });
+        expect(await service.pay(ID, { restore: true }, viewer)).toEqual({ status: "checking" });
+    });
+
+    it("keeps Orbit's 'unsure' on a start's 409 refusal (an order may have been made), and nothing else about a plain refusal", async () => {
+        const http = { put: vi.fn(), post: vi.fn() };
+        const service = new ArtifactsService("http://orbit", "token", http);
+        http.post.mockRejectedValueOnce(orbitError(409, { error: "unavailable", unsure: true }));
+        await expect(service.pay(ID, { start: true, intentId: "w1234567890" }, viewer)).rejects.toEqual(
+            new ArtifactsError("unavailable", 409, true)
+        );
+        http.post.mockRejectedValueOnce(orbitError(409, { error: "unavailable" }));
+        const clear = await service.pay(ID, { start: true, intentId: "w1234567890" }, viewer).catch((e) => e);
+        expect(clear).toMatchObject({ code: "unavailable", status: 409, unsure: false });
+        // Only a real true counts
+        http.post.mockRejectedValueOnce(orbitError(409, { error: "unavailable", unsure: "yes" }));
+        const odd = await service.pay(ID, { start: true, intentId: "w1234567890" }, viewer).catch((e) => e);
+        expect(odd).toMatchObject({ code: "unavailable", status: 409, unsure: false });
+    });
+
+    it("sends a wish, a check, a restore and a guest's code to Orbit, and keeps what a window needs of the answer (pollAfterMs, none, paidAt)", async () => {
+        const http = { put: vi.fn(), post: vi.fn() };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        const code = "R".repeat(43);
+        http.post.mockResolvedValueOnce({
+            data: {
+                orderId: "o1",
+                checkoutUrl: "https://checkout.examplepay.com/c1",
+                app: "Example",
+                amount: "1.000",
+                currency: "KWD",
+                reused: true,
+            },
+        } as never);
+        expect(await service.pay(ID, { start: true, intentId: "w1234567890", recoveryCode: code }, viewer)).toEqual({
+            orderId: "o1",
+            checkoutUrl: "https://checkout.examplepay.com/c1",
+            app: "Example",
+            reused: true,
+        });
+        expect(http.post).toHaveBeenLastCalledWith(
+            `https://orbit.test/api/artifacts/${ID}/pay`,
+            { viewer, start: true, intentId: "w1234567890", recoveryCode: code },
+            { headers: { Authorization: "secret" } }
+        );
+        http.post.mockResolvedValueOnce({
+            data: {
+                status: "checking",
+                checkoutUrl: null,
+                testPayment: false,
+                orderId: "o1",
+                pollAfterMs: 5000,
+                secret: "x",
+            },
+        } as never);
+        expect(await service.pay(ID, { check: true, intentId: "w1234567890", recoveryCode: code }, viewer)).toEqual({
+            status: "checking",
+            checkoutUrl: null,
+            testPayment: false,
+            orderId: "o1",
+            pollAfterMs: 5000,
+        });
+        http.post.mockResolvedValueOnce({
+            data: {
+                status: "paid",
+                testPayment: false,
+                orderId: "o9",
+                pollAfterMs: 3000,
+                paidAt: "2026-11-19T08:00:00.000Z",
+            },
+        } as never);
+        expect(await service.pay(ID, { restore: true, recoveryCode: code, receiptCode: code }, viewer)).toMatchObject({
+            status: "paid",
+            orderId: "o9",
+            paidAt: "2026-11-19T08:00:00.000Z",
+        });
+        http.post.mockResolvedValueOnce({
+            data: { status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 },
+        } as never);
+        expect(await service.pay(ID, { restore: true, recoveryCode: code }, viewer)).toMatchObject({
+            status: "none",
+            orderId: null,
+        });
+        // A guest with no usable code is refused in words, not turned into a different error
+        http.post.mockRejectedValueOnce(orbitError(400, { error: "buyer_required" }));
+        await expect(service.pay(ID, { restore: true }, viewer)).rejects.toEqual(
+            new ArtifactsError("buyer_required", 400)
+        );
+    });
+
+    it("keeps who Orbit says the asking buyer is (account or guest) on every answer, and drops a word it does not know", async () => {
+        const http = { put: vi.fn(), post: vi.fn() };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        http.post.mockResolvedValueOnce({
+            data: { orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example", buyer: "guest" },
+        } as never);
+        expect(
+            await service.pay(ID, { start: true, intentId: "w1234567890", recoveryCode: "c".repeat(43) }, viewer)
+        ).toMatchObject({ buyer: "guest" });
+        http.post.mockResolvedValueOnce({ data: { status: "paid", testPayment: false, buyer: "account" } } as never);
+        expect(
+            await service.pay(ID, { check: true, intentId: "w1234567890", recoveryCode: "c".repeat(43) }, viewer)
+        ).toMatchObject({ buyer: "account" });
+        http.post.mockResolvedValueOnce({ data: { status: "none", buyer: "someone else" } } as never);
+        const other = await service.pay(ID, { restore: true, recoveryCode: "c".repeat(43) }, viewer);
+        expect(other).toEqual({ status: "none" });
     });
 
     it("opens an artifact as the viewer, with the admin token, and keeps only what the game uses", async () => {

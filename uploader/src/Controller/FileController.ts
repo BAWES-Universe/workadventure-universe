@@ -29,7 +29,6 @@ import {
 } from "../Service/AudioMessageValidator";
 import {
   isValidPlayAuthToken,
-  isValidPlayGameSession,
   playGameIdentifier,
 } from "../Service/PlayAuthToken";
 import {
@@ -78,6 +77,19 @@ async function locationOf(bucket: string | undefined, fileUuid: string): Promise
     if (cdnProvider) return cdnProvider.getSignedUrl(fileUuid);
   }
   return `${UPLOADER_URL}/upload-file/${fileUuid}`;
+}
+
+/**
+ * For a file kept in a bucket whose link is signed (it runs out), the uploader's own lasting link to it, written with the address this
+ * uploader is reached at from outside: a bot server may know the uploader only by a name inside its network, which a browser cannot open.
+ */
+export function lastingLocationOf(bucket: string | undefined, fileUuid: string, location: string): { lastingLocation?: string } {
+  if (!bucket || !UPLOADER_URL || location.startsWith(`${UPLOADER_URL}/upload-file/`)) return {};
+  const isChatBucket = bucket === S3_CDN_USER_REFS_BUCKET || bucket === S3_CDN_BOT_GENS_BUCKET;
+  const publicUrl = bucket === S3_CDN_USER_REFS_BUCKET ? S3_CDN_USER_REFS_PUBLIC_URL : S3_CDN_BOT_GENS_PUBLIC_URL;
+  // A bucket with a public link already answered with it, which lasts
+  if (!isChatBucket || publicUrl) return {};
+  return { lastingLocation: `${UPLOADER_URL.replace(/\/+$/, "")}/chat-file/${encodeURIComponent(bucket)}/${encodeURIComponent(fileUuid)}` };
 }
 
 /** What a player says an upload is for; anything else is a chat file. */
@@ -278,7 +290,10 @@ export class FileController {
         response.status(503).json({ message: "uploads-not-configured" });
         return;
       }
-      if (isValidPlayGameSession(request.header("authorization"), SECRET_KEY)) {
+      // Who the session is, read once: the receipt of this upload names this one, whatever the session does while the file is stored
+      const who = playGameIdentifier(request.header("authorization"), SECRET_KEY);
+      if (who) {
+        response.locals.gameIdentifier = who;
         next();
         return;
       }
@@ -342,6 +357,7 @@ export class FileController {
           lastModified: Date;
           type?: string;
           receipt?: string;
+          lastingLocation?: string;
         }[] = [];
 
         // Validate session token if admin API is configured (skip for bot uploads)
@@ -382,7 +398,7 @@ export class FileController {
           const location = await locationOf(bucket, fileUuid);
           // A player's upload comes with a receipt: who uploaded which bytes, so a bot server can trust the file a guest names
           const now = Date.now();
-          const uploader = !isBotUpload && SECRET_KEY ? playGameIdentifier(request.header("authorization"), SECRET_KEY) : null;
+          const uploader: string | null = !isBotUpload && SECRET_KEY && typeof response.locals.gameIdentifier === "string" ? response.locals.gameIdentifier : null;
           const receipt =
             uploader && SECRET_KEY
               ? signReceipt(
@@ -411,6 +427,7 @@ export class FileController {
             lastModified: new Date(),
             type: file.mimetype,
             ...(receipt ? { receipt } : {}),
+            ...lastingLocationOf(bucket, fileUuid, location),
           });
         }
 

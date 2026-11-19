@@ -9,6 +9,7 @@
   },
   "scripts": {
     "fetch-data": "bash scripts/fetch-data.sh",
+    "test": "node --import tsx --test test/*.test.ts",
     "evaluate": "ORT_DISABLE_TELEMETRY=1 tsx src/run-all.ts data out 4",
     "report": "tsx src/report.ts data out results/adjudication.tsv",
     "parity": "ORT_DISABLE_TELEMETRY=1 tsx src/parity.ts data out \"silero p>=0.50 for 64 ms\"",
@@ -28,6 +29,10 @@
     "@evan/opus": "1.0.3",
     "onnxruntime-node": "1.31.1",
     "onnxruntime-web": "1.31.1",
-    "tsx": "4.23.15"
+    "tsx": "4.23.15",
+    "ws": "8.22.1"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
   }
 }

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+    availableLabel,
     availableText,
     fullAgainWhen,
     moneyLeft,
     moneyUsedUp,
     parseUsage,
     renewsWhen,
+    spentLabel,
     spentText,
     storageSize,
 } from "../Usage";
@@ -239,6 +241,33 @@ describe("real numbers (credits and grants)", () => {
         expect(usage?.storagePaidByUniverse).toBe(true);
     });
 
+    it("has one row for a receipt: the same id twice is one task, the first", () => {
+        const at = "2026-11-15T11:16:00.000Z";
+        const read = parseUsage(
+            real({
+                activity: [
+                    { id: "same", title: "First", at },
+                    { id: "same", title: "Second", at },
+                    { id: "other", title: "Other", at },
+                ],
+            })
+        );
+        expect(read?.activity.map((one) => `${one.id}:${one.title}`)).toEqual(["same:First", "other:Other"]);
+    });
+
+    it("does not let a row that is still being looked up take the place of the same task's settled row", () => {
+        const at = "2026-11-15T11:16:00.000Z";
+        const read = parseUsage(
+            real({
+                activity: [
+                    { id: "same", title: "Looking", at, state: "checking" },
+                    { id: "same", title: "Settled", at, state: "done" },
+                ],
+            })
+        );
+        expect(read?.activity.map((one) => `${one.id}:${one.title}`)).toEqual(["same:Settled"]);
+    });
+
     it("reads at most fifty tasks", () => {
         const many = Array.from({ length: 80 }, (_, i) => ({
             id: `a${i}`,
@@ -261,6 +290,21 @@ describe("dollars", () => {
         expect(spentText(920_001, "en-US")).toBe("$0.93");
         expect(spentText(1, "en-US")).toBe("$0.01");
         expect(spentText(0, "en-US")).toBe("$0");
+    });
+    it("says a positive amount under a cent as 'less than', a true zero as $0, and anything else as it did", () => {
+        const tiny = "Less than $0.01";
+        expect(availableLabel(5_000, "en-US", tiny)).toBe(tiny);
+        expect(availableLabel(9_999, "en-US", tiny)).toBe(tiny);
+        expect(availableLabel(0, "en-US", tiny)).toBe("$0");
+        expect(availableLabel(10_000, "en-US", tiny)).toBe("$0.01");
+        expect(availableLabel(3_209_999, "en-US", tiny)).toBe("$3.20");
+        const line = "less than $0.01";
+        expect(spentLabel(1, "en-US", line)).toBe(line);
+        expect(spentLabel(9_999, "en-US", line)).toBe(line);
+        expect(spentLabel(0, "en-US", line)).toBe("$0");
+        expect(spentLabel(10_000, "en-US", line)).toBe("$0.01");
+        expect(spentLabel(10_001, "en-US", line)).toBe("$0.02");
+        expect(spentLabel(60_000, "en-US", line)).toBe("$0.06");
     });
     it("is used up below a cent, and the bar counts whole cents", () => {
         expect(moneyUsedUp({ availableMicros: 9_999 })).toBe(true);

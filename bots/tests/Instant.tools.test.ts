@@ -17,17 +17,23 @@ import { AIService } from '../ai/AIService';
 import { MCPConnector } from '../mcp/MCPConnector';
 import {
     InstantOffers,
+    NOT_CONFIRMED,
     carryOnCard,
+    CLOSE_WAITS,
     endInstantTask,
+    instantTaskPending,
     formatInstantResult,
     instantReceiptTitle,
     instantToolDefinitions,
     instantToolName,
     instantToolsNote,
     isInstantTool,
+    mixedTaskNote,
     newInstantTask,
     openInstantReceipt,
     receiptStateOf,
+    renewInstantReceipt,
+    ruleStopResult,
     runInstantTool,
     stableJson,
 } from '../ai/InstantTools';
@@ -49,11 +55,11 @@ const respond = (status: number, data: unknown) => request.mockResolvedValueOnce
 
 afterEach(() => {
     vi.clearAllMocks();
-    delete process.env.BOT_SERVICE_TOKEN;
+    vi.unstubAllEnvs();
 });
 
 function admin(): AdminApiService {
-    process.env.BOT_SERVICE_TOKEN = 'service-token';
+    vi.stubEnv('BOT_SERVICE_TOKEN', 'service-token');
     return new AdminApiService('https://orbit.example', 'admin-token');
 }
 
@@ -141,7 +147,7 @@ describe('Orbit’s Instant routes, from the bot server', () => {
             expect(await ask()).toEqual({ status: 'rejected' });
         }
         expect(request).toHaveBeenCalledTimes(4);
-        delete process.env.BOT_SERVICE_TOKEN;
+        vi.stubEnv('BOT_SERVICE_TOKEN', undefined);
         expect(await new AdminApiService('https://orbit.example', 'admin-token').instantRun(BRICK, { requesterKey: 'a', tool: 'T', arguments: {}, callId: 'c' })).toEqual({ status: 'rejected' });
     });
 
@@ -154,6 +160,45 @@ describe('Orbit’s Instant routes, from the bot server', () => {
         respond(200, { ok: true, id: 'act_1', state: 'done' });
         expect(await admin().closeTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'instant-1', state: 'done' })).toBe(true);
         expect(request.mock.calls[1][0].data).toEqual({ userId: 'uuid-alice', action: 'close', taskKey: 'instant-1', state: 'done' });
+    });
+
+    it('reads the generation a receipt is on, sends it with a close and a renew, and says so when Orbit calls a close stale', async () => {
+        respond(201, { id: 'act_1', link: null, paidBy: { label: 'Paid by you' }, created: true, generation: 1, leaseUntil: '2026-11-19T10:10:00.000Z' });
+        expect(await admin().openTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', title: 'Exa search', category: 'apps' })).toEqual({ link: null, paidBy: 'Paid by you', generation: 1 });
+        respond(200, { ok: true, id: 'act_1', state: 'running', generation: 1, leaseUntil: '2026-11-19T10:20:00.000Z', renewed: true });
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', generation: 1 })).toEqual({ generation: 1, stale: false });
+        expect(request.mock.calls[1][0].data).toEqual({ userId: 'uuid-alice', action: 'renew', taskKey: 'k', generation: 1 });
+        // A renewal from an older generation changes nothing and names the one the receipt is on
+        respond(200, { ok: true, id: 'act_1', state: 'running', generation: 2, leaseUntil: null, renewed: false, stale: true });
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', generation: 1 })).toEqual({ generation: 2, stale: true });
+        respond(200, { ok: true, id: 'act_1', state: 'done', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', state: 'done', generation: 1 })).toBe(true);
+        expect(request.mock.calls[3][0].data).toEqual({ userId: 'uuid-alice', action: 'close', taskKey: 'k', state: 'done', generation: 1 });
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 2, stale: true });
+        expect(await admin().closeTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k', state: 'done', generation: 1 })).toEqual({ stale: true, generation: 2 });
+        // An Orbit that gives no generation, and one that cannot be reached, are never a reason to throw
+        respond(200, { ok: true, id: 'act_1', state: 'running', renewed: true });
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k' })).toEqual({ generation: undefined, stale: false });
+        expect(request.mock.calls[5][0].data).toEqual({ userId: 'uuid-alice', action: 'renew', taskKey: 'k' });
+        respond(500, {});
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k' })).toBeNull();
+        request.mockRejectedValueOnce(new Error('down'));
+        expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k' })).toBeNull();
+    });
+
+    it('says a close of done or refunded that Orbit answers "checking" (its computer job is still running) is waiting, not ended; "checking" answered to "checking" is just taken', async () => {
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done', generation: 1 })).toEqual({ waiting: true });
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'refunded' })).toEqual({ waiting: true });
+        // The word sent was "checking" itself: that is what it asked for
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'checking' })).toBe(true);
+        // A stale answer is still stale, and an ended one is taken
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 2, stale: true });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done', generation: 1 })).toEqual({ stale: true, generation: 2 });
+        respond(200, { ok: true, id: 'act_1', state: 'done', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(true);
     });
 
     it('never throws for a receipt: Orbit down, a guest without Activity or a body it does not take is just "no receipt"', async () => {
@@ -305,7 +350,7 @@ describe('one Instant run', () => {
         const lost = await go(never);
         expect(never).toHaveBeenCalledTimes(3);
         expect(lost.result).toMatchObject({ success: false, outcome: 'uncertain' });
-        expect(String(lost.result.note)).toMatch(/do not run it again/);
+        expect(String(lost.result.note)).toMatch(/Do not run it again in this reply/);
         expect(lost.notSent).toBe(false);
         expect(lost.ended).toBe('unsure');
         // a refused token is certain, and not asked again
@@ -324,6 +369,100 @@ describe('one Instant run', () => {
         expect(receiptStateOf([ran.ended])).toBe('refunded');
     });
 
+    it('says it may have run, never "nothing ran", when a refusal follows an asking that got no answer or was still being checked', async () => {
+        const refusals: InstantRunAnswer[] = [
+            { status: 'refused', reason: 'credit_used_up', message: 'Your Instant Apps credit does not cover it.' } as InstantRunAnswer,
+            { status: 'refused', reason: 'paused', message: 'Paused.' } as InstantRunAnswer,
+            { status: 'rejected' } as InstantRunAnswer,
+            { status: 'not_owner' } as InstantRunAnswer,
+        ];
+        for (const before of [{ status: 'unreachable', retry: true }, { status: 'checking' }] as InstantRunAnswer[]) {
+            for (const refusal of refusals) {
+                const ran = await go(answers(before, refusal));
+                expect(ran).toMatchObject({ ended: 'unsure', notSent: false });
+                expect(ran.result).toMatchObject({ outcome: 'uncertain' });
+                expect(ran.carryOn).toBeNull();
+                expect(String(ran.result.note)).not.toMatch(/Nothing ran/);
+            }
+        }
+        // A rule that said no still ends the task, so nothing more is run in it
+        const rule = await go(answers({ status: 'unreachable', retry: true }, { status: 'refused', reason: 'rule', message: 'No.', stop: true } as InstantRunAnswer));
+        expect(rule).toMatchObject({ ended: 'unsure', stop: true });
+        // A first asking that is refused is still plainly "nothing ran"
+        const first = await go(answers({ status: 'refused', reason: 'credit_used_up', message: 'Credit.' } as InstantRunAnswer));
+        expect(first).toMatchObject({ ended: 'not_sent', notSent: true });
+    });
+
+    it('says every unsettled run in the approved words with a Check status link, and never says it will show in Usage', async () => {
+        const link = '[What it used](#usage=act_9)';
+        const ways: Array<[string, InstantRunAnswer[]]> = [
+            ['no answer', [{ status: 'unreachable', retry: false }]],
+            ['still checking', Array.from({ length: 6 }, () => ({ status: 'checking' }) as InstantRunAnswer)],
+            ['unclear failure', [{ status: 'failed', reason: 'unclear', message: 'Checking.' }]],
+            ['already checking', [{ status: 'refused', reason: 'already_checking', message: 'Checking.', stop: false } as InstantRunAnswer]],
+            ['refused after no answer', [{ status: 'unreachable', retry: true }, { status: 'rejected' }]],
+            ['not owner after still checking', [{ status: 'checking' }, { status: 'not_owner' }]],
+        ];
+        for (const [name, steps] of ways) {
+            const ran = await go(answers(...steps), { receiptLink: link });
+            expect(ran.ended, name).toBe('unsure');
+            const note = String(ran.result.note);
+            expect(note, name).toContain(`"${NOT_CONFIRMED}"`);
+            expect(NOT_CONFIRMED).toBe("I couldn't confirm whether it ran. I won't submit it again in this reply.");
+            expect(note, name).toContain('[Check status](#usage=act_9)');
+            expect(ran.result.receipt, name).toBe('[Check status](#usage=act_9)');
+            expect(note, name).not.toMatch(/Usage|settles by itself|will show/);
+            expect(JSON.stringify(ran.result), name).not.toContain('What it used');
+        }
+        // no real receipt link: no link is made up, and nothing points to Usage
+        for (const none of [null, undefined, '', 'https://evil.example', '[x](javascript:alert(1))']) {
+            const ran = await go(answers({ status: 'unreachable', retry: false }), { receiptLink: none });
+            expect(String(ran.result.note)).toContain(`"${NOT_CONFIRMED}"`);
+            expect(String(ran.result.note)).not.toMatch(/Check status|Usage|\]\(/);
+            expect(ran.result.receipt).toBeUndefined();
+        }
+    });
+
+    it('a rule that stops a task after a try nobody could settle says both facts, keeps the rule\'s own words, and stays stopped', async () => {
+        const link = '[What it used](#usage=act_4)';
+        const ran = await go(answers({ status: 'unreachable', retry: true }, { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true } as InstantRunAnswer), { receiptLink: link });
+        expect(ran).toMatchObject({ ended: 'unsure', stop: true, notSent: false });
+        const note = String(ran.result.note);
+        expect(note).toContain('"Your spending rule stopped further steps."');
+        expect(note).toContain('"I\'m still checking the earlier request."');
+        expect(note).toContain('You said no more than a dollar a day.');
+        expect(note).toContain('[Check status](#usage=act_4)');
+        expect(note).toMatch(/Do not run any Instant App for this again/);
+        expect(note).toMatch(/never suggest more credit, a top-up or asking for more/);
+        expect(note).not.toMatch(/Usage|settles by itself/);
+        expect(ran.result).toMatchObject({ success: false, outcome: 'uncertain', reason: 'rule', error: 'You said no more than a dollar a day.', receipt: '[Check status](#usage=act_4)' });
+        // the plain rule stop (nothing was tried before) is unchanged
+        expect(ruleStopResult('No.')).toMatchObject({ outcome: 'not_sent', reason: 'rule' });
+        expect(String(ruleStopResult('No.').note)).not.toMatch(/still checking/);
+    });
+
+    it('names what already worked in a task on its own when a later step is unsettled or failed, and never says the whole task worked or failed', () => {
+        expect(mixedTaskNote([], 'unsure')).toBe('');
+        expect(mixedTaskNote(['failed'], 'unsure')).toBe('');
+        expect(mixedTaskNote(['worked'], 'worked')).toBe('');
+        expect(mixedTaskNote(['worked'], 'not_sent')).toBe('');
+        for (const now of ['unsure', 'failed'] as const) {
+            expect(mixedTaskNote(['worked', 'failed'], now)).toMatch(/One earlier step of this task worked: say that on its own/);
+            expect(mixedTaskNote(['worked', 'worked'], now)).toMatch(/2 earlier steps of this task worked/);
+            expect(mixedTaskNote(['worked'], now)).toMatch(/Never say the whole task worked, and never that all of it failed/);
+        }
+    });
+
+    it('sends nothing after the deadline: a wait that used the time up ends as unsure, without another asking', async () => {
+        for (const first of [{ status: 'unreachable', retry: true }, { status: 'checking' }] as InstantRunAnswer[]) {
+            const instantRun = answers(first, { status: 'done', data: 1, chargedMicros: 1 });
+            let clock = 0;
+            const ran = await go(instantRun, { sleep: async () => void (clock += 151_000), now: () => clock });
+            expect(instantRun).toHaveBeenCalledTimes(1);
+            expect(ran).toMatchObject({ ended: 'unsure', notSent: false });
+        }
+    });
+
     it('waits and asks again with the same id while Orbit is still checking, then leaves it to settle by itself', async () => {
         const instantRun = answers({ status: 'checking' }, { status: 'done', data: 'ok', chargedMicros: 3 });
         const ran = await go(instantRun);
@@ -334,7 +473,7 @@ describe('one Instant run', () => {
         const stuck = answers(...Array.from({ length: 6 }, () => ({ status: 'checking' }) as InstantRunAnswer));
         const waited = await go(stuck, { receiptLink: '[What it used](#usage=act_3)' });
         expect(stuck).toHaveBeenCalledTimes(4);
-        expect(waited.result).toMatchObject({ success: false, outcome: 'uncertain', error: 'No answer came back, so I cannot tell whether it ran.', receipt: '[What it used](#usage=act_3)' });
+        expect(waited.result).toMatchObject({ success: false, outcome: 'uncertain', error: 'No answer came back, so I cannot tell whether it ran.', receipt: '[Check status](#usage=act_3)' });
         expect(waited.ended).toBe('unsure');
         // the step shows "no answer", never "didn't work"
         expect(resultOf('t1', waited.result)).toMatchObject({ ok: false, unknown: true });
@@ -472,7 +611,9 @@ describe('one task, one receipt', () => {
     it('ends as done when something worked, checking when an answer never came, and refunded when nothing was taken', () => {
         expect(receiptStateOf(['worked'])).toBe('done');
         expect(receiptStateOf(['failed', 'worked'])).toBe('done');
-        expect(receiptStateOf(['unsure', 'worked'])).toBe('done');
+        // A run nobody could settle keeps the receipt open, however many others worked
+        expect(receiptStateOf(['unsure', 'worked'])).toBe('checking');
+        expect(receiptStateOf(['worked', 'unsure'])).toBe('checking');
         expect(receiptStateOf(['unsure'])).toBe('checking');
         expect(receiptStateOf(['failed', 'unsure'])).toBe('checking');
         expect(receiptStateOf(['failed'])).toBe('refunded');
@@ -504,6 +645,76 @@ describe('one task, one receipt', () => {
         // nothing new ran, so a second end says nothing
         await endInstantTask(admin, BRICK, 'uuid-alice', task);
         expect(admin.closeTaskReceipt).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes under the generation the receipt was opened on, and when Orbit calls it stale says the same word once under the one it is on now', async () => {
+        const task = newInstantTask();
+        const admin = {
+            openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null, generation: 1 }),
+            closeTaskReceipt: vi.fn().mockResolvedValueOnce({ stale: true, generation: 2 }).mockResolvedValue(true),
+        };
+        await openInstantReceipt(admin, BRICK, 'u', task, 'x');
+        task.ended.push('worked');
+        await endInstantTask(admin, BRICK, 'u', task);
+        expect(admin.closeTaskReceipt.mock.calls.map((call) => call[2])).toEqual([
+            { taskKey: task.key, state: 'done', generation: 1 },
+            { taskKey: task.key, state: 'done', generation: 2 },
+        ]);
+        expect(task.reported).toBe(1);
+        expect(task.generation).toBe(2);
+
+        // Stale again right after: it is not asked a third time in this end, and is kept for the next
+        const again = newInstantTask();
+        const stale = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null, generation: 1 }), closeTaskReceipt: vi.fn().mockResolvedValue({ stale: true, generation: 5 }) };
+        await openInstantReceipt(stale, BRICK, 'u', again, 'x');
+        again.ended.push('unsure');
+        await endInstantTask(stale, BRICK, 'u', again);
+        expect(stale.closeTaskReceipt).toHaveBeenCalledTimes(2);
+        expect(again.reported).toBeUndefined();
+        expect(again.attempts).toBe(1);
+        expect(again.generation).toBe(5);
+    });
+
+    it('a close Orbit answers "still checking" (the computer job is still running) ends nothing and is no failure: the same word goes at the next end, and is taken when the job is over', async () => {
+        const task = newInstantTask();
+        const admin = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null, generation: 1 }), closeTaskReceipt: vi.fn().mockResolvedValueOnce({ waiting: true }).mockResolvedValueOnce({ waiting: true }).mockResolvedValue(true) };
+        await openInstantReceipt(admin, BRICK, 'u', task, 'x');
+        task.ended.push('worked');
+        await endInstantTask(admin, BRICK, 'u', task);
+        // Not counted as ended, and no try used up (a failure to ask is a different thing)
+        expect(task.reported).toBeUndefined();
+        expect(task.attempts).toBeUndefined();
+        expect(instantTaskPending(task)).toBe(true);
+        await endInstantTask(admin, BRICK, 'u', task);
+        expect(task.reported).toBeUndefined();
+        // The job is over: Orbit takes it at once
+        await endInstantTask(admin, BRICK, 'u', task);
+        expect(admin.closeTaskReceipt).toHaveBeenCalledTimes(3);
+        expect(admin.closeTaskReceipt.mock.calls.every((call) => call[2].state === 'done')).toBe(true);
+        expect(task.reported).toBe(1);
+        expect(instantTaskPending(task)).toBe(false);
+
+        // A receipt that waits for ever is not asked for ever: past a few ends Orbit's own sweep ends it with the job
+        const long = newInstantTask();
+        const waiting = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null }), closeTaskReceipt: vi.fn().mockResolvedValue({ waiting: true }) };
+        await openInstantReceipt(waiting, BRICK, 'u', long, 'x');
+        long.ended.push('worked');
+        for (let i = 0; i < CLOSE_WAITS + 5; i++) await endInstantTask(waiting, BRICK, 'u', long);
+        expect(waiting.closeTaskReceipt).toHaveBeenCalledTimes(CLOSE_WAITS);
+    });
+
+    it('renews the lease of an opened receipt with its generation, takes the generation Orbit names, and never throws', async () => {
+        const task = newInstantTask();
+        const admin = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null, generation: 1 }), renewTaskReceipt: vi.fn().mockResolvedValue({ generation: 3, stale: true }) };
+        // Nothing opened yet: nothing to renew
+        await renewInstantReceipt(admin, BRICK, 'u', task);
+        expect(admin.renewTaskReceipt).not.toHaveBeenCalled();
+        await openInstantReceipt(admin, BRICK, 'u', task, 'x');
+        await renewInstantReceipt(admin, BRICK, 'u', task);
+        expect(admin.renewTaskReceipt).toHaveBeenCalledWith(BRICK, 'u', { taskKey: task.key, generation: 1 });
+        expect(task.generation).toBe(3);
+        admin.renewTaskReceipt.mockRejectedValue(new Error('down'));
+        await expect(renewInstantReceipt(admin, BRICK, 'u', task)).resolves.toBeUndefined();
     });
 
     it('a close Orbit did not take is kept and said again at the next end, and a failure never throws', async () => {
@@ -567,6 +778,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
             instantRun: vi.fn().mockResolvedValue({ status: 'done', data: { r: 1 }, chargedMicros: 7000 } satisfies InstantRunAnswer),
             openTaskReceipt: vi.fn().mockResolvedValue({ link: '[What it used](#usage=act_1)', paidBy: 'Paid by you' }),
             closeTaskReceipt: vi.fn().mockResolvedValue(true),
+            renewTaskReceipt: vi.fn().mockResolvedValue({ generation: undefined, stale: false }),
             ...over,
         };
         const ai = Object.create(AIService.prototype) as AIService;
@@ -584,6 +796,11 @@ describe('in a Brick’s owner chat (AIService)', () => {
         return { ai: ai as unknown as Ai, orbit, memory };
     }
     const where = { botId: BRICK, playerId: 1 };
+    /** A new message from the person, through the real start of a reply: it clears what the last turn kept (its tool calls), as a new turn does. */
+    const newMessage = async (ai: Ai) => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        await (ai as unknown as AIService).generateBotResponseStream(BRICK, 1, 'a new message', '', 'none', 'matrix-dm', '').next().catch(() => undefined);
+    };
 
     it('offers Instant only in a person’s own Brick, to its owner, and never in a bubble or without Orbit', async () => {
         const { ai, orbit } = service();
@@ -657,7 +874,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         // another question is another run, and a new turn clears what was kept
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'other' }, where);
         expect(orbit.instantRun).toHaveBeenCalledTimes(2);
-        (memory.instantCalls as Map<string, unknown>).clear();
+        await newMessage(ai);
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
         expect(orbit.instantRun).toHaveBeenCalledTimes(3);
         expect(new Set(orbit.instantRun.mock.calls.map((c) => c[1].callId)).size).toBe(3);
@@ -700,6 +917,26 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(orbit.openTaskReceipt).toHaveBeenCalledTimes(2);
     });
 
+    it('renews the receipt when a later run of the task starts, and when the turn ends with a run still in flight', async () => {
+        const { ai, orbit, memory } = service({ openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: 'Paid by you', generation: 1 }) });
+        ai.noteBrick(BRICK, { isDefault: false });
+        await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        // The first run's open was its renewal
+        expect(orbit.renewTaskReceipt).not.toHaveBeenCalled();
+        let land: (answer: InstantRunAnswer) => void = () => undefined;
+        orbit.instantRun.mockImplementationOnce(() => new Promise<InstantRunAnswer>((resolve) => (land = resolve)));
+        const second = ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        await vi.waitFor(() => expect(orbit.renewTaskReceipt).toHaveBeenCalledTimes(1));
+        const key = orbit.instantRun.mock.calls[0][1].taskKey;
+        expect(orbit.renewTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: key, generation: 1 });
+        // The turn ends while that run is still out: its receipt is alive, and is not closed until the run has landed
+        await ai.endInstantTurn(BRICK, 'uuid-alice', memory.instantTurn as never);
+        await vi.waitFor(() => expect(orbit.renewTaskReceipt).toHaveBeenCalledTimes(2));
+        expect(orbit.closeTaskReceipt).not.toHaveBeenCalled();
+        land({ status: 'done', data: 2, chargedMicros: 1 });
+        await second;
+    });
+
     it('never opens a receipt for a call that is not offered, and a receipt Orbit cannot open does not stop the run', async () => {
         const { ai, orbit } = service();
         ai.noteBrick(BRICK, { isDefault: false });
@@ -736,6 +973,84 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(lost.orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ state: 'checking' }));
         // no person to end for
         await expect(lost.ai.endInstantTurn(BRICK, undefined, lost.memory.instantTurn)).resolves.toBeUndefined();
+    });
+
+    it('tells the model what already worked in the task when a later step could not be confirmed, and a rule after that keeps both facts for every later call', async () => {
+        const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: undefined, canAskForMore: undefined };
+        const { ai, orbit } = service({
+            instantRun: vi
+                .fn()
+                .mockResolvedValueOnce({ status: 'done', data: 1, chargedMicros: 1 })
+                .mockResolvedValueOnce({ status: 'unreachable', retry: false })
+                .mockResolvedValueOnce(rule)
+                .mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }),
+        });
+        ai.noteBrick(BRICK, { isDefault: false });
+        const one = await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        expect(one).toMatchObject({ success: true });
+        expect(String(one.note)).not.toMatch(/earlier step/);
+        const two = await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        expect(two).toMatchObject({ success: false, outcome: 'uncertain' });
+        expect(String(two.note)).toContain(`"${NOT_CONFIRMED}"`);
+        expect(String(two.note)).toContain('[Check status](#usage=act_1)');
+        expect(String(two.note)).toMatch(/One earlier step of this task worked: say that on its own/);
+        const three = await ai.runInstantToolCall('instant_app_exa_search', { query: 'c' }, where);
+        expect(String(three.note)).toContain('"Your spending rule stopped further steps."');
+        expect(String(three.note)).toContain('"I\'m still checking the earlier request."');
+        const four = await ai.runInstantToolCall('instant_app_exa_search', { query: 'd' }, where);
+        expect(four).toBe(three);
+        expect(orbit.instantRun).toHaveBeenCalledTimes(3);
+    });
+
+    it('counts steps of the same task that landed while this run was in flight, for what it says about earlier steps and for a rule (Sentry)', async () => {
+        const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: undefined, canAskForMore: undefined };
+        const { ai, orbit } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        // Run a is sent first and is slow; run b is sent after it and lands first
+        let landA: (answer: InstantRunAnswer) => void = () => undefined;
+        orbit.instantRun
+            .mockImplementationOnce(() => new Promise<InstantRunAnswer>((resolve) => (landA = resolve)))
+            .mockResolvedValueOnce({ status: 'done', data: 2, chargedMicros: 1 });
+        const a = ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
+        const b = await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        expect(b).toMatchObject({ success: true });
+        landA({ status: 'unreachable', retry: false });
+        const late = await a;
+        expect(late).toMatchObject({ success: false, outcome: 'uncertain' });
+        // b worked while a was still out: a says so, though b was not there when a was sent
+        expect(String(late.note)).toMatch(/One earlier step of this task worked: say that on its own/);
+
+        // The same for a rule: c could not be settled while d was out, and d is then stopped by the rule: both facts
+        const second = service();
+        second.ai.noteBrick(BRICK, { isDefault: false });
+        let landD: (answer: InstantRunAnswer) => void = () => undefined;
+        second.orbit.instantRun
+            .mockImplementationOnce(() => new Promise<InstantRunAnswer>((resolve) => (landD = resolve)))
+            .mockResolvedValueOnce({ status: 'unreachable', retry: false });
+        const d = second.ai.runInstantToolCall('instant_app_exa_search', { query: 'd' }, where);
+        await vi.waitFor(() => expect(second.orbit.instantRun).toHaveBeenCalledTimes(1));
+        await second.ai.runInstantToolCall('instant_app_exa_search', { query: 'c' }, where);
+        landD(rule);
+        const stopped = await d;
+        expect(String(stopped.note)).toContain('"Your spending rule stopped further steps."');
+        expect(String(stopped.note)).toContain('"I\'m still checking the earlier request."');
+    });
+
+    it('a rule that stops a run while another run of the same task is still out says it is still checking that one', async () => {
+        const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: undefined, canAskForMore: undefined };
+        const { ai, orbit } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        let landA: (answer: InstantRunAnswer) => void = () => undefined;
+        orbit.instantRun.mockImplementationOnce(() => new Promise<InstantRunAnswer>((resolve) => (landA = resolve))).mockResolvedValueOnce(rule);
+        const a = ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
+        // b is stopped by the rule while a is still out: a may have taken something, so b does not say it is simply over
+        const b = await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        expect(b).toMatchObject({ success: false, reason: 'rule', outcome: 'uncertain' });
+        expect(String(b.note)).toContain('"I\'m still checking the earlier request."');
+        landA({ status: 'done', data: 1, chargedMicros: 1 });
+        await a;
     });
 
     it('a rule that says no stops the task: Orbit’s words, no card for more credit, and no other Instant App is tried after it', async () => {
@@ -840,8 +1155,14 @@ describe('in a Brick’s owner chat (AIService)', () => {
         const key = orbit.instantRun.mock.calls[0][1].taskKey;
         expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1);
         // the next turn begins: the old task is closed on its own and the memory is clear for the new one
-        ai.startInstantTurn(BRICK, memory);
-        expect(memory.instantTask).toBeUndefined();
+        const left = memory.instantTurn;
+        const next = ai.startInstantTurn(BRICK, memory);
+        // The new turn is its own object, with none of the old turn's tasks; the old one is still closed under its own key below
+        expect(next).toBeDefined();
+        expect(next).not.toBe(left);
+        expect(memory.instantTurn).toBe(next);
+        expect(next!.tasks).toEqual([]);
+        expect((left as { tasks: unknown[] }).tasks).toHaveLength(1);
         await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2));
         expect(orbit.closeTaskReceipt).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { taskKey: key, state: 'done' });
         // one that was closed, or never ran, is not said again
@@ -989,7 +1310,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         ai.noteBrick(BRICK, { isDefault: false });
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
         memory.instantTurn = undefined;
-        (memory.instantCalls as Map<string, unknown>).clear();
+        await newMessage(ai);
         expect(await ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where)).toMatchObject({ success: true });
         expect(orbit.instantRun).toHaveBeenCalledTimes(2);
     });
@@ -1047,7 +1368,7 @@ describe('in a Brick’s owner chat (AIService)', () => {
         const older = ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
         await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
         // the next turn begins and asks the same call: its own run
-        (memory.instantCalls as Map<string, unknown>).clear();
+        await newMessage(ai);
         await ai.runInstantToolCall('instant_app_exa_search', { query: 'q' }, where);
         expect(orbit.instantRun).toHaveBeenCalledTimes(2);
         // the older one now comes back refused before any run: it must not drop the newer one's entry
@@ -1092,6 +1413,29 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: orbit.instantRun.mock.calls[0][1].taskKey, state: 'done' });
     });
 
+    it('a late close Orbit does not take stays owed to the turns that follow, even when the turn that began meanwhile did not know of it', async () => {
+        let letRunGo: (answer: InstantRunAnswer) => void = () => undefined;
+        const running = new Promise<InstantRunAnswer>((resolve) => (letRunGo = resolve));
+        const { ai, orbit, memory } = service({
+            instantRun: vi.fn().mockReturnValueOnce(running),
+            closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
+        });
+        ai.noteBrick(BRICK, { isDefault: false });
+        ai.startInstantTurn(BRICK, memory);
+        const slow = ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
+        // A new turn begins while the run is still out: it has nothing of this task to close yet
+        ai.startInstantTurn(BRICK, memory);
+        letRunGo({ status: 'done', data: 1, chargedMicros: 1 });
+        await slow;
+        // The late run closes its own task, and Orbit does not take it
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        // The next turn asks again, and Orbit takes it
+        ai.startInstantTurn(BRICK, memory);
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2));
+    });
+
     it('a close Orbit still does not take stays owed from turn to turn until it does', async () => {
         const { ai, orbit, memory } = service({ closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true) });
         ai.noteBrick(BRICK, { isDefault: false });
@@ -1123,7 +1467,8 @@ describe('in a Brick’s owner chat (AIService)', () => {
                 ['other_tool', { serverName: 'x' }],
             ]),
         });
-        const { ai } = service();
+        const { ai, orbit } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
         const built = (await ai.buildTools(BRICK, undefined, {}, 'dm', undefined, undefined, false, listing())) as unknown as { tools: Array<{ function: { name: string; description: string } }>; toolServerMap: Map<string, unknown> };
         const named = built.tools.filter((tool) => tool.function.name === 'instant_app_exa_search');
         expect(named).toHaveLength(1);
@@ -1131,6 +1476,24 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(built.toolServerMap.has('instant_app_exa_search')).toBe(false);
         expect(built.toolServerMap.has('other_tool')).toBe(true);
         expect(built.tools.some((tool) => tool.function.name === 'other_tool')).toBe(true);
+
+        // Dispatch with the map that was built: the call reaches Orbit's Instant run for EXA_SEARCH, and the tool server is never asked
+        const serverCall = vi.fn().mockResolvedValue({ content: 'from the tool server' });
+        (MCPConnector as unknown as { executeToolCall: unknown }).executeToolCall = serverCall;
+        const [ran] = await (ai as unknown as { executeToolCalls(...args: unknown[]): Promise<Array<{ result: Record<string, unknown> }>> }).executeToolCalls(
+            [{ id: 't1', name: 'instant_app_exa_search', arguments: '{"query":"ramen"}' }],
+            undefined,
+            orbit,
+            built.toolServerMap,
+            'uuid-alice',
+            'matrix-dm',
+            BRICK,
+            1
+        );
+        expect(serverCall).not.toHaveBeenCalled();
+        expect(orbit.instantRun).toHaveBeenCalledTimes(1);
+        expect(orbit.instantRun.mock.calls[0][1]).toMatchObject({ tool: 'EXA_SEARCH', arguments: { query: 'ramen' } });
+        expect(ran.result).toMatchObject({ success: true });
     });
 
     it('a tool server’s tool with an Instant-looking name is read as a tool server’s answer, not as an Instant result', () => {

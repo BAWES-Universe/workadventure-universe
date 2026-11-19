@@ -126,6 +126,25 @@ describe("upload receipts (voice notes for every bot, plan v3 section 5)", () =>
     expect(claims!.exp).toBeGreaterThan(Date.now());
   });
 
+  it("still gives a receipt when the session runs out while the file is being stored: it names who the session was when the upload came in", async () => {
+    // A clock of the test's own: the session is good for a minute and is checked at the very start, then the clock is moved past its end while the file is stored
+    const start = Date.now();
+    let at = start;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => at);
+    try {
+      uploadFile.mockImplementation(() => {
+        at = start + 5 * 60 * 1000;
+        return Promise.resolve("stored.ogg");
+      });
+      const expiresSoon = sessionToken({ identifier: guest, exp: Math.floor(start / 1000) + 60 });
+      const response = await post({ Authorization: expiresSoon }, "guest-brick");
+      expect(response.status).toBe(200);
+      expect(readReceipt(response.data[0].receipt, SECRET)).toMatchObject({ sub: guest, fid: "stored.ogg" });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("calls an upload with no purpose, or one it does not know, a chat file", async () => {
     const token = sessionToken({ identifier: guest });
     expect(readReceipt((await post({ Authorization: token })).data[0].receipt, SECRET)?.aud).toBe("chat-file");
@@ -150,6 +169,21 @@ describe("upload receipts (voice notes for every bot, plan v3 section 5)", () =>
     expect(readReceipt(`${body}.${plain}`, SECRET)).toBeNull();
     expect(readReceipt(token, "another-secret")).toBeNull();
     expect(readReceipt(token, SECRET)?.sub).toBe(guest);
+  });
+
+  it("never signs a receipt longer than the reader takes, whatever type or name an upload carried", () => {
+    const make = (type: string, name: string) =>
+      signReceipt({ sub: guest, aud: "chat-file", fid: "f", bkt: null, loc: "https://uploader.example/upload-file/f", sha256: "h".repeat(64), name, type, size: 1, len: "unmeasured", iat: 1, exp: Date.now() + 1000 }, SECRET);
+    // A type that is not one is replaced, so the receipt is read and renewed as any other
+    const odd = make("application/" + "a".repeat(4096), "voice.ogg");
+    expect(odd.length).toBeLessThanOrEqual(4096);
+    expect(readReceipt(odd, SECRET)).toMatchObject({ sub: guest, name: "voice.ogg", type: "application/octet-stream" });
+    // A name of many characters that escape long in JSON is cut to fit
+    const long = make("audio/ogg", "\u00e9\"".repeat(255).repeat(8));
+    expect(long.length).toBeLessThanOrEqual(4096);
+    expect(readReceipt(long, SECRET)).toMatchObject({ sub: guest, type: "audio/ogg" });
+    // An ordinary one is untouched
+    expect(readReceipt(make("audio/ogg", "note.ogg"), SECRET)).toMatchObject({ name: "note.ogg", type: "audio/ogg" });
   });
 
   it("refuses a receipt whose claims were changed", () => {
