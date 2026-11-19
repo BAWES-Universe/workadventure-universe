@@ -119,6 +119,8 @@
     let renewal = 0;
     /** A renewal was asked for while another opening was on its way, and is still wanted if that one does not come on show. */
     let renewWhenFree = false;
+    /** An opening started while a version was on show, and dropped its renewal: set when it starts, cleared when it comes on show. */
+    let renewalDropped = false;
     /** Counts the openings that came on show: a checkout asked for by the page of one is never told to the page of another. */
     let opening = 0;
     /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
@@ -235,6 +237,8 @@
         // One that is only waiting for its time is cancelled too, and renewAddress does nothing until this opening ends.
         renewal++;
         renewIn(undefined);
+        // Only a version that is on show had a renewal, and it is set up again if this opening does not come on show
+        if (opened) renewalDropped = true;
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
@@ -248,6 +252,8 @@
             // also when the same version is on show again (1, then 2, then 1)
             renewal++;
             renewWhenFree = false;
+            // This opening brings its own address and timer (watchAddress below): nothing was dropped that needs setting up again
+            renewalDropped = false;
             opening++;
             text = undefined;
             textFailed = false;
@@ -327,6 +333,9 @@
 
     /** The version on show was left without its renewal while another opening was on its way: set one up again. */
     function lookAfterRenewal() {
+        // Nothing was dropped (the opening came on show, or the version was never opened again): the timer in place is the right one
+        if (!renewalDropped) return;
+        renewalDropped = false;
         if (opened && (renewWhenFree || (opened.version.url !== null && opened.version.urlHasMedia)))
             renewIn(RENEW_RETRY_MS);
         renewWhenFree = false;

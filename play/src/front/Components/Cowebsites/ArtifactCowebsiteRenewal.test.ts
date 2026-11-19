@@ -252,4 +252,46 @@ describe("an artifact window's renewals of the address on show", () => {
         expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/1-renewed");
         view.$destroy();
     });
+
+    it("leaves the normal renewal wait of a first opening alone: nothing is renewed 30 s after it", async () => {
+        vi.useFakeTimers();
+        let asked = 0;
+        api.fetchArtifact.mockImplementation(() => {
+            asked++;
+            return Promise.resolve(opened(asked, `https://files.test/${asked}`));
+        });
+        const { target, view } = mount();
+        await settle();
+        expect(asked).toBe(1);
+        // The address lasts 300 s: the quick retry wait (30 s) must not be what renews it
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(asked).toBe(1);
+        await vi.advanceTimersByTimeAsync(215_000);
+        expect(asked).toBe(2);
+        expect(target.querySelector("iframe")).not.toBeNull();
+        view.$destroy();
+    });
+
+    it("leaves the normal renewal wait of a version switched to alone: no renewal 30 s after the switch", async () => {
+        vi.useFakeTimers();
+        let asked = 0;
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, wanted: number | undefined) => {
+            asked++;
+            const number = wanted ?? 1;
+            return Promise.resolve(opened(number, `https://files.test/${number}-${asked}`));
+        });
+        const { version, target, view } = mount();
+        await settle();
+        await vi.advanceTimersByTimeAsync(100_000);
+        version.set(2);
+        await settle();
+        expect(asked).toBe(2);
+        expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/2-2");
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(asked).toBe(2);
+        // Its own address renews after its own wait
+        await vi.advanceTimersByTimeAsync(215_000);
+        expect(asked).toBe(3);
+        view.$destroy();
+    });
 });
