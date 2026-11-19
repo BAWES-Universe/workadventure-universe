@@ -193,6 +193,54 @@ describe("the line under a paying page in the artifact window (the approved mock
         view.$destroy();
     });
 
+    it("does not show a copy that failed, or say it is copied, on a newer checkout that took the line meanwhile", async () => {
+        let deny: (error: Error) => void = () => undefined;
+        let allow: () => void = () => undefined;
+        let copies = 0;
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: {
+                writeText: () =>
+                    new Promise<void>((resolve, reject) => {
+                        copies++;
+                        if (copies === 1) deny = reject;
+                        else allow = resolve;
+                    }),
+            },
+        });
+        api.payOnArtifact
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValueOnce({ status: "paid", testPayment: false })
+            // The next checkout starts, and its order is never answered about: the line is on "checking"
+            .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" })
+            .mockImplementation(
+                () =>
+                    new Promise(() => {
+                        // never answered
+                    })
+            );
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const { say, press, target, view, text } = await mount();
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await vi.advanceTimersByTimeAsync(3_000);
+        await settle();
+        await press("copy");
+        // The page asks again before the browser answers the copy
+        await say({ universe: "use-app", app: "examplepay", request: "r2", session: "s1" });
+        await vi.advanceTimersByTimeAsync(1_000);
+        await settle();
+        expect(text()).toContain("Checking your payment");
+        expect(text()).not.toContain("Copy receipt link");
+        deny(new Error("denied"));
+        await settle();
+        expect(text()).not.toContain("Could not copy it");
+        expect(target.querySelector('[data-testid="artifactReceiptText"]')).toBeNull();
+        allow();
+        await settle();
+        expect(text()).not.toContain("copied");
+        view.$destroy();
+    });
+
     it("g1, g4: a payment not heard back about says so and offers Check payment, which asks the server and says what it says", async () => {
         api.payOnArtifact
             .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })

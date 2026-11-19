@@ -1,8 +1,8 @@
 import { AdminApiService } from '../server/AdminApiService';
 import { describe, expect, it, vi } from 'vitest';
 import {
-    CONTINUE_PROMPT,
     RESUME_PROMPT,
+    CONTINUE_PROMPT,
     RUNNER_GUARDS,
     createComputerRunner,
     endingOf,
@@ -645,6 +645,23 @@ describe('a turn that is lost, or room that is gone', () => {
             // The first turn started on 1 and was over on 2: no finish was sent for it
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 2 }]);
             expect(seen.turns[1]).toBe(RESUME_PROMPT);
+        });
+
+        it('a job taken and given back after a turn\'s closing read is not told to just carry on: the agent looks at the page first', async () => {
+            // The turn started on 1 and the closing read says 1 too; the person then takes the machine and gives it back, so the next turn starts on 3
+            const generations = [1, 1, 3, 3, 3, 3];
+            let at = 0;
+            const { orbit, seen } = fakeOrbit([done('Still working.'), done('All done. [[done]]')], () => ({ status: 'running', control: 'brick', generation: generations[Math.min(at++, generations.length - 1)] }));
+            await runJob(orbit);
+            expect(seen.turns).toHaveLength(2);
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 3 }]);
+        });
+
+        it('a job that stays on its generation between turns is still told to carry on', async () => {
+            const { orbit, seen } = fakeOrbit([done('Still working.'), done('All done. [[done]]')], () => ({ status: 'running', control: 'brick', generation: 5 }));
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(CONTINUE_PROMPT);
         });
 
         it('getComputerJob passes the generation on, and leaves it out when Orbit gives none or something that is no generation', async () => {

@@ -6,6 +6,9 @@ import { describePayLine, shortDate } from "./payLineView";
 
 vi.mock("./ArtifactApi", () => ({ ArtifactRequestError: class extends Error {}, payOnArtifact: vi.fn() }));
 
+// Noon of 19 Nov in the time zone the test runs in: a fixed UTC time would be 20 Nov east of UTC+12
+const NOON_19_NOV = new Date(2026, 10, 19, 12).toISOString();
+
 // Every line of the approved mock M1 (19 Nov), word for word. Orbit's public page says the same lines.
 describe("the line under a paying page says what the approved mock says", () => {
     beforeAll(() => loadLocale("en-US"));
@@ -100,7 +103,7 @@ describe("the line under a paying page says what the approved mock says", () => 
     });
 
     it("g5: a purchase that is back, with the day it was made", () => {
-        expect(view({ paid: { test: false }, restored: { paidAt: "2026-11-19T12:00:00.000Z" } })).toMatchObject({
+        expect(view({ paid: { test: false }, restored: { paidAt: NOON_19_NOV } })).toMatchObject({
             title: "Your purchase from 19 Nov is back.",
             sub: null,
             actions: [],
@@ -152,7 +155,7 @@ describe("the line under a paying page says what the approved mock says", () => 
         for (const extra of [
             {},
             { receipt: "https://orbit.test/a/a1#receipt=abc", buyer: "guest" },
-            { restored: { paidAt: "2026-11-19T12:00:00.000Z" } },
+            { restored: { paidAt: NOON_19_NOV } },
         ] as Partial<PayLine>[]) {
             expect(view({ paid: { test: true }, ...extra })).toMatchObject({
                 title: "Test payment received. No money moved.",
@@ -199,9 +202,9 @@ describe("the line under a paying page says what the approved mock says", () => 
     });
 
     it("names the day in the buyer's language, English first the day", () => {
-        expect(shortDate("2026-11-19T12:00:00.000Z", "en-US")).toBe("19 Nov");
-        expect(shortDate("2026-11-19T12:00:00.000Z")).toBe("19 Nov");
+        expect(shortDate(NOON_19_NOV, "en-US")).toBe("19 Nov");
+        expect(shortDate(NOON_19_NOV)).toBe("19 Nov");
         expect(shortDate(null)).toBeNull();
-        expect(shortDate("2026-11-19T12:00:00.000Z", "not a locale!!")).toBe("19 Nov");
+        expect(shortDate(NOON_19_NOV, "not a locale!!")).toBe("19 Nov");
     });
 });

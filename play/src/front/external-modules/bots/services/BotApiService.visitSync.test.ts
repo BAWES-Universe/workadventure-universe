@@ -290,6 +290,48 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
             expect(fetchMock).toHaveBeenCalledTimes(before + 1);
         });
 
+        it('does not drop a Bring along\'s "here" because a check sent after it ended the looking after with its own third miss', async () => {
+            const api = signedIn();
+            api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));
+            const reply = (body: Record<string, unknown>) =>
+                new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+            answerWith({ present: true });
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            // Two misses in a row from the checks
+            answerWith({ present: false });
+            await vi.advanceTimersByTimeAsync(120_000);
+            // The Bring along is sent just before the third check is due, and waits; the check goes out after it
+            let bringAlong: (response: Response) => void = () => undefined;
+            let thirdCheck: (response: Response) => void = () => undefined;
+            fetchMock
+                .mockImplementationOnce(
+                    () =>
+                        new Promise<Response>((resolve) => {
+                            bringAlong = resolve;
+                        })
+                )
+                .mockImplementationOnce(
+                    () =>
+                        new Promise<Response>((resolve) => {
+                            thirdCheck = resolve;
+                        })
+                );
+            await vi.advanceTimersByTimeAsync(59_000);
+            const bringing = api.syncVisitingBrick({ x: 1, y: 1 });
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.advanceTimersByTimeAsync(1_000);
+            // The third check says "not here" and ends the looking after; then the Bring along says "here"
+            thirdCheck(reply({ present: false }));
+            await vi.advanceTimersByTimeAsync(0);
+            bringAlong(reply({ present: true }));
+            await bringing;
+            answerWith({ present: true });
+            const before = fetchMock.mock.calls.length;
+            await vi.advanceTimersByTimeAsync(60_000);
+            // The Bring along started the looking after again: the Brick is checked on
+            expect(fetchMock).toHaveBeenCalledTimes(before + 1);
+        });
+
         it("never starts for someone with no Brick on the map, and stops when the Brick is gone, the visit ends or the room changes", async () => {
             const api = signedIn();
             api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));

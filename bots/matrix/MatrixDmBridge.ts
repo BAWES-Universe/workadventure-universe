@@ -1487,6 +1487,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     private async rememberRoom(roomId: string, botId: string): Promise<void> {
         this.roomBots.set(roomId, botId);
+        // The bot is in this room again: a removal that waited for the store (after it left) no longer applies to it
+        if (this.pendingBotRemovals.get(roomId) === botId) this.pendingBotRemovals.delete(roomId);
         try {
             await this.deps.rooms?.rememberDmRoom(roomId, botId);
             this.unkeptRoomBots.delete(roomId);
@@ -1496,19 +1498,26 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    private async forgetRoom(roomId: string): Promise<void> {
+    /** `strict` throws when the shared store could not be cleared, and keeps what the retry needs (a person's room is dropped from memory only once the store let it go). */
+    private async forgetRoom(roomId: string, strict = false): Promise<void> {
         this.roomBots.delete(roomId);
         this.unkeptRoomBots.delete(roomId);
         this.roomMembers.delete(roomId);
         for (const [key, room] of [...this.directRooms]) {
             if (room !== roomId) continue;
-            this.directRooms.delete(key);
             const cut = key.indexOf('|');
+            if (strict) {
+                await this.deps.rooms?.forgetDmRoomOf?.(key.slice(0, cut), key.slice(cut + 1), roomId);
+                this.directRooms.delete(key);
+                continue;
+            }
+            this.directRooms.delete(key);
             await this.deps.rooms?.forgetDmRoomOf?.(key.slice(0, cut), key.slice(cut + 1), roomId).catch(() => undefined);
         }
         this.lastRestingLine.delete(roomId);
         for (const state of ['resting', 'unready', 'no_access', 'limited']) this.lastNote.delete(`${roomId}|${state}`);
-        await this.deps.rooms?.forgetDmRoom(roomId).catch(() => undefined);
+        if (strict) await this.deps.rooms?.forgetDmRoom(roomId);
+        else await this.deps.rooms?.forgetDmRoom(roomId).catch(() => undefined);
     }
 
     /** The bot in this DM room, or null for a room it never joined or has left. `strict` throws when the store can't be read. */
@@ -1857,6 +1866,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
         } catch {
             // Never in the way of the reply
         }
+        // A recovered message that a newer one has overtaken is dropped (or kept to wait) before it does anything: it must not count as a new
+        // request or close the cards the newer message made. Checked again after the steps below, which take a while.
+        const staleRecovered = (): boolean => {
+            if (!recovered) return false;
+            const at = event.origin_server_ts ?? 0;
+            if (at <= (this.answeredLive.get(event.room_id) ?? -1)) return true;
+            if (at <= (this.answeringLive.get(event.room_id) ?? -1)) {
+                this.keepUnplaced(event);
+                return true;
+            }
+            return false;
+        };
+        if (staleRecovered()) return;
         // Something typed instead of tapping closes the person's waiting cards (a typed "yes" never approves) and keeps
         // their remembered approvals alive (#1657)
         const asker = { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest };
@@ -1943,14 +1965,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         };
         // A recovered message is checked again just before it is answered: the steps above take a while, and a newer message in this chat may have been answered
         // meanwhile (it is dropped, never answered after it), or may be being answered now (it is kept, and waits to see whether that answer lands)
-        if (recovered) {
-            const at = event.origin_server_ts ?? 0;
-            if (at <= (this.answeredLive.get(event.room_id) ?? -1)) return;
-            if (at <= (this.answeringLive.get(event.room_id) ?? -1)) {
-                this.keepUnplaced(event);
-                return;
-            }
-        }
+        if (staleRecovered()) return;
         // Show "typing" only when the reply takes a moment, like a person would; quick replies need no extra calls.
         let typing = false;
         let typingRefresh: NodeJS.Timeout | undefined;
@@ -2251,8 +2266,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             try {
                 // Strict: a store that still cannot answer keeps the removal; one that answers decides it
                 const stored = await this.botForRoom(roomId, true);
-                this.pendingBotRemovals.delete(roomId);
-                if (stored === botId) await this.forgetRoom(roomId);
+                // The bot may have joined again while the store was being asked: that removal is void, and the room stays
+                if (this.pendingBotRemovals.get(roomId) !== botId) continue;
+                // Cleared for real, or the removal stays for the next try
+                if (stored === botId) await this.forgetRoom(roomId, true);
+                if (this.pendingBotRemovals.get(roomId) === botId) this.pendingBotRemovals.delete(roomId);
             } catch (error: any) {
                 console.warn(`[MatrixDmBridge] Could not look up the bot for ${roomId} to clear it after the bot left, trying again:`, error?.message ?? error);
             }

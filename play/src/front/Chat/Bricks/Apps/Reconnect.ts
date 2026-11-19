@@ -67,6 +67,11 @@ export async function signInInPopup(
     // What is needed before the window can go to the app's sign-in page: its address, or the end of this when none is needed. A late
     // completion (after the sheet was closed) goes no further: it starts nothing once the signal says so
     const setup = async (): Promise<ReconnectResult | { url: string }> => {
+        // Already cancelled: the app's connection is not even started (a factory that makes it would start it after the sheet was closed)
+        if (signal?.aborted) {
+            closeQuietly(popup);
+            return "stopped";
+        }
         try {
             const id = await (typeof appId === "function" ? appId() : appId);
             if (signal?.aborted) {

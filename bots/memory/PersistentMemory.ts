@@ -207,9 +207,9 @@ export class PersistentMemory extends ConversationMemory {
         if (Date.now() - this.queueRefreshedAt < PersistentMemory.UNREPORTED_RETRY_MS) return;
         const run = (async () => {
             try {
-                // Our own writes first, or an entry removed here and not yet removed there would come back
-                await this.queueWriting;
-                const { kept, gone } = await this.loadQueue(store);
+                // Our own writes first, or an entry removed here and not yet removed there would come back (a removal made while
+                // those writes are out is noted too: the watch starts before the wait)
+                const { kept, gone } = await this.loadQueue(store, true);
                 if (store !== this.forgetQueue) return;
                 this.mergeStored(kept, gone);
                 // What another server forgot applies to what this one already holds (a restore does the same)
@@ -241,10 +241,11 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /** Reads the shared store, and what this process let go of meanwhile is not brought back by it. */
-    private async loadQueue(store: ForgetQueueStore): Promise<{ kept: ForgetFileContents; gone: Map<string, number> }> {
+    private async loadQueue(store: ForgetQueueStore, afterOwnWrites = false): Promise<{ kept: ForgetFileContents; gone: Map<string, number> }> {
         const gone = new Map<string, number>();
         this.letGoWhileReading.add(gone);
         try {
+            if (afterOwnWrites) await this.queueWriting;
             return { kept: await store.load(), gone };
         } finally {
             this.letGoWhileReading.delete(gone);
@@ -374,15 +375,13 @@ export class PersistentMemory extends ConversationMemory {
      * shared store lets go first too: the earliest time, and "whenever it was said" (0) counts as the latest of all, so it is kept longest.
      */
     private capLedger(): void {
-        while (this.forgottenLedger.size > MAX_FORGOTTEN_ITEMS) {
-            let oldest: { key: string; since: number } | null = null;
-            for (const [key, entry] of this.forgottenLedger) {
-                const rank = entry.since === 0 ? Infinity : entry.since;
-                if (!oldest || rank < oldest.since) oldest = { key, since: rank };
-            }
-            this.letGo(this.forgottenLedger, (oldest as { key: string }).key);
-            console.warn('[PersistentMemory] Too many forgotten things kept; letting the oldest go');
-        }
+        const over = this.forgottenLedger.size - MAX_FORGOTTEN_ITEMS;
+        if (over <= 0) return;
+        // Ranked once, however far over it is (a scan for the oldest on every step would be quadratic); equal ranks keep their order of entry
+        const ranked = Array.from(this.forgottenLedger, ([key, entry]) => ({ key, rank: entry.since === 0 ? Infinity : entry.since }));
+        ranked.sort((a, b) => (a.rank === b.rank ? 0 : a.rank < b.rank ? -1 : 1));
+        for (const { key } of ranked.slice(0, over)) this.letGo(this.forgottenLedger, key);
+        console.warn(`[PersistentMemory] Too many forgotten things kept; letting the ${over} oldest go`);
     }
 
     /**
@@ -675,6 +674,11 @@ export class PersistentMemory extends ConversationMemory {
         for (const [key, tracked] of this.uuidTracking) {
             if (!key.startsWith(prefix) || !isForgotten(tracked.userUuid) || this.getAllMemories().has(key)) continue;
             this.wipes.set(key, (this.wipes.get(key) ?? 0) + 1);
+            // A save still waiting on its timer holds the old snapshot apart too: it would be written over the Forget when the timer fires
+            const waiting = this.debounceTimers.get(key);
+            if (waiting) clearTimeout(waiting);
+            this.debounceTimers.delete(key);
+            this.pendingSaves.delete(key);
         }
 
         for (const key of Array.from(this.loadedMemoriesByUuid.keys())) {

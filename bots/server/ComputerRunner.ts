@@ -417,6 +417,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const accepted: Accepted = { turn: false };
         let turns = 0;
         let bad = 0;
+        // The generation the last turn started on: a job that was taken and given back between two turns is read on a later one
+        let lastGeneration: number | undefined;
         for (;;) {
             if (signal.aborted) return;
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
@@ -434,6 +436,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             }
             // The control generation this turn starts on: every action it takes for the job carries it, so one from an older turn changes nothing
             const generation = state.generation;
+            // The person took the machine and gave it back after the last turn's closing read: this is not a plain "carry on", the agent looks at the page first
+            if (lastGeneration !== undefined && generation !== undefined && generation !== lastGeneration) input = follow(RESUME_PROMPT);
+            lastGeneration = generation;
             // An action refused as stale: the job changed hands or paused meanwhile. It is read again, and this turn's words are not acted on
             const readAgain = async () => {
                 input = follow(RESUME_PROMPT);

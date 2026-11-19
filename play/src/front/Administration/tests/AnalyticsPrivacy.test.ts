@@ -277,6 +277,22 @@ describe("keepPrivate", () => {
         expect(text).toContain('"style":"color: red"');
     });
 
+    it("keeps an escaped bracket or quote inside a style's address, so nothing after it is left in the recording", () => {
+        const node = {
+            tagName: "style",
+            attributes: {
+                _cssText:
+                    ".a { background: url(/pics/a\\)b.png?token=secret1) } .b { background: url(\"/pics/c\\\"d.png?token=secret2\") } .c { background: url('/pics/e\\')f.png?token=secret3') } .d { background: url(/pics/ok.png?token=secret4) }",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=");
+        expect(text).not.toContain("secret");
+        expect(text).toContain("url(/pics/a\\\\)b.png)");
+        expect(text).toContain("url(/pics/ok.png)");
+    });
+
     it("does not send a replay recording too large to be checked whole", () => {
         const huge = { type: 2, data: { values: new Array<string>(500_001).fill("*") } };
         const event = keepPrivate({

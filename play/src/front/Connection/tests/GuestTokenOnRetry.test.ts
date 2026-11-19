@@ -127,6 +127,31 @@ describe("the guest id sent along when a guest signs in to an account", () => {
         }
     });
 
+    it("renews it when the request was sent while it was valid and the retry came back after the 30 minutes", async () => {
+        vi.useFakeTimers();
+        try {
+            const start = Date.now();
+            vi.setSystemTime(start);
+            localUserStore.setAuthToken(GUEST);
+            localUserStore.keepGuestTokenAside(start);
+            localUserStore.setAuthToken(gameToken);
+            // Sent at 29:59, answered at 30:01
+            vi.setSystemTime(start + (30 * 60 - 1) * 1000);
+            mocks.me.mockImplementationOnce(() => {
+                vi.setSystemTime(start + (30 * 60 + 1) * 1000);
+                return Promise.resolve(retryAnswer);
+            });
+            await signIn(gameToken);
+            expect(guestTokenOfCall(0)).toBe(GUEST);
+            // Not thrown away: the next try still carries it
+            expect(localUserStore.peekGuestTokenAside()).toBe(GUEST);
+            vi.setSystemTime(start + 50 * 60 * 1000);
+            expect(localUserStore.peekGuestTokenAside()).toBe(GUEST);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("does not renew it for a refusal that is not a retry, nor once signed in", async () => {
         vi.useFakeTimers();
         try {

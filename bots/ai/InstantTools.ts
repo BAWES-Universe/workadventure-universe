@@ -358,7 +358,8 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
             }
             case 'refused': {
                 const words = answer.message || PLAIN_FALLBACK;
-                if (answer.reason === 'unclear') return unsure();
+                // Unclear, but Orbit's own stop still ends the task
+                if (answer.reason === 'unclear') return answer.stop === true ? { ...unsure(), stop: true } : unsure();
                 // Orbit is already checking this one: the stop that came with the answer still ends the task
                 if (answer.reason === 'already_checking') return answer.stop === true ? { ...unsure(), stop: true } : unsure();
                 // The same, whatever the refusal says (a rule, credit used up, anything else): an earlier asking may have run. A rule still
