@@ -14,6 +14,8 @@
 
 /** How many replies stay bound: more than a bot ever writes at once, with room for the marks that follow a reply. */
 const MAX_BOUND = 300;
+/** Replies that are still being written are never let go of for room; only so many of them are kept, whatever happens to the rest. */
+const MAX_BOUND_ALL = 3000;
 const MAX_TURNS = 500;
 
 /** The person a reply is for, from the id the behaviours give it ("bot-<bot>-player-<id>-<uuid>"). */
@@ -28,7 +30,7 @@ export class ReplyReaders {
     /** By space and player: whether the reply being written for them started with them alone with the bot. */
     private readonly turns = new Map<string, boolean>();
     /** By reply: its space, and its one reader's space user id, or null when it is for everyone there. */
-    private readonly bound = new Map<string, { spaceName: string; reader: string | null }>();
+    private readonly bound = new Map<string, { spaceName: string; reader: string | null; done?: true }>();
     /** By reply: its space, for a reply decided to be for one person alone whose reader cannot be named yet (it stays private until it can be). */
     private readonly unresolved = new Map<string, string>();
     /** By space and player: whether the reply last sent to them there went to them alone. */
@@ -80,9 +82,31 @@ export class ReplyReaders {
         }
         this.unresolved.delete(responseId);
         this.bound.set(responseId, { spaceName, reader });
-        if (this.bound.size > MAX_BOUND) this.bound.delete(this.bound.keys().next().value as string);
+        this.makeRoom();
         this.noteLatest(spaceName, playerId, reader !== null);
         return reader ?? undefined;
+    }
+
+    /**
+     * Past the cap, the oldest reply that is complete is let go of. A reply still being written keeps its reader: a late piece of
+     * it would otherwise be decided afresh and could go to someone who has walked up since. Only a flood of unfinished replies
+     * (more than MAX_BOUND_ALL) lets go of the oldest of them.
+     */
+    private makeRoom(): void {
+        while (this.bound.size > MAX_BOUND) {
+            const finished = [...this.bound].find(([, reply]) => reply.done);
+            if (finished) this.bound.delete(finished[0]);
+            else if (this.bound.size > MAX_BOUND_ALL) this.bound.delete(this.bound.keys().next().value as string);
+            else return;
+        }
+    }
+
+    /** The reply's last piece went out: its reader is kept for the marks that follow it, and can be let go of once the cap needs room. */
+    complete(responseId: string): void {
+        const reply = this.bound.get(responseId);
+        if (!reply) return;
+        reply.done = true;
+        this.makeRoom();
     }
 
     private noteLatest(spaceName: string, playerId: number | undefined, alone: boolean): void {

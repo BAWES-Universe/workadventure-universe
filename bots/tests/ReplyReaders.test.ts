@@ -50,6 +50,32 @@ describe('ReplyReaders', () => {
         expect(readers.readerOf(SPACE, 'bot-bot-test-say-abc', now(true))).toBeUndefined();
     });
 
+    it('keeps a reply that is still being written bound to its reader, however many newer replies there are', () => {
+        const readers = new ReplyReaders();
+        readers.starts(SPACE, 7, true);
+        expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
+        // 300 newer replies for the others, each one finished
+        for (let i = 0; i < 300; i++) {
+            const id = `bot-bot-test-player-9-n${i}`;
+            readers.readerOf(SPACE, id, now(false));
+            readers.complete(id);
+        }
+        // Someone walked up since: the late piece of the first reply still goes to its reader alone
+        readers.starts(SPACE, 7, false);
+        expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
+    });
+
+    it('lets go of the oldest finished reply once the cap needs room, and never of one still being written', () => {
+        const readers = new ReplyReaders();
+        readers.starts(SPACE, 7, true);
+        readers.readerOf(SPACE, REPLY, now(false));
+        readers.readerOf(SPACE, 'bot-bot-test-player-7-second', now(true));
+        readers.complete('bot-bot-test-player-7-second');
+        for (let i = 0; i < 300; i++) readers.readerOf(SPACE, `bot-bot-test-player-9-n${i}`, now(false));
+        // The finished one made room, the unfinished one is still bound
+        expect(readers.forOneReaderIn(SPACE)).toEqual([REPLY]);
+    });
+
     it('keeps each space and person to themselves, and decides afresh once they have left', () => {
         const readers = new ReplyReaders();
         readers.starts(SPACE, 7, true);

@@ -2271,6 +2271,8 @@ export class BotClient {
                 },
             },
         });
+        // Its last piece is out: its reader may be let go of once the cap needs room (never before, so a late piece of an unfinished reply is not decided afresh)
+        if (isFinal) this.readers.complete(responseId);
         // A greeting the bot made on its own is never a voice reply: it stays in the chat, so it is not spoken and never counts as a
         // spoken reply
         if (isGreetingReply(responseId)) return;
