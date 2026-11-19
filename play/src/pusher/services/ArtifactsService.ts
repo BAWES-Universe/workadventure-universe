@@ -104,8 +104,15 @@ const PayAnswer = z.object({
     app: z.string().optional(),
     status: z.enum(["checking", "paid", "not_paid", "cant_confirm", "none"]).optional(),
     testPayment: z.boolean().optional(),
-    /** How long the window may wait before asking about an order again, in milliseconds */
-    pollAfterMs: z.number().int().min(0).max(3_600_000).optional(),
+    /**
+     * How long the window may wait before asking about an order again, in milliseconds. The window keeps it between one and
+     * thirty seconds itself, so an odd number (a fraction, a negative, a huge one) is only a hint it ignores and must never
+     * cost the answer its status (a paid order told as a failed request)
+     */
+    pollAfterMs: z
+        .unknown()
+        .transform((ms) => (typeof ms === "number" && Number.isFinite(ms) ? ms : undefined))
+        .optional(),
     /** When a restored purchase was paid, for "Your purchase from 19 Nov is back." */
     paidAt: z.string().nullable().optional(),
     /** A start sent again found the order it had made */
@@ -276,7 +283,7 @@ export class ArtifactsService {
     private async call<T>(
         path: string,
         body: unknown,
-        answer: z.ZodType<T>,
+        answer: z.ZodType<T, z.ZodTypeDef, unknown>,
         method: "post" | "put" = "post"
     ): Promise<T> {
         if (!this.isEnabled()) {
