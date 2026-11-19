@@ -2062,6 +2062,7 @@ const chat: BaseTranslation = {
                 done: "Done",
                 cancel: "Cancel",
                 failed: "That didn't go through. Nothing was added.",
+                unsure: "We couldn't tell whether that went through. Try again in a moment; it won't be added twice.",
             },
         },
     },
