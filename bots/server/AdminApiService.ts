@@ -624,6 +624,9 @@ export type BotAiCredentialsAnswer =
       })
     | { source: 'resting'; keyOwnerId: string; restingLine: string };
 
+/** How long keepItemDelivered waits before trying a call again that failed for a reason that is not a refusal (so it tries three times) */
+const KEEP_DELIVERED_RETRY_MS = [300, 900] as const;
+
 export class AdminApiService {
     private adminApiUrl: string;
     // Cache for room metadata (room URL -> metadata, cached for 5 minutes)
@@ -1331,15 +1334,22 @@ export class AdminApiService {
     async keepItemDelivered(runId: string, eventId: string, report?: { outcome?: string; result?: string; progress?: unknown; reached?: boolean }): Promise<boolean> {
         const path = `api/bricks/items/runs/${encodeURIComponent(runId)}/delivered`;
         for (const body of report ? [{ eventId, report: this.withoutEmpty(report) }, { eventId }] : [{ eventId }]) {
-            try {
-                await this.brickCall('post', path, body);
-                return true;
-            } catch (error) {
-                console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
-                // Only a refusal (4xx, but not "too early" or "too many") says the call that carries the report is not understood. A 503 or a
-                // timeout says nothing: the whole delivery is tried again, so the report is not dropped
-                const status = (error as { response?: { status?: number } })?.response?.status;
-                if (!(typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429)) return false;
+            // A call that fails for a reason that is not a refusal is tried again a short while later (twice), so a blip does not lose the report
+            for (let attempt = 0; attempt <= KEEP_DELIVERED_RETRY_MS.length; attempt++) {
+                try {
+                    await this.brickCall('post', path, body);
+                    return true;
+                } catch (error) {
+                    console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+                    // Only a refusal (4xx, but not "too early" or "too many") says the call that carries the report is not understood: the next
+                    // body is then tried. A 503 or a timeout says nothing: the same call is tried again, and when it never gets through the
+                    // answer is false, so the report is not dropped quietly
+                    const status = (error as { response?: { status?: number } })?.response?.status;
+                    const refused = typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429;
+                    if (refused) break;
+                    if (attempt === KEEP_DELIVERED_RETRY_MS.length) return false;
+                    await new Promise<void>((resolve) => setTimeout(resolve, KEEP_DELIVERED_RETRY_MS[attempt]));
+                }
             }
         }
         return false;

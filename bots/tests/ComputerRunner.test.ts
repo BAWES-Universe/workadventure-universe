@@ -448,6 +448,47 @@ describe('a turn that is lost, or room that is gone', () => {
         }
     });
 
+    it('a later renewal that Orbit refuses while a turn stream is open ends that stream, and the next turn is told to look at the page again', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const { orbit, seen } = fakeOrbit([done('Done. [[done]]')]);
+            const original = orbit.action;
+            const open = orbit.turn;
+            let renewals = 0;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'renew') {
+                    seen.actions.push(body);
+                    // The first renewal is granted for five seconds, the next one is refused
+                    if (renewals++ === 0) return { ok: true, renewInSeconds: 5 };
+                    throw Object.assign(new Error('Request failed with status code 404'), { response: { status: 404 } });
+                }
+                return original(botId, jobId, body);
+            };
+            let streamAborted = false;
+            let first = true;
+            orbit.turn = async (jobId, input, signal) => {
+                if (!first) return open(jobId, input, signal);
+                first = false;
+                seen.turns.push(input);
+                // A turn that goes on until it is stopped
+                const events = (async function* (): AsyncGenerator<RunnerEvent> {
+                    yield { type: 'created', id: 'r', sessionId: 's' };
+                    await new Promise<void>((resolve) => signal?.addEventListener('abort', () => ((streamAborted = true), resolve()), { once: true }));
+                })();
+                return { ok: true, events };
+            };
+            const running = runJob(orbit);
+            await vi.advanceTimersByTimeAsync(5_000);
+            await running;
+            expect(streamAborted).toBe(true);
+            expect(seen.cancels).toBe(1);
+            expect(seen.turns).toHaveLength(2);
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     describe('the control generation of a job (an action from an older turn changes nothing)', () => {
         const stale = (generation: number) => Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true, response: { status: 409, data: { ok: false, reason: 'stale', generation } } });
 

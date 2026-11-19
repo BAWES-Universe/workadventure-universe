@@ -59,6 +59,8 @@ const DM_STATUS_TIMEOUT_MS = 10000;
 const GUEST_REPLY_TIMEOUT_MS = 130000;
 /** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
 const DIRECT_CHAT_TIMEOUT_MS = 5000;
+/** How long the exchange of the sign-in for an Orbit session may take, answer and body: past this it is no session, and the next call asks again */
+const SESSION_EXCHANGE_MS = 15_000;
 /** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
 const BRICK_WRITE_TIMEOUT_MS = 20_000;
 
@@ -316,11 +318,14 @@ export class BotApiService {
             }
             const loginAttempt = this.fetchSessionTokenFromAdminApi();
             this.sessionTokenPromise = loginAttempt;
-            const token = await loginAttempt;
-            if (this.sessionTokenPromise === loginAttempt) {
-                this.sessionTokenPromise = null;
+            try {
+                return await loginAttempt;
+            } finally {
+                // Only the attempt that is still the cached one is let go: a newer one is not touched
+                if (this.sessionTokenPromise === loginAttempt) {
+                    this.sessionTokenPromise = null;
+                }
             }
-            return token;
         }
 
         return null;
@@ -370,6 +375,10 @@ export class BotApiService {
         const adminUrl = this.adminUrl;
         if (!adminUrl) return null;
 
+        // The exchange is shared by every caller that waits for the sign-in, so it has a deadline of its own that covers the answer and
+        // its body: one that never answers ends as "no session" for all of them, and the next call asks again
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), SESSION_EXCHANGE_MS);
         try {
             const response = await fetch(`${adminUrl}/api/auth/session`, {
                 method: "POST",
@@ -377,6 +386,7 @@ export class BotApiService {
                     Authorization: `Bearer ${accessToken}`,
                 },
                 credentials: "omit",
+                signal: stop.signal,
             });
 
             if (!response.ok) {
@@ -417,6 +427,8 @@ export class BotApiService {
                 console.error("[BotApiService] Error fetching session token from Admin API:", error);
             }
             return null;
+        } finally {
+            clearTimeout(timer);
         }
     }
 
@@ -2104,6 +2116,15 @@ export class BotApiService {
             return present;
         } catch (error) {
             console.warn("Could not put the Brick beside you", error);
+            // A walk in or a Bring along that could not be answered (a deadline, the bot server for a moment) is looked at again in a minute,
+            // as an answer of "not here yet" is: unless the visit ended or another sync was sent since
+            if (
+                !options?.ending &&
+                serial !== undefined &&
+                serial === this.visitSyncSerial &&
+                generation === this.visitRecheckGeneration
+            )
+                this.startVisitRecheck();
             return undefined;
         }
     }

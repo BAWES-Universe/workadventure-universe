@@ -176,6 +176,16 @@ describe('what a reply sends with it (#1993)', () => {
             expect(memory.pendingMedia).toEqual([]);
         });
 
+        it('sends the same media queued for one person and for the room once each, to its own audience', () => {
+            const bot = client();
+            const memory = waiting(Date.now() - 60_000);
+            (memory.pendingMedia as Array<Record<string, unknown>>).push({ ...memory.pendingMedia[0], audience: KHALID });
+            service(memory)['flushPendingMedia'](bot as never, SPACE, 'bot1', KHALID, undefined, KHALID);
+
+            expect(bot.sendMediaMessage).toHaveBeenCalledTimes(2);
+            expect((bot.sendMediaMessage.mock.calls as unknown[][]).map((call) => call[7])).toEqual([KHALID, KHALID]);
+        });
+
         it('waits when other people read the reply, and what that reply made goes to everyone', () => {
             const bot = client();
             const now = Date.now();

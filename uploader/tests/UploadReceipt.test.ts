@@ -58,7 +58,7 @@ jest.mock("../src/Service/StorageProviderService", () => ({
 }));
 
 import { FileController } from "../src/Controller/FileController";
-import { readReceipt, receiptKey, sha256Hex, signReceipt } from "../src/Service/UploadReceipt";
+import { ReceiptTooLongError, readReceipt, receiptKey, sha256Hex, signReceipt } from "../src/Service/UploadReceipt";
 
 function sessionToken(payload: Record<string, unknown>, secret = SECRET, options = {}) {
   return Jwt.sign(payload, secret, options);
@@ -151,6 +151,17 @@ describe("upload receipts (voice notes for every bot, plan v3 section 5)", () =>
     expect(readReceipt((await post({ Authorization: token }, "admin")).data[0].receipt, SECRET)?.aud).toBe("chat-file");
   });
 
+  it("refuses an upload whose receipt could not be kept within the length the reader takes, and takes the stored file back", async () => {
+    deleteFileById.mockReset();
+    deleteFileById.mockResolvedValue(undefined);
+    const stored = `${"x".repeat(3200)}.ogg`;
+    uploadFile.mockResolvedValue(stored);
+    const response = await post({ Authorization: sessionToken({ identifier: guest }) });
+    expect(response.status).toBe(400);
+    expect(response.data).toEqual({ message: "receipt-too-long" });
+    expect(deleteFileById).toHaveBeenCalledWith(stored);
+  });
+
   it("gives the bot server's own uploads no receipt", async () => {
     const response = await post({ "x-bot-service-token": BOT_TOKEN });
     expect(response.status).toBe(200);
@@ -184,6 +195,11 @@ describe("upload receipts (voice notes for every bot, plan v3 section 5)", () =>
     expect(readReceipt(long, SECRET)).toMatchObject({ sub: guest, type: "audio/ogg" });
     // An ordinary one is untouched
     expect(readReceipt(make("audio/ogg", "note.ogg"), SECRET)).toMatchObject({ name: "note.ogg", type: "audio/ogg" });
+  });
+
+  it("throws instead of signing a receipt the reader would refuse when cutting the name and type is not enough", () => {
+    const claims = { sub: guest, aud: "chat-file" as const, fid: "f", bkt: null, loc: `https://uploader.example/upload-file/${"l".repeat(3500)}`, sha256: "h".repeat(64), name: "voice.ogg", type: "audio/ogg", size: 1, len: "unmeasured" as const, iat: 1, exp: Date.now() + 1000 };
+    expect(() => signReceipt(claims, SECRET)).toThrow(ReceiptTooLongError);
   });
 
   it("refuses a receipt whose claims were changed", () => {

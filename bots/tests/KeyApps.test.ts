@@ -352,6 +352,36 @@ describe('the two tools of a Brick for keys', () => {
         }
     });
 
+    it('does not call a setup done when a timed-out write changed only the description and the read-back still holds the old one', async () => {
+        const described = () => ask({ description: 'Join the club' });
+        // The read-back holds the same page, App, amount and currency, with the description it had before
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: saved({ description: 'Old text' }) } });
+        const stale = await described();
+        expect(stale).not.toHaveProperty('done');
+        expect(stale.error).toMatch(/not confirmed/);
+        expect(http.post).toHaveBeenCalledTimes(1);
+
+        // With the description that was asked for, it is done
+        http.post.mockClear();
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: saved({ description: 'Join the club' }) } });
+        expect(await described()).toMatchObject({ done: true });
+        expect(http.post).toHaveBeenCalledTimes(1);
+
+        // A read-back that does not carry the description cannot confirm one that was asked for
+        http.post.mockClear();
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        const { description: _gone, ...without } = saved();
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: without } });
+        expect(await described()).not.toHaveProperty('done');
+
+        // None asked for: what the job holds is not compared
+        http.post.mockClear();
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: saved({ description: 'Old text' }) } });
+        expect(await ask()).toMatchObject({ done: true });
+    });
+
     it('takes the read-back as the answer when the write gave none that was whole: no second write either way', async () => {
         const unclear: unknown[] = [new Error('timeout of 15000ms exceeded'), { status: 502, data: {} }, { status: 200, data: {} }, { status: 200, data: { job: {} } }, { status: 200, data: { job: { amount: '4.500', currency: 'KWD', app: 'Example Pay' } } }, { status: 200, data: { job: null } }];
         for (const first of unclear) {

@@ -670,7 +670,13 @@ describe("the Usage page (#1999)", () => {
         game.getMyUsage.mockResolvedValue(
             live({}, { activity: [partly({ actions: [worked(20_000), worked(), failedStep] })] })
         );
+        // The page is made again from nothing, and the task opened, so the rows read are the new ones
+        page?.$destroy();
+        page = undefined;
+        target.innerHTML = "";
         await open();
+        target.querySelector<HTMLElement>('[data-activity="act_partly"]')?.click();
+        await settle();
         expect(stepRows()).toEqual(["Gmail · worked $0.02", "Gmail · worked", "Gmail · didn't work Nothing taken"]);
     });
 

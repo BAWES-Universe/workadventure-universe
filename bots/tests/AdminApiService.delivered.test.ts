@@ -11,7 +11,10 @@ function service(brickCall: (...args: unknown[]) => Promise<unknown>) {
 }
 
 describe('keeping where a run spoke', () => {
-    afterEach(() => vi.restoreAllMocks());
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
 
     it('sends the event id alone for a reminder, and the report with it for a goal, without empty parts', async () => {
         const plain = service(async () => ({}));
@@ -35,23 +38,43 @@ describe('keeping where a run spoke', () => {
         expect(warn).toHaveBeenCalledTimes(1);
     });
 
-    it('does not drop the report when the call that carries it fails for a reason that is not a refusal: the whole delivery is tried again', async () => {
+    it('tries a call again that fails for a reason that is not a refusal, with the report still on it, and keeps it when the retry gets through', async () => {
+        vi.useFakeTimers();
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         for (const failure of [Object.assign(new Error('503'), { response: { status: 503 } }), Object.assign(new Error('slow'), { response: { status: 429 } }), Object.assign(new Error('timeout'), { code: 'ECONNABORTED' })]) {
+            let failed = 0;
             const flaky = service(async () => {
-                throw failure;
+                if (failed++ < 2) throw failure;
+                return {};
             });
-            expect(await flaky.orbit.keepItemDelivered('run-1', '$e1', report)).toBe(false);
-            expect(flaky.call).toHaveBeenCalledTimes(1);
+            const kept = flaky.orbit.keepItemDelivered('run-1', '$e1', report);
+            await vi.advanceTimersByTimeAsync(2_000);
+            expect(await kept).toBe(true);
+            expect(flaky.call).toHaveBeenCalledTimes(3);
+            for (const [, , body] of flaky.call.mock.calls) expect((body as Record<string, unknown>).report).toBeDefined();
         }
+    });
+
+    it('says it was not kept, without dropping to the event id alone, when the call keeps failing for a reason that is not a refusal', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const down = service(async () => {
+            throw Object.assign(new Error('503'), { response: { status: 503 } });
+        });
+        const kept = down.orbit.keepItemDelivered('run-1', '$e1', report);
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(await kept).toBe(false);
+        expect(down.call).toHaveBeenCalledTimes(3);
+        for (const [, , body] of down.call.mock.calls) expect((body as Record<string, unknown>).report).toBeDefined();
     });
 
     it('says it was not kept when Orbit refuses both', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const down = service(async () => {
-            throw new Error('down');
+            throw Object.assign(new Error('no'), { response: { status: 400 } });
         });
         expect(await down.orbit.keepItemDelivered('run-1', '$e1', report)).toBe(false);
+        expect(down.call).toHaveBeenCalledTimes(2);
         expect(await down.orbit.keepItemDelivered('run-1', '$e1')).toBe(false);
     });
 });

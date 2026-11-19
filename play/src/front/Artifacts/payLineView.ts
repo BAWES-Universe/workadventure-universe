@@ -84,12 +84,18 @@ export function describePayLine(
                       closable: false,
                   };
         }
+        // A guest on a page that cannot be opened by link has no receipt link: it is not told the purchase is saved to an account
+        if (line.buyer === "guest") {
+            return { title: LL.payPaidGuest(), sub: LL.payPaidGuestNoReceiptSub(), actions: [], closable: false };
+        }
         return { title: LL.payPaidAccount(), sub: LL.payPaidAccountSub(), actions: [], closable: false };
     }
     if (line.problem === "none") {
+        // Check payment found no order for the wish: it can be asked again (a Restore purchase that found nothing cannot)
+        const again = line.canCheck ? [check] : [];
         return line.buyer === "account"
-            ? { title: LL.payNoneAccount(), sub: LL.payNoneAccountSub(), actions: [], closable: true }
-            : { title: LL.payNoneGuest(), sub: LL.payNoneGuestSub(), actions: [], closable: true };
+            ? { title: LL.payNoneAccount(), sub: LL.payNoneAccountSub(), actions: again, closable: true }
+            : { title: LL.payNoneGuest(), sub: LL.payNoneGuestSub(), actions: again, closable: true };
     }
     if (line.problem === "not_paid") {
         return { title: LL.payNotPaid(), sub: LL.payNotPaidSub(), actions: [check, ...restoreToo], closable: false };
@@ -104,7 +110,13 @@ export function describePayLine(
             : { title: LL.payUnavailable(), sub: null, actions: restoreToo, closable: false };
     }
     if (line.problem === "limit") {
-        return { title: LL.payLimit(), sub: LL.payLimitSub(), actions: restoreToo, closable: false };
+        // An answer that may have made an order (an uncertain refusal) can be checked
+        return {
+            title: LL.payLimit(),
+            sub: LL.payLimitSub(),
+            actions: [...(line.canCheck ? [check] : []), ...restoreToo],
+            closable: false,
+        };
     }
     if (line.needsUpdate) {
         if (state.owner) {

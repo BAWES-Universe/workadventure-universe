@@ -6,13 +6,14 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { readWav16k } from '../src/wav.ts';
 import { SileroStream, type SileroModel } from '../src/silero.ts';
 import { sourceSha, SYNTHETIC } from '../src/sources.ts';
-import { buildManifest } from '../src/fixtures.ts';
+import { buildManifest, replayProvidersOf } from '../src/fixtures.ts';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'vad-eval-'));
 const tsx = (args: string[], cwd = root) => spawnSync(process.execPath, ['--import', 'tsx', ...args], { cwd, encoding: 'utf8' });
 
@@ -293,18 +294,62 @@ describe('yield-report.ts', () => {
         assert.match(line, /400 ms \/ 400 ms \| 0\.4 s \|$/);
     });
 
-    it('refuses a sweep whose windows were not scored on the same clips as the 1500 ms run', () => {
+    // A small data directory: its manifest is what a sweep is checked against. Contributors are on one side of the split only, so there are enough of them for both halves to hold speech
+    const miniData = (): string => {
         const dir = scratch();
-        const clips = [row('unit-speech-1', 'speech', [[1100, 'pause']]), row('unit-speech-2', 'speech', [[1100, 'pause']]), row('unit-noise-1', 'noise', [])];
-        for (const w of [300, 600, 1000, 1500]) {
-            // The 300 ms run was made with REPLAY_LIMIT: one clip only
-            const held = w === 300 ? clips.slice(0, 1) : clips;
-            writeFileSync(join(dir, `yield-replay-tune-${w}.jsonl`), held.map((r) => JSON.stringify(r)).join('\n') + '\n');
-        }
-        const ran = yieldReport(['sweep', dir]);
+        const put = (path: string, samples: number): void => {
+            mkdirSync(join(dir, path.split('/').slice(0, -1).join('/')), { recursive: true });
+            wav(join(dir, path), samples);
+        };
+        const speakers = Array.from({ length: 12 }, (_, n) => n);
+        for (const word of ['stop', 'no', 'yes', 'go']) for (const n of speakers) put(`mini_speech_commands/${word}/sp${n}_nohash_0.wav`, 8000);
+        for (const word of ['stop', 'no', 'yes', 'cancel', 'close', 'ok']) for (const n of speakers) put(`asc/dataset/${word}/1000000${n}_1.wav`, 8000);
+        put('ms-snsd/clean_test/clean_1.wav', 16000);
+        put('ms-snsd/noise_test/Typing_1.wav', 64000);
+        put('ms-snsd/noise_test/VacuumCleaner_1.wav', 64000);
+        return dir;
+    };
+    const tuneRows = (data: string) =>
+        buildManifest(data)
+            .filter((i) => i.split === 'tune')
+            .flatMap((i) => replayProvidersOf(i).map((provider) => ({ ...row(i.id, i.kind === 'speech' ? 'speech' : 'noise', i.kind === 'speech' ? [[1100, 'pause']] : []), provider })));
+    const writeRuns = (dir: string, rowsOf: (window: number) => unknown[]) => {
+        for (const w of [300, 600, 1000, 1500]) writeFileSync(join(dir, `yield-replay-tune-${w}.jsonl`), rowsOf(w).map((r) => JSON.stringify(r)).join('\n') + '\n');
+    };
+
+    it('refuses a sweep whose windows were not scored on the same clips as the 1500 ms run', () => {
+        const data = miniData();
+        const dir = scratch();
+        const clips = tuneRows(data);
+        assert.ok(clips.some((c) => c.kind === 'speech') && clips.some((c) => c.kind !== 'speech'));
+        // The 300 ms run was made with REPLAY_LIMIT: one clip only
+        writeRuns(dir, (w) => (w === 300 ? clips.slice(0, 1) : clips));
+        const ran = yieldReport(['sweep', dir, data]);
         assert.notEqual(ran.status, 0);
         assert.match(ran.stderr, /the tune run for 300 ms was not scored on the same clips/);
         assert.equal(existsSync(join(dir, 'yield-sweep.md')), false);
+    });
+
+    it('refuses a sweep whose runs all miss the same clips of the tune half, so the 1500 ms run is checked against the half and not only against the others', () => {
+        const data = miniData();
+        const dir = scratch();
+        const clips = tuneRows(data);
+        // Every window was run with the same REPLAY_LIMIT: they agree with each other, not with the half
+        writeRuns(dir, () => clips.slice(0, clips.length - 1));
+        const ran = yieldReport(['sweep', dir, data]);
+        assert.notEqual(ran.status, 0);
+        assert.match(ran.stderr, /the tune run for 1500 ms is not the whole tune half/);
+        assert.equal(existsSync(join(dir, 'yield-sweep.md')), false);
+    });
+
+    it('writes the pick only for runs that hold the whole tune half', () => {
+        const data = miniData();
+        const dir = scratch();
+        const clips = tuneRows(data);
+        writeRuns(dir, () => clips);
+        const ran = yieldReport(['sweep', dir, data]);
+        assert.equal(ran.status, 0, ran.stderr);
+        assert.match(readFileSync(join(dir, 'yield-sweep.md'), 'utf8'), /Picked and frozen: \d+ ms/);
     });
 });
 

@@ -50,6 +50,13 @@ describe("the line under a paying page says what the approved mock says", () => 
         ]);
     });
 
+    it("a guest who paid on a page with no receipt link is not told it is saved to an account", () => {
+        const guest = view({ paid: { test: false }, buyer: "guest" });
+        expect(guest?.title).toBe("Paid. Thank you.");
+        expect(guest?.sub).not.toContain("account");
+        expect(guest?.actions).toEqual([]);
+    });
+
     it("g3: paid, saved to the account", () => {
         expect(view({ paid: { test: false }, buyer: "account" })).toMatchObject({
             title: "Paid. Thank you.",
@@ -83,8 +90,17 @@ describe("the line under a paying page says what the approved mock says", () => 
         expect(labels({ problem: "limit", offerRestore: true })).toEqual(["restore:Restore purchase:secondary"]);
     });
 
+    it("keeps Check payment on a 'none' line and a 'limit' line when the payment can be checked, and shows no action when it cannot", () => {
+        expect(labels({ problem: "none", buyer: "guest", canCheck: true })).toEqual(["check:Check payment:primary"]);
+        expect(labels({ problem: "none", buyer: "account", canCheck: true })).toEqual(["check:Check payment:primary"]);
+        expect(labels({ problem: "none", buyer: "guest", canCheck: false })).toEqual([]);
+        expect(view({ problem: "none", buyer: "guest", canCheck: true })?.closable).toBe(true);
+        expect(labels({ problem: "limit", canCheck: true })).toEqual(["check:Check payment:primary"]);
+        expect(labels({ problem: "limit", canCheck: false })).toEqual([]);
+    });
+
     it("g5: a purchase that is back, with the day it was made", () => {
-        expect(view({ paid: { test: false }, restored: { paidAt: "2026-11-19T08:00:00.000Z" } })).toMatchObject({
+        expect(view({ paid: { test: false }, restored: { paidAt: "2026-11-19T12:00:00.000Z" } })).toMatchObject({
             title: "Your purchase from 19 Nov is back.",
             sub: null,
             actions: [],
@@ -136,7 +152,7 @@ describe("the line under a paying page says what the approved mock says", () => 
         for (const extra of [
             {},
             { receipt: "https://orbit.test/a/a1#receipt=abc", buyer: "guest" },
-            { restored: { paidAt: "2026-11-19T08:00:00.000Z" } },
+            { restored: { paidAt: "2026-11-19T12:00:00.000Z" } },
         ] as Partial<PayLine>[]) {
             expect(view({ paid: { test: true }, ...extra })).toMatchObject({
                 title: "Test payment received. No money moved.",
@@ -183,9 +199,9 @@ describe("the line under a paying page says what the approved mock says", () => 
     });
 
     it("names the day in the buyer's language, English first the day", () => {
-        expect(shortDate("2026-11-19T08:00:00.000Z", "en-US")).toBe("19 Nov");
-        expect(shortDate("2026-11-19T08:00:00.000Z")).toBe("19 Nov");
+        expect(shortDate("2026-11-19T12:00:00.000Z", "en-US")).toBe("19 Nov");
+        expect(shortDate("2026-11-19T12:00:00.000Z")).toBe("19 Nov");
         expect(shortDate(null)).toBeNull();
-        expect(shortDate("2026-11-19T08:00:00.000Z", "not a locale!!")).toBe("19 Nov");
+        expect(shortDate("2026-11-19T12:00:00.000Z", "not a locale!!")).toBe("19 Nov");
     });
 });

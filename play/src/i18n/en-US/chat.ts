@@ -2218,6 +2218,7 @@ const chat: BaseTranslation = {
         payPaidAccountSub: "It's saved to your account, so it comes back whenever you open this page.",
         payPaidGuest: "Paid. Thank you.",
         payPaidGuestSub: "Save your receipt link. It brings this purchase back on any device.",
+        payPaidGuestNoReceiptSub: "It's kept in this browser, so it comes back whenever you open this page here.",
         payPaidTest: "Test payment received. No money moved.",
         payPaidTestSub: "Only a live payment counts as a purchase.",
         payRestored: "Your purchase from {date:string} is back.",

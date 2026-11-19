@@ -380,6 +380,24 @@ describe('the file tools in AIService', () => {
         return ai;
     };
 
+    it('says what it held for the group when the round ends, and says nothing of it when the reply was cancelled', async () => {
+        const ai = withFiles();
+        const turn = { fileDerived: { joined: () => false } } as never;
+        // A round that ends without its closing chunk, as a cancelled reply does
+        const round = async function* () {
+            yield { content: 'what it found in the files', done: false };
+        };
+        const said = async (signal?: AbortSignal) => {
+            const out: Array<{ content?: string }> = [];
+            for await (const chunk of ai['heldForGroup'](round() as never, turn, signal)) out.push(chunk);
+            return out.map((chunk) => chunk.content).join('');
+        };
+        expect(await said()).toBe('what it found in the files');
+        const cancelled = new AbortController();
+        cancelled.abort();
+        expect(await said(cancelled.signal)).toBe('');
+    });
+
     it('holds back an earlier file or card for everyone here when someone has walked up since the reply started (#1993)', () => {
         const ai = withFiles();
         const here: { others: string[] | undefined } = { others: ['uuid-sara'] };

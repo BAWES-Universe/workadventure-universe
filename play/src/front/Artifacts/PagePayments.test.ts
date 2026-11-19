@@ -306,6 +306,17 @@ describe("a page that takes payments, in the game's window", () => {
                 signal.addEventListener("abort", onAbort);
             });
 
+    /** A start that never answers on its own and, when it is dropped, stays pending: its answer can still arrive afterwards (the server made the order) */
+    const holdsThenAnswers =
+        (dropped: { value: boolean; answer?: (value: ArtifactPay) => void }) =>
+        (_id: unknown, _chat: unknown, _request: unknown, signal: AbortSignal) =>
+            new Promise<ArtifactPay>((resolve) => {
+                dropped.answer = resolve;
+                signal.onabort = () => {
+                    dropped.value = true;
+                };
+            });
+
     it("does not stay starting when the server never answers the start: it says it is taking longer, tells the page nothing, then drops it and can be asked again", async () => {
         const close = vi.fn();
         const popup = { location: { href: "" }, close } as unknown as Window;
@@ -396,7 +407,7 @@ describe("a page that takes payments, in the game's window", () => {
 
     it("never offers a late checkout to a page that was told 'unavailable': a start answered after it was dropped is never read", async () => {
         const dropped: { value: boolean; answer?: (value: ArtifactPay) => void } = { value: false };
-        const pay = vi.fn().mockImplementationOnce(neverAnswers(dropped));
+        const pay = vi.fn().mockImplementationOnce(holdsThenAnswers(dropped));
         const payments = make(pay, () => null);
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
@@ -423,7 +434,7 @@ describe("a page that takes payments, in the game's window", () => {
         const dropped: { value: boolean; answer?: (value: ArtifactPay) => void } = { value: false };
         const pay = vi
             .fn()
-            .mockImplementationOnce(neverAnswers(dropped))
+            .mockImplementationOnce(holdsThenAnswers(dropped))
             .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" })
             .mockResolvedValue({ status: "paid", checkoutUrl: null, testPayment: false });
         const payments = make(pay, () => null);
@@ -1192,6 +1203,26 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             payments.destroy();
         });
 
+        it("never asks again after its own deadline, even when the last answer asked to wait a whole minute", async () => {
+            const at: number[] = [];
+            const slow = { ...unfinished, pollAfterMs: 60_000 } as ArtifactPay;
+            // The first answer asks for half a minute, so the minute-long waits that follow do not end on the deadline itself
+            const pay = vi.fn(() => {
+                at.push(Date.now());
+                return Promise.resolve(
+                    at.length === 1 ? ({ ...unfinished, pollAfterMs: 30_000 } as ArtifactPay) : slow
+                );
+            });
+            const payments = make(pay);
+            const started = Date.now();
+            ask(payments, frameWindow, load);
+            await flush();
+            await vi.advanceTimersByTimeAsync(21 * 60_000 + 30_000);
+            expect(get(payments.line)).toMatchObject({ problem: "unavailable", canCheck: true });
+            expect(Math.max(...at) - started).toBeLessThanOrEqual(20 * 60_000);
+            payments.destroy();
+        });
+
         it("ends the wait at a refusal, and never waits for an order of a receipt (via receipt) or without via", async () => {
             const refused = make(
                 vi
@@ -1321,6 +1352,56 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         await vi.advanceTimersByTimeAsync(3_000);
         expect(heard().at(-1)).toEqual({ universe: "app-result", status: "paid", request: "r1", session: "s1" });
         live.destroy();
+    });
+
+    it("gives an order that was adopted with no link its Continue link when a later answer carries one", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ status: "checking", orderId: "o5", checkoutUrl: null, pollAfterMs: 3000 })
+            .mockResolvedValueOnce({
+                status: "checking",
+                orderId: "o5",
+                checkoutUrl: "https://checkout.examplepay.com/c5",
+                app: "Example",
+                pollAfterMs: 3000,
+            })
+            .mockResolvedValue({ status: "checking", pollAfterMs: 3000 });
+        const payments = make(pay);
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load1",
+            session: "s1",
+            restore: true,
+        });
+        await flush();
+        expect(get(payments.line)).toMatchObject({ checking: true, resume: null });
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line)).toMatchObject({
+            checking: true,
+            resume: { url: "https://checkout.examplepay.com/c5", app: "Example" },
+        });
+        // A link that is not plain https is never offered
+        const unsafe = make(
+            vi.fn().mockResolvedValue({
+                status: "checking",
+                orderId: "o6",
+                checkoutUrl: "javascript:alert(1)",
+                pollAfterMs: 3000,
+            })
+        );
+        ask(unsafe, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load2",
+            session: "s1",
+            restore: true,
+        });
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(unsafe.line).resume).toBeNull();
+        payments.destroy();
+        unsafe.destroy();
     });
 
     it("watches an open order of the buyer's found by a restore, with its own link, and the page hears it end under its restore request", async () => {

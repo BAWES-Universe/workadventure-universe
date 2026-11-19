@@ -55,14 +55,15 @@ export async function placeBrickHere(
 ): Promise<PlaceAnswer> {
     const roomUrl = botApiService.getRoomId();
     if (!roomUrl) return { ok: false };
-    // A Brick that already stands in this room is moved, and keeps how it behaves here
-    // Only from the list of this room: the one held may be the room before's (nothing reloads it on walking into another room)
-    const standingHere = forRoom === roomUrl ? get(bricks)?.here.find((row) => row.id === brick.id) : undefined;
     try {
         // A Brick has one home: placing it here moves it out of the room it lived in, which is told too
         const before = await Promise.resolve()
             .then(() => botApiService.getBrickHome(brick.id))
             .then(parseBrickHome, () => undefined);
+        // A Brick that already stands in this room is moved, and keeps how it behaves here. Read after the wait above: the list may have
+        // been reloaded meanwhile (its own refresh, another tab's change), and a stale row would put back how it behaved before
+        // Only from the list of this room: the one held may be the room before's (nothing reloads it on walking into another room)
+        const standingHere = forRoom === roomUrl ? get(bricks)?.here.find((row) => row.id === brick.id) : undefined;
         const placed = parsePlaced(
             await botApiService.placeBrickHome(brick.id, roomUrl, placementOf(standingHere, spot))
         );

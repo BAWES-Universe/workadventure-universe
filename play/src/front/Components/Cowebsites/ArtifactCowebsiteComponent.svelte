@@ -155,8 +155,13 @@
     const payLine = payments.line;
     // The line under the page: what it says and what can be pressed (the approved mock M1)
     let receiptCopied = false;
+    // The receipt link, shown to be selected by hand when the browser would not copy it: it is the guest's way back to the purchase on another device
+    let receiptByHand: string | undefined;
     let receiptTimer: ReturnType<typeof setTimeout> | undefined;
-    $: if (!$payLine.paid) receiptCopied = false;
+    $: if (!$payLine.paid) {
+        receiptCopied = false;
+        receiptByHand = undefined;
+    }
     $: payView = describePayLine(
         $payLine,
         { copied: receiptCopied, locale: $locale, owner: opened?.you.owner ? { maker: makerName } : undefined },
@@ -174,11 +179,15 @@
         copying.then(
             () => {
                 if (destroyed) return;
+                receiptByHand = undefined;
                 receiptCopied = true;
                 if (receiptTimer) clearTimeout(receiptTimer);
                 receiptTimer = setTimeout(() => (receiptCopied = false), 8_000);
             },
-            () => undefined
+            () => {
+                if (destroyed) return;
+                receiptByHand = receipt;
+            }
         );
     }
     onMount(() => {
@@ -850,6 +859,10 @@
                                     {/if}
                                 {/each}
                             </div>
+                        {/if}
+                        {#if receiptByHand}
+                            <p class="pay-s" role="alert">{$LL.chat.artifacts.copyFailed()}</p>
+                            <code class="link-text" data-testid="artifactReceiptText">{receiptByHand}</code>
                         {/if}
                     </div>
                 {/if}

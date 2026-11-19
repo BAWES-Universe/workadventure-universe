@@ -128,6 +128,38 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
             expect(fetchMock).toHaveBeenCalledTimes(2);
         });
 
+        it("looks again in a minute when walking in or bringing along could not be answered at all", async () => {
+            vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const api = signedIn();
+            api.setOwnPlaceProvider(() => ({ x: 7, y: 8 }));
+            fetchMock.mockImplementationOnce(() => Promise.reject(new Error("bot server down")));
+            await expect(api.syncVisitingBrick({ x: 1, y: 1 }, { entry: true })).resolves.toBeUndefined();
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(bodyOfLastCall()).toMatchObject({ x: 7, y: 8 });
+        });
+
+        it("does not start the looking after for a walk in that failed after the visit ended", async () => {
+            vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const api = signedIn();
+            api.setOwnPlaceProvider(() => ({ x: 7, y: 8 }));
+            let fail: (error: Error) => void = () => undefined;
+            fetchMock.mockImplementationOnce(
+                () =>
+                    new Promise<Response>((_resolve, reject) => {
+                        fail = reject;
+                    })
+            );
+            const walkIn = api.syncVisitingBrick({ x: 1, y: 1 }, { entry: true });
+            await api.syncVisitingBrick(undefined, { ending: true });
+            fail(new Error("bot server down"));
+            await expect(walkIn).resolves.toBeUndefined();
+            fetchMock.mockClear();
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+
         it("keeps looking after a Brick through a moment when the bot server could not look, and counts only answers in a row (Sentry on #2023)", async () => {
             const api = signedIn();
             api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));

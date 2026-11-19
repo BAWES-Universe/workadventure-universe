@@ -424,6 +424,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     next = Math.min(MOST_POLL_MS, Math.max(LEAST_POLL_MS, answer.pollAfterMs));
                 }
                 const test = answer.testPayment === true;
+                // An order that was adopted with no link (a restore found it before its checkout existed) gets its Continue link once an answer carries one
+                if (answer.status === "checking" && current.checking && !current.resume && !checkout?.popup) {
+                    const link = safeCheckout(answer.checkoutUrl);
+                    if (link) publish({ ...current, resume: { url: link, app: answer.app ?? "" } });
+                }
                 if (answer.status === "paid") return finish({ paid: { test } }, "paid", test);
                 if (answer.status === "not_paid") return finish({ problem: "not_paid", canCheck: true }, "not_paid");
                 if (answer.status === "cant_confirm") {
@@ -461,7 +466,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     /** A start that got no answer at all is sent again with the same wish; an answer, whatever it says, is final. */
     const startWithTries = async (intentId: string, signal: AbortSignal, attempt = 1): Promise<ArtifactPay> => {
         try {
-            return await ask({ start: true, intentId }, signal);
+            // The answer of a start that was dropped says nothing about who the buyer is
+            return await ask({ start: true, intentId }, signal, () => !signal.aborted);
         } catch (error) {
             if (!gotNoAnswer(error) || signal.aborted || destroyed || attempt >= START_TRIES) {
                 throw error;
@@ -590,8 +596,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         if (destroyed || Date.now() >= ends) return null;
         show({ checking: true });
         const wait = answer.pollAfterMs ?? OWN_START_POLL_DEFAULT_MS;
-        await waitFor(Math.min(Math.max(wait, OWN_START_POLL_MIN_MS), OWN_START_POLL_MAX_MS));
-        if (destroyed) return null;
+        // Never past the end of the wait: the last answer comes just before it, and what it asks for is not asked after it
+        await waitFor(
+            Math.min(Math.max(wait, OWN_START_POLL_MIN_MS), OWN_START_POLL_MAX_MS, Math.max(0, ends - Date.now()))
+        );
+        if (destroyed || Date.now() >= ends) return null;
         try {
             return await followOwnStart(await askWithin({ restore: true }), ends);
         } catch (error) {
