@@ -103,7 +103,9 @@
             {:else if phase === "failed"}
                 <p class="tp-bad" data-testid="templateListFailed">{t.listFailed()}</p>
                 <div class="tp-btns">
-                    <PageButton tall testId="templateListRetry" on:click={load}>{$LL.chat.brick.tryAgain()}</PageButton>
+                    <PageButton tall testId="templateListRetry" on:click={() => load()}
+                        >{$LL.chat.brick.tryAgain()}</PageButton
+                    >
                 </div>
             {:else if sections.length === 0}
                 <p class="tp-sub" data-testid="templateListNone">{t.listNone()}</p>

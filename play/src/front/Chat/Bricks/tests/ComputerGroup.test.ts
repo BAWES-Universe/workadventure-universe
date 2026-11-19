@@ -442,7 +442,7 @@ describe("a Brick's computer on screen (#2000)", () => {
         game.getBrickComputer.mockResolvedValue(working);
         await loadBrickComputer(OTHER);
         const onClose2 = vi.fn();
-        piece = new BrickScreen({ target, props: { brick, onClose: onClose2 } });
+        const second = new BrickScreen({ target, props: { brick, onClose: onClose2 } });
         await settle();
         let stopped2: (value: unknown) => void = () => undefined;
         game.brickComputerAction.mockReturnValue(
@@ -452,11 +452,14 @@ describe("a Brick's computer on screen (#2000)", () => {
         );
         byId("brickScreenStop")?.click();
         await settle();
-        (piece as unknown as { $set: (props: object) => void }).$set({ brick: { ...brick, id: OTHER, name: "Other" } });
+        (second as unknown as { $set: (props: object) => void }).$set({
+            brick: { ...brick, id: OTHER, name: "Other" },
+        });
         await settle();
         stopped2({ job: job({ status: "stopped" }) });
         await settle();
         expect(onClose2).not.toHaveBeenCalled();
+        second.$destroy();
     });
 
     it("still closes on Stop when the screen is still the one that was tapped", async () => {

@@ -715,7 +715,7 @@ describe("a guest's chat when guests change, time passes and the chat is carried
     }
     const reply = (text: string) => ({ kind: "reply", text, needsAccount: false });
     const tick = async () => {
-        for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+        await Array.from({ length: 20 }).reduce<Promise<void>>((turn) => turn.then(() => undefined), Promise.resolve());
     };
 
     it("shows nothing of a chat kept for a guest when there is no guest now, and writes nothing under that guest's id", async () => {

@@ -164,7 +164,7 @@ describe("a person's usage in the game (#1999)", () => {
             )
             .mockResolvedValueOnce({ ...out, storage: { bytes: 222 } });
         // Listening from the start: what is ever shown is seen, so the old answer is known never to have been
-        const seen: Array<number | undefined> = [];
+        const seen: Array<number | null | undefined> = [];
         const stop = myUsageStore.subscribe((usage) => seen.push(usage?.storageBytes));
         const first = loadMyUsage();
         const refreshed = refreshMyUsage();

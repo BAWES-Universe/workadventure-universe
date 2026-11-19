@@ -364,6 +364,25 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(all("templateRow")).toHaveLength(1);
         });
 
+        it("says it is loading again, and then lists, when Try again is tapped after a read failed", async () => {
+            game.getTemplateLists.mockRejectedValueOnce(new Error("offline"));
+            part = new TemplateList({ target, props: { isOpen: true } });
+            await settle();
+            expect(byId("templateListFailed")).not.toBeNull();
+            let answer: (value: unknown) => void = () => undefined;
+            game.getTemplateLists.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+            );
+            byId("templateListRetry")?.click();
+            await tick();
+            expect(byId("templateListLoading")).not.toBeNull();
+            answer({ starred: [], picks: [card("t2", "Shop greeter", "Sara")], met: [] });
+            await settle();
+            expect(all("templateRow")).toHaveLength(1);
+        });
+
         it("says when there is nothing yet, and when it could not be read", async () => {
             game.getTemplateLists.mockResolvedValueOnce({ starred: [], picks: [], met: [] });
             part = new TemplateList({ target, props: { isOpen: true } });

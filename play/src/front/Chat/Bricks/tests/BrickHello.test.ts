@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { i18nObject } from "../../../../i18n/i18n-util";
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
-import { STARTER_IDEAS } from "../Brick";
 import {
     BRICK_IDEAS,
     BRICK_IDEAS_CARD,
