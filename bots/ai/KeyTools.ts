@@ -94,7 +94,7 @@ export function keyAppsNote(apps: readonly KeyApp[], services: readonly { servic
     return lines.join('\n');
 }
 
-const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max).trim() : '');
 
 export interface KeyToolContext {
     where: { adminApiUrl: string; serviceToken: string };
