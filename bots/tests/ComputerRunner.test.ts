@@ -567,6 +567,8 @@ describe('a turn that is lost, or room that is gone', () => {
             await runJob(orbit);
             expect(seen.cancels).toBe(1);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 2 }]);
+            // The stopped turn is not reconnected to: the agent is told to look at the page again, not just to carry on (Sentry)
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
         });
 
         it('a turn the job moved on from while it went (taken and given back) is not acted on, even though the job is Brick\'s again', async () => {

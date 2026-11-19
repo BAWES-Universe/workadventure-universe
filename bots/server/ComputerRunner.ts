@@ -201,8 +201,11 @@ function fenced(body: Record<string, unknown>, generation: number | undefined): 
 type TurnResult =
     /** The turn ended and what the agent said is here (it may be empty). */
     | { kind: 'ended'; words: string; failed: boolean; fenced: boolean }
-    /** Orbit or the job changed under it: look at the job again. */
-    | { kind: 'look' }
+    /**
+     * Orbit or the job changed under it: look at the job again. `cancelled`: this turn was stopped here (its room was gone, or a report
+     * was refused as stale), so it is not there to reconnect to, and the page may have changed since: the next turn is told to look first.
+     */
+    | { kind: 'look'; cancelled?: true }
     /** Stopped (a restart): nothing more is done, and the turn goes on on the machine. */
     | { kind: 'stopped' };
 
@@ -323,7 +326,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         try {
             if (now() >= renewing.nextAt) await renew();
             else renewTimer = setTimeout(() => void renew(), Math.max(1000, renewing.nextAt - now()));
-            if (lost) return { kind: 'look' };
+            if (lost) return { kind: 'look', cancelled: true };
 
             let words = '';
             let stepDone = 0;
@@ -378,7 +381,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     terminal = terminal ?? { failed: true, fenced: false, code: 'stream_broke' };
                 }
                 if (signal.aborted) return { kind: 'stopped' };
-                if (lost) return { kind: 'look' };
+                if (lost) return { kind: 'look', cancelled: true };
                 await report(true);
                 if (terminal && terminal.code !== 'stream_broke' && terminal.code !== 'stream_ended') return { kind: 'ended', words, failed: terminal.failed, fenced: terminal.fenced };
                 // The connection ended before the turn did: reconnect to it, a few times, then let the next look decide
@@ -462,8 +465,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
             if (result.kind === 'look') {
+                // A turn that was stopped here is not reconnected to: the agent is told to look at the page again before it goes on
                 // A turn the agent has taken is not sent again: the next try reconnects to it (a turn that is gone says so there)
-                if (accepted.turn) input = null;
+                if (result.cancelled) input = follow(RESUME_PROMPT);
+                else if (accepted.turn) input = null;
                 await sleep(timing.waitMs, signal);
                 continue;
             }
