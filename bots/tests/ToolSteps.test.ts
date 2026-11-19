@@ -258,7 +258,8 @@ describe('waiting, times and what a step did (#2061)', () => {
     it('lists what a call sent as plain lines, keeping an address but never a key, a token or data', () => {
         const lines = stepDetails(
             { to: 'info@meetingcpp.com', subject: 'Review draft', api_key: 'abc', note: 'x'.repeat(30) + '1', options: { a: 1 }, tags: ['a', 'b'], link: 'https://x.test/p?token=zz#h' },
-            [{ type: 'text', text: 'Draft updated' }]
+            [{ type: 'text', text: 'Draft updated' }],
+            true
         );
         expect(lines).toEqual([
             { label: 'To', text: 'info@meetingcpp.com' },
@@ -274,8 +275,15 @@ describe('waiting, times and what a step did (#2061)', () => {
     });
 
     it('shows no result that is data, and nothing when there is nothing to show', () => {
-        expect(stepDetails({}, [{ type: 'text', text: '{"data":{"id":"r1"}}' }])).toBeUndefined();
+        expect(stepDetails({}, [{ type: 'text', text: '{"data":{"id":"r1"}}' }], true)).toBeUndefined();
         expect(stepDetails('{"subject":"Hi"}', undefined)).toEqual([{ label: 'Subject', text: 'Hi' }]);
+    });
+
+    it('leaves out what a tool answered unless its answer is known to be a safe summary, so a password in plain text never reaches a step', () => {
+        const answer = [{ type: 'text', text: 'Your new password is correct horse battery' }];
+        expect(stepDetails({ subject: 'Hi' }, answer)).toEqual([{ label: 'Subject', text: 'Hi' }]);
+        expect(stepDetails({}, answer)).toBeUndefined();
+        expect(stepDetails({ subject: 'Hi' }, answer, true)).toEqual([{ label: 'Subject', text: 'Hi' }, { label: 'Result', text: 'Your new password is correct horse battery' }]);
     });
 
     it('carries what a step did into the field it sends', () => {

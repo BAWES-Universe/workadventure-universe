@@ -442,8 +442,9 @@ function plainAnswer(result: unknown): string | undefined {
 /**
  * What a call sent and got back, as labelled plain lines for a step opened in a direct message (#2061). Only the person
  * whose reply it is reads this, so an address stays; a key, token or password never does, and data (JSON) is never shown.
+ * What the tool answered is left out unless `resultIsSafeToShow` says its answer is an explicit safe summary.
  */
-export function stepDetails(rawArgs: unknown, result?: unknown): StepLine[] | undefined {
+export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToShow = false): StepLine[] | undefined {
     const lines: StepLine[] = [];
     for (const [key, value] of Object.entries(parseArgs(rawArgs))) {
         if (lines.length >= LINES_MAX) break;
@@ -451,7 +452,9 @@ export function stepDetails(rawArgs: unknown, result?: unknown): StepLine[] | un
         const text = plainValue(value);
         if (text) lines.push({ label: tidyName(key), text });
     }
-    const answer = plainAnswer(result);
+    // A tool server's answer is its own words and can carry a password or a code in plain text, so it is shown only for a tool
+    // whose answer is known to be a safe summary (none of the tool servers' tools are, for now)
+    const answer = resultIsSafeToShow ? plainAnswer(result) : undefined;
     if (answer) lines.push({ label: 'Result', text: answer });
     return lines.length ? lines : undefined;
 }

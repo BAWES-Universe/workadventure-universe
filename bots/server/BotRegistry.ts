@@ -225,9 +225,21 @@ export class BotRegistry {
         return (await this.redis.hGet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`)) ?? null;
     }
 
-    async forgetDmRoomOf(botId: string, matrixUserId: string): Promise<void> {
+    /**
+     * Forgets the direct chat of a bot and a person. With the room that was seen, only while the store still points at that
+     * room: a newer chat that another device or bot server noted since is never forgotten with the old one.
+     */
+    async forgetDmRoomOf(botId: string, matrixUserId: string, roomId?: string): Promise<void> {
         if (!isUp(this.redis)) return;
-        await this.redis.hDel('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`);
+        const key = `${botId}|${matrixUserId}`;
+        if (roomId === undefined) {
+            await this.redis.hDel('bots:matrix:dm-room-of', key);
+            return;
+        }
+        await this.redis.eval("if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then return redis.call('HDEL', KEYS[1], ARGV[1]) end return 0", {
+            keys: ['bots:matrix:dm-room-of'],
+            arguments: [key, roomId],
+        });
     }
 
     /**

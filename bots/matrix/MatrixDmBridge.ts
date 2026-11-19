@@ -154,6 +154,11 @@ export interface MatrixDmBridgeDeps {
     /** `fresh` skips any cache, for checking whether a resting bot is back. */
     getBotConfig(botId: string, fresh?: boolean): Promise<BotConfiguration | null>;
     checkAccess(botId: string, chatId: string): Promise<DmAccessResult>;
+    /**
+     * Whether this person really has this App connected for this Brick (game #2001), asked before the Brick carries on as if they had.
+     * Without it, or when Orbit cannot say, the continuation is not carried on.
+     */
+    appConnected?(botId: string, userUuid: string, app: string): Promise<boolean>;
     reply(botId: string, person: DmPerson, text: string, attachments: DmAttachment[], hooks: DmReplyHooks): Promise<DmReply | null>;
     /** Optional shared store so the bot still knows its rooms after a restart. */
     rooms?: {
@@ -163,7 +168,8 @@ export interface MatrixDmBridgeDeps {
         /** The same store, read the other way: the direct chat of a bot and a person (#1993). */
         rememberDmRoomOf?(botId: string, matrixUserId: string, roomId: string): Promise<void>;
         getDmRoomOf?(botId: string, matrixUserId: string): Promise<string | null>;
-        forgetDmRoomOf?(botId: string, matrixUserId: string): Promise<void>;
+        /** With the room that was seen, forgets only while the store still points at that room (a newer chat stays). */
+        forgetDmRoomOf?(botId: string, matrixUserId: string, roomId?: string): Promise<void>;
         /**
          * One device at a time makes the chat of a bot and a person (#1995): true for the first to ask while the claim
          * lasts, false for the others. Null when there is no shared store, and the bridge keeps its own claim. Held
@@ -426,20 +432,26 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * from a person in their own two-person chat with the bot; whether they may chat with it is checked as for any message.
      * Never throws; a lost answer costs nothing, since the card already said what happened.
      */
+    /** The App a continuation line from the system is about. Only this bridge sets it, never the content of a message. */
+    private connectedNotes = new WeakMap<MatrixEvent, { app: string; name: string }>();
+
     private async onAppConnected(event: MatrixEvent): Promise<void> {
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const connected = connectedAppOf(event.content);
         if (!connected || !this.firstSighting(event.event_id)) return;
         const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Start your answer with the one word “Connected.” in their language, then carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
         try {
-            await this.onMessage({
+            const carried: MatrixEvent = {
                 type: 'm.room.message',
                 room_id: event.room_id,
                 sender: event.sender,
                 event_id: `$app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
                 origin_server_ts: Date.now(),
-                content: { msgtype: 'm.text', body: note, [APP_CONNECTED_KEY]: connected },
-            });
+                content: { msgtype: 'm.text', body: note },
+            };
+            // Said by the bridge, outside the message's own content: a person's message can hold any content at all
+            this.connectedNotes.set(carried, connected);
+            await this.onMessage(carried);
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not carry on after an App was connected in ${event.room_id}:`, error?.message ?? error);
         }
@@ -662,7 +674,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // Not theirs any more (the bot left, or someone joined): forgotten. Unreadable just now: asked again next time
         if (theirs === false) {
             if (this.directRooms.get(key) === roomId) this.directRooms.delete(key);
-            await this.deps.rooms?.forgetDmRoomOf?.(botId, matrixUserId).catch(() => undefined);
+            await this.deps.rooms?.forgetDmRoomOf?.(botId, matrixUserId, roomId).catch(() => undefined);
         }
         return { roomId: null, unsure: theirs === null };
     }
@@ -731,7 +743,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // The same transaction id for every try of this hand-over (of this part): a try that failed after the homeserver had taken
         // the message is not sent twice. Past the homeserver's memory of it, the game still draws a named line once
         const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`).digest('hex');
-        const content = { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines, ...(part ? { [GUEST_CHAT_PART_KEY]: { v: 1, from: part.from, to: part.to, last: part.last } } : {}) };
+        // Who is in the room is looked at again right before each part goes: someone may have joined since it was looked at
+        if (!this.stillTheirs(known.roomId, this.botUserId(botId), matrixUserId)) return 'wait';
+        // The receipt names the upload for the bot server only; it never goes into the chat
+        const carried = lines.map((line) => (line.media ? { ...line, media: line.media.map(({ receipt: _receipt, ...one }) => one) } : line));
+        const content = { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: carried, ...(part ? { [GUEST_CHAT_PART_KEY]: { v: 1, from: part.from, to: part.to, last: part.last } } : {}) };
         await this.client.sendMessage(this.botUserId(botId), known.roomId, content, txnId);
         return 'sent';
     }
@@ -872,6 +888,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const later = this.nearbyAnswers.get(key) ?? [];
             this.nearbyAnswers.delete(key);
             this.nearbyAnswers.set(key, [...due.slice(from), ...later].slice(-NEARBY_ANSWERS_PER_CHAT));
+            // Put back above the cap, the oldest pair makes room, as when an answer is first kept
+            while (this.nearbyAnswers.size > NEARBY_ANSWERS_MAX) {
+                const oldest = this.nearbyAnswers.keys().next().value!;
+                if (oldest === key) break;
+                this.nearbyAnswers.delete(oldest);
+            }
         };
         for (let index = 0; index < due.length; index++) {
             // Each send waits, so who is in the room is looked at again before every one of them
@@ -981,7 +1003,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (room !== roomId) continue;
             this.directRooms.delete(key);
             const cut = key.indexOf('|');
-            await this.deps.rooms?.forgetDmRoomOf?.(key.slice(0, cut), key.slice(cut + 1)).catch(() => undefined);
+            await this.deps.rooms?.forgetDmRoomOf?.(key.slice(0, cut), key.slice(cut + 1), roomId).catch(() => undefined);
         }
         this.lastRestingLine.delete(roomId);
         for (const state of ['resting', 'unready', 'no_access', 'limited']) this.lastNote.delete(`${roomId}|${state}`);
@@ -1332,6 +1354,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (!catchUp) await this.sendNoteNowAndThen(botId, event.room_id, 'unready', language, config);
             return;
         }
+        // A line from the system after an App was connected (game #2001) is believed only when the bridge said it and Orbit
+        // confirms the person has that App connected for this Brick; otherwise it is dropped (a lost answer costs nothing)
+        let connectedApp = this.connectedNotes.get(event) ?? null;
+        if (connectedApp) {
+            const confirmed = await this.deps.appConnected?.(botId, user.uuid, connectedApp.app).catch(() => false);
+            if (confirmed !== true) {
+                console.info(`[MatrixDmBridge] Not carrying on after an App was connected in ${event.room_id}: not confirmed as connected`);
+                return;
+            }
+        }
 
         const read = await this.readMessage(botUserId, content);
         const { attachments, failed } = read;
@@ -1390,7 +1422,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 // "Make it" tapped on the Brick's suggestion (#1996)
                 ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
                 // An App was connected from a card (game #2001): a line from the system, nothing is learned about the person from it
-                ...(event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true, connectedApp: connectedAppOf(content[APP_CONNECTED_KEY])! } : {}),
+                ...(connectedApp ? { note: true, connectedApp } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -1490,7 +1522,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
             }
             // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
-            const justConnected = reply.text ? connectedAppOf(content[APP_CONNECTED_KEY]) : null;
+            const justConnected = reply.text ? connectedApp : null;
             if (justConnected) {
                 await this.client
                     .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
@@ -1606,8 +1638,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (Object.keys(info).length > 0) kept.info = info;
         for (const key of ['org.matrix.msc3245.voice', 'm.voice'] as const) if (content[key] !== undefined) kept[key] = {};
         // A line from the system after an App was connected (game #2001) must still be told apart from the person's own words
-        const connected = connectedAppOf(content[APP_CONNECTED_KEY]);
-        if (connected) kept[APP_CONNECTED_KEY] = connected;
+        const connected = this.connectedNotes.get(event);
         const message = JSON.stringify({
             event_id: event.event_id,
             room_id: event.room_id,
@@ -1615,7 +1646,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             origin_server_ts: event.origin_server_ts ?? Date.now(),
             type: 'm.room.message',
             content: kept,
-            ...(attempts > 0 ? { unsigned: { universe_attempts: attempts } } : {}),
+            ...(attempts > 0 || connected ? { unsigned: { ...(attempts > 0 ? { universe_attempts: attempts } : {}), ...(connected ? { universe_connected_app: connected } : {}) } } : {}),
         });
         if (this.deps.waiting?.hasSharedStore()) {
             try {
@@ -1696,6 +1727,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 continue;
             }
             if (Date.now() - (event.origin_server_ts ?? 0) >= WAITING_MAX_AGE_MS) continue;
+            // Written by this bridge when it kept the message; never read from a live event
+            const connected = connectedAppOf(event.unsigned?.universe_connected_app);
+            if (connected) this.connectedNotes.set(event, connected);
             const kept = newestByRoom.get(event.room_id);
             // Local copies come after the shared store's, so on a tie the later one (written last) wins.
             if (!kept || (event.origin_server_ts ?? 0) >= (kept.origin_server_ts ?? 0)) newestByRoom.set(event.room_id, event);

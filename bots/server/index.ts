@@ -221,6 +221,7 @@ async function setupMatrix(): Promise<void> {
         approvals,
         getBotConfig: (botId, fresh) => dmReplyService.getBotConfig(botId, fresh),
         checkAccess: (botId, chatId) => adminApiService.checkDmAccess(botId, chatId),
+        appConnected: async (botId, userUuid, app) => (await adminApiService.appsOfferableFor(botId, userUuid)).some((one) => one.key.toLowerCase() === app.toLowerCase() && one.connected),
         reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
         rooms: botRegistry,
         uploadAttachment,
