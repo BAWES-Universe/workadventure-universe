@@ -18,13 +18,18 @@
 
     $: text = $LL.chat.brick.apps.github;
     let copied = false;
+    // The browser did not let the link be copied: the whole link is shown to be selected and copied by hand
+    let copyFailed = false;
 
     async function copy() {
         try {
             await navigator.clipboard.writeText(installUrl);
             copied = true;
+            copyFailed = false;
         } catch (error) {
             console.warn("Could not copy the link", error);
+            copied = false;
+            copyFailed = true;
         }
     }
 </script>
@@ -37,6 +42,10 @@
 >
     <p class="lb">{text.sendLink()}</p>
     <div class="fd" data-testid="gitHubInstallLink">{shortLink(installUrl)}</div>
+    {#if copyFailed}
+        <p class="bad" data-testid="gitHubCopyFailed">{text.copyFailed()}</p>
+        <div class="fd full" data-testid="gitHubInstallFull">{installUrl}</div>
+    {/if}
     <div>
         <PageButton tall testId="gitHubCopyLink" on:click={() => void copy()}
             ><IconCopy font-size="16" />{copied ? text.copied() : text.copyLink()}</PageButton
@@ -60,6 +69,14 @@
         font-size: 13px;
         font-weight: 600;
         color: rgba(244, 242, 250, 0.82);
+    }
+    .bad {
+        margin: 0;
+        font-size: 13px;
+        color: #ff9a9a;
+    }
+    .full {
+        user-select: all;
     }
     .fd {
         padding: 12px;

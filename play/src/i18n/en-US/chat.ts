@@ -1904,6 +1904,7 @@ const chat: BaseTranslation = {
                 sendLink: "Or send them this link",
                 copyLink: "Copy link",
                 copied: "Copied",
+                copyFailed: "Couldn't copy it. Select the whole link below and copy it yourself.",
                 cantWait: "Can't wait? Use my own GitHub key",
                 cantWaitLine: "Works right away for every place your key reaches",
                 done: "Done",
@@ -1945,6 +1946,7 @@ const chat: BaseTranslation = {
             // Take back
             takeBackTitle: "Take {app:string} back from {universe:string}?",
             takeBackBots: "{bots:string} stops using {app:string} at once, also in a chat that is already open.",
+            takeBackSeveral: "{bots:string} stop using {app:string} at once, also in a chat that is already open.",
             takeBackBotsNone: "Bots there stop using {app:string} at once, also in a chat that is already open.",
             takeBackAgain: "Lending it again later does not give it back to them.",
             takeBackNote: "Your own Bricks keep using it. Nothing in {app:string} is deleted.",
