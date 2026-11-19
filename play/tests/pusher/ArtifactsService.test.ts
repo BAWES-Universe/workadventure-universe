@@ -108,6 +108,25 @@ describe("ArtifactsService", () => {
         expect(odd).toMatchObject({ code: "unavailable", status: 409, unsure: false });
     });
 
+    it("keeps the status of an answer whose pollAfterMs is odd (a fraction, a negative, a huge number, a word)", async () => {
+        const http = { put: vi.fn(), post: vi.fn() };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        const answers = [
+            [1500.5, 1500.5],
+            [-5, -5],
+            [99_999_999, 99_999_999],
+            ["soon", undefined],
+        ] as const;
+        for (const [odd] of answers) {
+            http.post.mockResolvedValueOnce({ data: { status: "paid", orderId: "o1", pollAfterMs: odd } } as never);
+        }
+        const told = await Promise.all(
+            answers.map(() => service.pay(ID, { check: true, orderId: "o1" } as never, viewer))
+        );
+        expect(told.map((answer) => answer.status)).toEqual(["paid", "paid", "paid", "paid"]);
+        expect(told.map((answer) => answer.pollAfterMs)).toEqual(answers.map(([, kept]) => kept));
+    });
+
     it("sends a wish, a check, a restore and a guest's code to Orbit, and keeps what a window needs of the answer (pollAfterMs, none, paidAt)", async () => {
         const http = { put: vi.fn(), post: vi.fn() };
         const service = new ArtifactsService("https://orbit.test", "secret", http);
