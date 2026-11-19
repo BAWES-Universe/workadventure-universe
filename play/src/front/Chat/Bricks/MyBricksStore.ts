@@ -46,6 +46,7 @@ export const myBricksListFailed: Readable<boolean> = { subscribe: listFailed.sub
 let loading: Promise<void> | undefined;
 // Whether the last read of this sign-in ended with nothing read at all: it throws (and is only told in the console), so the
 // list's own "failed" flag does not say it
+// (or every try was set aside because changes kept coming: nothing was applied, so it is not "read" either)
 let lastReadThrew = false;
 // Counts sign-outs: a read or a change that was asked for before the person signed out changes nothing when it ends.
 let generation = 0;
@@ -57,7 +58,8 @@ const READS_WHILE_CHANGING = 3;
 // Switches Orbit has not answered yet: the page already shows them, and a list read meanwhile may not have them yet.
 let switching = 0;
 
-async function load(asked: number, read = 1): Promise<void> {
+/** True when a list was read and applied (or what the page shows was kept on purpose); false when every try was set aside. */
+async function load(asked: number, read = 1): Promise<boolean> {
     const seen = changes;
     // Orbit makes the Brick everyone gets the first time this account asks, and never again: asking is safe from
     // every device, as often as the chat opens. An account whose owner deleted it gets none.
@@ -69,10 +71,10 @@ async function load(asked: number, read = 1): Promise<void> {
     const first = parseBrickCard(own?.brick);
     // The Bricks they made come with the list; when it can't be read, the one everyone gets still shows.
     const list = await botApiService.listMyBricks().catch(() => undefined);
-    if (asked !== generation) return;
+    if (asked !== generation) return true;
     if (seen !== changes || switching > 0) {
-        if (read < READS_WHILE_CHANGING) await load(asked, read + 1);
-        return;
+        // Changes kept coming: nothing of this read was applied, and after the last try it is not "read" (the caller asks again)
+        return read < READS_WHILE_CHANGING ? load(asked, read + 1) : false;
     }
     refreshMyChatId();
     const known = get(bricks);
@@ -89,20 +91,21 @@ async function load(asked: number, read = 1): Promise<void> {
             undoDays.set(parseUndoDays(list));
         }
         listFailed.set(true);
-        return;
+        return true;
     }
     if (list !== undefined) {
         bricks.set(parseBrickCards(list));
         deleted.set(parseDeletedBricks(list));
         undoDays.set(parseUndoDays(list));
         listFailed.set(false);
-        return;
+        return true;
     }
     // What was already known stays: a list that could not be read again does not take Bricks out of Chats
     if (known === undefined && !first) throw new Error("Could not list the Bricks");
     if (known === undefined) bricks.set(first ? [first] : []);
     else if (first && !known.some((brick) => brick.id === first.id)) bricks.set([first, ...known]);
     listFailed.set(true);
+    return true;
 }
 
 /** A change made here: a list read before it is not put back over it. */
@@ -119,8 +122,8 @@ export function loadMyBricks(): Promise<void> {
     if (!loading) {
         const asked = generation;
         const run: Promise<void> = load(asked)
-            .then(() => {
-                if (asked === generation) lastReadThrew = false;
+            .then((applied) => {
+                if (asked === generation) lastReadThrew = !applied;
             })
             .catch((error: unknown) => {
                 if (asked !== generation) return;

@@ -449,6 +449,25 @@ describe("turning a Brick on or off", () => {
         });
     });
 
+    it("does not call a read 'read' when a switch that Orbit has not answered set every try aside, and reads again once the switch ended", async () => {
+        let answer: (value: unknown) => void = () => undefined;
+        api.setBrickEnabled.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        const saving = setMyBrickEnabled(MADE, false);
+        const before = api.listMyBricks.mock.calls.length;
+        // The switch is still out: all three tries are set aside, nothing is applied, and the caller is told it must ask again
+        expect(await loadMyBricksAfterPending()).toBe(false);
+        expect(api.listMyBricks.mock.calls.length - before).toBe(3);
+        expect(enabled(MADE)).toBe(false);
+        answer({ brick: { ...made, enabled: false } });
+        await saving;
+        // The switch ended: the next ask reads the list, and says so
+        expect(await loadMyBricksAfterPending()).toBe(true);
+    });
+
     it("puts the switch back when Orbit refuses, and says it was not saved", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         api.setBrickEnabled.mockRejectedValue(new Error("API error: 500"));
