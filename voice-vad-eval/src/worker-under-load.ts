@@ -19,14 +19,18 @@ const out = process.env.LOAD_SUMMARY ?? '/tmp/worker-summary.json';
 const cgroup = (name: string): string | undefined => (existsSync(`/sys/fs/cgroup/${name}`) ? readFileSync(`/sys/fs/cgroup/${name}`, 'utf8').trim() : undefined);
 const keyed = (text?: string): Record<string, number> => Object.fromEntries((text ?? '').split('\n').filter(Boolean).map((line) => [line.split(' ')[0], Number(line.split(' ')[1])]));
 const MB = 1048576;
+/** A cgroup figure in MB; undefined when the file is not there (memory.peak needs Linux 5.19), so a missing figure is never read as 0. */
+const asMb = (value: string | undefined): number | undefined => (value === undefined ? undefined : Number(value) / MB);
+// The highest memory.current seen by the sampler since the start: the peak when the kernel keeps none of its own
+let sampledPeakMb = 0;
 /** The container's own accounting, whichever of the two cgroup layouts the host uses. Memory includes file cache; "anon" is without it. */
-function container(): { currentMb: number; anonMb: number; peakMb: number; limitMb: number; oomKills: number; cpuSeconds: number; throttledSeconds: number; throttledPeriods: number } {
+function container(): { currentMb: number; anonMb: number; peakMb: number | undefined; limitMb: number; oomKills: number; cpuSeconds: number; throttledSeconds: number; throttledPeriods: number } {
     if (existsSync('/sys/fs/cgroup/memory.current')) {
         const cpu = keyed(cgroup('cpu.stat'));
         return {
             currentMb: Number(cgroup('memory.current')) / MB,
             anonMb: (keyed(cgroup('memory.stat')).anon ?? 0) / MB,
-            peakMb: Number(cgroup('memory.peak') ?? 0) / MB,
+            peakMb: asMb(cgroup('memory.peak')),
             limitMb: Number(cgroup('memory.max')) / MB,
             oomKills: keyed(cgroup('memory.events')).oom_kill ?? 0,
             cpuSeconds: (cpu.usage_usec ?? 0) / 1e6,
@@ -38,7 +42,7 @@ function container(): { currentMb: number; anonMb: number; peakMb: number; limit
     return {
         currentMb: Number(cgroup('memory/memory.usage_in_bytes') ?? 0) / MB,
         anonMb: (keyed(cgroup('memory/memory.stat')).total_rss ?? 0) / MB,
-        peakMb: Number(cgroup('memory/memory.max_usage_in_bytes') ?? 0) / MB,
+        peakMb: asMb(cgroup('memory/memory.max_usage_in_bytes')),
         limitMb: Number(cgroup('memory/memory.limit_in_bytes') ?? 0) / MB,
         oomKills: keyed(cgroup('memory/memory.oom_control')).oom_kill ?? 0,
         cpuSeconds: Number(cgroup('cpuacct/cpuacct.usage') ?? 0) / 1e9,
@@ -63,6 +67,7 @@ const samples: { t: number; currentMb: number; anonMb: number; rssMb: number; qu
 const sampler = setInterval(() => {
     const observer = worker.stats().speechObserver as { queuedMs: number; streams: number } | undefined;
     const box = container();
+    sampledPeakMb = Math.max(sampledPeakMb, box.currentMb);
     samples.push({ t: Math.round((performance.now() - mark.at) / 1000), currentMb: Math.round(box.currentMb), anonMb: Math.round(box.anonMb), rssMb: Math.round(process.memoryUsage().rss / MB), queuedMs: observer?.queuedMs ?? 0, streams: observer?.streams ?? 0 });
     // Kept as it goes, so a worker that is killed still leaves its memory curve behind
     if (trace && ++traced % 10 === 0) {
@@ -84,6 +89,7 @@ process.on('SIGUSR2', () => {
 process.on('SIGUSR1', () => {
     const seconds = (performance.now() - mark.at) / 1000;
     const box = container();
+    const peakMb = box.peakMb ?? Math.max(sampledPeakMb, box.currentMb);
     const counters = worker.counters.snapshot();
     const since = (name: string): number => (counters[name] ?? 0) - (mark.counters[name] ?? 0);
     const completed = since('observer_windows_completed');
@@ -107,8 +113,10 @@ process.on('SIGUSR1', () => {
                 // peakMb is the container's high-water mark since it started, file cache included (what the cap is enforced on)
                 memory: {
                     limitMb: Math.round(box.limitMb),
-                    peakMb: Math.round(box.peakMb),
-                    peakShareOfLimit: Number((box.peakMb / box.limitMb).toFixed(3)),
+                    // The kernel's own high-water mark when it keeps one; else the highest figure the sampler saw (twice a second), and said so
+                    peakMb: Math.round(peakMb),
+                    peakSampled: box.peakMb === undefined,
+                    peakShareOfLimit: Number((peakMb / box.limitMb).toFixed(3)),
                     peakAnonMbSampled: Math.max(0, ...samples.map((x) => x.anonMb)),
                     peakProcessRssMbSampled: Math.max(0, ...samples.map((x) => x.rssMb)),
                     endAnonMb: Math.round(box.anonMb),

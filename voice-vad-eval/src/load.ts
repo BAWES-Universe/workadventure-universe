@@ -118,11 +118,14 @@ const named = (b: Bubble) => [...b.people.filter((p) => p.named).map((p) => rost
 async function joinRoom(s: Stream): Promise<void> {
     const { id, bubble: b } = s;
     const { game, calls } = b;
+    // Kept outside the try: a person who did not get in is disconnected in the catch
+    let room: { disconnect(): Promise<unknown> } | undefined;
     try {
-        const room = new lk!.Room();
-        await room.connect(LIVEKIT_URL, await roomToken(game.spaceName, id), { autoSubscribe: false, dynacast: false });
+        const connection = new lk!.Room();
+        room = connection;
+        await connection.connect(LIVEKIT_URL, await roomToken(game.spaceName, id), { autoSubscribe: false, dynacast: false });
         const source = new lk!.AudioSource(48000, 1);
-        await room.localParticipant!.publishTrack(lk!.LocalAudioTrack.createAudioTrack('mic', source), new lk!.TrackPublishOptions({ source: lk!.TrackSource.SOURCE_MICROPHONE }));
+        await connection.localParticipant!.publishTrack(lk!.LocalAudioTrack.createAudioTrack('mic', source), new lk!.TrackPublishOptions({ source: lk!.TrackSource.SOURCE_MICROPHONE }));
         s.named = true;
         calls.spaceUsers(game.spaceName, named(b));
         if (!b.invited) {
@@ -130,12 +133,16 @@ async function joinRoom(s: Stream): Promise<void> {
             calls.handlePrivateEvent(privateEvent(game, game.botId, { $case: 'livekitInvitationMessage', livekitInvitationMessage: { token: await roomToken(game.spaceName, game.botId), serverUrl: LIVEKIT_URL } }, { tags: ['bot'], uuid: 'bot-1' }));
         }
         await waitFor(`the bot to be in the room of ${id}`, () => b.roomUp, 20000);
-        s.room = room;
+        s.room = connection;
         s.mic = source as never;
         s.joined = true;
         tally.joins++;
     } catch (error) {
         s.named = false;
+        // A person who did not get in leaves no connection behind (it would go on counting as someone in the room), and the roster
+        // no longer names them
+        await room?.disconnect().catch(() => undefined);
+        calls.spaceUsers(game.spaceName, named(b));
         tally.joinFailures++;
         tally.errors.push(String(error));
     }
@@ -159,10 +166,12 @@ async function join(s: Stream): Promise<void> {
     const human = new FakeHuman(id);
     game.humans.set(id, human);
     const before = calls.hasCall(game.spaceName, id);
-    calls.spaceUserJoined(game.spaceName, { spaceUserId: id, uuid: `uuid-${id}`, tags: [], name: id } as never);
-    calls.handlePrivateEvent(privateEvent(game, id, { $case: 'webRtcStartMessage', webRtcStartMessage: { userId: id, initiator: false } }));
-    for (const signal of await human.offer()) calls.handlePrivateEvent(privateEvent(game, id, { $case: 'webRtcSignal', webRtcSignal: { signal } }));
     try {
+        // Starting the call and the first signals are inside the try too: one person who cannot start counts as a failed join, and
+        // does not end the whole run
+        calls.spaceUserJoined(game.spaceName, { spaceUserId: id, uuid: `uuid-${id}`, tags: [], name: id } as never);
+        calls.handlePrivateEvent(privateEvent(game, id, { $case: 'webRtcStartMessage', webRtcStartMessage: { userId: id, initiator: false } }));
+        for (const signal of await human.offer()) calls.handlePrivateEvent(privateEvent(game, id, { $case: 'webRtcSignal', webRtcSignal: { signal } }));
         await waitFor(`the audio connection of ${id}`, () => human.state === 'connected', 15000);
         s.human = human;
         s.joined = true;
@@ -170,6 +179,7 @@ async function join(s: Stream): Promise<void> {
     } catch (error) {
         tally.joinFailures++;
         tally.errors.push(`${String(error)} (had call before: ${before})`);
+        game.humans.delete(id);
         await human.close().catch(() => undefined);
     }
 }
