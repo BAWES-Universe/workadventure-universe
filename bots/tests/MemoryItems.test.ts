@@ -696,6 +696,23 @@ describe('PersistentMemory: a forgotten thing is not brought back by a snapshot,
         expect(save).not.toHaveBeenCalled();
     });
 
+    it('does not write a person back over a Forget of them when their memory was evicted before the save timer fired', async () => {
+        const memory = held();
+        const save = vi.spyOn(memory.memoryStorage, 'saveMemory').mockResolvedValue(undefined);
+        await vi.advanceTimersByTimeAsync(10);
+        save.mockClear();
+        memory.scheduleDebouncedSave(BOT, SARA);
+        // The cleanup of old memories let the active memory go, but the save still waits on its timer with the old snapshot
+        memory.memories.clear();
+        expect(memory.pendingSaves.has(`${BOT}_${SARA}`)).toBe(true);
+        memory.forget(BOT, { everyone: false, userUuids: ['uuid-sara'], rows: [{ id: 'row-4', userUuid: 'uuid-sara' }] });
+        expect(memory.pendingSaves.has(`${BOT}_${SARA}`)).toBe(false);
+        expect(memory.debounceTimers.has(`${BOT}_${SARA}`)).toBe(false);
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+        await memory.flushDebouncedSave(BOT, SARA);
+        expect(save).not.toHaveBeenCalled();
+    });
+
     it('still saves when nothing was forgotten while Orbit was being told', async () => {
         const memory = held();
         const save = vi.spyOn(memory.memoryStorage, 'saveMemory').mockResolvedValue(undefined);
@@ -1139,6 +1156,53 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:timed-1`)).toBe(false);
         expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:timed-2`)).toBe(true);
         warn.mockRestore();
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('lets go of many at once when the ledger is far over its limit, in one pass', async () => {
+        const memory = await start();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        memory.ledgerForget({ botId: BOT, userUuid: 'uuid-sara', itemKey: 'pref:untimed', since: 0 });
+        for (let at = 1; at <= MAX_FORGOTTEN_ITEMS + 50; at++) {
+            memory.forgottenLedger.set(`${BOT}|uuid-sara|pref:timed-${at}`, { botId: BOT, userUuid: 'uuid-sara', itemKey: `pref:timed-${at}`, since: at });
+        }
+        memory.capLedger();
+        expect(memory.forgottenLedger.size).toBe(MAX_FORGOTTEN_ITEMS);
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:untimed`)).toBe(true);
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:timed-51`)).toBe(false);
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:timed-52`)).toBe(true);
+        // Said once for the whole pass, not once for each one let go
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('does not bring back an entry that was let go while the read waited for this server\'s own writes', async () => {
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(memory.unreportedRetryTimer);
+        expect(store.contents().pending).toHaveLength(1);
+        // A write of ours is still out when the refresh starts
+        let finishWrite: () => void = () => undefined;
+        memory.queueWriting = new Promise<void>((resolve) => (finishWrite = resolve));
+        memory.queueRefreshedAt = 0;
+        const refreshing = memory.refreshForgetQueue();
+        await new Promise((resolve) => setImmediate(resolve));
+        // The Brick is deleted for good meanwhile: the read that follows still sees the entry in the store
+        memory.purgeForgottenFor(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        const real = store.load.bind(store);
+        vi.spyOn(store, 'load').mockImplementation(async () => {
+            const kept = await real();
+            expect(kept.pending).toHaveLength(1);
+            return kept;
+        });
+        finishWrite();
+        await refreshing;
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(memory.forgottenLedger.size).toBe(0);
         clearTimeout(memory.unreportedRetryTimer);
     });
 

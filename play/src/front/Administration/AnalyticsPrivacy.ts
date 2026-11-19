@@ -128,8 +128,11 @@ function redact(properties: Record<string, unknown> | undefined, depth = 0): voi
 
 /** An attribute that holds a list of addresses with a size each ("a.png 1x, b.png 2x"). */
 const REPLAY_SRCSET_KEYS = /^(?:attr__)?(?:data-)?(?:image)?srcset$/i;
-/** An address inside a style or a stylesheet's text: url(...), with or without quotes. */
-const CSS_URL = /url\(\s*(["']?)(.*?)\1\s*\)/gi;
+/**
+ * An address inside a style or a stylesheet's text: url(...), with or without quotes. A backslash escapes the next character in CSS,
+ * so an escaped bracket or quote ("a\)b.png?token=x") belongs to the address and does not end it.
+ */
+const CSS_URL = /url\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\.|[^)\\])*?))\s*\)/gi;
 
 /** One address of a replay, without its query and hash (absolute or relative), and without an email in its path. A data: address holds no address and stays. */
 function cleanReplayAddress(address: string): string {
@@ -186,7 +189,12 @@ function cleanReplayValue(key: string, value: string): string {
     if (/url\(/i.test(cleaned))
         cleaned = cleaned.replace(
             CSS_URL,
-            (_all, quote: string, address: string) => `url(${quote}${cleanReplayAddress(address)}${quote})`
+            (_all, double: string | undefined, single: string | undefined, bare: string | undefined) =>
+                double !== undefined
+                    ? `url("${cleanReplayAddress(double)}")`
+                    : single !== undefined
+                    ? `url('${cleanReplayAddress(single)}')`
+                    : `url(${cleanReplayAddress(bare ?? "")})`
         );
     return cleaned.replace(EMAIL, "[email]");
 }

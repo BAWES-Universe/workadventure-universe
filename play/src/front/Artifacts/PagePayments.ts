@@ -216,6 +216,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // and the opening it came from: a request of another opening is never taken for it
     let activeRequest = "";
     let activeFrom = 0;
+    // The document the active operation was started for, held with it: the map of sessions by request can be overwritten by another document that
+    // reuses the same request id, and a busy answer is decided by who the operation really belongs to
+    let activeSession: string | undefined;
     // The start that is waiting for its answer: its request is dropped when the window goes away, and its timers stop
     let startInFlight: { abort: AbortController; clear: () => void } | undefined;
     // What Check payment asks about: the wish of the last checkout (when there is one in this window), and who asked for it
@@ -364,12 +367,13 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
      * A restore that was turned away while this payment ran is answered when the payment ends paid: that page was told "busy", and
      * would stay on its pay button for a purchase that is made. Told under its own request and session, once.
      */
-    const tellDeferredPaid = (test: boolean) => {
+    const tellDeferredPaid = (test: boolean, ...told: string[]) => {
         const waiting = deferredRestore;
         deferredRestore = null;
         if (waiting && waiting.from === opening() && stillSpeaking(waiting.request, waiting.session)) {
-            tellEnd("paid", waiting.request, waiting.from, test, waiting.session);
-            if (waiting.latest && waiting.latest !== waiting.request) {
+            // What was just told under its request is not told twice
+            if (!told.includes(waiting.request)) tellEnd("paid", waiting.request, waiting.from, test, waiting.session);
+            if (waiting.latest && waiting.latest !== waiting.request && !told.includes(waiting.latest)) {
                 tellEnd("paid", waiting.latest, waiting.from, test, waiting.session);
             }
         }
@@ -399,6 +403,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     ) => {
         busy = false;
         activeRequest = "";
+        activeSession = undefined;
         show({
             ...owedRestore(update),
             ...update,
@@ -406,7 +411,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         });
         tellEnd(status, request, from, test, asker ?? sessions.get(request));
         if (update.paid) {
-            tellDeferredPaid(test);
+            tellDeferredPaid(test, request);
             tellLatestPaid(test, request);
         }
     };
@@ -491,6 +496,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         busy = true;
         activeRequest = request;
         activeFrom = from;
+        activeSession = asker ?? sessions.get(request);
         show({ checking: true, resume: checkout && !checkout.popup ? { url: checkout.url, app: checkout.app } : null });
         watch(orderId, checkout, request, from, asker);
     };
@@ -533,6 +539,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         const intentId = random(24);
         // The document that asked, taken now: the end of this checkout is told to it, whoever uses the same request id later
         const asker = sessions.get(request);
+        activeSession = asker;
         target = { intentId, request, from, session: asker };
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
         let popup: Window | null = null;
@@ -665,6 +672,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         activeRequest = request;
         activeFrom = from;
         const asker = sessions.get(request);
+        activeSession = asker;
         lastRestore = { request, from, session: asker };
         deferredRestore = null;
         lateAsker = null;
@@ -742,7 +750,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         }
         // The document that spoke last: what comes of an older document's request is told to nobody
         const session = data.session;
-        const askedBefore = sessions.get(activeRequest);
+        const askedBefore = activeSession;
         speaker = session;
         if (busy) {
             // The same tap heard twice, in the same opening, is the same request. Anything else while a payment is on its way (or its start
@@ -797,7 +805,6 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             stillSpeaking(deferredRestore.request, deferredRestore.session)
                 ? deferredRestore
                 : null;
-        if (restoring) deferredRestore = null;
         if (deferred) remember(deferred.request, deferred.session);
         const asked = deferred
             ? { intentId: null, ...deferred }
@@ -810,11 +817,31 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         busy = true;
         activeRequest = asked.request;
         activeFrom = asked.from;
+        activeSession = asked.session;
         show({ checking: true });
+        // A lookup that could not be made keeps the restore that was turned away: the buyer's next try (Restore purchase, or Check payment) goes on with
+        // that page's request, and not with the wish of the checkout before it. Only a lookup that gave an answer lets it go.
+        const keepRestore = () => {
+            if (!deferred) return;
+            deferredRestore ??= deferred;
+            lastRestore = { request: deferred.request, from: deferred.from, session: deferred.session };
+            target = null;
+        };
+        const lettingGo = () => {
+            if (
+                deferredRestore &&
+                deferredRestore.request === asked.request &&
+                deferredRestore.session === asked.session
+            )
+                deferredRestore = null;
+        };
         void (async () => {
             const settle = (update: Partial<PayLine>, told: string, test = false) => {
                 busy = false;
                 activeRequest = "";
+                activeSession = undefined;
+                if (told === "unavailable" || told === "cant_confirm") keepRestore();
+                else if (!update.paid) lettingGo();
                 show({
                     ...owedRestore(update),
                     ...update,
@@ -825,7 +852,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     tellEnd(told, deferred.latest, asked.from, test, asked.session);
                 }
                 if (update.paid) {
-                    tellDeferredPaid(test);
+                    tellDeferredPaid(test, asked.request, deferred?.latest ?? "");
                     tellLatestPaid(test, asked.request, deferred?.latest ?? "");
                 }
             };
@@ -857,6 +884,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     if (deferred?.latest && deferred.latest !== asked.request) {
                         lateAsker = { request: deferred.latest, from: asked.from, session: deferred.session };
                     }
+                    // Its restore is being watched now, under its own request: nothing is left to hand over at the end
+                    lettingGo();
                     return adopt(answer.orderId, resumeOf(answer), asked.request, asked.from, asked.session);
                 }
                 if (answer.status === "not_paid" || answer.status === "cant_confirm") {
@@ -872,6 +901,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 }
                 busy = false;
                 activeRequest = "";
+                activeSession = undefined;
+                keepRestore();
                 const update: Partial<PayLine> = { problem: "unavailable", canCheck: true };
                 show({ ...owedRestore(update), ...update });
             }

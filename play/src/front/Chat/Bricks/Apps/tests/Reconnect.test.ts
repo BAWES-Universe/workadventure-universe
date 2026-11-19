@@ -252,4 +252,13 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         expect(await signInInPopup("c1", { signal: early.signal })).toBe("stopped");
         expect(popup.location.href).not.toBe("");
     });
+
+    it("never starts the app's connection when it is stopped before it began", async () => {
+        const early = new AbortController();
+        early.abort();
+        const factory = vi.fn(() => Promise.resolve("c1"));
+        expect(await signInInPopup(factory, { signal: early.signal })).toBe("stopped");
+        expect(factory).not.toHaveBeenCalled();
+        expect(popup.close).toHaveBeenCalled();
+    });
 });

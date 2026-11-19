@@ -2111,7 +2111,9 @@ export class BotApiService {
                 // looking after stops only after a few such answers in a row, not on the first
                 this.visitRecheckMisses += 1;
                 if (!options?.recheck || this.visitRecheckMisses >= BotApiService.VISIT_RECHECK_MISSES)
-                    this.stopVisitRecheck();
+                    // The looking after's own third miss ends it but does not void a walk in or Bring along still on its way: those
+                    // are judged by their own count, so a "here" from one of them still starts the looking after again
+                    this.stopVisitRecheck(!options?.recheck);
             }
             return present;
         } catch (error) {
@@ -2154,8 +2156,8 @@ export class BotApiService {
         }, BotApiService.VISIT_RECHECK_MS);
     }
 
-    private stopVisitRecheck(): void {
-        this.visitRecheckGeneration += 1;
+    private stopVisitRecheck(voidInFlight = true): void {
+        if (voidInFlight) this.visitRecheckGeneration += 1;
         this.visitRecheckMisses = 0;
         if (this.visitRecheck === undefined) return;
         clearInterval(this.visitRecheck);

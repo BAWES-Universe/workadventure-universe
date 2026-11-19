@@ -532,6 +532,15 @@ describe('one Instant run', () => {
         expect(b.result.outcome).toBe('uncertain');
     });
 
+    it('an unclear refusal that carries Orbit\'s stop still ends the task, and one without it does not', async () => {
+        const stopped = await go(answers({ status: 'refused', reason: 'unclear', message: 'Checking.', stop: true } as InstantRunAnswer));
+        expect(stopped.result.outcome).toBe('uncertain');
+        expect(stopped.stop).toBe(true);
+        const open = await go(answers({ status: 'refused', reason: 'unclear', message: 'Checking.', stop: false } as InstantRunAnswer));
+        expect(open.result.outcome).toBe('uncertain');
+        expect(open.stop).toBeFalsy();
+    });
+
     it('an already-checking answer that says stop still ends the task, and the link is given one instruction, not two', async () => {
         const link = '[What it used](#usage=act_5)';
         const stopped = await go(answers({ status: 'refused', reason: 'already_checking', message: 'Checking.', stop: true } as InstantRunAnswer), { receiptLink: link });

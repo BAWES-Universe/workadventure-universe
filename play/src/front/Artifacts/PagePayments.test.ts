@@ -1782,6 +1782,111 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         gone.destroy();
     });
 
+    it("keeps a restore that was turned away through a lookup that could not be made: Check payment and Restore purchase both go on with that page's request", async () => {
+        const offline = () => new ArtifactRequestError(0, "offline");
+        const paidBack = { status: "paid", testPayment: false, paidAt: "2026-11-19T10:00:00.000Z" };
+        const turnedAway = async (pay: ReturnType<typeof vi.fn>) => {
+            showing = 1;
+            const payments = make(pay);
+            ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+            await flush();
+            showing = 2;
+            ask(payments, frameWindow, {
+                universe: "use-app",
+                app: "examplepay",
+                request: "load",
+                session: "s2",
+                restore: true,
+            });
+            ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r2", session: "s2" });
+            await flush();
+            // The first checkout ends unpaid, and the buyer is offered Restore purchase for the page that was turned away
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(get(payments.line)).toMatchObject({ problem: "not_paid", offerRestore: true });
+            framePost.mockClear();
+            return payments;
+        };
+
+        // Restore purchase whose lookup fails, then Check payment: it retries that restore (not the first checkout's wish), and the page hears paid under both requests it waits on
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "not_paid" })
+            .mockRejectedValueOnce(offline())
+            .mockResolvedValue(paidBack);
+        const payments = await turnedAway(pay);
+        payments.restorePurchase();
+        await flush();
+        expect(get(payments.line)).toMatchObject({ problem: "unavailable", canCheck: true });
+        payments.checkPayment();
+        await flush();
+        expect(pay.mock.calls.at(-1)?.[2]).toMatchObject({ restore: true });
+        expect(heard()).toEqual([
+            { universe: "app-result", status: "paid", request: "load", session: "s2" },
+            { universe: "app-result", status: "paid", request: "r2", session: "s2" },
+        ]);
+        payments.destroy();
+
+        // Restore purchase again after the failed lookup: the same page is answered
+        const again = await turnedAway(
+            vi
+                .fn()
+                .mockResolvedValueOnce(checkout)
+                .mockResolvedValueOnce({ status: "not_paid" })
+                .mockResolvedValueOnce({ status: "cant_confirm" })
+                .mockResolvedValue(paidBack)
+        );
+        again.restorePurchase();
+        await flush();
+        expect(get(again.line)).toMatchObject({ problem: "cant_confirm" });
+        again.restorePurchase();
+        await flush();
+        expect(heard().filter((m) => m.status === "paid")).toEqual([
+            { universe: "app-result", status: "paid", request: "load", session: "s2" },
+            { universe: "app-result", status: "paid", request: "r2", session: "s2" },
+        ]);
+        again.destroy();
+    });
+
+    it("answers a request busy by the document the running operation was started for, not by whoever last used that request id", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ status: "none" })
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "not_paid" })
+            // The buyer's own Restore purchase is running when the other document repeats its request
+            .mockImplementationOnce(
+                () =>
+                    new Promise(() => {
+                        // never answered
+                    })
+            );
+        const payments = make(pay);
+        showing = 1;
+        // Document A restores under r1 and finds nothing
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "r1",
+            session: "sA",
+            restore: true,
+        });
+        await flush();
+        // Document B uses the same id for its checkout, which ends unpaid
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "sB" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line)).toMatchObject({ problem: "not_paid" });
+        framePost.mockClear();
+        // The buyer restores for A (the last restore a page asked for); B repeats its request while it runs
+        payments.restorePurchase();
+        await flush();
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "sB" });
+        await flush();
+        expect(heard()).toEqual([{ universe: "app-result", status: "busy", request: "r1", session: "sB" }]);
+        payments.destroy();
+    });
+
     it("tells the page its purchase is back when Check payment finds it after a failed load restore: the page has no checkout of its own, so it is told under the request that asked", async () => {
         const pay = vi
             .fn()

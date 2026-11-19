@@ -870,6 +870,9 @@ class ConnectionManager {
         const guestToken = localUserStore.peekGuestTokenAside();
         const sendGuestToken = guestToken !== null && localUserStore.storedTokenIsAccounts();
 
+        // When the request goes: whether the guest token was still valid is judged then, not when the answer comes back
+        const sentAt = Date.now();
+
         // TODO: the call to "/me" could be completely removed and the request data could come from the FrontController
         // For this to work, the authToken should be stored in a cookie instead of localStorage.
         const data = await axiosToPusher
@@ -896,7 +899,7 @@ class ConnectionManager {
         if (response.status === "error") {
             // Orbit asked for the same sign-in again, with the guest id that went along: it is kept aside for 30 more minutes from now, so
             // a hand-over that takes longer than the first 30 still has it on the last try
-            if (response.type === "retry" && sendGuestToken) localUserStore.renewGuestTokenAside();
+            if (response.type === "retry" && sendGuestToken) localUserStore.renewGuestTokenAside(Date.now(), sentAt);
             // A refusal the pusher sent after renewing the token carries it: keep it, the old one may no longer work.
             const renewedToken = (data as { authToken?: unknown } | null)?.authToken;
             if (typeof renewedToken === "string") {

@@ -175,17 +175,21 @@
     function copyReceipt() {
         const receipt = payments.receiptLink();
         if (!receipt) return;
+        // The paid line this copy was started from: a guest's receipt link is the same for every checkout of this page, so it is the line that tells
+        // whether the outcome still belongs to what the buyer sees
+        const copiedFrom = $payLine.paid;
         const copying = navigator.clipboard?.writeText(receipt) ?? Promise.reject(new Error("No clipboard"));
         copying.then(
             () => {
-                if (destroyed) return;
+                // Only for the line that was being copied from: a new checkout may have taken the line since
+                if (destroyed || $payLine.paid !== copiedFrom) return;
                 receiptByHand = undefined;
                 receiptCopied = true;
                 if (receiptTimer) clearTimeout(receiptTimer);
                 receiptTimer = setTimeout(() => (receiptCopied = false), 8_000);
             },
             () => {
-                if (destroyed) return;
+                if (destroyed || $payLine.paid !== copiedFrom) return;
                 receiptByHand = receipt;
             }
         );
