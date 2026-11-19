@@ -264,6 +264,28 @@ describe('a message that arrives while the store that knows the chat is down', (
         bridge.stop();
     });
 
+    it('lets go of a kept message once it is a day old, however many times it was kept again', async () => {
+        vi.useFakeTimers({ now: 1_700_000_000_000 });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+
+        await bridge.onEvent({ ...message('are you there?'), origin_server_ts: Date.now() });
+        // Every try fails for a day and an hour: it is kept again each time, and its age is the message's own
+        await vi.advanceTimersByTimeAsync(25 * 60 * 60_000);
+        down = false;
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+        expect(stores.deps.reply).not.toHaveBeenCalled();
+        bridge.stop();
+    });
+
     it('does not answer an older message after the person wrote again and was answered', async () => {
         vi.useFakeTimers();
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);

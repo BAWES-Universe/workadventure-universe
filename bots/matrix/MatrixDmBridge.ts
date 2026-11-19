@@ -329,6 +329,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private stopping = false;
     private waitingTimer: NodeJS.Timeout | undefined;
     /** The newest message of a chat whose bot could not be looked up because the store was unreachable: tried again, never lost. */
+    /** `at`: when the message was sent, not when it was last kept, so a message kept again and again still ages out like a waiting one. */
     private unplaced = new Map<string, { event: MatrixEvent; at: number }>();
     private unplacedTimer: NodeJS.Timeout | undefined;
     private unplacedDelay = UNPLACED_RETRY_MS;
@@ -1648,7 +1649,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private keepUnplaced(event: MatrixEvent): void {
         if (this.stopping) return;
         const kept = this.unplaced.get(event.room_id);
-        if (!kept || (event.origin_server_ts ?? 0) >= (kept.event.origin_server_ts ?? 0)) this.unplaced.set(event.room_id, { event, at: Date.now() });
+        if (!kept || (event.origin_server_ts ?? 0) >= (kept.event.origin_server_ts ?? 0)) this.unplaced.set(event.room_id, { event, at: event.origin_server_ts ?? Date.now() });
         this.scheduleUnplaced();
     }
 
