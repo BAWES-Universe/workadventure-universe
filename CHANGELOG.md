@@ -8,25 +8,30 @@ Everything before Universe's own releases is the WorkAdventure history, kept at 
 
 ## [Unreleased]
 
-Planned for 0.5.0. This section gets its version and date when the release ships.
+Planned for 0.5.0. This section gets its version and date when the release ships. Numbers like (#123) are pull request or issue numbers in this repository.
 
 ### Added
 - **Bricks for everyone.** "Just you" in the Share list, private answers in a group, everyone's own Brick, more Bricks, delete with Undo, the Brick for guests in Chats, what a Brick remembers and its files, a Brick's page with look, Mind, Voice, Behavior, Permissions and Companion, a Brick that lives in a room and walks beside its person, templates. (#2009, #2010, #2014, #2019 to #2021, #2023, #2049, #2055)
 - **Calling a Brick.** The call's rules, bar, walk-up card and button, the private call space, the bot server starting and ending a call, the front joining the call, a meeting holding the call, a quiet stretch, and "On a call" next to a person's status. (#2017, #2024, #2026, #2039, #2040, #2050)
-- **Apps.** Lend an App to a universe, the Apps pages, Search apps and Connect another, "Connect your calendar?" in chat, add your own App, Keys for Apps (including keys with text that cannot go in a header), add by link without making it twice, Connect GitHub for Bricks. (#2027 to #2030, #2035, #2042, #2048, #2051, #2058)
-- **Goals and tasks.** Reminders from Orbit's due list, a person asks for a reminder and can snooze, pause or stop it, watches, briefings and goals, goals use the owner's Apps and ask on a card, a goal that cannot tell asks once, Goals on a Brick's page and across all Bricks, "Everything Brick did", chat steps with a clock and a time per step. (#2025, #2034, #2047, #2054, #2056, #2057, #2059, #2060, #2062, #2064)
-- **Computers.** The model relay and the runner, and computers for every member. (#2015, #2043)
+- **Apps.** Lend an App to a universe, the Apps pages, Search apps and Connect another, "Connect your calendar?" in chat, add your own App, Keys for Apps (including keys with text that cannot go in a header), add by link without making it twice, Connect GitHub for Bricks, a Connect card for ready-made Apps and GitHub, Reconnect for an App whose sign-in expired, other people using your Apps through your Brick, and a kind line when the team paused Apps or computers. (#2027 to #2030, #2035, #2042, #2048, #2051, #2058, #2081, #2082, #2089)
+- **Goals and tasks.** Reminders from Orbit's due list, a person asks for a reminder and can snooze, pause or stop it, watches, briefings and goals, goals use the owner's Apps and ask on a card, a goal that cannot tell asks once, Goals on a Brick's page and across all Bricks, "Everything Brick did", chat steps with a clock and a time per step, a Run now button, and a snoozed run says the schedule after it. (#2025, #2034, #2047, #2054, #2056, #2057, #2059, #2060, #2062, #2064, #2090)
+- **Computers.** The model relay and the runner, and computers for every member. Computers report back truthfully: told only when delivered, results in Files, file cards. A Brick says which app it weighed and how many steps, and the screen closes when its tab is hidden. Reach every file in a Brick's Files, search them, and download all of them. (#2015, #2043, #2083, #2084, #2087)
 - **Usage.** A Usage row and page, real numbers, extra credit, By bot and Activity receipts, and a Brick's owner can run Instant Apps from chat. (#2016, #2052, #2053)
 - **Voice and phone.** Every bot hears voice notes, a locked-phone push opens with the Brick's news, and wokas at the screen edges stay visible when zoomed out. (#2032, #2065, #2018)
 
 ### Changed
 - "Didn't work?" is removed, and a refunded task shows why it took nothing. (#2066)
 - Free bot greetings are text only. (#1989)
+- A Friends chip shows how many friends are online. (#2097)
+- Old images are cleaned from the package list: on by default, and also when a PR closes. (#2091, #2099)
+- A purged Brick keeps nothing in chat. (#2092)
 - PostHog gets usage numbers only, nothing people say, and players by Orbit id and never email. (#2045, #1842, #1843)
 
 ### Fixed
 - Voice bots reconnect a lost audio line, and a bot hears a LiveKit person again. (#1990, #2012)
 - The Play build no longer runs the runner out of memory. (#2037)
+- Every voice bot pauses on a loud sound and stops only when it is speech. (#2013)
+- Room is held for a computer's model call when the text is not Latin, and the screen input socket has its own deadline. (#2077, #2088)
 
 ## [0.4.3] - 2026-11-10
 
