@@ -457,6 +457,8 @@ export interface InstantTask {
     attempts?: number;
     /** The generation Orbit says the receipt is on: sent with every renew and close, so a word from an older turn changes nothing there. Unset for an Orbit that gives none. */
     generation?: number;
+    /** How many times Orbit answered a close of done or refunded with "still checking" (the task's computer job is still going): said again later, a few times. */
+    waited?: number;
     /** A close was sent (whether or not Orbit took it). A closed task is never used again: Orbit keeps a done or refunded receipt as it ended, so a run
      * that came after (a reply written again) goes under a task of its own, with its own key and receipt. */
     closed?: boolean;
@@ -523,9 +525,11 @@ export function receiptStateOf(ended: readonly InstantEnded[]): TaskReceiptState
 
 /** How many times a close that Orbit did not answer is sent again before it is let go (Orbit settles a receipt left open by itself). */
 export const CLOSE_TRIES = 3;
+/** How many times a close that Orbit answers "still checking" (a job is still going) is said again, one for each end of a turn: past it Orbit's own sweep ends the receipt with the job. */
+export const CLOSE_WAITS = 10;
 
 /** Whether the task has outcomes its receipt was not closed with yet, and a close still worth sending. */
-export const instantTaskPending = (task: InstantTask): boolean => !!task.title && task.ended.length > (task.reported ?? 0) && (task.attempts ?? 0) < CLOSE_TRIES;
+export const instantTaskPending = (task: InstantTask): boolean => !!task.title && task.ended.length > (task.reported ?? 0) && (task.attempts ?? 0) < CLOSE_TRIES && (task.waited ?? 0) < CLOSE_WAITS;
 
 /**
  * Ends the task's receipt, once for what ran since it was last ended. Nothing happens when nothing new ran. What the task used is never sent:
@@ -560,13 +564,19 @@ export function endInstantTask(
             let taken = await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state, ...(task.generation === undefined ? {} : { generation: task.generation }) });
             // Orbit moved the receipt on to a later generation (a late run came under it): that close changed nothing. This task still holds the turn's
             // end, so the same word goes again, once, under the generation it is on now
-            if (typeof taken === 'object') {
+            if (typeof taken === 'object' && 'stale' in taken) {
                 if (taken.generation !== undefined) task.generation = taken.generation;
                 taken = taken.generation === undefined ? false : await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state, generation: taken.generation });
-                if (typeof taken === 'object') {
+                if (typeof taken === 'object' && 'stale' in taken) {
                     if (taken.generation !== undefined) task.generation = taken.generation;
                     taken = false;
                 }
+            }
+            // The task is not over (its computer job is still running): the receipt waits for it. Nothing was ended, nothing went wrong, and no try is used up:
+            // the same word goes again at the next end, and settles at once when the job is over
+            if (typeof taken === 'object') {
+                task.waited = (task.waited ?? 0) + 1;
+                return;
             }
             if (taken) task.reported = count;
             else task.attempts = (task.attempts ?? 0) + 1;

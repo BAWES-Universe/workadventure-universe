@@ -464,6 +464,13 @@ export interface TaskReceiptStale {
     stale: true;
     generation?: number;
 }
+/**
+ * Orbit's answer to a close of done or refunded for a task that is not over (a computer's job is still running, or a run of the task has not ended):
+ * the receipt waits in "checking" and ends with the job. The close is not taken yet: it is said again later, and settles at once when the job is over.
+ */
+export interface TaskReceiptWaiting {
+    waiting: true;
+}
 const wholeGeneration = (value: unknown): number | undefined => (typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined);
 export type TaskReceiptState = 'done' | 'refunded' | 'checking';
 
@@ -1601,7 +1608,7 @@ export class AdminApiService {
      * more to ask: Orbit took it, or said it never will (a receipt that is not this person's or does not exist, a guest without Activity, a request it
      * refuses: asking again will not change that). False when Orbit gave no answer (down, a server error, a timeout) or said to slow down (429), so it is worth asking again.
      */
-    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState; generation?: number }): Promise<boolean | TaskReceiptStale> {
+    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState; generation?: number }): Promise<boolean | TaskReceiptStale | TaskReceiptWaiting> {
         const answer = await this.instantCall(
             'post',
             `api/bots/${encodeURIComponent(botId)}/task-receipts`,
@@ -1613,6 +1620,9 @@ export class AdminApiService {
         if (answer.status === 'none') return answer.rejected === true && answer.http !== 429;
         // A close from an older generation changed nothing: the caller says which one the receipt is on now, and decides whether it is still the closer
         if (answer.status === 200 && answer.data.stale === true) return { stale: true, generation: wholeGeneration(answer.data.generation) };
+        // A done or a refunded that Orbit answers with "checking": the task is not over (its job is still running), so the receipt waits for it. It is
+        // not ended, and not a failure: the close goes again later. When the word sent was "checking" itself, "checking" is the answer it asked for
+        if (answer.status === 200 && task.state !== 'checking' && answer.data.state === 'checking') return { waiting: true };
         return answer.status === 200 || answer.status === 404;
     }
 

@@ -19,7 +19,9 @@ import {
     InstantOffers,
     NOT_CONFIRMED,
     carryOnCard,
+    CLOSE_WAITS,
     endInstantTask,
+    instantTaskPending,
     formatInstantResult,
     instantReceiptTitle,
     instantToolDefinitions,
@@ -182,6 +184,21 @@ describe('Orbit’s Instant routes, from the bot server', () => {
         expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k' })).toBeNull();
         request.mockRejectedValueOnce(new Error('down'));
         expect(await admin().renewTaskReceipt(BRICK, 'uuid-alice', { taskKey: 'k' })).toBeNull();
+    });
+
+    it('says a close of done or refunded that Orbit answers "checking" (its computer job is still running) is waiting, not ended; "checking" answered to "checking" is just taken', async () => {
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done', generation: 1 })).toEqual({ waiting: true });
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'refunded' })).toEqual({ waiting: true });
+        // The word sent was "checking" itself: that is what it asked for
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'checking' })).toBe(true);
+        // A stale answer is still stale, and an ended one is taken
+        respond(200, { ok: true, id: 'act_1', state: 'checking', generation: 2, stale: true });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done', generation: 1 })).toEqual({ stale: true, generation: 2 });
+        respond(200, { ok: true, id: 'act_1', state: 'done', generation: 1 });
+        expect(await admin().closeTaskReceipt(BRICK, 'u', { taskKey: 'k', state: 'done' })).toBe(true);
     });
 
     it('never throws for a receipt: Orbit down, a guest without Activity or a body it does not take is just "no receipt"', async () => {
@@ -656,6 +673,34 @@ describe('one task, one receipt', () => {
         expect(again.reported).toBeUndefined();
         expect(again.attempts).toBe(1);
         expect(again.generation).toBe(5);
+    });
+
+    it('a close Orbit answers "still checking" (the computer job is still running) ends nothing and is no failure: the same word goes at the next end, and is taken when the job is over', async () => {
+        const task = newInstantTask();
+        const admin = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null, generation: 1 }), closeTaskReceipt: vi.fn().mockResolvedValueOnce({ waiting: true }).mockResolvedValueOnce({ waiting: true }).mockResolvedValue(true) };
+        await openInstantReceipt(admin, BRICK, 'u', task, 'x');
+        task.ended.push('worked');
+        await endInstantTask(admin, BRICK, 'u', task);
+        // Not counted as ended, and no try used up (a failure to ask is a different thing)
+        expect(task.reported).toBeUndefined();
+        expect(task.attempts).toBeUndefined();
+        expect(instantTaskPending(task)).toBe(true);
+        await endInstantTask(admin, BRICK, 'u', task);
+        expect(task.reported).toBeUndefined();
+        // The job is over: Orbit takes it at once
+        await endInstantTask(admin, BRICK, 'u', task);
+        expect(admin.closeTaskReceipt).toHaveBeenCalledTimes(3);
+        expect(admin.closeTaskReceipt.mock.calls.every((call) => call[2].state === 'done')).toBe(true);
+        expect(task.reported).toBe(1);
+        expect(instantTaskPending(task)).toBe(false);
+
+        // A receipt that waits for ever is not asked for ever: past a few ends Orbit's own sweep ends it with the job
+        const long = newInstantTask();
+        const waiting = { openTaskReceipt: vi.fn().mockResolvedValue({ link: null, paidBy: null }), closeTaskReceipt: vi.fn().mockResolvedValue({ waiting: true }) };
+        await openInstantReceipt(waiting, BRICK, 'u', long, 'x');
+        long.ended.push('worked');
+        for (let i = 0; i < CLOSE_WAITS + 5; i++) await endInstantTask(waiting, BRICK, 'u', long);
+        expect(waiting.closeTaskReceipt).toHaveBeenCalledTimes(CLOSE_WAITS);
     });
 
     it('renews the lease of an opened receipt with its generation, takes the generation Orbit names, and never throws', async () => {
