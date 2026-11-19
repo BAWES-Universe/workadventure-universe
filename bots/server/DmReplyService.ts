@@ -17,6 +17,7 @@ import type { PendingMedia } from '../memory/ConversationMemory';
 import type { ArtifactCard } from '../ai/ArtifactTools';
 import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
+import type { ToolSignInCard, ToolSignInDelivery } from '../mcp/ToolSignInCard';
 import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
@@ -164,6 +165,10 @@ export interface DmReply {
     claimOffer?: () => Promise<string | null>;
     /** The same for an App offer's card (game #2001). */
     claimApp?: () => Promise<string | null>;
+    /** A tool's sign-in expired and this person manages the bot (#1819): the Reconnect card to send after the reply. */
+    toolSignIn?: ToolSignInCard;
+    /** Says how the Reconnect card's send went (see AIStreamChunk.toolSignInDelivery) */
+    toolSignInDelivery?: ToolSignInDelivery;
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -557,6 +562,8 @@ export class DmReplyService extends BaseBehavior {
         let promptTokens = 0;
         let completionTokens = 0;
         let providerFailed = false;
+        let toolSignIn: ToolSignInCard | undefined;
+        let toolSignInDelivery: ToolSignInDelivery | undefined;
         // The bot's own "Show tool calls" switch (#742) decides whether this reply shows its steps line (#1545)
         let steps: ReplySteps | undefined;
         let showSteps: boolean | undefined;
@@ -617,9 +624,15 @@ export class DmReplyService extends BaseBehavior {
                     if (steps?.finish(chunk.toolStepResults)) await showStepsNow();
                     continue;
                 }
+                if (chunk.toolSignIn) {
+                    toolSignIn = chunk.toolSignIn;
+                    toolSignInDelivery = chunk.toolSignInDelivery;
+                    continue;
+                }
                 // A reply limit: nothing was said and nothing is remembered as said
                 if (chunk.replyLimit) {
                     await stopSteps();
+                    toolSignInDelivery?.(false);
                     return { text: '', media: [], replyLimit: chunk.replyLimit };
                 }
                 if (chunk.content) fullMessage = appendStreamedChunk(fullMessage, chunk.content);
@@ -634,11 +647,14 @@ export class DmReplyService extends BaseBehavior {
         } catch (error) {
             console.error(`[DmReplyService] AI error for bot ${botId}:`, error);
             await stopSteps();
+            // The reply failed before the card could go with it: it is shown at a later reply
+            toolSignInDelivery?.(false);
             return { text: '', media: [], failed: true };
         }
         if (providerFailed) {
             console.error(`[DmReplyService] AI provider failed for bot ${botId}; the answer so far is dropped`);
             await stopSteps();
+            toolSignInDelivery?.(false);
             return { text: '', media: [], failed: true };
         }
 
@@ -694,6 +710,7 @@ export class DmReplyService extends BaseBehavior {
             replyText = withoutRoomCardMark(replyText);
         } catch (error) {
             await stopSteps();
+            toolSignInDelivery?.(false);
             throw error;
         }
         // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
@@ -751,6 +768,7 @@ export class DmReplyService extends BaseBehavior {
             ...(bricks.length ? { bricks } : {}),
             ...(claimOffer ? { claimOffer } : {}),
             ...(claimApp ? { claimApp } : {}),
+            ...(toolSignIn ? { toolSignIn, ...(toolSignInDelivery ? { toolSignInDelivery } : {}) } : {}),
         };
     }
 

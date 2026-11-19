@@ -298,8 +298,9 @@ describe('a ready-made App', () => {
                     sent.push(body);
                     return { data: { status: 401, contentType: null, sessionId: null, body: '' } };
                 }) as never);
-                const result = (await callWith(ai, 'second')).result as { outcome: string };
-                expect(result.outcome).toBe('not_sent');
+                const result = (await callWith(ai, 'second')).result as { outcome: string; error: string };
+                // Its key is no longer good: nothing ran, and it is told as a sign-in that expired (#1819), not as an outage
+                expect(result).toMatchObject({ outcome: 'failed', error: 'Sign-in expired. Nothing ran' });
                 expect(sent.map((b) => b.message.method)).toEqual(['tools/list']);
             } finally {
                 vi.useRealTimers();
@@ -340,7 +341,8 @@ describe('a ready-made App', () => {
         });
         const ai = service(async () => ({ allowed: true }));
         const [result] = await ai['executeToolCalls']([{ id: 'c-401', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-401', 7);
-        expect(result.result.outcome).toBe('not_sent');
+        // Nothing ran, and it is told as a sign-in that expired (#1819), not as an outage
+        expect(result.result).toMatchObject({ outcome: 'failed', error: 'Sign-in expired. Nothing ran' });
         expect(sent.map((b) => b.message.method)).toEqual(['initialize']);
         // Nothing was kept: the next call opens a session again
         sent.length = 0;

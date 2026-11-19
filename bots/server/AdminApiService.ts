@@ -465,6 +465,11 @@ export interface OfferableApp {
     key: string;
     name: string;
     blurb: string;
+    /**
+     * Which call connects it, as Orbit says: "listed" is an App of Orbit's list, and GitHub through Universe's own GitHub App;
+     * "readyMade" is a ready-made App. An older Orbit sends none, and every App it lists is "listed".
+     */
+    kind: 'listed' | 'readyMade';
     /** The person's own connection to it, when they have one. */
     connectionId: string | null;
     /** That connection is signed in and works. */
@@ -1131,8 +1136,8 @@ export class AdminApiService {
     }
 
     /**
-     * The Apps a Brick of this person could offer to connect (game #2001): the list a super admin keeps in Orbit, with the
-     * person's own connection to each when they have one, whether it works, and whether this Brick may already use it. Orbit
+     * The Apps a Brick of this person could offer to connect (game #2001): every App the Apps page offers under Connect another
+     * (the list a super admin keeps, ready-made Apps and GitHub), with the person's own connection to each when they have one, whether it works, and whether this Brick may already use it. Orbit
      * answers only for the Brick's owner. Throws when Orbit says no or cannot be reached: the caller offers nothing then.
      */
     async appsOfferableFor(viaBotId: string, userId: string): Promise<OfferableApp[]> {
@@ -1146,6 +1151,7 @@ export class AdminApiService {
                 key: app.key,
                 name: app.name,
                 blurb: typeof app.blurb === 'string' ? app.blurb : '',
+                kind: app.kind === 'readyMade' ? 'readyMade' : 'listed',
                 connectionId: typeof app.connectionId === 'string' && app.connectionId ? app.connectionId : null,
                 connected: app.connected === true,
                 usable: app.usable === true,

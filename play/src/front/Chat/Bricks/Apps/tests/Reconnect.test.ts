@@ -25,8 +25,12 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         game.startAppSignIn.mockResolvedValue("https://github.com/login/oauth/authorize?x=1");
     });
 
-    const handOver = (data: unknown, origin = window.location.origin) =>
-        window.dispatchEvent(new MessageEvent("message", { data, origin }));
+    // jsdom takes only a real window as a message's source, so it is set on the event after it is made
+    const handOver = (data: unknown, origin = window.location.origin, from: unknown = popup) => {
+        const event = new MessageEvent("message", { data, origin });
+        Object.defineProperty(event, "source", { value: from });
+        window.dispatchEvent(event);
+    };
 
     it("finishes it with the code the return page hands over, then closes the window", async () => {
         game.finishGitHubSignIn.mockResolvedValue({ installUrl: null });
@@ -109,5 +113,30 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         handOver({ type: "oauth-failure" });
         expect(await result).toBe("stopped");
         expect(game.finishGitHubSignIn).not.toHaveBeenCalled();
+    });
+
+    it("opens a window of its own for each attempt, and takes only its own window's word", async () => {
+        const other = { location: { href: "" }, close: vi.fn(), closed: false };
+        vi.mocked(window.open)
+            .mockReturnValueOnce(popup as unknown as Window)
+            .mockReturnValueOnce(other as unknown as Window);
+        const first = signInInPopup("c1");
+        const second = signInInPopup("c2");
+        await vi.waitFor(() => expect(other.location.href).toContain("github.com"));
+        const names = vi.mocked(window.open).mock.calls.map((call) => call[1]);
+        expect(new Set(names).size).toBe(2);
+        let settled = false;
+        void first.then(() => (settled = true));
+        // The second window's result settles only the second attempt
+        handOver({ type: "oauth-success" }, window.location.origin, other);
+        expect(await second).toBe("done");
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        // Nor does some other window's word settle the first
+        handOver({ type: "oauth-success" }, window.location.origin, { another: "window" });
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        handOver({ type: "oauth-success" });
+        expect(await first).toBe("done");
     });
 });

@@ -12,13 +12,16 @@ export function reconnectApp(appId: string): Promise<ReconnectResult> {
     return signInInPopup(appId);
 }
 
+/** Each attempt has a window of its own: one name would hand the same window to two sign-ins started together */
+let signInAttempts = 0;
+
 /**
  * The same window for connecting an app for the first time (a Brick's card in a chat): the connection may still be being
  * made when the tap happens, so the window opens first and the app's id may be a promise. A connection that cannot be made
  * is "blocked", like a sign-in that did not start.
  */
 export async function signInInPopup(appId: string | Promise<string>): Promise<ReconnectResult> {
-    const popup = window.open("", "oauth-popup", "width=600,height=700");
+    const popup = window.open("", `oauth-popup-app-${++signInAttempts}`, "width=600,height=700");
     if (!popup) return "blocked";
     let authorizeUrl: string;
     try {
@@ -56,6 +59,8 @@ export async function signInInPopup(appId: string | Promise<string>): Promise<Re
         let signedIn = false;
         const onMessage = (event: MessageEvent) => {
             if (event.origin !== window.location.origin) return;
+            // Only what this attempt's own window says counts: another window's result does not settle it
+            if (event.source !== popup) return;
             const data = event.data as { type?: unknown; state?: unknown; code?: unknown } | null;
             if (data?.type === "oauth-success") finish("done");
             else if (data?.type === "oauth-failure") finish(signedIn ? "done" : "stopped");

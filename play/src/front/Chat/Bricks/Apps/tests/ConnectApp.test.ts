@@ -70,8 +70,12 @@ describe("Connect on an app (#2001)", () => {
         vi.unstubAllGlobals();
     });
 
-    const tell = (type: string) =>
-        window.dispatchEvent(new MessageEvent("message", { data: { type }, origin: window.location.origin }));
+    // jsdom takes only a real window as a message's source, so it is set on the event after it is made
+    const tell = (type: string, from: unknown = popup) => {
+        const event = new MessageEvent("message", { data: { type }, origin: window.location.origin });
+        Object.defineProperty(event, "source", { value: from });
+        window.dispatchEvent(event);
+    };
 
     it("opens the sign-in window from a listed app and answers its connection once it signed in", async () => {
         game.connectListedApp.mockResolvedValue("c1");
@@ -100,6 +104,26 @@ describe("Connect on an app (#2001)", () => {
         );
         tell("oauth-success");
         expect(await result).toEqual({ status: "connected", appId: "c9" });
+    });
+
+    it("opens a window of its own for each attempt, and takes only its own window's result", async () => {
+        game.connectReadyMadeApp.mockResolvedValue({ id: "c9", redirectUrl: "https://provider.test/sign-in" });
+        const result = connectApp(ready);
+        const other = connectApp(ready);
+        await vi.waitFor(() => expect(popup.location.href).not.toBe(""));
+        const names = open.mock.calls.map((call) => call[1]);
+        expect(new Set(names).size).toBe(2);
+        // A result from some other window settles nothing
+        let settled = false;
+        void result.then(() => (settled = true));
+        tell("oauth-success", { another: "window" });
+        await new Promise((resolve) => {
+            setTimeout(resolve, 20);
+        });
+        expect(settled).toBe(false);
+        tell("oauth-success");
+        expect(await result).toEqual({ status: "connected", appId: "c9" });
+        await other;
     });
 
     it("does not call a ready-made app connected when its provider has not confirmed the sign-in", async () => {

@@ -17,7 +17,7 @@ function setup() {
         viewport: { top: 0, bottom: 600, left: 0, right: 800 },
         characterTextureIds: [],
     });
-    const send = vi.fn();
+    const send = vi.fn(() => true);
     Object.assign(bot as unknown as { send: unknown }, { send });
     const internals = bot as unknown as { spaces: Map<string, string>; bubbles: Map<string, number[]> };
     internals.spaces.set(SPACE, 'room-1_12');

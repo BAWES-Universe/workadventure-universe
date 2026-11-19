@@ -928,6 +928,26 @@ const chat: BaseTranslation = {
         useMyKey: "Use my AI key",
         onlyYou: "Only you see this",
     },
+    toolSignIn: {
+        titleOne: "{name} needs signing in again",
+        titleMany: "{count} Apps need signing in again",
+        titleBackOne: "{name} is connected again",
+        titleBackMany: "Connected again",
+        lineOne: "Since {time}. {bot} answers without {name} until it's reconnected.",
+        lineMany: "{bot} answers without them until they're reconnected.",
+        lineBack: "{bot} can use it from its next reply.",
+        reconnect: "Reconnect {name}",
+        pasteKey: "Paste a new {name} key",
+        waiting: "Waiting for {name}…",
+        reconnected: "Reconnected",
+        rowBack: "{name} reconnected",
+        rowBackLine: "Working again",
+        rowSince: "Since {time}",
+        blocked: "Couldn't open the sign-in window. Allow pop-ups and try again.",
+        keyFormFailed: "Couldn't open the key form. Try again.",
+        onlyYou: "Only you see this card. You can manage {bot}.",
+        close: "Close",
+    },
     botAsk: {
         needsAnswer: "{name} needs your answer",
         usesAccount: "Uses {account} account",
@@ -1135,6 +1155,9 @@ const chat: BaseTranslation = {
             notNowAsked: "Nothing is connected",
             // The sign-in window was closed, blocked or did not start; the card stays so they can try again
             signInStopped: "{name} was not connected. Try again when you're ready.",
+            // The sign-in finished but Orbit could not be asked whether it counted: it may well be connected
+            signInUnchecked:
+                "{name}'s sign-in finished, but we couldn't check it just now. Open Apps in a moment to see it.",
             signInBlocked: "The sign-in window did not open. Allow pop-ups for this page and try again.",
             couldNotLet: "{name} is connected, but this Brick could not be let use it. Choose it in Apps.",
         },

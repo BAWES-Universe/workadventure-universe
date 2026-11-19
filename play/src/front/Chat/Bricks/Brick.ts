@@ -382,6 +382,8 @@ export interface AppOffer {
     /** The App on Orbit's list: its key and the name people see. */
     app: string;
     name: string;
+    /** Which call connects it: "listed" (an App of Orbit's list, and GitHub) or "readyMade". Older messages carry none: "listed". */
+    connectKind: "listed" | "readyMade";
     /** "new": nothing is connected. "connected": they connected it already, and this Brick may not use it yet. */
     state: "new" | "connected";
     /** Their connection to it, when they have one. */
@@ -405,11 +407,12 @@ export function readAppOffer(
     const offer = content[APP_OFFER_KEY];
     if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text") return undefined;
     if (!offer || typeof offer !== "object") return undefined;
-    const { topic, app, name, state, connectionId, ask, asked, other } = offer as Record<string, unknown>;
+    const { topic, app, name, connectKind, state, connectionId, ask, asked, other } = offer as Record<string, unknown>;
     const read: AppOffer = {
         topic: text(topic, TOPIC_MAX),
         app: text(app, 80),
         name: text(name, APP_NAME_MAX),
+        connectKind: connectKind === "readyMade" ? "readyMade" : "listed",
         state: state === "connected" ? "connected" : "new",
         connectionId: typeof connectionId === "string" && connectionId ? connectionId : null,
         ask: text(ask, APP_ASK_MAX),

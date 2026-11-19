@@ -1,4 +1,5 @@
 import type { AppOffer } from "../Brick";
+import type { ConnectResult } from "./ConnectApp";
 import type { ReconnectResult } from "./Reconnect";
 
 /**
@@ -9,6 +10,8 @@ import type { ReconnectResult } from "./Reconnect";
  * - An App they connected already is only "let it use": no second sign-in.
  * - A new one: its connection is made and the sign-in window opens in the same tap (the window is opened first, so the
  *   browser does not block it), then this Brick is let use it. Only this Brick: the Apps page is where the others are chosen.
+ *   An App of Orbit's list (and GitHub, through Universe's own GitHub App) and a ready-made App sign in the two ways the Apps
+ *   page does: the offer says which (`connectKind`), so a card never connects through the wrong call.
  * - An App that needs no sign-in has its connection made and nothing opens.
  */
 export type ChatConnectResult =
@@ -16,6 +19,8 @@ export type ChatConnectResult =
     | "connected"
     /** The window was closed, or the sign-in did not finish. Nothing is left half done that the person must undo. */
     | "stopped"
+    /** The sign-in finished, but Orbit could not be asked whether it counted. It may well be connected. */
+    | "unchecked"
     /** The window could not open, or the connection could not be made. */
     | "blocked"
     /** It is connected, but this Brick could not be let use it. */
@@ -26,6 +31,11 @@ export interface ChatConnectSteps {
     connectListedApp: (key: string) => Promise<string>;
     /** Opens the App's sign-in window now and ends when it ends. */
     signIn: (appId: string | Promise<string>) => Promise<ReconnectResult>;
+    /**
+     * A ready-made App: makes the connection, opens the provider's own sign-in page in a window opened first, and ends when it
+     * ends, with the connection once Orbit confirms the sign-in (the same steps as "Connect" on the Apps page).
+     */
+    connectReadyMade: (app: { key: string; name: string }) => Promise<ConnectResult>;
     /** Whether the person's connection works without a window (an App that needs no sign-in). */
     isConnected: (appId: string) => Promise<boolean>;
     /** Lets one of the person's Bricks use their App. */
@@ -44,6 +54,15 @@ export async function connectFromCard(
     let appId: string;
     if (offer.state === "connected" && offer.connectionId) {
         appId = offer.connectionId;
+    } else if (offer.connectKind === "readyMade") {
+        // The window opens in this same tap: nothing is awaited before it
+        const made = await steps.connectReadyMade({ key: offer.app, name: offer.name });
+        if (made.status === "blocked") return "blocked";
+        if (made.status !== "connected") {
+            await steps.refresh();
+            return made.status;
+        }
+        appId = made.appId;
     } else {
         // Both start in the same tap: the window opens while the connection is still being made
         const made = steps.connectListedApp(offer.app);
