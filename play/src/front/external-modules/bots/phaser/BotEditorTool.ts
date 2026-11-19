@@ -53,6 +53,12 @@ export class BotEditorTool {
     // Store subscriptions
     private unsubscribers: Unsubscriber[] = [];
 
+    // Pending retry of activate() while the room's scene is being swapped
+    private activateRetryTimer: ReturnType<typeof setTimeout> | undefined;
+    private activateRetryCount = 0;
+    private static readonly ACTIVATE_RETRY_DELAY_MS = 250;
+    private static readonly ACTIVATE_MAX_RETRIES = 40;
+
     // Event handlers
     private pointerDownHandler?: (pointer: Phaser.Input.Pointer) => void;
     private pointerMoveHandler?: (pointer: Phaser.Input.Pointer) => void;
@@ -66,11 +72,38 @@ export class BotEditorTool {
      * Get the current game scene
      */
     private getScene(): GameScene | undefined {
+        // Only the live current scene: getCurrentGameScene() falls back to the scene being replaced during a room
+        // change, which Phaser may already have shut down (its keyboard plugin then has no manager and addKey throws).
+        let scene: GameScene | undefined;
         try {
-            return gameManager.getCurrentGameScene();
+            scene = gameManager.tryGetCurrentGameScene();
         } catch {
             return undefined;
         }
+        if (!scene || !BotEditorTool.isSceneUsable(scene)) {
+            return undefined;
+        }
+        return scene;
+    }
+
+    private static isSceneUsable(scene: GameScene): boolean {
+        const input = scene.input;
+        if (!scene.sys.isActive() || !input) {
+            return false;
+        }
+        // A destroyed KeyboardPlugin keeps existing but drops its manager
+        if (input.keyboard && !input.keyboard.manager) {
+            return false;
+        }
+        return true;
+    }
+
+    private cancelActivateRetry(): void {
+        if (this.activateRetryTimer !== undefined) {
+            clearTimeout(this.activateRetryTimer);
+            this.activateRetryTimer = undefined;
+        }
+        this.activateRetryCount = 0;
     }
 
     /**
@@ -92,8 +125,18 @@ export class BotEditorTool {
         this.scene = this.getScene();
         if (!this.scene) {
             console.warn("BotEditorTool: Cannot activate - no scene available");
+            // The room's scene may be mid-swap: try again once the new one is running
+            const canRetry = this.activateRetryCount < BotEditorTool.ACTIVATE_MAX_RETRIES;
+            if (this.activateRetryTimer === undefined && canRetry) {
+                this.activateRetryCount++;
+                this.activateRetryTimer = setTimeout(() => {
+                    this.activateRetryTimer = undefined;
+                    this.activate();
+                }, BotEditorTool.ACTIVATE_RETRY_DELAY_MS);
+            }
             return;
         }
+        this.cancelActivateRetry();
 
         this.isActive = true;
         botEditorToolActiveStore.set(true);
@@ -119,6 +162,7 @@ export class BotEditorTool {
      * Deactivate the bot editor tool
      */
     public deactivate(): void {
+        this.cancelActivateRetry();
         if (!this.isActive) {
             return;
         }
