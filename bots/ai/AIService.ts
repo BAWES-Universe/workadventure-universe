@@ -2196,7 +2196,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
                                 readForTheGroup = true;
@@ -4611,7 +4611,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** The reply is an answer for one person alone (#1993): it was offered no tools, so a call the model makes anyway is not run. */
         noTools = false,
         /** The Apps a review in this reply said the computer could do better (the reply's own set, filled as it goes). */
-        reviewedApps?: ReadonlySet<string>
+        reviewedApps?: ReadonlySet<string>,
+        /** Where the reply is said: the memory tools (what is remembered, forgetting it) are the person's own and run only in their direct message, whatever the model asks for. */
+        channel: 'world' | 'dm' = 'world'
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -4643,7 +4645,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 const instantRun = isInstantTool(toolCall.name) && !toolServerMap?.has(toolCall.name);
                 // A visitor's turn never runs the owner's artifacts, files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
                 const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
-                switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
+                switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && (channel !== 'dm' || !this.memoryToolsOn(botId, botClient))) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();

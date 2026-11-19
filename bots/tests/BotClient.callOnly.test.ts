@@ -104,6 +104,26 @@ describe('BotClient call-only connection', () => {
         expect(gate.check).not.toHaveBeenCalled();
     });
 
+    it('admits only a call the game makes for this bot, and only its caller', async () => {
+        const { client, internals } = bot(true);
+        client.setBehavior({ setBot: vi.fn(), getConfiguredFacing: vi.fn(), onSpaceUserJoined: vi.fn() } as never);
+        // A name that only starts like a call's, or one made for another bot, is no call of this bot's
+        expect(await internals.mayChat('call__zz', 7, {})).toBe(false);
+        expect(await internals.mayChat(`${SPACE}_extra`, 7, {})).toBe(false);
+        expect(await internals.mayChat(callSpaceName({ botId: 'another-bot', callerUuid: 'uuid-1', callId: 'c1' }), 7, {})).toBe(false);
+        expect(await internals.mayChat(SPACE, 7, {})).toBe(true);
+        // Once the caller is in the space, a line from any other member of it is not theirs
+        await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: 'room_7' } } });
+        const mayChat = internals.mayChat as unknown as (space: string, sender: number, message: object, spaceUserId?: string) => Promise<boolean>;
+        expect(await mayChat.call(client, SPACE, 7, {}, 'room_7')).toBe(true);
+        expect(await mayChat.call(client, SPACE, 8, {}, 'room_8')).toBe(false);
+        // And a bot takes no call that is not its own
+        internals.emitJoinSpace = vi.fn().mockResolvedValue('call_abc');
+        expect(await client.acceptCall('call__zz')).toBe(false);
+        expect(await client.acceptCall(callSpaceName({ botId: 'another-bot', callerUuid: 'uuid-1', callId: 'c1' }))).toBe(false);
+        expect(internals.emitJoinSpace).not.toHaveBeenCalled();
+    });
+
     it('takes a call by joining its space with nothing to show', async () => {
         const { client, internals } = bot(true);
         const onSpaceJoined = vi.fn();

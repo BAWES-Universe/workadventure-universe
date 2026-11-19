@@ -61,7 +61,7 @@ import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
 import { isGreetingReply } from './GreetingReply';
 import { ReplyReaders } from './ReplyReaders';
-import { isCallSpaceName } from '../../libs/shared-utils/src/Space/callSpaceName';
+import { isCallSpaceName, parseCallSpaceName } from '../../libs/shared-utils/src/Space/callSpaceName';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -448,11 +448,12 @@ export class BotClient {
      * go no further; when Orbit cannot answer and the bot has no earlier answer for them, they are told so each time.
      * Never throws.
      */
-    private async mayChat(spaceName: string, senderId: number, message: object): Promise<boolean> {
+    private async mayChat(spaceName: string, senderId: number, message: object, senderSpaceUserId?: string): Promise<boolean> {
         // A meeting room's chat is not the bot's to answer: there the bot only takes part in the audio
         if (this.isMeetingSpace(spaceName)) return false;
-        // A call was allowed by Orbit's "Call" rule when it was started (and only that person is in it)
-        if (isCallSpaceName(spaceName)) return true;
+        // A call was allowed by Orbit's "Call" rule when it was started, and only its caller and this bot are in it: a space that only
+        // starts like a call's (it is not exactly one a call makes, or it is another bot's), or a sender who is not the caller, is not one
+        if (isCallSpaceName(spaceName)) return this.ownCall(spaceName) !== undefined && this.isCaller(spaceName, senderSpaceUserId);
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         // Someone's first words can arrive just before the game says who they are: asking Orbit now would take a
@@ -472,6 +473,18 @@ export class BotClient {
             }
         }
         return this.chatAllowed(gate, spaceName, senderId);
+    }
+
+    /** The call a space is, when it is exactly one the game makes for this bot (not another bot's, not a name that only starts like one). */
+    private ownCall(spaceName: string): ReturnType<typeof parseCallSpaceName> {
+        const call = parseCallSpaceName(spaceName);
+        return call && call.botId === this.config.botId ? call : undefined;
+    }
+
+    /** Whether who sent this is the caller the call's space has (when the caller is known, and the sender's id is: the pusher lets in only the two). */
+    private isCaller(spaceName: string, senderSpaceUserId: string | undefined): boolean {
+        const caller = this.callerIds.get(spaceName);
+        return caller === undefined || senderSpaceUserId === undefined || senderSpaceUserId === caller;
     }
 
     /** Orbit's answer for this person, with the owner's line said once per visit when it is a no. */
@@ -3163,7 +3176,7 @@ export class BotClient {
      * a call-only connection has no room user. Resolves true once it is in the space.
      */
     async acceptCall(spaceName: string): Promise<boolean> {
-        if (!this.config.callOnly || !isCallSpaceName(spaceName)) return false;
+        if (!this.config.callOnly || !this.ownCall(spaceName)) return false;
         try {
             const spaceUserId = await this.emitJoinSpace(spaceName, FilterType.ALL_USERS, ['cameraState', 'microphoneState', 'screenShareState']);
             this.spaces.set(spaceName, spaceUserId);
@@ -3180,7 +3193,7 @@ export class BotClient {
 
     /** In a call space, anyone who is not a call-only connection (this bot) is the caller. */
     private noteCallerIn(spaceName: string, users: ReadonlyArray<{ spaceUserId?: string }>): void {
-        if (!this.config.callOnly || !isCallSpaceName(spaceName)) return;
+        if (!this.config.callOnly || !this.ownCall(spaceName)) return;
         const caller = users.find((user) => user.spaceUserId && !user.spaceUserId.startsWith(CALL_ONLY_SPACE_USER_PREFIX));
         if (!caller?.spaceUserId) return;
         // Kept so a reply meant for the caller alone is addressed to the caller's own id (spaceUserIdOf)
@@ -3834,20 +3847,12 @@ export class BotClient {
                     
                     // Extract numeric userId from senderUserId (format: "roomID_userID")
                     // This is more reliable than matching by name and avoids name collisions
-                    let senderId = 0;
-                    if (senderUserId) {
-                        const lastUnderscoreIndex = senderUserId.lastIndexOf('_');
-                        if (lastUnderscoreIndex !== -1) {
-                            const userIdStr = senderUserId.substring(lastUnderscoreIndex + 1);
-                            senderId = parseInt(userIdStr, 10);
-                            if (isNaN(senderId)) {
-                                senderId = 0;
-                            }
-                        }
-                    }
-                    
-                    // Fallback: if extraction failed, try to find by name
-                    if (senderId === 0) {
+                    // A call-only connection's id ("call_<random>") is never a player number, however its random part ends (playerIdOf)
+                    const callOnlySender = !!senderUserId?.startsWith(CALL_ONLY_SPACE_USER_PREFIX);
+                    let senderId = BotClient.playerIdOf(senderUserId);
+
+                    // Fallback: if extraction failed, try to find by name (never for a call-only connection: a name is no proof of who it is)
+                    if (senderId === 0 && !callOnlySender) {
                         for (const [userId, player] of this.players.entries()) {
                             if (player.name === senderName) {
                                 senderId = userId;
@@ -3914,7 +3919,7 @@ export class BotClient {
                             break;
                         }
                         // Before anything is done with the message (links looked up, files read, the AI asked)
-                        if (!(await this.mayChat(spaceName, senderId, message))) {
+                        if (!(await this.mayChat(spaceName, senderId, message, senderUserId))) {
                             break;
                         }
                         // Heard once, here; the people who got the note see what was heard under it
