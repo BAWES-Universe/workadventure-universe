@@ -1848,6 +1848,78 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         again.destroy();
     });
 
+    describe("Check payment after a turned-away page's restore lookup failed", () => {
+        const offline = () => new ArtifactRequestError(0, "offline");
+        const paidBack = { status: "paid", testPayment: false, paidAt: "2026-11-19T10:00:00.000Z" };
+        const turnedAway = async (pay: ReturnType<typeof vi.fn>) => {
+            showing = 1;
+            const payments = make(pay);
+            ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+            await flush();
+            showing = 2;
+            ask(payments, frameWindow, {
+                universe: "use-app",
+                app: "examplepay",
+                request: "load",
+                session: "s2",
+                restore: true,
+            });
+            ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r2", session: "s2" });
+            await flush();
+            // The first checkout ends unpaid; the page that was turned away asks to restore, and the lookup cannot be made
+            await vi.advanceTimersByTimeAsync(3_000);
+            payments.restorePurchase();
+            await flush();
+            expect(get(payments.line)).toMatchObject({ problem: "unavailable", canCheck: true });
+            framePost.mockClear();
+            return payments;
+        };
+
+        it("keeps what the page waits on through a not paid yet, and tells it under both requests when the purchase is found", async () => {
+            const notYet = await turnedAway(
+                vi
+                    .fn()
+                    .mockResolvedValueOnce(checkout)
+                    .mockResolvedValueOnce({ status: "not_paid" })
+                    .mockRejectedValueOnce(offline())
+                    .mockResolvedValueOnce({ status: "not_paid" })
+                    .mockResolvedValue(paidBack)
+            );
+            notYet.checkPayment();
+            await flush();
+            expect(get(notYet.line)).toMatchObject({ problem: "not_paid", canCheck: true });
+            framePost.mockClear();
+            notYet.checkPayment();
+            await flush();
+            expect(heard().filter((m) => m.status === "paid")).toEqual([
+                { universe: "app-result", status: "paid", request: "load", session: "s2" },
+                { universe: "app-result", status: "paid", request: "r2", session: "s2" },
+            ]);
+            notYet.destroy();
+        });
+
+        it("hands over what the page waits on when Check payment finds an open order that is paid later", async () => {
+            const open = await turnedAway(
+                vi
+                    .fn()
+                    .mockResolvedValueOnce(checkout)
+                    .mockResolvedValueOnce({ status: "not_paid" })
+                    .mockRejectedValueOnce(offline())
+                    .mockResolvedValueOnce({ status: "checking", orderId: "o9", pollAfterMs: 3000 })
+                    .mockResolvedValue(paidBack)
+            );
+            open.checkPayment();
+            await flush();
+            await vi.advanceTimersByTimeAsync(10_000);
+            await flush();
+            expect(heard().filter((m) => m.status === "paid")).toEqual([
+                { universe: "app-result", status: "paid", request: "load", session: "s2" },
+                { universe: "app-result", status: "paid", request: "r2", session: "s2" },
+            ]);
+            open.destroy();
+        });
+    });
+
     it("tells a restore that was turned away its purchase even when another document's checkout used the same request id", async () => {
         const pay = vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "paid", testPayment: false });
         const payments = make(pay);

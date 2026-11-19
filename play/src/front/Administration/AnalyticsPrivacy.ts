@@ -132,7 +132,7 @@ const REPLAY_SRCSET_KEYS = /^(?:attr__)?(?:data-)?(?:image)?srcset$/i;
  * An address inside a style or a stylesheet's text: url(...), with or without quotes. A backslash escapes the next character in CSS,
  * so an escaped bracket or quote ("a\)b.png?token=x") belongs to the address and does not end it.
  */
-const CSS_URL = /url\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\.|[^)\\])*?))\s*\)/gi;
+const CSS_URL = /url\(\s*(?:"((?:\\[\s\S]|[^"\\])*)"|'((?:\\[\s\S]|[^'\\])*)'|((?:\\[\s\S]|[^)\\])*?))\s*\)/gi;
 
 /** One address of a replay, without its query and hash (absolute or relative), and without an email in its path. A data: address holds no address and stays. */
 function cleanReplayAddress(address: string): string {

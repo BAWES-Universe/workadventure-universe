@@ -192,11 +192,23 @@ export class PersistentMemory extends ConversationMemory {
 
     /** A late read of the store may bring forgets that apply to what is already held: they are applied to it now. */
     private dropRecordedForgetsFromHeld(): void {
-        for (const [key, memory] of this.getAllMemories()) this.dropRecordedForgets(key.slice(0, key.lastIndexOf('_')), memory, this.personOf(key, memory) || undefined);
-        // The snapshot's key says whose it is ("<bot>_<uuid>"), whatever the memory inside still calls itself (a memory made before the uuid was known says "temp-<playerId>")
-        for (const [key, memory] of this.loadedMemoriesByUuid) {
-            const cut = key.lastIndexOf('_');
-            this.dropRecordedForgets(key.slice(0, cut), memory, key.slice(cut + 1));
+        // Whose forgets there are, taken from the entries themselves: a key cut at an underscore breaks for a person whose id has one (an email)
+        const people = new Map<string, Set<string>>();
+        for (const entry of [...this.unreportedItemForgets.values(), ...this.forgottenLedger.values()]) {
+            const known = people.get(entry.botId);
+            if (known) known.add(entry.userUuid);
+            else people.set(entry.botId, new Set([entry.userUuid]));
+        }
+        for (const [botId, userUuids] of people) {
+            const prefix = `${botId}_`;
+            for (const [key, memory] of this.getAllMemories()) {
+                if (key.startsWith(prefix)) this.dropRecordedForgets(botId, memory, this.personOf(key, memory) || undefined);
+            }
+            // The snapshot's key says whose it is ("<bot>_<uuid>"), whatever the memory inside still calls itself (a memory made before the uuid was known says "temp-<playerId>")
+            for (const userUuid of userUuids) {
+                const snapshot = this.loadedMemoriesByUuid.get(`${botId}_${userUuid}`);
+                if (snapshot) this.dropRecordedForgets(botId, snapshot, userUuid);
+            }
         }
     }
 

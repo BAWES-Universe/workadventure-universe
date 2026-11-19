@@ -1132,7 +1132,8 @@ export class AIService {
         yield { content: `\n\n${NOTHING_SAVED_LINE}`, done: false };
         hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
         yield { content: '', done: false, reset: true, toolNames: [] };
-        const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
+        // What the first answer was made from is what this one is made from too: someone who walks up meanwhile is not sent it
+        const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false, fileDerived: turn.fileDerived };
         for await (const chunk of this.heldForGroup(attempt(nothingSavedRetryMessage(message, said), true, second), second, abortSignal)) {
             if (chunk.reset) hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
             if (chunk.done) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
