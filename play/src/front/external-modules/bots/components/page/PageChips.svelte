@@ -7,6 +7,7 @@
     export let options: Array<{ value: T; label: string; icon?: ComponentType }>;
     export let value: T;
     export let onPick: (value: T) => void;
+    export let disabled = false;
 </script>
 
 <div class="bp-chips" role="radiogroup" aria-label={label}>
@@ -17,6 +18,7 @@
             class="bp-chip"
             class:on={option.value === value}
             aria-checked={option.value === value}
+            {disabled}
             on:click={() => onPick(option.value)}
         >
             {#if option.value === value}<span class="bp-check"><IconCheck font-size="14" stroke-width="3" /></span>{/if}

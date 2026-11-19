@@ -292,6 +292,10 @@ export interface BrickItemView {
     cadence: { type: 'once'; at: string } | { type: 'daily'; time: string; days: number[] } | { type: 'every'; minutes: number } | { type: 'none' };
     timeZone: string;
     nextDueAt: string | null;
+    /** Where the schedule itself comes next: a snooze moves one run and never this. */
+    nextRegularAt?: string | null;
+    /** The snoozed run that is still to come (it is `nextDueAt`), or null/absent when nothing is snoozed. */
+    snoozedUntil?: string | null;
     state: 'on' | 'paused' | 'done' | 'deleted';
     setBy: 'you' | 'brick';
     lastRunAt: string | null;
@@ -1204,7 +1208,7 @@ export class AdminApiService {
         return this.itemCall('get', `api/bots/${encodeURIComponent(brickId)}/brick-items`, undefined, { userId });
     }
 
-    changeBrickItem(brickId: string, itemId: string, body: Record<string, unknown>): Promise<ItemAnswer<{ item: BrickItemView }>> {
+    changeBrickItem(brickId: string, itemId: string, body: Record<string, unknown>): Promise<ItemAnswer<{ item: BrickItemView; run?: { runId: string; state: string; replay: boolean } }>> {
         return this.itemCall('patch', `api/bots/${encodeURIComponent(brickId)}/brick-items/${encodeURIComponent(itemId)}`, body);
     }
 
@@ -1570,12 +1574,19 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string } }
-    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string }> {
-        const response = await this.brickCall<{ ok?: unknown; reason?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
+        ask: { title: string; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
+        const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
-            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }), ...(ask.origin ? { origin: ask.origin } : {}) }
+            {
+                userId,
+                title: ask.title,
+                ...(ask.brief ? { brief: ask.brief } : {}),
+                ...(ask.writes === undefined ? {} : { writes: ask.writes }),
+                ...(ask.plan ? { plan: ask.plan } : {}),
+                ...(ask.origin ? { origin: ask.origin } : {}),
+            }
         );
         const data = response.data;
         const job = data?.job;
@@ -1586,7 +1597,13 @@ export class AdminApiService {
                 restoredFrom: typeof data.restoredFrom === 'string' ? data.restoredFrom : null,
             };
         }
-        return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown' };
+        return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown', ...(typeof data?.app === 'string' ? { app: data.app } : {}) };
+    }
+
+    /** Whether the steps an app has taken in one answer already cost what the job would on the computer, so the Brick should look again at the way. Throws when Orbit cannot be reached. */
+    async reviewAppSteps(viaBotId: string, userId: string, app: string, steps: number): Promise<boolean> {
+        const response = await this.brickCall<{ review?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-route-review`, { userId, app, steps });
+        return response.data?.review === true;
     }
 
     /** A job as it stands (#2000), or null when it is not there. */

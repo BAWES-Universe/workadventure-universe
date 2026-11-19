@@ -35,6 +35,8 @@ export function computerToolDefinitions(): { type: 'function'; function: { name:
                     properties: {
                         job: { type: 'string', description: 'What the job is, in a few plain words, as the bar will show it: "Visa form", "Shop website", "Taxi booking".' },
                         details: { type: 'string', description: 'Everything the computer needs to do it, in the person\'s words: the site, what they asked for, the choices they made. Leave out passwords, card numbers and ID numbers: the computer asks the person for those when it needs them.' },
+                        app: { type: 'string', description: 'Only when one of your apps could seem to fit this job: its name, as it is connected. Leave out otherwise.' },
+                        app_steps: { type: 'integer', description: 'With app: about how many steps (your own turns) that app would take to do the whole job. Your best guess, a whole number.' },
                         app_cannot: { type: 'string', description: 'Only when one of your apps could seem to fit this job: in a few words, why that app cannot do it (it has no such action, or the job lives on a website screen). Leave out otherwise.' },
                         reads_only: { type: 'boolean', description: 'True when the job only looks and writes nothing anywhere (it may run beside another job). Leave out otherwise.' },
                     },
@@ -62,6 +64,8 @@ export interface ComputerToolContext {
     userId: string;
     /** The direct chat this reply is in: the job is started from it, and its result goes back to it and nowhere else. */
     origin?: { kind: 'dm'; ref: string };
+    /** The apps a review in this reply said the computer could do better: a call that names one with how many steps are left is for Orbit to weigh, not sent back to the app. */
+    reviewed?: ReadonlySet<string>;
     /** Called once a job is running, so a development server can pretend to do it. */
     onStarted?: (jobId: string) => void;
 }
@@ -89,24 +93,115 @@ export function appThatFits(job: string, details: string, apps: string[] | undef
     return null;
 }
 
+/** Every this many steps an app has taken in one answer, the Brick looks again at whether the computer would be the better way for the rest. */
+export const APP_STEP_CHECKPOINT = 20;
+
+/** Whether going from `before` to `after` steps passed a checkpoint (20, 40, 60...). */
+export function checkpointCrossed(before: number, after: number): boolean {
+    return after > before && Math.floor(after / APP_STEP_CHECKPOINT) > Math.floor(before / APP_STEP_CHECKPOINT);
+}
+
+/** Every checkpoint passed in going from `before` to `after` steps, in order (a round that adds many steps can pass more than one). */
+export function checkpointsCrossed(before: number, after: number): number[] {
+    const passed: number[] = [];
+    for (let at = (Math.floor(before / APP_STEP_CHECKPOINT) + 1) * APP_STEP_CHECKPOINT; at <= after; at += APP_STEP_CHECKPOINT) passed.push(at);
+    return passed;
+}
+
+/** One line for the model at a checkpoint: no price, and nothing for the person unless the Brick moves the work. */
+export function appStepsNote(app: string, steps: number): string {
+    return `You have taken ${steps} steps in ${app} on this job. If a lot of the job is still left, your computer may be the better way to finish it: call use_computer for the rest, with app "${app}" and app_steps about how many steps the rest would take in ${app} (no app_cannot is needed). If it is nearly done, just finish it in ${app}. Say nothing about this to the person unless you move the work.`;
+}
+
+/** A step that did not run, or did not finish: it is not a step the App took. */
+const notTaken = (result: unknown): boolean => {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+    const given = result as Record<string, unknown>;
+    return given.error !== undefined || given.success === false || given.isError === true || given.status === 'waiting_for_ok';
+};
+
+/** What the model reads of an App result at a checkpoint: the line first, so that cutting a long result for room never cuts it. The person's own view of the step is made from the result and is not this. */
+export function withReviewNote(text: string, note: string | undefined): string {
+    return note ? `${note}\n\n${text}` : text;
+}
+
+export interface AppStepReview {
+    /** The line for the model, by the id of the App result it goes with (the model's copy only: what the person sees is left as it was). */
+    notes: Map<string, string>;
+    /** The Apps whose steps a review said the computer could do better: a use_computer that names one of them and says how many steps are left goes to Orbit to weigh. */
+    accepted: Set<string>;
+}
+
+/**
+ * Counts the steps the apps took in one round of tool calls (`counts` is kept for the whole answer, per app) and, for every checkpoint an
+ * app's count passes, asks whether to look again at the computer (`ask`, which is Orbit's call). When one of those says yes, the line is
+ * given for that app's last result of the round, to be put first in the model's copy of it. A step that failed or is waiting for an OK is not
+ * counted. Nothing is changed in the results. Advice only, and never throws: a question that cannot be answered adds nothing.
+ */
+export async function reviewAppSteps(
+    results: Array<{ id: string; name: string; result: unknown }>,
+    appOf: (toolName: string) => string | undefined,
+    counts: Map<string, number>,
+    ask: (app: string, steps: number) => Promise<boolean>,
+    cancelled: () => boolean = () => false
+): Promise<AppStepReview> {
+    const review: AppStepReview = { notes: new Map(), accepted: new Set() };
+    const lastOf = new Map<string, string>();
+    const taken = new Map<string, number>();
+    for (const entry of results) {
+        const app = appOf(entry.name);
+        if (!app || notTaken(entry.result)) continue;
+        taken.set(app, (taken.get(app) ?? 0) + 1);
+        lastOf.set(app, entry.id);
+    }
+    for (const [app, more] of taken) {
+        const before = counts.get(app) ?? 0;
+        const after = before + more;
+        counts.set(app, after);
+        for (const at of checkpointsCrossed(before, after)) {
+            if (cancelled()) return review;
+            try {
+                if (await ask(app, at)) {
+                    review.accepted.add(app);
+                    const id = lastOf.get(app);
+                    if (id !== undefined) review.notes.set(id, appStepsNote(app, after));
+                    break;
+                }
+            } catch (error) {
+                console.warn('[ComputerTools] Could not weigh the steps of an app:', error instanceof Error ? error.message : error);
+            }
+        }
+    }
+    return review;
+}
+
 /** Runs use_computer. Never throws: the model is told in plain words what happened. */
 export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext): Promise<Record<string, unknown>> {
     const job = text(args.job, TITLE_MAX);
     if (!job) return { error: 'Say in a few words what the job is.' };
     const brief = typeof args.details === 'string' ? args.details.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, DETAILS_MAX) : '';
     const fits = appThatFits(job, brief, context.apps);
-    if (fits && text(args.app_cannot, 300).length < 8) {
+    const appCannot = text(args.app_cannot, 300);
+    const stepsGiven = typeof args.app_steps === 'number' && Number.isInteger(args.app_steps) && args.app_steps >= 1;
+    const afterReview = !!fits && stepsGiven && !!context.reviewed && [...context.reviewed].some((app) => plain(app) === plain(fits));
+    if (fits && appCannot.length < 8 && !afterReview) {
         return { started: false, success: false, note: `You have ${fits} connected, and this names it: do the job through ${fits} first. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
     }
+    // The way Brick weighed: Orbit works out which way costs least and says so (no price comes back, and none goes to the model)
+    const planned = text(args.app, 120) || fits || '';
+    const steps = typeof args.app_steps === 'number' && Number.isInteger(args.app_steps) && args.app_steps >= 1 ? Math.min(args.app_steps, 10000) : undefined;
+    const plan = planned ? { app: planned, ...(steps !== undefined ? { steps } : {}), ...(appCannot ? { appCannot } : {}) } : undefined;
     let started;
     try {
-        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(context.origin ? { origin: context.origin } : {}) });
+        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) });
     } catch (error) {
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
     }
     if (!started.ok) {
         switch (started.reason) {
+            case 'cheaper_route':
+                return { started: false, success: false, note: `${started.app ?? 'An app you have'} can do this job: do it through ${started.app ?? 'that app'}. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
             case 'off':
                 return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
             case 'broken_start':

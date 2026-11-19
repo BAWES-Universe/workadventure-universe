@@ -1,34 +1,69 @@
 name: Prune old images
 
-# Keeps the GitHub package list clean (#741): every week the dev builds older than the newest
-# KEEP are deleted from each Universe image. Release images are never touched.
-# It only lists what it would delete until the repository variable PRUNE_IMAGES_LIVE is `true`.
+# Keeps the GitHub package list clean (#741). Every week, and whenever a pull request closes, old images
+# are deleted from every Universe image. What stays, and what goes, is decided in
+# .github/scripts/prune-images.mjs (and tested in .github/scripts/prune-images.test.mjs):
+#
+#   stays:  every release image (latest, universe, universe-<sha>, version numbers), the current
+#           `universe-develop` build and the newest 10 `universe-develop-<sha>` builds (so a dev rollback still
+#           works), the build dev or production runs right now, and anything younger than two days.
+#   goes:   older universe-develop builds, the images a PR put on dev as `<branch>` and `<branch>-<sha7>` once the
+#           PR is closed (a branch that still has an open PR keeps its newest 3), and untagged versions no kept
+#           image uses.
+#
+# The two-day grace period applies to the weekly sweep. When a PR closes, its own branch's images go at once, whatever
+# their age, when they were built from the closing PR's own commits (and no other open PR uses the branch).
+#
+# The plan is printed before anything is deleted, and the weekly dry runs of the first version of this clean-up
+# already listed it. prune-images-check.yml prints the same plan as a dry run on any pull request that changes
+# the clean-up, so a change shows what it would delete before it merges.
 
 on:
   schedule:
     - cron: '17 3 * * 0'
+  # pull_request_target, not pull_request: GitHub does not start a pull_request workflow for a PR that conflicts with its base,
+  # so a conflicted PR closed unmerged would never clear its images. This job runs only the base branch's own scripts (the
+  # checkout below is the base branch) and never checks out or runs the PR's code; the PR's branch name and number are
+  # passed as plain values.
+  pull_request_target:
+    types: [closed]
   workflow_dispatch:
     inputs:
-      keep:
-        description: 'Dev builds to keep per image'
-        default: '10'
-      live:
-        description: 'Delete for real (true) or only list (false)'
-        default: 'false'
+      dry_run:
+        description: 'Only list what would be deleted'
+        type: boolean
+        default: false
+
+# Runs do not queue behind each other (a queue keeps only its newest waiting run, which would drop a closing PR's
+# clean-up). Two at once is safe: each plans from the current list and a version that is already gone is skipped.
+# Only the same PR closing twice shares a group, and waits.
+concurrency:
+  group: prune-images-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  packages: write
-
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
 
 jobs:
   prune:
+    # A PR from a fork never built images here, and Dependabot (whose runs get no secrets, and whose branches build no
+    # images) has nothing to clear.
+    if: >-
+      github.event_name != 'pull_request_target' || (
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+      && github.event.pull_request.user.login != 'dependabot[bot]')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+      # Only to open the issue below when GitHub refuses a delete.
+      issues: write
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         package:
           - play-universe
@@ -37,14 +72,91 @@ jobs:
           - uploader-universe
           - discord-bot-universe
           - bot-server-universe
+          - voice-worker-universe
     steps:
       - uses: actions/checkout@v6
-
+        with:
+          # A closed PR has no merge ref when it conflicts, so take the script from the branch the PR targeted (the code already merged there).
+          ref: ${{ github.event.pull_request.base.ref || github.ref }}
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
       - name: Prune ${{ matrix.package }}
+        id: prune
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE: ${{ matrix.package }}
+          # What dev and production run now stays. A missing uuid, address or token stops the run before anything is deleted.
+          DEV_COOLIFY_BASE: ${{ vars.DEV_COOLIFY_BASE }}
+          DEV_COOLIFY_TOKEN: ${{ secrets.DEV_COOLIFY_TOKEN }}
+          DEV_APPS: |
+            back-universe ${{ vars.DEV_COOLIFY_BACK_UUID }}
+            map-storage-universe ${{ vars.DEV_COOLIFY_MAP_STORAGE_UUID }}
+            uploader-universe ${{ vars.DEV_COOLIFY_UPLOADER_UUID }}
+            bot-server-universe ${{ vars.DEV_COOLIFY_BOT_SERVER_UUID }}
+            play-universe ${{ vars.DEV_COOLIFY_PLAY_UUID }}
+            # an unset voice-worker uuid means it is not deployed there: build-universe-images.yml and dev-server-switch.yml skip it the same way
+            voice-worker-universe ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID || 'none' }}
+          PROD_COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          PROD_COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          PROD_APPS: |
+            play-universe ${{ secrets.COOLIFY_PLAY_UUID }}
+            back-universe ${{ secrets.COOLIFY_BACK_UUID }}
+            map-storage-universe ${{ secrets.COOLIFY_MAP_STORAGE_UUID }}
+            bot-server-universe ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
+            discord-bot-universe ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
+            uploader-universe ${{ secrets.COOLIFY_UPLOADER_UUID }}
+            voice-worker-universe ${{ secrets.COOLIFY_VOICE_WORKER_UUID || 'none' }}
+          CLOSED_BRANCH: ${{ github.event.pull_request.head.ref }}
+          CLOSED_PR: ${{ github.event.pull_request.number }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(--package "$PACKAGE" --prod-branch universe --dev-branch universe-develop)
+          [ "$DRY_RUN" = true ] || args+=(--live)
+          [ -z "$CLOSED_BRANCH" ] || args+=(--closed-branch "$CLOSED_BRANCH" --closed-pr "$CLOSED_PR")
+          node .github/scripts/prune-images-cli.mjs "${args[@]}"
+      # GitHub refused a delete because this repository lacks the Admin role on the package. Say so in an issue assigned to
+      # the owner, so the missing setting is reported instead of waiting in a log. One open issue per package: a later
+      # run that hits the same refusal adds nothing while that issue is open. Two runs that report at the same moment can
+      # both create one; each then keeps the oldest and closes the rest, so one issue stays open.
+      - name: Report missing Admin access on ${{ matrix.package }}
+        if: failure() && steps.prune.outputs.needs_admin == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
           PACKAGE: ${{ matrix.package }}
-          KEEP: ${{ github.event.inputs.keep || '10' }}
-          LIVE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.live || vars.PRUNE_IMAGES_LIVE || 'false' }}
-        run: bash .github/scripts/prune-images.sh "$OWNER" "$PACKAGE" "$KEEP" "$LIVE"
+          TITLE: Image clean-up needs Admin access on ${{ matrix.package }}
+          ASSIGNEE: BAWES
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Every open issue (all pages, not a capped list) with exactly this title, oldest first.
+          matching() {
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" \
+              --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number' | sort -n
+          }
+          # A failed lookup fails this step (set -e on the assignment), so it is reported rather than read as "no issue".
+          existing=$(matching)
+          if [ -z "$existing" ]; then
+            body=$(printf '%s\n' \
+              "The image clean-up could not delete old versions of **$PACKAGE**: GitHub refused because this repository does not have the Admin role on that package. Nothing else is affected; the clean-up of this image waits until this is fixed." \
+              "" \
+              "**How to fix (about a minute):**" \
+              "1. Open https://github.com/orgs/$GITHUB_REPOSITORY_OWNER/packages and click **$PACKAGE**." \
+              "2. Click **Package settings** at the bottom of the right-hand column." \
+              "3. Under **Manage Actions access**, set **${GITHUB_REPOSITORY#*/}** to **Admin**. If it is not listed, click **Add Repository**, pick it, and choose **Admin**." \
+              "4. Close this issue. The next clean-up run deletes as planned, and opens a new issue if it is still refused." \
+              "" \
+              "Run that hit this: $RUN_URL")
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" --assignee "$ASSIGNEE" \
+              || gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body"
+            existing=$(matching)
+          fi
+          # Every run that gets here reconciles, so duplicates left by an earlier run (or a race) are closed now: keep the
+          # oldest, close the rest. A failed close fails this step and the next run tries again.
+          mapfile -t numbers <<<"$existing"
+          echo "Open issue reporting this: #${numbers[0]}"
+          for number in "${numbers[@]:1}"; do
+            gh issue close "$number" --repo "$GITHUB_REPOSITORY" --reason "not planned" --comment "Duplicate of #${numbers[0]}."
+          done

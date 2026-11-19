@@ -21,6 +21,7 @@
     import { keySaves, replaceKey } from "./KeyForm";
     import { mayLine, thingLabel } from "./AppWords";
     import LendSheet from "./LendSheet.svelte";
+    import ShareBlock from "./ShareBlock.svelte";
     import { reconnectApp } from "./Reconnect";
     import {
         IconAlertTriangle,
@@ -409,7 +410,18 @@
                     testId="appOnlyForYou"
                 />
             {:else}
-                <AppRow title={text.onlyYou()} hint={text.onlyYouLine()} icon={IconUsers} testId="appOnlyYou" />
+                <!-- One block for each Brick that uses the app: "Only you" and a button, or what people can ask for (game #2006) -->
+                {#each app.bricks as brick (brick.botId)}
+                    <ShareBlock
+                        {appId}
+                        appName={app.name}
+                        botId={brick.botId}
+                        brickName={brick.botName}
+                        look={looks.get(brick.botId) ?? null}
+                    />
+                {:else}
+                    <AppRow title={text.onlyYou()} hint={text.onlyYouLine()} icon={IconUsers} testId="appOnlyYou" />
+                {/each}
                 <AppSection title={text.lentTo()} testId="appLentTo" />
                 {#each page.lentTo as lend (lend.universeId)}
                     <div class="pg-lent" data-testid="appLent">
