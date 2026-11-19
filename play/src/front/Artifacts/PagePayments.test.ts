@@ -197,53 +197,68 @@ describe("a page that takes payments, in the game's window", () => {
         expect(told()).toEqual(["limit"]);
     });
 
-    it("does not stay starting when the server never answers the start, and can be asked again once that start is dropped", async () => {
+    /** What the page's own code does with what it hears, as the recipe the Brick is given says: waiting only while "started" */
+    const pageHears = (request: string) => {
+        let waiting = request;
+        const heard: string[] = [];
+        for (const message of toldAll()) {
+            if (!waiting || message.request !== waiting) continue;
+            heard.push(message.status);
+            if (message.status !== "started") waiting = "";
+        }
+        return heard;
+    };
+    /** A start that never answers on its own (its answer can be given by hand), and fails when it is dropped */
+    const neverAnswers =
+        (dropped: { value: boolean; answer?: (value: ArtifactPay) => void }) =>
+        (_id: unknown, _chat: unknown, _request: unknown, signal: AbortSignal) =>
+            new Promise<ArtifactPay>((resolve, reject) => {
+                dropped.answer = resolve;
+                const onAbort = () => {
+                    signal.removeEventListener("abort", onAbort);
+                    dropped.value = true;
+                    reject(new ArtifactRequestError(0, "offline"));
+                };
+                signal.addEventListener("abort", onAbort);
+            });
+
+    it("does not stay starting when the server never answers the start: it says it is taking longer, tells the page nothing, then drops it and can be asked again", async () => {
         const close = vi.fn();
         const popup = { location: { href: "" }, close } as unknown as Window;
-        let dropped = false;
-        const pay = vi
-            .fn()
-            .mockImplementationOnce(
-                (_id: unknown, _chat: unknown, _request: unknown, signal: AbortSignal) =>
-                    new Promise<ArtifactPay>((_resolve, reject) => {
-                        // Never answers, and rejects when it is dropped
-                        const onAbort = () => {
-                            signal.removeEventListener("abort", onAbort);
-                            dropped = true;
-                            reject(new ArtifactRequestError(0, "offline"));
-                        };
-                        signal.addEventListener("abort", onAbort);
-                    })
-            )
-            .mockResolvedValueOnce({
-                orderId: "o2",
-                checkoutUrl: "https://checkout.examplepay.com/c2",
-                app: "Example",
-            });
+        const dropped = { value: false };
+        const pay = vi.fn().mockImplementationOnce(neverAnswers(dropped)).mockResolvedValueOnce({
+            orderId: "o2",
+            checkoutUrl: "https://checkout.examplepay.com/c2",
+            app: "Example",
+        });
         const payments = make(pay, () => popup);
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
         await flush();
         await vi.advanceTimersByTimeAsync(29_000);
-        expect(get(payments.line)).toMatchObject({ checking: false, problem: null });
+        expect(get(payments.line)).toMatchObject({ checking: false, slow: false, problem: null });
         await vi.advanceTimersByTimeAsync(2_000);
-        expect(get(payments.line)).toMatchObject({ checking: false, problem: "unavailable" });
+        // The buyer's window says it is taking longer; the page has heard nothing, so it is still listening for its own request
+        expect(get(payments.line)).toMatchObject({ checking: true, slow: true, problem: null, resume: null });
         expect(close).toHaveBeenCalled();
-        expect(toldAll()).toEqual([{ universe: "app-result", status: "unavailable", request: "first" }]);
+        expect(toldAll()).toEqual([]);
         // Its answer may still come, so no second checkout is made meanwhile: another request is told it is busy, under its own id
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
         await flush();
         expect(pay).toHaveBeenCalledTimes(1);
-        expect(toldAll().at(-1)).toEqual({ universe: "app-result", status: "busy", request: "second" });
-        // Dropped for good after two minutes: nothing is stuck, and another start is taken
-        await vi.advanceTimersByTimeAsync(120_000);
-        expect(dropped).toBe(true);
+        expect(toldAll()).toEqual([{ universe: "app-result", status: "busy", request: "second" }]);
+        // Dropped for good two minutes after the tap: the page hears "unavailable" once, and nothing is stuck
+        await vi.advanceTimersByTimeAsync(90_000);
+        expect(dropped.value).toBe(true);
+        expect(get(payments.line)).toMatchObject({ checking: false, slow: false, problem: "unavailable" });
+        expect(toldAll().at(-1)).toEqual({ universe: "app-result", status: "unavailable", request: "first" });
+        expect(pageHears("first")).toEqual(["unavailable"]);
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "third" });
         await flush();
         expect(pay).toHaveBeenCalledTimes(2);
         payments.destroy();
     });
 
-    it("takes up a checkout that was made while its answer stalled, under the request it was started for, with its link on the line", async () => {
+    it("takes up a checkout whose start answered late, under the request it was started for, and the page hears started and then paid", async () => {
         let answerLate: (value: ArtifactPay) => void = () => undefined;
         const pay = vi
             .fn()
@@ -259,16 +274,19 @@ describe("a page that takes payments, in the game's window", () => {
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
         await flush();
         await vi.advanceTimersByTimeAsync(31_000);
-        expect(get(payments.line).problem).toBe("unavailable");
+        // Taking longer, and the page has not been told it failed
+        expect(get(payments.line)).toMatchObject({ checking: true, slow: true, problem: null });
+        expect(toldAll()).toEqual([]);
         // The page taps again while the first start is still out: refused as busy, no second checkout is made
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
         await flush();
         expect(pay).toHaveBeenCalledTimes(1);
         answerLate({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" } as ArtifactPay);
         await flush();
-        // The order is not lost: the window shows it again, with the link to go on, and asks how it stands
+        // The order is not lost: the window offers its link, and asks how it stands
         expect(get(payments.line)).toMatchObject({
             checking: true,
+            slow: false,
             problem: null,
             resume: { url: "https://checkout.examplepay.com/c1", app: "Example" },
         });
@@ -278,10 +296,115 @@ describe("a page that takes payments, in the game's window", () => {
         expect(get(payments.line).paid).toEqual({ test: false });
         // Everything about that order went out under the first request's id, and the second one only heard "busy"
         expect(toldAll()).toEqual([
-            { universe: "app-result", status: "unavailable", request: "first" },
             { universe: "app-result", status: "busy", request: "second" },
+            { universe: "app-result", status: "started", request: "first" },
             { universe: "app-result", status: "paid", request: "first" },
         ]);
+        // The page's own recipe keeps listening only while "started": it hears started, then paid, so it unlocks
+        expect(pageHears("first")).toEqual(["started", "paid"]);
+        payments.destroy();
+    });
+
+    it("never offers a late checkout to a page that was told 'unavailable': a start answered after it was dropped is never read", async () => {
+        const dropped: { value: boolean; answer?: (value: ArtifactPay) => void } = { value: false };
+        const pay = vi.fn().mockImplementationOnce(neverAnswers(dropped));
+        const payments = make(pay, () => null);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(dropped.value).toBe(true);
+        expect(pageHears("first")).toEqual(["unavailable"]);
+        // The server made the order and its answer arrives anyway: nothing is offered, nothing is asked about, the page hears nothing more
+        dropped.answer?.({
+            orderId: "o1",
+            checkoutUrl: "https://checkout.examplepay.com/c1",
+            app: "Example",
+        } as ArtifactPay);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(get(payments.line)).toMatchObject({ checking: false, resume: null, problem: "unavailable" });
+        expect(pay).toHaveBeenCalledTimes(1);
+        expect(told()).toEqual(["unavailable"]);
+        payments.destroy();
+    });
+
+    it("makes exactly one link reach the buyer when an order was made while its answer was dropped and the buyer tries again", async () => {
+        // The server makes an order for every start and returns its link only in the answer. The first answer is slower than the
+        // window waits: it is dropped, and the second start makes its own order.
+        const links: string[] = [];
+        const dropped: { value: boolean; answer?: (value: ArtifactPay) => void } = { value: false };
+        const pay = vi
+            .fn()
+            .mockImplementationOnce(neverAnswers(dropped))
+            .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" })
+            .mockResolvedValue({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay, () => null);
+        const stop = payments.line.subscribe((now) => {
+            if (now.resume) links.push(now.resume.url);
+        });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(dropped.value).toBe(true);
+        // Only now can the buyer try again (a retry never runs beside the start that was waiting), and the page is listening anew
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        await flush();
+        // The first order's answer reaches nobody, even if it arrives now
+        dropped.answer?.({
+            orderId: "o1",
+            checkoutUrl: "https://checkout.examplepay.com/c1",
+            app: "Example",
+        } as ArtifactPay);
+        await vi.advanceTimersByTimeAsync(6_000);
+        expect(links).toEqual(["https://checkout.examplepay.com/c2"]);
+        expect(pay).not.toHaveBeenCalledWith("a1", undefined, { order: "o1" });
+        expect(toldAll().map((one) => `${one.request}:${one.status}`)).toEqual([
+            "first:unavailable",
+            "second:started",
+            "second:paid",
+        ]);
+        expect(pageHears("second")).toEqual(["started", "paid"]);
+        stop();
+        payments.destroy();
+    });
+
+    it("drops a start that is still waiting for its answer when the window goes away, however soon", async () => {
+        const dropped = { value: false };
+        let signalSeen: AbortSignal | undefined;
+        const pay = vi
+            .fn()
+            .mockImplementationOnce((_id: unknown, _chat: unknown, _request: unknown, signal: AbortSignal) => {
+                signalSeen = signal;
+                return neverAnswers(dropped)(_id, _chat, _request, signal);
+            });
+        const payments = make(pay, () => null);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(signalSeen?.aborted).toBe(false);
+        payments.destroy();
+        expect(signalSeen?.aborted).toBe(true);
+        expect(dropped.value).toBe(true);
+        await vi.advanceTimersByTimeAsync(200_000);
+        // Nothing is said and nothing is asked once it is gone
+        expect(toldAll()).toEqual([]);
+        expect(pay).toHaveBeenCalledTimes(1);
+    });
+
+    it("tells the page a failure that comes while the start is only slow, once", async () => {
+        const pay = vi.fn().mockImplementationOnce(
+            () =>
+                new Promise<ArtifactPay>((_resolve, reject) => {
+                    setTimeout(() => reject(new ArtifactRequestError(500, "failed")), 45_000);
+                })
+        );
+        const payments = make(pay, () => null);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(31_000);
+        expect(get(payments.line).slow).toBe(true);
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(get(payments.line)).toMatchObject({ checking: false, slow: false, problem: "unavailable" });
+        expect(told()).toEqual(["unavailable"]);
         payments.destroy();
     });
 
@@ -311,7 +434,7 @@ describe("a page that takes payments, in the game's window", () => {
         await flush();
         await vi.advanceTimersByTimeAsync(3_000);
         expect(toldAll().map((one) => `${one.request}:${one.status}`)).toEqual([
-            "first:unavailable",
+            "first:started",
             "first:not_paid",
             "second:started",
             "second:paid",

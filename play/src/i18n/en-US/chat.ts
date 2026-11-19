@@ -2167,6 +2167,7 @@ const chat: BaseTranslation = {
         frameTitle: "{title}, by {maker}",
         // A page that takes payments (Keys for Apps, game #2044)
         payChecking: "Checking your payment…",
+        payTakingLonger: "Starting your payment is taking longer than usual. Please wait…",
         payPaid: "Paid. Thank you.",
         payPaidTest: "Test payment received. No money moved.",
         payUnavailable: "Payments unavailable",

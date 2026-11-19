@@ -728,7 +728,11 @@
                         {:else if $payLine.problem}
                             <p>{payProblemText($payLine.problem)}</p>
                         {:else}
-                            <p>{$LL.chat.artifacts.payChecking()}</p>
+                            <p>
+                                {$payLine.slow
+                                    ? $LL.chat.artifacts.payTakingLonger()
+                                    : $LL.chat.artifacts.payChecking()}
+                            </p>
                             {#if $payLine.resume}
                                 <a
                                     class="pay-go"

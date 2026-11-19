@@ -20,6 +20,8 @@ export type PayProblem = "unavailable" | "limit" | "not_paid" | "cant_confirm";
 export interface PayLine {
     /** A payment was started and has not ended */
     checking: boolean;
+    /** The start of the checkout is taking longer than usual: the page has been told nothing yet (it hears "started" or a failure, once) */
+    slow: boolean;
     /** Why it did not go through, if it did not */
     problem: PayProblem | null;
     /** Where to go on when the pop-up was blocked: the same checkout, in a new tab */
@@ -28,17 +30,24 @@ export interface PayLine {
     paid: { test: boolean } | null;
 }
 
-export const NO_PAY_LINE: PayLine = { checking: false, problem: null, resume: null, paid: null };
+export const NO_PAY_LINE: PayLine = { checking: false, slow: false, problem: null, resume: null, paid: null };
 
 /** How often an order is asked about, and for how long. The server asks the service itself at most once every few seconds. */
 const POLL_MS = 3_000;
 const POLL_FOR_MS = 20 * 60_000;
-/** How long the start of a checkout may wait for an answer before the window says it did not start (it is never left "starting"). */
+/** How long the start of a checkout may wait for an answer before the window says it is taking longer (to the buyer only: the page is told nothing yet). */
 const START_FOR_MS = 30_000;
 /**
- * How long a start that stalled is still waited for in the background. Its order, if it was made, is taken up when the answer comes (so
- * it is never lost), and no other start is taken meanwhile, so two checkouts are never made for one wish. Past this the request is
- * dropped for good: its answer is never read, so no link to it reaches anyone and it cannot be paid.
+ * How long, from the tap, the start of a checkout is waited for in all. Its order, if it was made, is taken up when the answer comes
+ * (so it is never lost) and the page hears "started" then, as for any start; and no other start is taken meanwhile (the window stays
+ * busy), so two checkouts are never made for one wish. Past this the request is dropped for good and the page hears "unavailable",
+ * once: the page is never told "unavailable" about a checkout that can still be offered to the buyer, because a page that has heard
+ * a failure stops listening to that request, and would not hear "paid" for it.
+ *
+ * Dropping the request does not undo an order the server may already have made: the server writes a new order for every start (the
+ * order's id is the service's own reference), under its hourly limits, and the buyer's link is only ever returned in that answer. An
+ * answer that is dropped is never read, so nobody holds a link to that order and nothing can be paid against it; it stays pending,
+ * never asked about, and costs one slot in the hourly limits. The next start makes its own order, with its own link.
  */
 const STALLED_START_FOR_MS = 120_000;
 /** How often a closed checkout tab is looked for: on its own clock, not the status questions' */
@@ -81,9 +90,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     let destroyed = false;
     // The id the page gave the checkout that is on its way (or whose start has not ended): every status about that checkout carries it
     let activeRequest = "";
-    // A start that was given up on (it stalled) but whose answer may still come: no other start is taken until it ends
-    let stalledStart = "";
-    let stalledAbort: AbortController | undefined;
+    // The start that is waiting for its answer: its request is dropped when the window goes away, and its timers stop
+    let startInFlight: { abort: AbortController; clear: () => void } | undefined;
 
     // The frame has no origin of its own, so it can only be addressed with "*": the message holds nothing but a status and the
     // page's own request id. The page, not this window, decides what it trusts: only its parent, and only its own request.
@@ -158,10 +166,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         if (!data || data.universe !== "use-app" || typeof data.app !== "string") return;
         // A request without a valid id of its own is never answered: there would be no way to tell whose answer it is
         if (typeof data.request !== "string" || !REQUEST_ID.test(data.request)) return;
-        if (busy || stalledStart) {
-            // The same tap heard twice is the same request. Another request while a checkout is on its way (or a start that stalled
-            // may still be answered) is told so under its own id, and the checkout that is on its way keeps its own: its result is
-            // never handed to the newer request.
+        if (busy) {
+            // The same tap heard twice is the same request. Another request while a checkout is on its way (or its start is still
+            // waiting for an answer, however long it takes) is told so under its own id, and the checkout that is on its way keeps
+            // its own: its result is never handed to the newer request.
             if (data.request !== activeRequest) tellRequest("busy", data.request);
             return;
         }
@@ -177,43 +185,48 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         }
         const request = data.request;
         void (async () => {
-            // The start waits only so long. A checkout that was made while the answer stalled is not lost: the window says
-            // "unavailable" and takes no other start until that answer comes (or is dropped), and then takes the checkout up under
-            // the request it was started for, with its link on the line.
-            let stalled = false;
-            let startTimer: ReturnType<typeof setTimeout> | undefined;
+            // The start is waited for as long as STALLED_START_FOR_MS. After START_FOR_MS the buyer's window says it is taking
+            // longer and the blank pop-up is closed (the link is offered on the line instead); the page is told nothing until the
+            // start ends: "started" with its checkout (taken up as any other), or one failure, once.
+            let slowTimer: ReturnType<typeof setTimeout> | undefined;
+            let giveUpTimer: ReturnType<typeof setTimeout> | undefined;
             const abort = new AbortController();
+            const mine = {
+                abort,
+                clear: () => {
+                    if (slowTimer) clearTimeout(slowTimer);
+                    if (giveUpTimer) clearTimeout(giveUpTimer);
+                },
+            };
+            startInFlight = mine;
             const started = pay(options.artifactId, options.chat(), { start: true }, abort.signal);
-            const timeout = new Promise<"stalled">((resolve) => {
-                startTimer = setTimeout(() => resolve("stalled"), START_FOR_MS);
+            const slow = new Promise<"slow">((resolve) => {
+                slowTimer = setTimeout(() => resolve("slow"), START_FOR_MS);
             });
             // Taken up in whichever way the start ends, so a late answer never leaves an unhandled rejection
             started.catch(() => undefined);
             try {
-                const first = await Promise.race([started, timeout]);
-                if (first === "stalled") {
-                    stalled = true;
+                let answer: ArtifactPay;
+                const first = await Promise.race([started, slow]);
+                if (first === "slow") {
                     popup?.close();
-                    stalledStart = request;
-                    stalledAbort = abort;
-                    if (!destroyed) end({ problem: "unavailable" }, "unavailable", request);
-                    const giveUp = setTimeout(() => abort.abort(), STALLED_START_FOR_MS);
-                    let late: ArtifactPay;
-                    try {
-                        late = await started;
-                    } finally {
-                        clearTimeout(giveUp);
-                        stalledStart = "";
-                        stalledAbort = undefined;
+                    popup = null;
+                    if (!destroyed) line.set({ ...NO_PAY_LINE, checking: true, slow: true });
+                    const gaveUp = new Promise<"gave_up">((resolve) => {
+                        giveUpTimer = setTimeout(() => resolve("gave_up"), STALLED_START_FOR_MS - START_FOR_MS);
+                    });
+                    const second = await Promise.race([started, gaveUp]);
+                    if (second === "gave_up") {
+                        // Dropped for good: its answer is never read, so no link to an order it may have made reaches anyone
+                        abort.abort();
+                        if (!destroyed) end({ problem: "unavailable" }, "unavailable", request);
+                        return;
                     }
-                    if (destroyed) return;
-                    const lateUrl = safeCheckout(late.checkoutUrl);
-                    if (!late.orderId || !lateUrl) return;
-                    adopt(late.orderId, lateUrl, late.app ?? "", null, request);
-                    return;
+                    answer = second;
+                } else {
+                    answer = first;
                 }
-                if (startTimer) clearTimeout(startTimer);
-                const answer = first;
+                mine.clear();
                 const url = safeCheckout(answer.checkoutUrl);
                 if (destroyed) {
                     popup?.close();
@@ -227,12 +240,13 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 adopt(answer.orderId, url, answer.app ?? "", popup, request);
                 tellRequest("started", request);
             } catch (error) {
-                if (startTimer) clearTimeout(startTimer);
                 popup?.close();
-                // A start that failed after the window gave up on it has nothing more to say
-                if (destroyed || stalled) return;
+                if (destroyed) return;
                 const limit = error instanceof ArtifactRequestError && (error.code === "limit" || error.status === 429);
                 end({ problem: limit ? "limit" : "unavailable" }, limit ? "limit" : "unavailable", request);
+            } finally {
+                mine.clear();
+                if (startInFlight === mine) startInFlight = undefined;
             }
         })();
     };
@@ -242,7 +256,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         onMessage,
         destroy() {
             destroyed = true;
-            stalledAbort?.abort();
+            // A start that is still waiting for its answer is dropped too: its answer is never read
+            startInFlight?.abort.abort();
+            startInFlight?.clear();
             if (timer) clearTimeout(timer);
             if (deadline) clearTimeout(deadline);
             if (tabWatch) clearInterval(tabWatch);
