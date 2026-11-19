@@ -88,9 +88,15 @@ export class ArtifactsList implements Readable<ChatArtifactsState> {
 export class ChatArtifactsList extends ArtifactsList {
     constructor(
         readonly chat: ArtifactChat,
-        fetchPage: (chat: ArtifactChat, offset: number) => Promise<ChatArtifactPage> = fetchChatArtifacts
+        fetchPage: (
+            chat: ArtifactChat,
+            offset: number,
+            botId?: string
+        ) => Promise<ChatArtifactPage> = fetchChatArtifacts,
+        /** The bot of a direct chat with a bot: what it made for this person elsewhere is listed too. */
+        readonly botId?: string
     ) {
-        super((offset) => fetchPage(chat, offset));
+        super((offset) => (botId === undefined ? fetchPage(chat, offset) : fetchPage(chat, offset, botId)));
     }
 }
 
@@ -107,15 +113,15 @@ const KEPT_LISTS = 20;
 const lists = new Map<string, ChatArtifactsList>();
 
 /** The list of this chat, the same one for its group and its page. */
-export function chatArtifactsList(chat: ArtifactChat): ChatArtifactsList {
-    const key = `${chat.kind}:${chat.ref}`;
+export function chatArtifactsList(chat: ArtifactChat, botId?: string): ChatArtifactsList {
+    const key = `${chat.kind}:${chat.ref}:${botId ?? ""}`;
     const kept = lists.get(key);
     if (kept) {
         lists.delete(key);
         lists.set(key, kept);
         return kept;
     }
-    const list = new ChatArtifactsList(chat);
+    const list = new ChatArtifactsList(chat, fetchChatArtifacts, botId);
     lists.set(key, list);
     if (lists.size > KEPT_LISTS) lists.delete(lists.keys().next().value as string);
     return list;

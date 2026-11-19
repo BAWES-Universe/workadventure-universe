@@ -9,6 +9,7 @@
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import type { ChatArtifact } from "../../../../Artifacts/ArtifactApi";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../../Artifacts/artifactChatContext";
+    import { botIdFromChatId } from "../../../Bots/BotChatStatus";
     import { chatArtifactsList, type ChatArtifactsState } from "../../../../Artifacts/chatArtifactsList";
     import { openYourArtifacts } from "../../../../Artifacts/openYourArtifacts";
     import ArtifactRow from "./ArtifactRow.svelte";
@@ -31,7 +32,7 @@
         ? getContext(ARTIFACT_CHAT_CONTEXT)
         : () => undefined;
     const chat = chatOf();
-    const list = chat ? chatArtifactsList(chat) : undefined;
+    const list = chat ? chatArtifactsList(chat, botIdFromChatId(partnerChatId)) : undefined;
     const state: Readable<ChatArtifactsState> =
         list ?? readable({ artifacts: [], total: 0, next: null, loading: false, failed: false, loaded: true });
     const roomName = room.name;

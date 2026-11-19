@@ -20,13 +20,15 @@
     export let latest = 3;
     /** The bot of a direct chat with a bot. */
     export let botName: string | undefined = undefined;
+    /** The Orbit id of that bot: its list also holds what it made for this person in other chats. */
+    export let botId: string | undefined = undefined;
 
     // The chat the cards of this conversation open from: a bubble's space or a direct chat's room
     const chatOf: ArtifactChatOf = hasContext(ARTIFACT_CHAT_CONTEXT)
         ? getContext(ARTIFACT_CHAT_CONTEXT)
         : () => undefined;
     const chat = chatOf();
-    const list = chat ? chatArtifactsList(chat) : undefined;
+    const list = chat ? chatArtifactsList(chat, botId) : undefined;
     const state: Readable<ChatArtifactsState> =
         list ?? readable({ artifacts: [], total: 0, next: null, loading: false, failed: false, loaded: false });
     const direction = document.documentElement.getAttribute("dir") || "ltr";

@@ -102,9 +102,12 @@ export function fetchArtifact(id: string, chat: ArtifactChat | undefined, versio
     return post<OpenedArtifact>(`${encodeURIComponent(id)}/open`, { chat, version });
 }
 
-/** The artifacts made in this chat that this person may open, newest change first, from `offset` on. */
-export function fetchChatArtifacts(chat: ArtifactChat, offset = 0): Promise<ChatArtifactPage> {
-    return post<ChatArtifactPage>("in-chat", { chat, offset });
+/**
+ * The artifacts made in this chat that this person may open, newest change first, from `offset` on. In a direct chat
+ * with a bot (`botId`) it also holds what that bot made for this person in other chats, such as nearby chat.
+ */
+export function fetchChatArtifacts(chat: ArtifactChat, offset = 0, botId?: string): Promise<ChatArtifactPage> {
+    return post<ChatArtifactPage>("in-chat", { chat, offset, ...(botId ? { botId } : {}) });
 }
 
 /** Every artifact this person owns, from every chat and bot, newest change first, from `offset` on (game #1609). */

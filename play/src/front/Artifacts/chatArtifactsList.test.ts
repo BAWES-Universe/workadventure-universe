@@ -6,7 +6,7 @@ vi.mock("../Enum/EnvironmentVariable", () => ({ ADMIN_URL: undefined }));
 vi.mock("../Connection/LocalUserStore", () => ({ localUserStore: { getAuthToken: () => "token" } }));
 
 import type { ArtifactChat, ChatArtifact, ChatArtifactPage } from "./ArtifactApi";
-import { fetchYourArtifacts } from "./ArtifactApi";
+import { fetchChatArtifacts, fetchYourArtifacts } from "./ArtifactApi";
 import { ChatArtifactsList, chatArtifactsList, yourArtifactsList } from "./chatArtifactsList";
 
 const chat: ArtifactChat = { kind: "dm", ref: "!room:chat.example" };
@@ -101,6 +101,43 @@ describe("a chat's artifacts", () => {
         answerFirst(page(["old"], 1, null));
         await first;
         expect(get(list).artifacts.map((one) => one.id)).toEqual(["new"]);
+    });
+
+    it("asks for the bot's work from other chats too in a direct chat with a bot, and asks again for each page the same way", async () => {
+        const fetchPage = vi
+            .fn()
+            .mockResolvedValueOnce(page(["a"], 2, 1))
+            .mockResolvedValueOnce(page(["b"], 2, null));
+        const list = new ChatArtifactsList(chat, fetchPage, "bot-1");
+        await list.refresh();
+        await list.loadMore();
+        expect(fetchPage).toHaveBeenNthCalledWith(1, chat, 0, "bot-1");
+        expect(fetchPage).toHaveBeenNthCalledWith(2, chat, 1, "bot-1");
+    });
+
+    it("sends the bot to the game's server with the chat, and nothing when there is none", async () => {
+        const fetchMock = vi.fn(() =>
+            Promise.resolve(new Response(JSON.stringify({ artifacts: [], total: 0, next: null }), { status: 200 }))
+        );
+        vi.stubGlobal("fetch", fetchMock);
+        try {
+            await fetchChatArtifacts(chat, 0, "bot-1");
+            await fetchChatArtifacts(chat, 0);
+            const bodies = fetchMock.mock.calls.map((call) =>
+                JSON.parse((call as unknown as [string, RequestInit])[1].body as string)
+            );
+            expect(bodies).toEqual([
+                { chat, offset: 0, botId: "bot-1" },
+                { chat, offset: 0 },
+            ]);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it("keeps a chat's list with a bot apart from the same chat without one", () => {
+        expect(chatArtifactsList(chat, "bot-1")).toBe(chatArtifactsList({ ...chat }, "bot-1"));
+        expect(chatArtifactsList(chat, "bot-1")).not.toBe(chatArtifactsList(chat));
     });
 
     it("is the same list for a chat's group and its page", () => {
