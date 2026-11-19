@@ -67,6 +67,17 @@ export interface VideoBox {
     isMegaphoneSpace?: boolean;
 }
 
+/**
+ * Applies the changes of an update to a user. Lodash `merge` combines arrays by position and never makes one shorter, so for tags
+ * (a Brick says who it is visiting from them) a tag that was taken away would stay: when tags are in the update, the array is
+ * replaced by a copy of the new one, and `merge` keeps doing the rest.
+ */
+function mergeUserChanges(user: Partial<SpaceUser>, changes: Partial<SpaceUser>, updateMask: string[]): void {
+    const { tags, ...others } = changes;
+    merge(user, others);
+    if (updateMask.includes("tags")) user.tags = [...(tags ?? [])];
+}
+
 export class Space implements SpaceInterface {
     private readonly name: string;
 
@@ -666,7 +677,11 @@ export class Space implements SpaceInterface {
 
         const audienceHand = this._audienceHands.get(newData.spaceUserId);
         if (audienceHand) {
-            merge(audienceHand, applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>);
+            mergeUserChanges(
+                audienceHand,
+                applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>,
+                updateMask
+            );
             if (this.isAudienceHand(audienceHand)) {
                 // Still in the audience: only the row changes, and their camera shows or not (#1623).
                 this._audienceHands.set(newData.spaceUserId, audienceHand);
@@ -687,7 +702,7 @@ export class Space implements SpaceInterface {
         // For some reason, the WithFieldMask type seems to apply recursively on array. I think it is a bug in our context.
         const maskedNewData = applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>;
 
-        merge(userToUpdate, maskedNewData);
+        mergeUserChanges(userToUpdate, maskedNewData, updateMask);
 
         // Back in the audience with a hand still up: listed, without a video.
         if (this.isAudienceHand(userToUpdate)) {
