@@ -15,6 +15,10 @@ const GUEST = "4f1d2c3b-aaaa-4bbb-8ccc-0123456789ab";
 const HOUR = 60 * 60 * 1000;
 const ROOM = "/@/bawes/universe/hq";
 
+/** Everything a room draws, with its content read: the messages hold their words and files in a store, not in the list. */
+const drawn = (room: GuestBrickChatRoom): string =>
+    JSON.stringify(get(room.messages).map((message) => get(message.content)));
+
 /** What a device holds, and what the bot server is asked, with the answers each test gives. */
 function setup(over: Partial<GuestBrickDeps> = {}) {
     const device = { saved: null as string | null, clock: 1_000_000, turns: 0 };
@@ -74,6 +78,27 @@ describe("a guest's chat with the Brick for guests (#1997)", () => {
         expect("members" in room).toBe(false);
         expect(get(room.isEncrypted)).toBe(false);
         expect(get(room.name)).toBe("Brick");
+    });
+
+    it("tries to keep the chat again after the device refused it, instead of taking a failed save for a written one", async () => {
+        let refuse = true;
+        const { room, device, answers, settle } = setup({
+            save: (raw) => {
+                if (!refuse) device.saved = raw;
+            },
+        });
+        // `device` is not known to the override above until setup returns, so it reads through the closure
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Second row.", needsAccount: false }));
+        room.sendMessage("Where's the coffee?");
+        await settle();
+        expect(device.saved).toBeNull();
+        refuse = false;
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Yes.", needsAccount: false }));
+        room.sendMessage("Thanks");
+        await settle();
+        // The refused save was not taken for a written one: the chat that stayed in the room is kept now
+        expect(device.saved).not.toBeNull();
+        expect(JSON.parse(device.saved ?? "{}").lines).toHaveLength(4);
     });
 
     it("asks once for each message the guest writes, with the chat so far, the place and one id for the try", async () => {
@@ -465,8 +490,8 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         await sending;
         await settle();
         expect(asked).toHaveLength(1);
-        expect(JSON.stringify(get(room.messages))).not.toContain("Old words");
-        expect(JSON.stringify(get(room.messages))).not.toContain("menu.png");
+        expect(drawn(room)).not.toContain("Old words");
+        expect(drawn(room)).not.toContain("menu.png");
     });
 
     it("never writes a new guest's words into the chat the last guest had, even when it was not looked at again", async () => {
@@ -484,7 +509,7 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         expect(asked).toHaveLength(2);
         expect(asked[1].message).toBe("Hi");
         expect(asked[1].history).toEqual([]);
-        expect(JSON.stringify(get(room.messages))).not.toContain("My secret plan");
+        expect(drawn(room)).not.toContain("My secret plan");
         expect(device.saved ?? "").not.toContain("My secret plan");
     });
 
@@ -687,5 +712,246 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         await room.sendFiles(files("menu.png"));
         await settle();
         expect(get(get(room.messages).at(-1)!.content).body).toBe("This file is gone. Send it again.");
+    });
+});
+
+describe("a guest's chat when guests change, time passes and the chat is carried away (#2072)", () => {
+    const OTHER = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+    beforeAll(() => {
+        loadLocale("en-US");
+    });
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    });
+
+    /** A bot server whose every answer waits to be let out by the test. */
+    function held() {
+        const releases: Array<(answer: unknown) => void> = [];
+        const answer = () =>
+            new Promise<unknown>((resolve) => {
+                releases.push(resolve);
+            });
+        return { releases, answer };
+    }
+    const reply = (text: string) => ({ kind: "reply", text, needsAccount: false });
+    const tick = async () => {
+        await Array.from({ length: 20 }).reduce<Promise<void>>((turn) => turn.then(() => undefined), Promise.resolve());
+    };
+
+    it("shows nothing of a chat kept for a guest when there is no guest now, and writes nothing under that guest's id", async () => {
+        const saved = JSON.stringify({
+            v: 1,
+            guestId: GUEST,
+            startedAt: 1,
+            savedAt: 999_000,
+            saidNeedsAccount: false,
+            lines: [{ from: "guest", text: "My secret order", at: 999_000 }],
+        });
+        const { room, device, said, settle, asked } = setup({ guestId: () => null });
+        device.saved = saved;
+        room.refresh();
+        expect(said()).toEqual([]);
+        room.sendMessage("hello");
+        await settle();
+        // Only this one line, in a chat of its own: the earlier guest's lines are not drawn, sent or overwritten
+        expect(said()).not.toContain("me: My secret order");
+        expect(said()[0]).toBe("me: hello");
+        expect(asked).toEqual([]);
+        expect(device.saved).toBe(saved);
+    });
+
+    it("lets go of the chat a guest had when the game has no guest any more", async () => {
+        let guest: string | null = GUEST;
+        const { room, said, answers, settle } = setup({ guestId: () => guest });
+        answers.push(() => Promise.resolve(reply("Hi.")));
+        room.sendMessage("first");
+        await settle();
+        expect(said()).toEqual(["me: first", "brick: Hi."]);
+        guest = null;
+        room.refresh();
+        expect(said()).toEqual([]);
+        room.sendMessage("second");
+        await settle();
+        expect(said()[0]).toBe("me: second");
+        expect(said()).not.toContain("me: first");
+    });
+
+    it("never sends one guest's chat under another guest: the turn that was waiting when the guest changed asks nobody", async () => {
+        let guest = GUEST;
+        const bot = held();
+        const { room, asked, answers, settle } = setup({ guestId: () => guest });
+        answers.push(bot.answer);
+        room.sendMessage("a1");
+        room.sendMessage("a2");
+        await settle();
+        expect(asked).toHaveLength(1);
+        // Another guest on this device before the first answer is back: the second line of the first guest is still waiting
+        guest = OTHER;
+        bot.releases[0](reply("Answer to a1"));
+        await tick();
+        expect(asked).toHaveLength(1);
+    });
+
+    it("never asks a retry for a note after the guest changed during the wait", async () => {
+        let guest = GUEST;
+        const lost = vi.fn(() => Promise.reject(new Error("connection lost")));
+        const { room, asked, answers, settle } = setup({
+            guestId: () => guest,
+            upload: vi.fn(() =>
+                Promise.resolve({ location: "https://cdn.test/n", name: "note.ogg", type: "audio/ogg", receipt: "r1" })
+            ),
+            sleep: () => {
+                guest = OTHER;
+                return Promise.resolve();
+            },
+        });
+        answers.push(lost);
+        await room.sendVoiceNote(new File(["a"], "note.ogg", { type: "audio/ogg" }), { duration: 3, waveform: [] });
+        await settle();
+        await tick();
+        expect(asked).toHaveLength(1);
+    });
+
+    it("lets a new guest's first message be answered at once, with a history of its own, while an old guest's answer is still out", async () => {
+        let guest = GUEST;
+        const bot = held();
+        const { room, asked, answers, said, settle } = setup({ guestId: () => guest });
+        answers.push(bot.answer, bot.answer, bot.answer);
+        room.sendMessage("a1");
+        room.sendMessage("a2");
+        await settle();
+        guest = OTHER;
+        room.sendMessage("b1");
+        room.sendMessage("b2");
+        await settle();
+        // Not queued behind the other guest's answer, and nothing of theirs in what it asks
+        expect(asked.map((one) => one.message)).toEqual(["a1", "b1"]);
+        expect(asked[1].history).toEqual([]);
+        // The other guest's answers come late: they are nobody's here
+        bot.releases[0](reply("Answer to a1"));
+        await tick();
+        bot.releases[1](reply("Answer to b1"));
+        await tick();
+        // The second message is asked after the first one's answer, with the chat as it stands then
+        expect(asked.map((one) => one.message)).toEqual(["a1", "b1", "b2"]);
+        expect(asked[2].history).toEqual([
+            { from: "guest", text: "b1" },
+            { from: "brick", text: "Answer to b1" },
+        ]);
+        expect(said().join("|")).not.toContain("Answer to a1");
+        expect(said().join("|")).not.toContain("a2");
+    });
+
+    it("keeps the first request of a new guest free of their second line even after an old guest's queued turn ran", async () => {
+        let guest = GUEST;
+        const bot = held();
+        const { room, asked, answers, settle } = setup({ guestId: () => guest });
+        answers.push(bot.answer, bot.answer, bot.answer);
+        room.sendMessage("a1");
+        room.sendMessage("a2");
+        await settle();
+        guest = OTHER;
+        room.sendMessage("b1");
+        room.sendMessage("b2");
+        await settle();
+        bot.releases[0](reply("x"));
+        await tick();
+        // b1 was asked before b2's turn: it never saw b2 in its history
+        expect(asked.find((one) => one.message === "b1")?.history).toEqual([]);
+    });
+
+    it("clears what the old chat was showing when the guest changes: no typing, no leftover note of an answer that failed", async () => {
+        let guest = GUEST;
+        const bot = held();
+        const { room, answers, settle } = setup({ guestId: () => guest });
+        answers.push(bot.answer);
+        room.sendMessage("a1");
+        await settle();
+        expect(get(room.typingMembers)).toHaveLength(1);
+        guest = OTHER;
+        room.refresh();
+        expect(get(room.typingMembers)).toEqual([]);
+    });
+
+    it("stops showing typing when the guest changed while the answer was out and nobody looked at the chat since", async () => {
+        let guest = GUEST;
+        const bot = held();
+        const { room, answers, settle } = setup({ guestId: () => guest });
+        answers.push(bot.answer);
+        room.sendMessage("a1");
+        await settle();
+        expect(get(room.typingMembers)).toHaveLength(1);
+        // Another guest, with no refresh: the answer for the first one comes back late
+        guest = OTHER;
+        bot.releases[0](reply("Late answer."));
+        await tick();
+        expect(get(room.typingMembers)).toEqual([]);
+    });
+
+    it("does not ask an expired history again when a chat that is open is used after the device keeps chats", async () => {
+        const { room, device, asked, answers, said, settle } = setup();
+        answers.push(
+            () => Promise.resolve(reply("Hello.")),
+            () => Promise.resolve(reply("Back again."))
+        );
+        room.sendMessage("first");
+        await settle();
+        // The page stays open for longer than the device keeps a chat
+        device.clock += HOUR + 1;
+        room.sendMessage("second");
+        await settle();
+        expect(asked[1].history).toEqual([]);
+        expect(said()).toEqual(["me: second", "brick: Back again."]);
+        const kept = JSON.parse(device.saved!) as { lines: unknown[] };
+        expect(kept.lines).toHaveLength(2);
+    });
+
+    it("never writes a chat back that an account took with it: a late answer after the hand-over stays out of the device", async () => {
+        const bot = held();
+        const { room, device, answers, settle } = setup();
+        answers.push(bot.answer);
+        room.sendMessage("Remember me");
+        await settle();
+        expect(device.saved).not.toBeNull();
+        // The guest signed in and the chat was carried into their Brick's chat, and the device let it go
+        device.saved = null;
+        bot.releases[0](reply("Late answer."));
+        await tick();
+        expect(device.saved).toBeNull();
+    });
+
+    it("keeps an answer that comes before the hand-over is done: the chat on the device holds it", async () => {
+        const bot = held();
+        const { room, device, answers, settle } = setup();
+        answers.push(bot.answer);
+        room.sendMessage("Remember me");
+        await settle();
+        bot.releases[0](reply("On time."));
+        await tick();
+        expect(JSON.parse(device.saved!).lines.map((line: { text: string }) => line.text)).toEqual([
+            "Remember me",
+            "On time.",
+        ]);
+    });
+
+    it("keeps the newest answer of what the Brick takes when an older one comes back last", async () => {
+        type Takes = { files: boolean; notes: boolean };
+        const pending: Array<(takes: Takes) => void> = [];
+        const takes = vi.fn(
+            () =>
+                new Promise<Takes>((resolve) => {
+                    pending.push(resolve);
+                })
+        );
+        const { room } = setup({ takes });
+        room.refresh();
+        // One asking when the room was made, one when it was opened: the later one answers first
+        expect(pending).toHaveLength(2);
+        pending[1]({ files: true, notes: true });
+        await tick();
+        pending[0]({ files: false, notes: false });
+        await tick();
+        expect(get(room.takes)).toEqual({ files: true, notes: true });
     });
 });

@@ -1,5 +1,6 @@
 import { get, type Readable } from "svelte/store";
 import type { Observable } from "rxjs";
+import { v4 as uuidv4 } from "uuid";
 import type { CallFailure, CallResult } from "../../../external-modules/bots/services/callFailure";
 import type { CallMicGate } from "../../../Space/CallMicGate";
 import { micOwner, isLive } from "./CallSession";
@@ -29,10 +30,13 @@ export interface CallSpaceLike {
 
 export interface CallDeps {
     store: Pick<typeof botCallStore, "subscribe" | "start" | "send" | "clear">;
-    /** The bot server's answer, for this person. */
-    startCall(botId: string): Promise<CallResult>;
-    /** Tells the bot server the call is over. Never throws. */
-    endCall(botId: string): Promise<unknown>;
+    /** The bot server's answer, for this person. `callId` names this call, so a hang-up can name it too. */
+    startCall(botId: string, callId: string): Promise<CallResult>;
+    /**
+     * Tells the bot server the call is over. Never throws. `callId` is the one the call was started with: the server ends
+     * only that call, so a hang-up that reaches it late cannot end a newer call of the same person with the same bot.
+     */
+    endCall(botId: string, callId: string): Promise<unknown>;
     joinSpace(spaceName: string, signal: AbortSignal): Promise<CallSpaceLike>;
     leaveSpace(space: CallSpaceLike): Promise<void>;
     setGate(gate: CallMicGate | undefined): void;
@@ -80,6 +84,8 @@ export function createCallConnection(deps: CallDeps) {
     async function begin(botId: string, botName: string): Promise<BeginResult> {
         if (active || !deps.store.start(botId, botName)) return { ok: false, failure: "already_on_a_call" };
 
+        // Names this call to the bot server, for the start and for every hang-up of it
+        const callId = uuidv4();
         const abort = new AbortController();
         const cleanups: Array<() => void> = [];
         let space: CallSpaceLike | undefined;
@@ -116,7 +122,7 @@ export function createCallConnection(deps: CallDeps) {
             const left = space;
             space = undefined;
             if (left) quietly(() => deps.leaveSpace(left));
-            quietly(() => deps.endCall(botId));
+            quietly(() => deps.endCall(botId, callId));
         };
         active = { botId, stop: () => finish("you") };
         // Before anything else: no space carries the microphone until the call's own space is joined
@@ -151,10 +157,10 @@ export function createCallConnection(deps: CallDeps) {
         }, deps.connectTimeoutMs ?? CALL_CONNECT_TIMEOUT_MS);
         cleanups.push(() => clearTimeout(timer));
 
-        const started = await deps.startCall(botId);
+        const started = await deps.startCall(botId, callId);
         if (finished) {
             // Ended while it was starting: the bot server must not keep a call nobody holds
-            if (started.started) quietly(() => deps.endCall(botId));
+            if (started.started) quietly(() => deps.endCall(botId, callId));
             return { ok: false, failure: "cancelled" };
         }
         if (!started.started) {

@@ -285,8 +285,13 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             // A goal's own checks are not counted as scheduled on top of it
             expect(
                 brief([
-                    row({ id: "g", kind: "goal", cadence: { type: "none" }, nextDueAt: null }),
-                    row({ id: "k", kind: "schedule", goalId: "g" }),
+                    row({
+                        id: "g",
+                        kind: "goal",
+                        cadence: { type: "none" },
+                        nextDueAt: null,
+                        checks: [row({ id: "k", kind: "schedule", parentId: "g", nextDueAt: null })],
+                    }),
                 ])
             ).toBe("1 goal");
             expect(

@@ -43,6 +43,7 @@
         {now}
         {floating}
         stoppable={false}
+        micOn={$requestedMicrophoneState}
         onResume={() => botCallStore.send({ type: "resume", now: Date.now() })}
         onEnd={() => callConnection.end()}
         onMute={() => {

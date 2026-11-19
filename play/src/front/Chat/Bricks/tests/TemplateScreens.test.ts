@@ -61,6 +61,7 @@ import TemplateLookSheet from "../Templates/TemplateLookSheet.svelte";
 import TemplateSheet from "../Templates/TemplateSheet.svelte";
 import TemplateUpdateSheet from "../Templates/TemplateUpdateSheet.svelte";
 import { NO_CHOICES, type TemplateUpdate } from "../Templates/Template";
+import { setTemplateStar } from "../Templates/Templates";
 
 const card = (id: string, name: string, maker: string, over: Record<string, unknown> = {}) => ({
     id,
@@ -240,6 +241,14 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(game.openBrickChat).not.toHaveBeenCalled();
         });
 
+        it("still says setup is required when Orbit says so but no named need could be read, and still lets the Brick be made", async () => {
+            game.getTemplatePreview.mockResolvedValue({ template: template({ needs: [], setupRequired: true }) });
+            await open();
+            expect(byId("templateSetup")).not.toBeNull();
+            expect(all("templateNeed")).toHaveLength(0);
+            expect(byId<HTMLButtonElement>("templateCreate")?.disabled).toBe(false);
+        });
+
         it("opens the chat when there is nothing to set up", async () => {
             game.getTemplatePreview.mockResolvedValue({ template: template({ needs: [], routines: [] }) });
             game.makeFromTemplate.mockResolvedValue({
@@ -301,6 +310,101 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(game.openModal).toHaveBeenCalledWith(TemplateSheet, { templateId: "t2" });
         });
 
+        it("reads the list again when a star was saved under the preview, even one saved after the preview closed", async () => {
+            game.getTemplateLists.mockResolvedValueOnce({
+                starred: [card("t1", "Music companion", "Omar", { starred: true })],
+                picks: [],
+                met: [],
+            });
+            part = new TemplateList({ target, props: { isOpen: true } });
+            await settle();
+            expect(all("templateRow")).toHaveLength(1);
+            // Unstarred in the preview that was open over the list; the list stays drawn until the new read comes
+            game.getTemplateLists.mockResolvedValue({
+                starred: [],
+                picks: [card("t1", "Music companion", "Omar")],
+                met: [],
+            });
+            game.starTemplate.mockResolvedValue({ starred: false });
+            await expect(setTemplateStar("t1", false)).resolves.toBe(true);
+            await settle();
+            expect(game.getTemplateLists).toHaveBeenCalledTimes(2);
+            expect(all("templateListSection")).toHaveLength(1);
+            expect(target.textContent).not.toContain("Starred");
+        });
+
+        it("leaves the list as it was when a star could not be saved", async () => {
+            game.getTemplateLists.mockResolvedValue({
+                starred: [card("t1", "Music companion", "Omar", { starred: true })],
+                picks: [],
+                met: [],
+            });
+            part = new TemplateList({ target, props: { isOpen: true } });
+            await settle();
+            game.starTemplate.mockRejectedValue(new Error("offline"));
+            await expect(setTemplateStar("t1", false)).resolves.toBe(false);
+            await settle();
+            expect(game.getTemplateLists).toHaveBeenCalledTimes(1);
+            expect(all("templateRow")).toHaveLength(1);
+        });
+
+        it("keeps the list it shows when the read after a star fails", async () => {
+            game.getTemplateLists.mockResolvedValueOnce({
+                starred: [card("t1", "Music companion", "Omar", { starred: true })],
+                picks: [],
+                met: [],
+            });
+            part = new TemplateList({ target, props: { isOpen: true } });
+            await settle();
+            game.getTemplateLists.mockRejectedValue(new Error("offline"));
+            game.starTemplate.mockResolvedValue({ starred: false });
+            await setTemplateStar("t1", false);
+            await settle();
+            expect(byId("templateListFailed")).toBeNull();
+            expect(all("templateRow")).toHaveLength(1);
+        });
+
+        it("shows the try-again row, not Loading for good, when a star's read fails while the first read is still out", async () => {
+            let first: (value: unknown) => void = () => undefined;
+            game.getTemplateLists.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    first = resolve;
+                })
+            );
+            part = new TemplateList({ target, props: { isOpen: true } });
+            await settle();
+            expect(byId("templateListLoading")).not.toBeNull();
+            // A star was saved in a preview while the first read was out; the read it started fails
+            game.getTemplateLists.mockRejectedValueOnce(new Error("offline"));
+            game.starTemplate.mockResolvedValue({ starred: true });
+            await setTemplateStar("t1", true);
+            await settle();
+            // The first read comes back after, and is not shown: it was passed by the newer one
+            first({ starred: [], picks: [card("t2", "Shop greeter", "Sara")], met: [] });
+            await settle();
+            expect(byId("templateListLoading")).toBeNull();
+            expect(byId("templateListFailed")).not.toBeNull();
+        });
+
+        it("says it is loading again, and then lists, when Try again is tapped after a read failed", async () => {
+            game.getTemplateLists.mockRejectedValueOnce(new Error("offline"));
+            part = new TemplateList({ target, props: { isOpen: true } });
+            await settle();
+            expect(byId("templateListFailed")).not.toBeNull();
+            let answer: (value: unknown) => void = () => undefined;
+            game.getTemplateLists.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+            );
+            byId("templateListRetry")?.click();
+            await tick();
+            expect(byId("templateListLoading")).not.toBeNull();
+            answer({ starred: [], picks: [card("t2", "Shop greeter", "Sara")], met: [] });
+            await settle();
+            expect(all("templateRow")).toHaveLength(1);
+        });
+
         it("says when there is nothing yet, and when it could not be read", async () => {
             game.getTemplateLists.mockResolvedValueOnce({ starred: [], picks: [], met: [] });
             part = new TemplateList({ target, props: { isOpen: true } });
@@ -355,6 +459,29 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(game.shareTemplate).not.toHaveBeenCalled();
         });
 
+        it("says why Share is off when the Brick is blocked and no single finding can be shown", async () => {
+            game.lookAtTemplate.mockResolvedValue({ look: look({ blocked: true, findings: [] }) });
+            part = new TemplateLookSheet({ target, props: props() });
+            await settle();
+            expect(byId("templateSecret")).toBeNull();
+            expect(byId("templateLookBlocked")?.textContent).toContain("can't be shared as it is");
+            expect(byId<HTMLButtonElement>("templateLookShare")?.disabled).toBe(true);
+        });
+
+        it("shows when a watch routine would run, with its words", async () => {
+            game.lookAtTemplate.mockResolvedValue({
+                look: look({
+                    routines: [{ kind: "watch", words: "Watch my inbox", condition: "when an invoice arrives" }],
+                }),
+            });
+            part = new TemplateLookSheet({ target, props: props() });
+            await settle();
+            const row = byId("templateLookRoutine")?.textContent ?? "";
+            expect(row).toContain("Watch my inbox");
+            expect(row).toContain("when an invoice arrives");
+            expect(row).toContain("Arrives switched off");
+        });
+
         it("reads the look again and says it changed when Orbit answers 409", async () => {
             game.lookAtTemplate.mockResolvedValue({ look: look() });
             game.shareTemplate.mockRejectedValue(Object.assign(new Error("changed"), { status: 409, code: "changed" }));
@@ -404,6 +531,34 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(byId("templateShareLatest")).toBeNull();
             await click("templateStop");
             expect(game.stopSharingTemplate).toHaveBeenCalledWith("b1");
+            expect(byId("templateShared")).toBeNull();
+        });
+
+        it("keeps the result of Stop sharing when a read that began before it comes back after it", async () => {
+            game.getMakerTemplate.mockResolvedValueOnce({
+                template: maker({ shared: true, version: 2, madeFrom: 3, latest: look() }),
+            });
+            game.lookAtTemplate.mockResolvedValue({ look: look() });
+            part = new BrickTemplateGroup({
+                target,
+                props: { brickId: "b1", name: "Beat", open: false, onToggle: () => undefined },
+            });
+            await settle();
+            // The group opens, and its read of the template is slow
+            let answerSlow: (value: unknown) => void = () => undefined;
+            game.getMakerTemplate.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerSlow = resolve;
+                })
+            );
+            (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set({ open: true });
+            await settle();
+            game.stopSharingTemplate.mockResolvedValue({ template: maker({ stopped: true }) });
+            await click("templateStop");
+            expect(byId("templateShared")).toBeNull();
+            // The slow read, from before Stop sharing, says it is still shared: it must not bring that back
+            answerSlow({ template: maker({ shared: true, version: 2, madeFrom: 3, latest: look() }) });
+            await settle();
             expect(byId("templateShared")).toBeNull();
         });
 
@@ -569,6 +724,64 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(game.getMadeFrom).toHaveBeenCalledTimes(1);
         });
 
+        it("does not bring a dismissed update back when a read that was out comes back after Keep mine", async () => {
+            game.getMadeFrom.mockResolvedValueOnce(madeFrom({ update: UPDATE }));
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            expect(byId("brickTemplateUpdated")).not.toBeNull();
+            // The page asks again, and that answer is slow
+            let answerSlow: (value: unknown) => void = () => undefined;
+            game.getMadeFrom.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerSlow = resolve;
+                })
+            );
+            (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set({ refreshKey: "b" });
+            await settle();
+            // The person reviews the update and keeps theirs: the sheet hands back the new state
+            await click("brickTemplateReview");
+            const given = game.openModal.mock.calls.at(-1)![1] as {
+                onDone: (next: unknown, taken?: string[]) => void;
+            };
+            given.onDone({ ...madeFrom({ update: null }), update: null }, []);
+            await settle();
+            expect(byId("brickTemplateUpdated")).toBeNull();
+            answerSlow(madeFrom({ update: UPDATE }));
+            await settle();
+            expect(byId("brickTemplateUpdated")).toBeNull();
+        });
+
+        it("takes the sheet's answer that this Brick is not made from a template any more as the end of the line, not as no change", async () => {
+            game.getMadeFrom.mockResolvedValueOnce(madeFrom({ update: UPDATE }));
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            expect(byId("brickMadeFrom")).not.toBeNull();
+            await click("brickTemplateReview");
+            const given = game.openModal.mock.calls.at(-1)![1] as {
+                onDone: (next: unknown, taken?: string[], noTemplate?: boolean) => void;
+            };
+            given.onDone(undefined, [], true);
+            await settle();
+            expect(byId("brickMadeFrom")).toBeNull();
+            // And it is not read again for it
+            expect(game.getMadeFrom).toHaveBeenCalledTimes(1);
+        });
+
+        it("reads the page again after the sheet's change, so a read that began after it is never lost", async () => {
+            game.getMadeFrom.mockResolvedValueOnce(madeFrom({ update: UPDATE }));
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            await click("brickTemplateReview");
+            const given = game.openModal.mock.calls.at(-1)![1] as {
+                onDone: (next: unknown, taken?: string[]) => void;
+            };
+            game.getMadeFrom.mockResolvedValue(madeFrom({ update: null }));
+            given.onDone({ ...madeFrom({ update: null }), update: null }, []);
+            await settle();
+            expect(game.getMadeFrom).toHaveBeenCalledTimes(2);
+            expect(byId("brickTemplateUpdated")).toBeNull();
+        });
+
         it("offers Review when the template was updated", async () => {
             game.getMadeFrom.mockResolvedValue(madeFrom({ update: UPDATE }));
             part = new BrickMadeFrom({ target, props: props() });
@@ -615,6 +828,40 @@ describe("Brick templates, the game half (#2008)", () => {
             await click("templateTake");
             expect(game.takeTemplateUpdate).toHaveBeenCalledWith("n1", 2, ["firstThing"]);
             expect(given.onDone).toHaveBeenCalledWith(expect.anything(), ["firstThing"]);
+        });
+
+        it("keeps the sheet open, and says so, when the reread after a conflict fails", async () => {
+            game.takeTemplateUpdate.mockRejectedValue(Object.assign(new Error("changed"), { status: 409 }));
+            game.getMadeFrom.mockRejectedValue(new Error("offline"));
+            const given = props();
+            part = new TemplateUpdateSheet({ target, props: given });
+            await settle();
+            await click("templateKeepMine");
+            expect(game.closeModal).not.toHaveBeenCalled();
+            expect(given.onDone).not.toHaveBeenCalled();
+            expect(game.warn).toHaveBeenCalled();
+        });
+
+        it("closes when the reread after a conflict says no update remains", async () => {
+            game.takeTemplateUpdate.mockRejectedValue(Object.assign(new Error("changed"), { status: 409 }));
+            game.getMadeFrom.mockResolvedValue(madeFrom({ update: null }));
+            const given = props();
+            part = new TemplateUpdateSheet({ target, props: given });
+            await settle();
+            await click("templateKeepMine");
+            expect(game.closeModal).toHaveBeenCalled();
+            expect(given.onDone).toHaveBeenCalled();
+        });
+
+        it("says the Brick has no template any more, not that nothing changed, when the reread says it is gone", async () => {
+            game.takeTemplateUpdate.mockRejectedValue(Object.assign(new Error("changed"), { status: 409 }));
+            game.getMadeFrom.mockRejectedValue(Object.assign(new Error("gone"), { status: 404 }));
+            const given = props();
+            part = new TemplateUpdateSheet({ target, props: given });
+            await settle();
+            await click("templateKeepMine");
+            expect(given.onDone).toHaveBeenCalledWith(undefined, [], true);
+            expect(game.closeModal).toHaveBeenCalled();
         });
 
         it("says the template changed again when Orbit answers 409, and keeps the sheet open", async () => {

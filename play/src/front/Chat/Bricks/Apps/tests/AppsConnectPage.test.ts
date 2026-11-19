@@ -198,6 +198,8 @@ describe("Search apps and Connect another (#2001)", () => {
         document.body.innerHTML = "";
         target = document.createElement("div");
         document.body.appendChild(target);
+        // What getReadyMadeApps itself delivers for Orbit's 404 (BotApiService.readyMade.test.ts runs the real method on a 404);
+        // any other failure is a rejection, and is said below the list (next test)
         game.getReadyMadeApps.mockResolvedValue({ apps: [] });
         await open();
         expect(names("appsConnectRow")).not.toContain("Linear");
@@ -280,9 +282,12 @@ describe("Search apps and Connect another (#2001)", () => {
         await open();
         await click("appsConnect", 1);
         expect(words(allById("appsConnect")[1])).toBe("Connecting…");
+        // `every` is true of no buttons at all: the four are still there
+        expect(allById("appsConnect")).toHaveLength(4);
         expect(allById("appsConnect").every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
         finish({ status: "stopped" });
         await settle();
+        expect(allById("appsConnect")).toHaveLength(4);
         expect(allById("appsConnect").every((button) => !(button as HTMLButtonElement).disabled)).toBe(true);
         expect(words(allById("appsConnect")[1])).toBe("Connect");
     });
@@ -290,6 +295,8 @@ describe("Search apps and Connect another (#2001)", () => {
     it("says nothing was connected when the sign-in did not finish, and how to fix a window that did not open", async () => {
         await open();
         await click("appsConnect", 0);
+        expect(allById("appsConnect")).toHaveLength(4);
+        expect(allById("appsConnect").every((button) => !(button as HTMLButtonElement).disabled)).toBe(true);
         expect(words(byId("appsConnectNote"))).toBe("The sign-in didn't finish. Nothing was connected.");
         game.connectApp.mockResolvedValue({ status: "blocked" });
         await click("appsConnect", 0);
@@ -325,6 +332,7 @@ describe("Search apps and Connect another (#2001)", () => {
             })
         );
         await click("appsConnect", 0);
+        expect(allById("appsConnect")).toHaveLength(4);
         expect(allById("appsConnect").every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
         readAgain({ apps: [mine({ id: "notion-c", name: "Notion" })], bricks: [] });
         await settle();
@@ -339,5 +347,62 @@ describe("Search apps and Connect another (#2001)", () => {
         await click("appsConnectListTryAgain");
         expect(byId("appsConnectListFailed")).toBeNull();
         expect(names("appsConnectRow")).toHaveLength(4);
+    });
+
+    it("keeps the list a later read brought when an older read of it fails afterwards", async () => {
+        let failLate: (error: unknown) => void = () => undefined;
+        game.getMyApps.mockRejectedValueOnce(new Error("down"));
+        game.getAppCatalog.mockImplementationOnce(
+            () =>
+                new Promise((_resolve, reject) => {
+                    failLate = reject;
+                })
+        );
+        await open();
+        // The page could not read the person's apps: Try again reads everything again, and that read succeeds
+        await click("appsTryAgain");
+        expect(allById("appsConnect")).toHaveLength(4);
+        // The first read of the catalog now fails: it must not take the Connect buttons away
+        failLate(new Error("down"));
+        await settle();
+        expect(allById("appsConnect")).toHaveLength(4);
+        expect(byId("appsConnectListFailed")).toBeNull();
+    });
+
+    it("does not say no app matches while a list a search looks through is still being read", async () => {
+        let readCatalog: (value: unknown) => void = () => undefined;
+        game.getAppCatalog.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    readCatalog = resolve;
+                })
+        );
+        await open();
+        await type("dro");
+        expect(byId("appsNoMatch")).toBeNull();
+        expect(byId("appsFound")).toBeNull();
+        readCatalog(CATALOG);
+        await settle();
+        expect(words(byId("appsFound"))).toBe("1 app");
+        expect(names("appsConnectRow")).toEqual(["Dropbox"]);
+        await type("zzz");
+        expect(words(byId("appsNoMatch"))).toBe("No app matches “zzz”.");
+    });
+
+    it("does not count or say no app matches while the Instant Apps are still being read", async () => {
+        let readInstant: (value: unknown) => void = () => undefined;
+        game.getInstantApps.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    readInstant = resolve;
+                })
+        );
+        await open();
+        await type("zzz");
+        expect(byId("appsNoMatch")).toBeNull();
+        expect(byId("appsFound")).toBeNull();
+        readInstant({ apps: [] });
+        await settle();
+        expect(words(byId("appsNoMatch"))).toBe("No app matches “zzz”.");
     });
 });

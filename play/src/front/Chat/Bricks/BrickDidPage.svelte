@@ -75,17 +75,18 @@
                     >
                 </div>
             {/each}
-            {#if $more}
-                <button
-                    type="button"
-                    class="bkg-tap"
-                    data-testid="brickDidMore"
-                    disabled={$loadingMore}
-                    on:click={showMore}
-                >
-                    <span class="bkg-mtx"><span class="bkg-t">{$LL.chat.brick.goals.didMore()}</span></span>
-                </button>
-            {/if}
+        {/if}
+        <!-- Older runs are reached from here even when the first page held none that could be read -->
+        {#if $more && $state === "ready"}
+            <button
+                type="button"
+                class="bkg-tap"
+                data-testid="brickDidMore"
+                disabled={$loadingMore}
+                on:click={showMore}
+            >
+                <span class="bkg-mtx"><span class="bkg-t">{$LL.chat.brick.goals.didMore()}</span></span>
+            </button>
         {/if}
     </div>
 </div>

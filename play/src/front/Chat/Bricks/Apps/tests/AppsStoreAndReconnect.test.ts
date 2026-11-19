@@ -72,6 +72,40 @@ describe("the person's apps (#2001)", () => {
         expect(get(myAppsStore)?.map((one) => one.id)).toEqual(["new"]);
     });
 
+    it("never reads beside a read that another caller started when the first one ended", async () => {
+        const first = pending();
+        const second = pending();
+        const third = pending();
+        let running = 0;
+        let mostAtOnce = 0;
+        const answers = [first, second, third];
+        game.getMyApps.mockImplementation(() => {
+            const answer = answers.shift()!;
+            running++;
+            mostAtOnce = Math.max(mostAtOnce, running);
+            return answer.promise.finally(() => running--);
+        });
+        const reading = loadMyApps();
+        // Someone who waits for the read on its way asks for the next one the moment it ends, before the refresh behind it starts
+        const chained = reading.then(() => loadMyApps());
+        const afterChange = loadMyApps(true);
+        first.done({ apps: [app("old")], bricks: [] });
+        await reading;
+        await Promise.resolve();
+        await Promise.resolve();
+        // The chained read is the one on its way: the refresh waits behind it, it does not start beside it
+        expect(game.getMyApps).toHaveBeenCalledTimes(2);
+        expect(mostAtOnce).toBe(1);
+        second.done({ apps: [app("newer")], bricks: [] });
+        await chained;
+        await vi.waitFor(() => expect(game.getMyApps).toHaveBeenCalledTimes(3));
+        third.done({ apps: [app("newest")], bricks: [] });
+        await afterChange;
+        expect(mostAtOnce).toBe(1);
+        // The last read to start is the last to land: the refresh after the change has the final say
+        expect(get(myAppsStore)?.map((one) => one.id)).toEqual(["newest"]);
+    });
+
     it("starts no refresh for a change that was waiting when the person signed out", async () => {
         const first = pending();
         game.getMyApps.mockReturnValueOnce(first.promise);
