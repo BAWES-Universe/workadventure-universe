@@ -30,6 +30,8 @@ const RATE = 16000;
 const WINDOW_MS = 32;
 /** This much audio missing in one go (lost on the way, or skipped here) and what was heard before must not colour what comes next. */
 const GAP_RESET_MS = 100;
+/** How many people each session remembers the newest path of (epochs), apart from the places for streams. */
+const EPOCH_MEMORY = 1024;
 /** The detector's firing and today's gate count as agreeing when they come within this of each other for the same person. */
 const AGREE_MS = 600;
 /**
@@ -153,6 +155,11 @@ interface Owner {
     spokeAt: number;
     /** Per person: which path they are on, and the last unmatched firing and gate decision. At most `maxStreams` people. */
     marks: Map<string, { path: ObserverPath; epoch: number; firingAt: number; baselineAt: number }>;
+    /**
+     * Per person: the newest path (epoch) they were heard on. Kept apart from `marks`, which let a person go to make room, so a person who
+     * was let go is still not opened a stream on an older path by a late frame. Held for at most EPOCH_MEMORY people (the longest ago heard goes).
+     */
+    epochs: Map<string, number>;
     /** Per person: today's gate heard them, and the detector has not heard speech from them yet. */
     pending: Map<string, Pending>;
 }
@@ -262,6 +269,8 @@ export class SpeechObserver {
     private status: 'on' | 'off' | 'closed' = 'on';
     private inFlight = 0;
     private sweepTimer?: NodeJS.Timeout;
+    /** When the sweep timer fires (performance.now() clock), so a deadline that is earlier than it can move it up. */
+    private sweepAt = Infinity;
     private readonly maxAge: number;
     private readonly maxStream: number;
     private readonly maxTotal: number;
@@ -368,10 +377,12 @@ export class SpeechObserver {
         this.queuedSamples = 0;
         for (const owner of this.owners) {
             owner.marks.clear();
+            owner.epochs.clear();
             for (const participantId of [...owner.pending.keys()]) this.forgetPending(owner, participantId);
         }
         clearTimeout(this.sweepTimer);
         this.sweepTimer = undefined;
+        this.sweepAt = Infinity;
     }
 
     /**
@@ -379,7 +390,7 @@ export class SpeechObserver {
      * `botSpeaking` is only read, to count how much was observed while the bot was talking.
      */
     session(sessionId: string, about: { botSpeaking?: () => boolean } = {}): SessionObserver {
-        const owner: Owner = { id: ++this.sessions, sessionId, closed: false, botSpeaking: about.botSpeaking, spokeAt: -Infinity, marks: new Map(), pending: new Map() };
+        const owner: Owner = { id: ++this.sessions, sessionId, closed: false, botSpeaking: about.botSpeaking, spokeAt: -Infinity, marks: new Map(), epochs: new Map(), pending: new Map() };
         this.owners.add(owner);
         const c = this.options.counters;
         const mine = (): Stream[] => [...this.streams.values()].filter((stream) => stream.owner === owner);
@@ -400,6 +411,7 @@ export class SpeechObserver {
                 try {
                     for (const stream of mine()) if (match(stream.participantId, stream.epoch)) this.end(stream, 'revoked');
                     for (const [participantId, mark] of [...owner.marks]) if (match(participantId, mark.epoch)) owner.marks.delete(participantId);
+                    for (const [participantId, epoch] of [...owner.epochs]) if (match(participantId, epoch)) owner.epochs.delete(participantId);
                     // No longer heard: nothing of theirs is acted on
                     for (const [participantId, pending] of [...owner.pending]) if (match(participantId, pending.epoch)) this.forgetPending(owner, participantId);
                 } catch {
@@ -451,6 +463,7 @@ export class SpeechObserver {
                 for (const participantId of [...owner.pending.keys()]) this.forgetPending(owner, participantId);
                 for (const stream of mine()) this.end(stream, 'revoked');
                 owner.marks.clear();
+                owner.epochs.clear();
                 this.owners.delete(owner);
             },
         };
@@ -579,7 +592,7 @@ export class SpeechObserver {
         if (pending && pending.epoch === frame.epoch) pending.offeredMs += ms;
         const mark = owner.marks.get(frame.participantId);
         // The newest path this person was on before this piece: kept after their stream ended, so an older one can never open a new stream
-        const newestBefore = mark?.epoch;
+        const newestBefore = owner.epochs.get(frame.participantId);
         const key = `${owner.id}\n${frame.participantId}`;
         let stream = this.streams.get(key);
         // An obsolete frame is turned away before it changes anything: a delayed lane frame must not move the person's path (and so what
@@ -587,6 +600,13 @@ export class SpeechObserver {
         if ((stream && frame.epoch < stream.epoch) || (!stream && newestBefore !== undefined && frame.epoch < newestBefore)) {
             c.inc('observer_stale_dropped');
             return;
+        }
+        // Most recently heard last, so the one let go to make room is the one heard from longest ago
+        owner.epochs.delete(frame.participantId);
+        owner.epochs.set(frame.participantId, Math.max(newestBefore ?? frame.epoch, frame.epoch));
+        if (owner.epochs.size > EPOCH_MEMORY) for (const known of owner.epochs.keys()) {
+            owner.epochs.delete(known);
+            break;
         }
         if (mark) {
             mark.path = path;
@@ -676,7 +696,7 @@ export class SpeechObserver {
 
     /** While anything waits, a timer set for the moment the oldest of it has waited too long: audio expires by the clock even if no more arrives. */
     private watch(): void {
-        if (this.sweepTimer || this.status !== 'on' || this.streams.size === 0) return;
+        if (this.status !== 'on' || this.streams.size === 0) return;
         const now = performance.now();
         let due = Infinity;
         for (const stream of this.streams.values()) {
@@ -685,10 +705,19 @@ export class SpeechObserver {
             if (stream.waiting.length > 0) due = Math.min(due, stream.waiting[0].at + this.maxAge - now);
         }
         if (due === Infinity) return;
+        const wait = Math.max(1, Math.ceil(due) + 1);
+        // A timer already set stays unless something is due sooner than it fires: a stream that came back from a call (its place is let go once
+        // quiet) can be due before a deadline that was set while it was out, and a place held past its time keeps another person out
+        if (this.sweepTimer) {
+            if (now + wait >= this.sweepAt) return;
+            clearTimeout(this.sweepTimer);
+        }
+        this.sweepAt = now + wait;
         this.sweepTimer = setTimeout(() => {
             this.sweepTimer = undefined;
+            this.sweepAt = Infinity;
             this.sweep();
-        }, Math.max(1, Math.ceil(due) + 1));
+        }, wait);
         this.sweepTimer.unref?.();
     }
 

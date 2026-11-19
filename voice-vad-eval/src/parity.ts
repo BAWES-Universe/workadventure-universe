@@ -39,6 +39,8 @@ const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit ro
 // 1. Frame size
 {
     const sample = manifest.filter((_, i) => i % 60 === 0).slice(0, 60);
+    // A report half with nothing to cut would pass every check below with nothing measured
+    if (sample.length === 0) failures.push('frame size: the report half has no clips to cut');
     let windows = 0;
     let worst = 0;
     let seed = 7;
@@ -71,6 +73,9 @@ const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit ro
         ...pickEvery(manifest.filter((i) => i.kind === 'speech' && i.set === 'en-sentence' && ['S30', 'S40', 'N10'].includes(i.condition)), 90),
     ];
     const noise = pickEvery(manifest.filter((i) => i.kind === 'noise' && i.label === 'nonspeech' && i.condition === '-35'), 60);
+    // Neither set may be empty: with no speech clips every path would show "0/0" valid, and with no noise clips "0 firings in 0 minutes", as if both were clean
+    if (speech.length === 0) failures.push('paths: no speech clips of the report half were picked, so no path was measured on speech');
+    if (noise.length === 0) failures.push('paths: no non-speech noise clips of the report half were picked, so no path was measured on noise');
     const paths: Record<string, (pcm: Int16Array) => PathAudio> = {
         'fixture as is (20 ms)': (pcm) => ({ pcm, frameSamples: 320 }),
         'peer lane: Opus 32 kbps + worker resampler (20 ms)': (pcm) => peerLanePath(pcm, 32000),

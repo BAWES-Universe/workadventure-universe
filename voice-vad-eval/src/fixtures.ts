@@ -130,6 +130,9 @@ export const SPEECH_CONDITIONS = ['S20', 'S30', 'S40', 'N10', 'N5'] as const;
 export const LEAD = 1.0;
 const TAIL = 1.0;
 
+/** The speech-to-text providers a clip is replayed with (yield-replay.ts): speech with one that says words, a noise clip with one that hears nothing and with one that says words. */
+export const replayProvidersOf = (item: Pick<Item, 'kind'>): Array<'empty' | 'words'> => (item.kind === 'speech' ? ['words'] : ['empty', 'words']);
+
 export function buildManifest(data: string): Item[] {
     const items: Item[] = [];
     const split = (key: string): 'tune' | 'report' => (hash('split:' + key) % 2 === 0 ? 'tune' : 'report');

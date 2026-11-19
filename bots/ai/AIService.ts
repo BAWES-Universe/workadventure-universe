@@ -755,7 +755,8 @@ export class AIService {
                     if (this.botLimits.get(botId)?.files === true) this.orbitKeepsFiles = true;
                     this.conversationMemory?.setHistoryWindow?.(botId, resolved.config.limits.messages);
                 }
-                if (!resolved.resting) {
+                // Only an answer that is still current prices the shared ref: a lookup from before the Brick moved can finish after a fresh one
+                if (current && !resolved.resting) {
                     // Usage is priced by the provider that answered, and by the ref the bot is on ("universe-ai", "key-…")
                     this.botRoutePricing.set(resolved.config.providerId, resolved.config);
                     this.botRoutePricing.set(providerId, resolved.config);
@@ -1068,7 +1069,7 @@ export class AIService {
         let said = '';
         let done: AIStreamChunk | null = null;
         const first = watch && usage ? { ...shared, rules: [...(shared?.rules ?? []), privateAnswerRule(name)], usage } : shared;
-        for await (const chunk of this.heldForGroup(attempt(message, isRetry, turn, first), turn)) {
+        for await (const chunk of this.heldForGroup(attempt(message, isRetry, turn, first), turn, abortSignal)) {
             // Callers stop at the first done: it is held until the reply is known to be honest
             if (chunk.done) {
                 done = chunk;
@@ -1132,7 +1133,7 @@ export class AIService {
         hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
         yield { content: '', done: false, reset: true, toolNames: [] };
         const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
-        for await (const chunk of this.heldForGroup(attempt(nothingSavedRetryMessage(message, said), true, second), second)) {
+        for await (const chunk of this.heldForGroup(attempt(nothingSavedRetryMessage(message, said), true, second), second, abortSignal)) {
             if (chunk.reset) hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
             if (chunk.done) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
             yield chunk;
@@ -1146,13 +1147,14 @@ export class AIService {
      * reply found in the files is not said, and the fixed line is said instead (#1993). When nobody joined it is said as it was, only at
      * the end of the round rather than word by word. Any other reply passes straight through.
      */
-    private async *heldForGroup(chunks: AsyncIterable<AIStreamChunk>, turn: TurnFacts): AsyncGenerator<AIStreamChunk> {
+    private async *heldForGroup(chunks: AsyncIterable<AIStreamChunk>, turn: TurnFacts, abortSignal?: AbortSignal): AsyncGenerator<AIStreamChunk> {
         let held = '';
         let refused = false;
         const release = function* (): Generator<AIStreamChunk> {
             const text = held;
             held = '';
-            if (!text || refused) return;
+            // A reply that was cancelled says nothing of what it held
+            if (!text || refused || abortSignal?.aborted) return;
             if (turn.fileDerived?.joined()) {
                 refused = true;
                 yield { content: SOMEONE_CAME_READING, done: false };
@@ -5956,13 +5958,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
             // Deduplicate by originalUrl — the same media may exist at both the
             // original URL and the CDN URL. originalUrl is the stable identity.
-            const isDuplicate = Array.from(seen).some(
-                seenUrl => seenUrl === item.url || seenUrl === item.originalUrl,
-            );
+            // The same media for another audience is another item: one for a person alone and one for the room are never merged
+            const audienceKey = item.audience === undefined ? '' : String(item.audience);
+            const isDuplicate = seen.has(`${audienceKey}|${item.url}`) || seen.has(`${audienceKey}|${item.originalUrl}`);
             if (isDuplicate) {
                 continue;
             }
-            seen.add(item.originalUrl || item.url);
+            seen.add(`${audienceKey}|${item.originalUrl || item.url}`);
 
             if (item.retryCount >= 3) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {

@@ -35,6 +35,7 @@ import {
   RECEIPT_PURPOSES,
   RECEIPT_REFRESH_MS,
   RECEIPT_TTL_MS,
+  ReceiptTooLongError,
   readReceipt,
   sha256Hex,
   signReceipt,
@@ -399,26 +400,32 @@ export class FileController {
           // A player's upload comes with a receipt: who uploaded which bytes, so a bot server can trust the file a guest names
           const now = Date.now();
           const uploader: string | null = !isBotUpload && SECRET_KEY && typeof response.locals.gameIdentifier === "string" ? response.locals.gameIdentifier : null;
-          const receipt =
-            uploader && SECRET_KEY
-              ? signReceipt(
-                  {
-                    sub: uploader,
-                    aud: purposeOf(request.body?.purpose),
-                    fid: fileUuid,
-                    bkt: bucket ?? null,
-                    loc: location,
-                    sha256: sha256Hex(file.buffer),
-                    name: filename.slice(0, 255),
-                    type: file.mimetype || "application/octet-stream",
-                    size: file.buffer.byteLength,
-                    len: "unmeasured",
-                    iat: now,
-                    exp: now + RECEIPT_TTL_MS,
-                  },
-                  SECRET_KEY
-                )
-              : undefined;
+          let receipt: string | undefined;
+          if (uploader && SECRET_KEY) {
+            try {
+              receipt = signReceipt(
+                {
+                  sub: uploader,
+                  aud: purposeOf(request.body?.purpose),
+                  fid: fileUuid,
+                  bkt: bucket ?? null,
+                  loc: location,
+                  sha256: sha256Hex(file.buffer),
+                  name: filename.slice(0, 255),
+                  type: file.mimetype || "application/octet-stream",
+                  size: file.buffer.byteLength,
+                  len: "unmeasured",
+                  iat: now,
+                  exp: now + RECEIPT_TTL_MS,
+                },
+                SECRET_KEY
+              );
+            } catch (error) {
+              // A file nobody can name again is not kept: the one stored for this call is taken back before the call is refused
+              await uploaderService.deleteFileById(fileUuid).catch((deleteError: unknown) => console.error(deleteError));
+              throw error;
+            }
+          }
           uploadedFiles.push({
             name: filename,
             id: fileUuid,
@@ -462,6 +469,9 @@ export class FileController {
           console.error(err);
           response.status(500);
           return response.json({ message: "Internal server error" });
+        } else if (err instanceof ReceiptTooLongError) {
+          response.status(400);
+          return response.json({ message: err.message });
         } else if (err instanceof DisabledChat) {
           response.status(401);
           return response.json({ message: "disabled" });

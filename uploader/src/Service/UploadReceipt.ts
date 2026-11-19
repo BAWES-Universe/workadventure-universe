@@ -22,6 +22,13 @@ export const RECEIPT_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 /** The longest receipt the reader takes: what is signed never goes past it. */
 export const RECEIPT_MAX_CHARS = 4096;
 
+/** A receipt that cannot be kept within RECEIPT_MAX_CHARS whatever is cut (what is left over, the location above all, is not the device's to shorten). */
+export class ReceiptTooLongError extends Error {
+  constructor() {
+    super("receipt-too-long");
+  }
+}
+
 export type ReceiptPurpose = "chat-file" | "chat-note" | "guest-brick";
 export const RECEIPT_PURPOSES: readonly ReceiptPurpose[] = ["chat-file", "chat-note", "guest-brick"];
 
@@ -77,7 +84,7 @@ function safeType(type: string): string {
 /**
  * Signs a receipt that the reader will take: its length is kept within RECEIPT_MAX_CHARS by normalizing the file's type, then by
  * shortening its name (the one thing a device picks freely), so an upload with an odd name or type never gets a receipt that
- * cannot be read or renewed.
+ * cannot be read or renewed. Throws ReceiptTooLongError when that is not enough (the location alone is too long).
  */
 export function signReceipt(claims: Omit<ReceiptClaims, "iss" | "v" | "kid">, secret: string): string {
   const full: ReceiptClaims = { iss: "uploader", v: RECEIPT_VERSION, kid: RECEIPT_KID, ...claims };
@@ -91,6 +98,8 @@ export function signReceipt(claims: Omit<ReceiptClaims, "iss" | "v" | "kid">, se
     full.name = full.name.slice(0, Math.max(1, full.name.length - over));
     token = encode(full, secret);
   }
+  // Nothing left to cut: a receipt the reader would refuse is never handed out
+  if (token.length > RECEIPT_MAX_CHARS) throw new ReceiptTooLongError();
   return token;
 }
 

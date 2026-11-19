@@ -154,6 +154,36 @@ describe("the Bricks of the room being edited (#2005)", () => {
         });
     });
 
+    it("reads how the Brick behaves here after waiting to learn where it lived, so a list reloaded meanwhile is the one used", async () => {
+        api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
+        const patrol = {
+            behaviorType: "patrol",
+            behaviorConfig: {
+                assignedSpace: { center: { x: 10, y: 20 }, radius: 80 },
+                patrolRoute: [{ x: 1, y: 2 }],
+                wanderSpeed: 3,
+            },
+        };
+        api.getRoomBricks.mockResolvedValueOnce(
+            answer({ here: [{ ...answer().here[0], id: "m1", mine: true, ...patrol }] })
+        );
+        await loadRoomBricks();
+        let learned: (home: unknown) => void = () => undefined;
+        api.getBrickHome.mockReturnValueOnce(
+            new Promise((resolve) => {
+                learned = resolve;
+            })
+        );
+        const spot = { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } };
+        const placing = placeBrickHere({ id: "m1" }, spot);
+        // Meanwhile the Brick was taken out here (another tab): the list no longer has it
+        api.getRoomBricks.mockResolvedValue(answer({ here: [] }));
+        await loadRoomBricks();
+        learned({ home: null });
+        await placing;
+        expect(api.placeBrickHome).toHaveBeenCalledWith("m1", ROOM, spot);
+    });
+
     it("says when others cannot talk to it yet because its key is not lent", async () => {
         api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: "not_lent" });
         api.getRoomBricks.mockResolvedValue(answer());

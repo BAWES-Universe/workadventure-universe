@@ -170,6 +170,29 @@ describe("the line under a paying page in the artifact window (the approved mock
         view.$destroy();
     });
 
+    it("shows the receipt link to copy by hand when the browser would not copy it", async () => {
+        api.payOnArtifact
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValue({ status: "paid", testPayment: false });
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { writeText: () => Promise.reject(new Error("denied")) },
+        });
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const { say, press, target, view } = await mount();
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await vi.advanceTimersByTimeAsync(3_000);
+        await settle();
+        expect(target.querySelector('[data-testid="artifactReceiptText"]')).toBeNull();
+        await press("copy");
+        await settle();
+        expect(target.querySelector('[data-testid="artifactPayLine"]')?.textContent).toContain("Could not copy it");
+        expect(target.querySelector('[data-testid="artifactReceiptText"]')?.textContent).toMatch(
+            /^https:\/\/play\.test\/a\/a1#receipt=[A-Za-z0-9_-]{43}$/
+        );
+        view.$destroy();
+    });
+
     it("g1, g4: a payment not heard back about says so and offers Check payment, which asks the server and says what it says", async () => {
         api.payOnArtifact
             .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
@@ -244,7 +267,7 @@ describe("the line under a paying page in the artifact window (the approved mock
         await vi.advanceTimersByTimeAsync(3_000);
         await settle();
         expect(text()).toBe(
-            "Paid. Thank you. It's saved to your account, so it comes back whenever you open this page."
+            "Paid. Thank you. It's kept in this browser, so it comes back whenever you open this page here."
         );
         view.$destroy();
     });

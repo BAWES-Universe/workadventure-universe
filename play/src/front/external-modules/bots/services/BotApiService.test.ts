@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BotApiService, isBotAiOptions, isOrbitSessionResponse, myAiKeyNames } from "./BotApiService";
 
 const mocks = vi.hoisted(() => ({
@@ -521,5 +521,54 @@ describe("BotApiService when Orbit refuses a call after the session was renewed"
         ]);
         expect(sent[0].authorization).toBe(`Bearer ${OLD_SESSION}`);
         expect(sent[2].authorization).toBe(`Bearer ${NEW_SESSION}`);
+    });
+});
+
+describe("BotApiService when the sign-in exchange for an Orbit session never answers", () => {
+    const ADMIN = "https://admin.example.com";
+    const SESSION = `orb_sess_v2_${"e".repeat(64)}`;
+    const b64u = (input: unknown) =>
+        btoa(JSON.stringify(input)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const ACCESS = authToken(`${b64u({ alg: "none" })}.${b64u({ sub: "user" })}.sig`);
+
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("gives up on the exchange after its own deadline, for every caller, and asks again on the next call", async () => {
+        let asked = 0;
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+            asked++;
+            if (asked === 1) {
+                // Never answers; it ends only when the game gives up on it
+                return new Promise<Response>((_resolve, reject) => {
+                    if (init?.signal) init.signal.onabort = () => reject(new DOMException("aborted", "AbortError"));
+                });
+            }
+            return Promise.resolve(
+                new Response(JSON.stringify({ version: 2, sessionId: SESSION, expiresAt: Date.now() + 3600_000 }))
+            );
+        });
+        const service = new BotApiService();
+        service.initialize(ACCESS, ADMIN, "room-1");
+        const getSession = () =>
+            (service as unknown as { getAdminApiSessionToken(): Promise<string | null> }).getAdminApiSessionToken();
+
+        const first = getSession();
+        // A second caller shares the same sign-in
+        const second = getSession();
+        await vi.advanceTimersByTimeAsync(16_000);
+        await expect(first).resolves.toBeNull();
+        await expect(second).resolves.toBeNull();
+        expect(asked).toBe(1);
+
+        // The stuck sign-in is not what the next call waits on
+        await expect(getSession()).resolves.toBe(SESSION);
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
     });
 });

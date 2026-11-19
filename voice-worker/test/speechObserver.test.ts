@@ -471,6 +471,53 @@ describe('by the clock', () => {
         expect(o.calls.length).toBe(1);
     });
 
+    it('moves its timer up when a stream that came back from a call is due before the deadline set while it was out, so its place is let go on time', async () => {
+        const o = observing('held', { maxStreams: 2 });
+        await o.observer.ready();
+        // A sends exactly one window at 0 ms, and the detector is slow to answer it
+        o.feed(32, 'pA', 1, 512);
+        await settle();
+        expect(o.calls.length).toBe(1);
+        // B comes at 300 ms with less than a window: a timer is set for its deadline (700 ms), as A is out in a call
+        vi.advanceTimersByTime(300);
+        o.feed(20, 'pB', 1, 320);
+        // A's answer comes at 350 ms: nothing is waiting for it any more, and nothing has come since 0 ms, so it is let go at 400 ms
+        vi.advanceTimersByTime(50);
+        o.calls[0].answer();
+        await settle();
+        vi.advanceTimersByTime(52);
+        expect(o.observer.stats()).toMatchObject({ streams: 1 });
+        // C at 450 ms takes the place A held
+        vi.advanceTimersByTime(48);
+        o.feed(20, 'pC', 1, 320);
+        expect(o.observer.stats()).toMatchObject({ streams: 2 });
+        expect(o.counters.get('observer_streams_refused')).toBe(0);
+    });
+
+    it('still knows the newest path of a person whose place was let go to make room for others, however many came after', async () => {
+        const o = observing('at once', { maxStreams: 2 });
+        await o.observer.ready();
+        // p1 is heard on path 2 and their stream ends
+        o.feed(32, 'p1', 2, 512);
+        await settle();
+        vi.advanceTimersByTime(402);
+        // Two more people are admitted and let go in turn: p1's mark has been let go to make room
+        for (const who of ['p2', 'p3', 'p4']) {
+            o.feed(32, who, 1, 512);
+            await settle();
+            vi.advanceTimersByTime(402);
+        }
+        expect(o.observer.stats()).toMatchObject({ streams: 0 });
+        const calls = o.calls.length;
+        const dropped = o.counters.get('observer_stale_dropped');
+        // The old path of p1 is still turned away
+        o.feed(64, 'p1', 1, 512);
+        await settle();
+        expect(o.counters.get('observer_stale_dropped')).toBeGreaterThan(dropped);
+        expect(o.calls.length).toBe(calls);
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0 });
+    });
+
     it('a stream whose last window emptied its queue is let go once nothing comes for it, so it never holds one of the places', async () => {
         const o = observing('at once', { maxStreams: 2 });
         await o.observer.ready();

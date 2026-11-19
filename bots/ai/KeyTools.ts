@@ -125,6 +125,8 @@ interface SavedPageJob {
     exponent: number;
     amount: string;
     active: boolean;
+    /** What Orbit holds as the job's description: a text, null for none, undefined when the answer carried no such field. */
+    description?: string | null;
 }
 function savedJobOf(data: unknown): SavedPageJob | null {
     const job = (data as { job?: unknown } | null)?.job as Record<string, unknown> | null | undefined;
@@ -133,7 +135,8 @@ function savedJobOf(data: unknown): SavedPageJob | null {
     if (typeof artifactId !== 'string' || typeof connectionId !== 'string' || typeof currency !== 'string' || typeof amount !== 'string') return null;
     if (typeof amountMinor !== 'number' || !Number.isSafeInteger(amountMinor) || amountMinor < 0) return null;
     if (typeof exponent !== 'number' || ![0, 2, 3].includes(exponent) || typeof active !== 'boolean') return null;
-    return { artifactId, connectionId, amountMinor, currency, exponent, amount, active };
+    const description = typeof job.description === 'string' ? job.description : job.description === null ? null : undefined;
+    return { artifactId, connectionId, amountMinor, currency, exponent, amount, active, description };
 }
 
 /** What the owner asked for, in the smallest unit of a currency with `exponent` decimals ("4.5" and "4.500" KWD are both 4500); null for text that is not an amount that fits. */
@@ -148,8 +151,10 @@ export function minorUnitsOf(amount: string, exponent: number): number | null {
 }
 
 /** The saved job is the one asked for: this page, this App's connection, the amount in minor units, the currency, and it is on. */
-function savedMatches(job: SavedPageJob, asked: { artifact: string; connectionId: string; amount: string; currency: string }): boolean {
+function savedMatches(job: SavedPageJob, asked: { artifact: string; connectionId: string; amount: string; currency: string; description?: string }): boolean {
     const wanted = minorUnitsOf(asked.amount, job.exponent);
+    // A description that was asked for is part of what was set up: a job that holds another one (or the answer does not say) is not it
+    if (asked.description && job.description !== asked.description) return false;
     return job.active && job.artifactId === asked.artifact && job.connectionId === asked.connectionId && job.currency.toUpperCase() === asked.currency.toUpperCase() && wanted !== null && job.amountMinor === wanted;
 }
 
@@ -229,7 +234,8 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
     // Whatever was written is checked whole: cut to three letters, "USDT" would become a different money, and Orbit could not tell
     const currency = typeof args.currency === 'string' ? args.currency.trim() : '';
     if (!/^[A-Za-z]{3}$/.test(currency)) return { error: 'The currency must be a three-letter code, like USD. Nothing was set up. Ask which one they mean.' };
-    const asked = { artifact, connectionId: app.connectionId, amount, currency };
+    const description = text(args.description, 200);
+    const asked = { artifact, connectionId: app.connectionId, amount, currency, ...(description ? { description } : {}) };
     const terms = `${amount} ${currency.toUpperCase()}`;
     const done = (job: SavedPageJob): Record<string, unknown> => ({
         done: true,
@@ -243,7 +249,7 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
             artifactId: artifact,
             amount,
             currency,
-            ...(text(args.description, 200) ? { description: text(args.description, 200) } : {}),
+            ...(description ? { description } : {}),
         });
     } catch (error) {
         // The request may have reached Orbit: an unknown outcome is read back once, never written again

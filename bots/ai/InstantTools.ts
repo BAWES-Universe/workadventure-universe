@@ -358,9 +358,9 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
             }
             case 'refused': {
                 const words = answer.message || PLAIN_FALLBACK;
-                if (answer.reason === 'unclear' || answer.reason === 'already_checking') {
-                    return unsure();
-                }
+                if (answer.reason === 'unclear') return unsure();
+                // Orbit is already checking this one: the stop that came with the answer still ends the task
+                if (answer.reason === 'already_checking') return answer.stop === true ? { ...unsure(), stop: true } : unsure();
                 // The same, whatever the refusal says (a rule, credit used up, anything else): an earlier asking may have run. A rule still
                 // ends the task, so nothing more is run in it
                 if (earlierAttempt()) return answer.stop || answer.reason === 'rule' ? { ...unsure(), stop: true, result: ruleStopResult(words, { link: check }) } : unsure();
@@ -509,7 +509,8 @@ export async function renewInstantReceipt(admin: Pick<AdminApiService, 'renewTas
         if (!task.receipt || !(await task.receipt)) return;
         const renewed = await admin.renewTaskReceipt(botId, userId, { taskKey: task.key, ...(task.generation === undefined ? {} : { generation: task.generation }) });
         // The generation Orbit names is the one to use from now on, whether this renewal counted or was too old
-        if (renewed?.generation !== undefined) task.generation = renewed.generation;
+        // Only forward: an answer that arrives late, out of order, never takes the task back to an older generation
+        if (renewed?.generation !== undefined && (task.generation === undefined || renewed.generation > task.generation)) task.generation = renewed.generation;
     } catch {
         // the lease is Orbit's to settle
     }
@@ -565,10 +566,10 @@ export function endInstantTask(
             // Orbit moved the receipt on to a later generation (a late run came under it): that close changed nothing. This task still holds the turn's
             // end, so the same word goes again, once, under the generation it is on now
             if (typeof taken === 'object' && 'stale' in taken) {
-                if (taken.generation !== undefined) task.generation = taken.generation;
+                if (taken.generation !== undefined && (task.generation === undefined || taken.generation > task.generation)) task.generation = taken.generation;
                 taken = taken.generation === undefined ? false : await admin.closeTaskReceipt(botId, userId, { taskKey: task.key, state, generation: taken.generation });
                 if (typeof taken === 'object' && 'stale' in taken) {
-                    if (taken.generation !== undefined) task.generation = taken.generation;
+                    if (taken.generation !== undefined && (task.generation === undefined || taken.generation > task.generation)) task.generation = taken.generation;
                     taken = false;
                 }
             }
@@ -594,7 +595,8 @@ export function endInstantTask(
 /** One Instant tool's result as the model reads it: the answer from outside inside boundary markers, and plain notes otherwise. */
 export function formatInstantResult(name: string, result: Record<string, unknown>): string {
     const note = typeof result.note === 'string' ? result.note : '';
-    const receipt = typeof result.receipt === 'string' ? ` Link, only when you tell them something did not work or they ask what it used: ${result.receipt}` : '';
+    // A note that already says what to do with the link (an unsure result adds it on its own line) is not given a second instruction for the same link
+    const receipt = typeof result.receipt === 'string' && !note.includes(result.receipt) ? ` Link, only when you tell them something did not work or they ask what it used: ${result.receipt}` : '';
     if (result.success === true && 'data' in result) {
         const body = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
         // Markers inside the answer are neutralised, as for a page read from the web
