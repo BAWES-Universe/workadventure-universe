@@ -152,6 +152,57 @@ describe("the guest id sent along when a guest signs in to an account", () => {
         }
     });
 
+    it("judges the token at the one moment the request is stamped, so a token valid at that moment is sent and renewed together", async () => {
+        const start = Date.now();
+        localUserStore.setAuthToken(GUEST);
+        localUserStore.keepGuestTokenAside(start);
+        localUserStore.setAuthToken(gameToken);
+        // The clock reads exactly 30 minutes (still valid) at the first look and one millisecond later at the next
+        const edge = start + 30 * 60 * 1000;
+        let reads = 0;
+        const clock = vi.spyOn(Date, "now").mockImplementation(() => edge + reads++);
+        mocks.me.mockResolvedValueOnce(retryAnswer);
+        try {
+            await signIn(gameToken);
+        } finally {
+            clock.mockRestore();
+        }
+        expect(guestTokenOfCall(0)).toBe(GUEST);
+        // It went, so it is renewed, not dropped for the millisecond between the two looks
+        expect(localUserStore.peekGuestTokenAside(edge + 10 * 60 * 1000)).toBe(GUEST);
+    });
+
+    it("renews only the token that went with the request, never another one a different tab kept aside meanwhile", async () => {
+        vi.useFakeTimers();
+        try {
+            const start = Date.now();
+            vi.setSystemTime(start);
+            localUserStore.setAuthToken(GUEST);
+            localUserStore.keepGuestTokenAside(start);
+            localUserStore.setAuthToken(gameToken);
+            const OTHER = `header.${window.btoa(
+                JSON.stringify({ identifier: "0e9c1a52-1111-4222-8333-944455556666" })
+            )}.signature`;
+            vi.setSystemTime(start + 10 * 60 * 1000);
+            mocks.me.mockImplementationOnce(() => {
+                // Another tab keeps its own guest's token aside while the request is out; the answer comes back long after
+                vi.setSystemTime(start + 10 * 60 * 1000 + 1000);
+                localUserStore.setAuthToken(OTHER);
+                localUserStore.keepGuestTokenAside();
+                localUserStore.setAuthToken(gameToken);
+                vi.setSystemTime(start + 60 * 60 * 1000);
+                return Promise.resolve(retryAnswer);
+            });
+            await signIn(gameToken);
+            expect(guestTokenOfCall(0)).toBe(GUEST);
+            // The other one was not sent, so its time is as its tab set it: it is not lengthened by this answer
+            vi.setSystemTime(start + 80 * 60 * 1000);
+            expect(localUserStore.peekGuestTokenAside()).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("does not renew it for a refusal that is not a retry, nor once signed in", async () => {
         vi.useFakeTimers();
         try {

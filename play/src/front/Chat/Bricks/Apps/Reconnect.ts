@@ -50,6 +50,8 @@ export async function signInInPopup(
     options: SignInOptions = {}
 ): Promise<ReconnectResult> {
     const { signal } = options;
+    // Already cancelled: no window is opened, whether or not the browser would have blocked it
+    if (signal?.aborted) return "stopped";
     const popup = window.open("", newPopupName(), "width=600,height=700");
     if (!popup) return "blocked";
     // Cancellation is listened to from the first moment: while the app's connection, its "already connected" question or the sign-in

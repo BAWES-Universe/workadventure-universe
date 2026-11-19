@@ -599,6 +599,29 @@ describe('AIService: private answers in a group (#1993)', () => {
             expect(room).toContain('Someone else just joined');
         });
 
+        it('keeps the files check on the second try made when the first said it saved a page nobody saved', async () => {
+            const { say, here, service } = await withFiles();
+            let calls = 0;
+            (service as any).generateTurn = async function* (...args: any[]) {
+                calls++;
+                const facts = args[16];
+                if (calls === 1) {
+                    // The first answer read files, said it saved a page, and saved none
+                    Object.assign(facts, { guard: true, artifactTools: true, fileDerived: { joined: () => here.others?.includes(OMAR) === true } });
+                    yield { content: 'Rebuilt it, v2 is dark.', done: false };
+                } else {
+                    // The second look at the files timed out, so it sets nothing; Omar walks up while it answers
+                    here.others = [SARA, OMAR];
+                    yield { content: 'The minutes say the layoffs start on Monday.', done: false };
+                }
+                yield { content: '', done: true, metadata: { tokensUsed: 10, promptTokens: 5, completionTokens: 5, latency: 5, error: false, truncated: false } };
+            };
+            const { room } = await say('Rebuild the minutes page');
+            expect(calls).toBe(2);
+            expect(room).not.toContain('layoffs');
+            expect(room).toContain('Someone else just joined');
+        });
+
         it('says the same answer, whole, when nobody walked up', async () => {
             const { say, here } = await withFiles();
             answersWhileOmarComes(here, 'Your Q3-minutes.pdf is the newest one.', false);

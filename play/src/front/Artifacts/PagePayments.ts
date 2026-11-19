@@ -816,6 +816,17 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 : none
             : // After a failed first look the page has no checkout of its own: the purchase found is told under the request that asked for it back
               target ?? (lastRestore ? { intentId: null, ...lastRestore } : none);
+        // The turned-away restore this ask goes on with: Restore purchase takes it as it is, and Check payment after that restore's lookup failed
+        // goes on with its request too (nothing of its own is left to check), so the page waiting on that restore hears the end of it either way
+        const held =
+            deferred ??
+            (deferredRestore &&
+            deferredRestore.from === opening() &&
+            stillSpeaking(deferredRestore.request, deferredRestore.session) &&
+            deferredRestore.request === asked.request &&
+            deferredRestore.session === asked.session
+                ? deferredRestore
+                : null);
         busy = true;
         activeRequest = asked.request;
         activeFrom = asked.from;
@@ -843,23 +854,24 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 activeRequest = "";
                 activeSession = undefined;
                 if (told === "unavailable" || told === "cant_confirm") keepRestore();
-                else if (!update.paid) lettingGo();
+                // A line that still offers Check payment keeps the turned-away page's requests: a later answer that the purchase is made is theirs too
+                else if (!update.paid && !update.canCheck) lettingGo();
                 show({
                     ...owedRestore(update),
                     ...update,
                     receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
                 });
                 if (asked.request) tellEnd(told, asked.request, asked.from, test, asked.session);
-                if (deferred?.latest && deferred.latest !== asked.request) {
-                    tellEnd(told, deferred.latest, asked.from, test, asked.session);
+                if (held?.latest && held.latest !== asked.request) {
+                    tellEnd(told, held.latest, asked.from, test, asked.session);
                 }
                 if (update.paid) {
                     tellDeferredPaid(
                         test,
                         { request: asked.request, session: asked.session },
-                        ...(deferred?.latest ? [{ request: deferred.latest, session: asked.session }] : [])
+                        ...(held?.latest ? [{ request: held.latest, session: asked.session }] : [])
                     );
-                    tellLatestPaid(test, asked.request, deferred?.latest ?? "");
+                    tellLatestPaid(test, asked.request, held?.latest ?? "");
                 }
             };
             try {
@@ -887,8 +899,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                         target = { intentId: null, request: asked.request, from: asked.from, session: asked.session };
                     }
                     // The page turned away twice (its restore, then its pay tap) waits on its latest request: the end of this order is told under it too
-                    if (deferred?.latest && deferred.latest !== asked.request) {
-                        lateAsker = { request: deferred.latest, from: asked.from, session: deferred.session };
+                    if (held?.latest && held.latest !== asked.request) {
+                        lateAsker = { request: held.latest, from: asked.from, session: held.session };
                     }
                     // Its restore is being watched now, under its own request: nothing is left to hand over at the end
                     lettingGo();

@@ -864,14 +864,15 @@ class ConnectionManager {
             throw new Error("playUri is undefined");
         }
 
+        // When the request goes: whether the guest token is still valid is judged at this one moment, for sending it and for renewing it
+        // when the answer comes back (a token valid at the moment it went is not dropped for being a millisecond late)
+        const sentAt = Date.now();
+
         // Right after a sign-in: the guest token this device kept aside goes along once, so Orbit can join the guest's
         // visits to the account. Only with an account's token. It goes once: it is removed when the pusher has signed the
         // person in, and stays if the request fails or is refused, so a retry still carries it (it expires on its own).
-        const guestToken = localUserStore.peekGuestTokenAside();
+        const guestToken = localUserStore.peekGuestTokenAside(sentAt);
         const sendGuestToken = guestToken !== null && localUserStore.storedTokenIsAccounts();
-
-        // When the request goes: whether the guest token was still valid is judged then, not when the answer comes back
-        const sentAt = Date.now();
 
         // TODO: the call to "/me" could be completely removed and the request data could come from the FrontController
         // For this to work, the authToken should be stored in a cookie instead of localStorage.
@@ -899,7 +900,8 @@ class ConnectionManager {
         if (response.status === "error") {
             // Orbit asked for the same sign-in again, with the guest id that went along: it is kept aside for 30 more minutes from now, so
             // a hand-over that takes longer than the first 30 still has it on the last try
-            if (response.type === "retry" && sendGuestToken) localUserStore.renewGuestTokenAside(Date.now(), sentAt);
+            if (response.type === "retry" && sendGuestToken)
+                localUserStore.renewGuestTokenAside(Date.now(), sentAt, guestToken);
             // A refusal the pusher sent after renewing the token carries it: keep it, the old one may no longer work.
             const renewedToken = (data as { authToken?: unknown } | null)?.authToken;
             if (typeof renewedToken === "string") {

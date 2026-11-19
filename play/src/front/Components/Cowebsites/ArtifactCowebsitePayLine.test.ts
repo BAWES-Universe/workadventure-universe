@@ -195,16 +195,12 @@ describe("the line under a paying page in the artifact window (the approved mock
 
     it("does not show a copy that failed, or say it is copied, on a newer checkout that took the line meanwhile", async () => {
         let deny: (error: Error) => void = () => undefined;
-        let allow: () => void = () => undefined;
-        let copies = 0;
         Object.defineProperty(navigator, "clipboard", {
             configurable: true,
             value: {
                 writeText: () =>
-                    new Promise<void>((resolve, reject) => {
-                        copies++;
-                        if (copies === 1) deny = reject;
-                        else allow = resolve;
+                    new Promise<void>((_resolve, reject) => {
+                        deny = reject;
                     }),
             },
         });
@@ -235,9 +231,43 @@ describe("the line under a paying page in the artifact window (the approved mock
         await settle();
         expect(text()).not.toContain("Could not copy it");
         expect(target.querySelector('[data-testid="artifactReceiptText"]')).toBeNull();
+        view.$destroy();
+    });
+
+    it("does not say a copy that went through is copied on a newer, paid checkout that took the line meanwhile", async () => {
+        let allow: () => void = () => undefined;
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: {
+                writeText: () =>
+                    new Promise<void>((resolve) => {
+                        allow = resolve;
+                    }),
+            },
+        });
+        api.payOnArtifact
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValueOnce({ status: "paid", testPayment: false })
+            .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" })
+            .mockResolvedValue({ status: "paid", testPayment: false });
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const { say, press, target, view, text } = await mount();
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await vi.advanceTimersByTimeAsync(3_000);
+        await settle();
+        await press("copy");
+        // The page asks again, and the newer checkout is paid, all before the browser answers the first copy
+        await say({ universe: "use-app", app: "examplepay", request: "r2", session: "s1" });
+        await vi.advanceTimersByTimeAsync(3_000);
+        await settle();
+        expect(text()).toContain("Copy receipt link");
         allow();
         await settle();
+        // The newer line is as it was: its own button, ready to copy its own link
         expect(text()).not.toContain("copied");
+        expect(text()).toContain("Copy receipt link");
+        expect((target.querySelector('[data-testid="artifactPay-copy"]') as HTMLButtonElement).disabled).toBe(false);
+        expect(target.querySelector('[data-testid="artifactReceiptText"]')).toBeNull();
         view.$destroy();
     });
 

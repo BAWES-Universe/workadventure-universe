@@ -257,8 +257,21 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         const early = new AbortController();
         early.abort();
         const factory = vi.fn(() => Promise.resolve("c1"));
+        const open = vi.spyOn(window, "open");
+        open.mockClear();
         expect(await signInInPopup(factory, { signal: early.signal })).toBe("stopped");
         expect(factory).not.toHaveBeenCalled();
-        expect(popup.close).toHaveBeenCalled();
+        // No window is opened for a sign-in that was already stopped
+        expect(open).not.toHaveBeenCalled();
+    });
+
+    it("says it was stopped, not blocked, when it was stopped before the browser would have blocked the window", async () => {
+        const early = new AbortController();
+        early.abort();
+        const open = vi.spyOn(window, "open").mockReturnValue(null);
+        expect(await signInInPopup("c1", { signal: early.signal })).toBe("stopped");
+        expect(open).not.toHaveBeenCalled();
+        // Not stopped: a blocked window is still blocked
+        expect(await signInInPopup("c1", { signal: new AbortController().signal })).toBe("blocked");
     });
 });

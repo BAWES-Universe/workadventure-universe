@@ -293,6 +293,21 @@ describe("keepPrivate", () => {
         expect(text).toContain("url(/pics/ok.png)");
     });
 
+    it("keeps an escaped line break inside a quoted style address, so nothing after it is left in the recording", () => {
+        const node = {
+            tagName: "style",
+            attributes: {
+                _cssText:
+                    ".a { background: url(\"/img/a\\\nb.png?token=secret1\") } .b { background: url('/img/c\\\r\nd.png?token=secret2') } .c { background: url(/img/ok.png?token=secret3) }",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=");
+        expect(text).not.toContain("secret");
+        expect(text).toContain("url(/img/ok.png)");
+    });
+
     it("does not send a replay recording too large to be checked whole", () => {
         const huge = { type: 2, data: { values: new Array<string>(500_001).fill("*") } };
         const event = keepPrivate({
