@@ -5,7 +5,8 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
-import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
+import { MatrixDmBridge, chatRefusedForGood, computerFileMsgtype } from '../matrix/MatrixDmBridge';
+import type { AttachedFile } from '../server/ComputerReports';
 import { AdminApiService } from '../server/AdminApiService';
 import { BrickRunner, RUNNABLE_KINDS, dueRunOf, reminderText, transactionIdOfRun, type BrickRunnerApi, type BrickSpeaker, type DueRun, type RunReport } from '../server/BrickRunner';
 
@@ -208,14 +209,16 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
     const SARA = '@sara:matrix.test';
     const ROOM = '!dm:matrix.test';
 
-    function bridgeWith(opts: { room?: string | null; members?: string[]; access?: any; sendFails?: boolean }) {
+    function bridgeWith(opts: { room?: string | null; members?: string[]; membersOf?: Record<string, string[]>; access?: any; sendFails?: boolean }) {
         const sendMessage = vi.fn(async (..._args: unknown[]) => {
             if (opts.sendFails) throw new Error('homeserver down');
             return '$said';
         });
+        const uploadMedia = vi.fn(async (..._args: unknown[]) => 'mxc://matrix.test/abc');
         const client = {
             sendMessage,
-            getJoinedMembers: vi.fn(async (..._args: unknown[]) => opts.members ?? [SARA, BRICK_USER]),
+            uploadMedia,
+            getJoinedMembers: vi.fn(async (...args: unknown[]) => opts.membersOf?.[String(args[1])] ?? opts.members ?? [SARA, BRICK_USER]),
         };
         const deps: any = {
             getBotConfig: vi.fn(async () => ({ botId: BRICK, name: 'Brick', enabled: true })),
@@ -231,13 +234,257 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
             },
         };
         const bridge = new MatrixDmBridge({ homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as', hsToken: 'hs' }, client as never, deps);
-        return { bridge, sendMessage, deps, client };
+        return { bridge, sendMessage, uploadMedia, deps, client };
     }
 
     it('sends the text as the Brick into the chat the two share alone, under the run’s transaction id', async () => {
         const { bridge, sendMessage } = bridgeWith({});
         expect(await bridge.speakInDirectChat(BRICK, SARA, 'Reminder: Pick up the car', 'brick-run:run-1')).toEqual({ ok: true, eventId: '$said' });
         expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Reminder: Pick up the car', 'net.bawes.universe.alone': true }, 'brick-run:run-1');
+    });
+
+    it('puts a "Worked on its computer" line above a finished computer job, as a notice under its own transaction id, then says the text', async () => {
+        const { bridge, sendMessage } = bridgeWith({});
+        const field = { v: 1, state: 'done', line: 'Worked on its computer', startedAt: 1, took: 540, steps: [] } as never;
+        expect(await bridge.speakInDirectChat(BRICK, SARA, 'Visa form is done.', 'computer-told:j:done', { steps: { field, text: 'Worked on its computer' } })).toEqual({ ok: true, eventId: '$said' });
+        expect(sendMessage).toHaveBeenNthCalledWith(1, BRICK_USER, ROOM, { msgtype: 'm.notice', body: 'Worked on its computer', 'universe.steps': field }, 'computer-told:j:done:steps');
+        expect(sendMessage).toHaveBeenNthCalledWith(2, BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Visa form is done.', 'net.bawes.universe.alone': true }, 'computer-told:j:done');
+    });
+
+    it('still says the text when the line above it could not be sent', async () => {
+        const { bridge, sendMessage } = bridgeWith({});
+        sendMessage.mockRejectedValueOnce(new Error('homeserver blip'));
+        const field = { v: 1, state: 'done', line: 'Worked on its computer', startedAt: 1, steps: [] } as never;
+        expect(await bridge.speakInDirectChat(BRICK, SARA, 'Visa form is done.', 'k', { steps: { field, text: 'Worked on its computer' } } as never)).toEqual({ ok: true, eventId: '$said' });
+        expect(sendMessage).toHaveBeenLastCalledWith(BRICK_USER, ROOM, expect.objectContaining({ body: 'Visa form is done.' }), 'k');
+    });
+
+    describe('file cards from a finished computer job', () => {
+        const marked: string[] = [];
+        const file = (id: string, name: string, mime: string, bytes: Buffer | null | Error): AttachedFile => ({
+            id,
+            name,
+            mime,
+            bytes: bytes instanceof Buffer ? bytes.length : 0,
+            load: async () => {
+                if (bytes instanceof Error) throw bytes;
+                return bytes;
+            },
+            delivered: async () => void marked.push(id),
+        });
+
+        it('sends each file after the message as a file message under its own transaction id, and says they all went', async () => {
+            const { bridge, sendMessage, uploadMedia } = bridgeWith({});
+            const answer = await bridge.speakInDirectChat(BRICK, SARA, 'Visa form is done.', 'computer-told:j:done', {
+                files: [file('f1', 'visa-receipt.pdf', 'application/pdf', Buffer.from('%PDF')), file('f2', 'photo.png', 'image/png', Buffer.from('png'))],
+            });
+            expect(answer).toEqual({ ok: true, eventId: '$said', files: { attached: ['f1', 'f2'], missed: [] } });
+            expect(sendMessage).toHaveBeenNthCalledWith(1, BRICK_USER, ROOM, expect.objectContaining({ msgtype: 'm.text', body: 'Visa form is done.' }), 'computer-told:j:done');
+            expect(uploadMedia).toHaveBeenNthCalledWith(1, BRICK_USER, Buffer.from('%PDF'), 'application/pdf', 'visa-receipt.pdf');
+            expect(sendMessage).toHaveBeenNthCalledWith(
+                2,
+                BRICK_USER,
+                ROOM,
+                { msgtype: 'm.file', body: 'visa-receipt.pdf', filename: 'visa-receipt.pdf', url: 'mxc://matrix.test/abc', info: { mimetype: 'application/pdf', size: 4 } },
+                'computer-told:j:done:file:f1'
+            );
+            expect(sendMessage).toHaveBeenNthCalledWith(3, BRICK_USER, ROOM, expect.objectContaining({ msgtype: 'm.image', filename: 'photo.png' }), 'computer-told:j:done:file:f2');
+        });
+
+        it('says each file is delivered only after the chat took it, so a restart never uploads one twice, and a file that did not go is never marked', async () => {
+            marked.length = 0;
+            const { bridge, uploadMedia, sendMessage } = bridgeWith({});
+            const tooBig = Object.assign(new Error('too large'), { response: { status: 413 } });
+            uploadMedia.mockResolvedValueOnce('mxc://matrix.test/one').mockRejectedValueOnce(tooBig);
+            sendMessage.mockImplementation(async (..._args: unknown[]) => {
+                // The first file is marked before the second one is even tried
+                if (_args[3] === 'computer-told:j:done:file:f2') expect(marked).toEqual(['f1']);
+                return '$said';
+            });
+            await bridge.speakInDirectChat(BRICK, SARA, 'done', 'computer-told:j:done', { files: [file('f1', 'a.pdf', 'application/pdf', Buffer.from('a')), file('f2', 'big.zip', 'application/zip', Buffer.from('b'))] });
+            expect(marked).toEqual(['f1']);
+        });
+
+        it('a mark that cannot be kept never costs the person the file or the report', async () => {
+            const { bridge } = bridgeWith({});
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const one = { ...file('f1', 'a.pdf', 'application/pdf', Buffer.from('a')), delivered: async () => Promise.reject(new Error('Orbit down')) };
+            expect(await bridge.speakInDirectChat(BRICK, SARA, 'done', 't', { files: [one] })).toMatchObject({ ok: true, files: { attached: ['f1'], missed: [] } });
+            warn.mockRestore();
+        });
+
+        it('shows a picture, a sound and a video as such, and a page, a script or a vector picture as a file to download', () => {
+            expect(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'audio/mpeg', 'video/mp4', 'image/svg+xml', 'text/html', 'application/octet-stream', 'application/pdf'].map(computerFileMsgtype)).toEqual([
+                'm.image', 'm.image', 'm.image', 'm.image', 'm.audio', 'm.video', 'm.file', 'm.file', 'm.file', 'm.file',
+            ]);
+        });
+
+        it('says which file could not go and whether another try may work: gone from Orbit and refused by the chat will not, a fetch or send that failed may', async () => {
+            const { bridge, sendMessage, uploadMedia } = bridgeWith({});
+            const tooBig = Object.assign(new Error('too large'), { response: { status: 413 } });
+            uploadMedia.mockResolvedValueOnce('mxc://matrix.test/one').mockRejectedValueOnce(tooBig).mockResolvedValueOnce('mxc://matrix.test/three');
+            const answer = await bridge.speakInDirectChat(BRICK, SARA, 'done', 't', {
+                files: [
+                    file('f1', 'a.pdf', 'application/pdf', Buffer.from('a')),
+                    file('f2', 'big.zip', 'application/zip', Buffer.from('b')),
+                    file('f3', 'gone.pdf', 'application/pdf', null),
+                    file('f4', 'orbit-down.pdf', 'application/pdf', new Error('Orbit down')),
+                    file('f5', 'e.pdf', 'application/pdf', Buffer.from('e')),
+                ],
+            });
+            expect(answer).toEqual({
+                ok: true,
+                eventId: '$said',
+                files: {
+                    attached: ['f1', 'f5'],
+                    missed: [
+                        { id: 'f2', name: 'big.zip', again: false },
+                        { id: 'f3', name: 'gone.pdf', again: false, gone: true },
+                        { id: 'f4', name: 'orbit-down.pdf', again: true },
+                    ],
+                },
+            });
+            expect(sendMessage).toHaveBeenCalledTimes(3);
+        });
+
+        it('tries again after a refusal that will pass: too many requests, a timeout, a server error, even though axios calls every 4xx a bad request', () => {
+            const refused = (status: number) => Object.assign(new Error('refused'), { code: status < 500 ? 'ERR_BAD_REQUEST' : 'ERR_BAD_RESPONSE', response: { status } });
+            expect([400, 403, 413].map((status) => chatRefusedForGood(refused(status)))).toEqual([true, true, true]);
+            expect([408, 429, 500, 502, 503].map((status) => chatRefusedForGood(refused(status)))).toEqual([false, false, false, false, false]);
+            expect(chatRefusedForGood(Object.assign(new Error('too big'), { code: 'ERR_FR_MAX_BODY_LENGTH_EXCEEDED' }))).toBe(true);
+            expect(chatRefusedForGood(new Error('socket hang up'))).toBe(false);
+        });
+
+        it('says a chat that did not answer may be tried again, and never says a file’s name in the log', async () => {
+            const { bridge, sendMessage } = bridgeWith({});
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            sendMessage.mockResolvedValueOnce('$said').mockRejectedValueOnce(new Error('homeserver down'));
+            const answer = await bridge.speakInDirectChat(BRICK, SARA, 'done', 't', { files: [file('f1', 'passport-scan.pdf', 'application/pdf', Buffer.from('a'))] });
+            expect(answer).toMatchObject({ ok: true, files: { attached: [], missed: [{ id: 'f1', again: true }] } });
+            expect(JSON.stringify(warn.mock.calls)).not.toContain('passport-scan');
+            warn.mockRestore();
+        });
+
+        it('sends no file when the message itself could not go: the files wait for a try that can', async () => {
+            const { bridge, uploadMedia } = bridgeWith({ sendFails: true });
+            expect(await bridge.speakInDirectChat(BRICK, SARA, 'done', 't', { files: [file('f1', 'a.pdf', 'application/pdf', Buffer.from('a'))] })).toEqual({ ok: false, reason: 'unsure' });
+            expect(uploadMedia).not.toHaveBeenCalled();
+        });
+
+        it('refuses a chat that is not the person’s own, with no file sent', async () => {
+            const { bridge, uploadMedia } = bridgeWith({ room: null });
+            expect(await bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { files: [file('f1', 'a.pdf', 'application/pdf', Buffer.from('a'))] })).toEqual({ ok: false, reason: 'no_chat' });
+            expect(uploadMedia).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('what a job made goes back to the conversation it began in, and nowhere else', () => {
+        it('speaks in the chat the job began in', async () => {
+            const { bridge, sendMessage } = bridgeWith({});
+            expect(await bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: true, eventId: '$said' });
+            expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, expect.anything(), 't');
+        });
+
+        it('says origin_gone, and sends nothing, when the chat the two share now is another one and the chat it began in is not theirs any more (never a chat picked or made for it)', async () => {
+            const { bridge, sendMessage, uploadMedia } = bridgeWith({ membersOf: { '!old-chat:matrix.test': [SARA] } });
+            const answer = await bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: '!old-chat:matrix.test', files: [{ id: 'f1', name: 'a.pdf', mime: 'application/pdf', bytes: 1, load: async () => Buffer.from('a'), delivered: async () => undefined }] });
+            expect(answer).toEqual({ ok: false, reason: 'origin_gone' });
+            expect(sendMessage).not.toHaveBeenCalled();
+            expect(uploadMedia).not.toHaveBeenCalled();
+        });
+
+        it('still speaks in the chat the job began in when the chat kept for the person is another one, as long as it is still the two of them alone; a look that failed waits', async () => {
+            // The record points at ROOM, the job began in the older chat, which is still the person and the Brick alone
+            const both = bridgeWith({});
+            expect(await both.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: '!old-chat:matrix.test' })).toEqual({ ok: true, eventId: '$said' });
+            expect(both.sendMessage).toHaveBeenCalledWith(BRICK_USER, '!old-chat:matrix.test', expect.anything(), 't');
+            // Nothing is said in the chat kept now, and the record never moves to the older chat
+            expect(both.sendMessage).not.toHaveBeenCalledWith(BRICK_USER, ROOM, expect.anything(), expect.anything());
+            expect(both.deps.rooms.rememberDmRoomOf).not.toHaveBeenCalledWith(BRICK, SARA, '!old-chat:matrix.test');
+            // Someone else is in it: gone, not a retry
+            const shared = bridgeWith({ membersOf: { '!old-chat:matrix.test': [SARA, BRICK_USER, '@someone:matrix.test'] } });
+            expect(await shared.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: '!old-chat:matrix.test' })).toEqual({ ok: false, reason: 'origin_gone' });
+            expect(shared.sendMessage).not.toHaveBeenCalled();
+            // The look failed: tried again later, never marked gone
+            const down = bridgeWith({});
+            down.client.getJoinedMembers.mockRejectedValueOnce(new Error('homeserver down'));
+            expect(await down.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: '!old-chat:matrix.test' })).toEqual({ ok: false, reason: 'unsure' });
+            expect(down.sendMessage).not.toHaveBeenCalled();
+        });
+
+        it('uses the chat the job began in when the shared store has lost its record of it, and notes it again; a store that could not be read waits', async () => {
+            // Nothing recorded (a restart, a store that was emptied), but the chat the job began in is still the two of them alone
+            const lost = bridgeWith({ room: null });
+            expect(await lost.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: true, eventId: '$said' });
+            expect(lost.sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, expect.anything(), 't');
+            expect(lost.deps.rooms.rememberDmRoomOf).toHaveBeenCalledWith(BRICK, SARA, ROOM);
+            // Both records come back: which bot the room belongs to too, or the person's next message in that chat is not known to be the Brick's
+            expect(lost.deps.rooms.rememberDmRoom).toHaveBeenCalledWith(ROOM, BRICK);
+            // The record appears later: the same words are sent into the same chat, once the first try had to wait
+            const later = bridgeWith({ room: null });
+            later.client.getJoinedMembers.mockRejectedValueOnce(new Error('homeserver down'));
+            expect(await later.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: false, reason: 'unsure' });
+            expect(later.sendMessage).not.toHaveBeenCalled();
+            expect(await later.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: true, eventId: '$said' });
+            // The chat it began in is not the two of them any more: gone for good, and nothing is said anywhere else
+            const strangers = bridgeWith({ room: null, members: [SARA, BRICK_USER, '@someone:matrix.test'] });
+            expect(await strangers.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: false, reason: 'origin_gone' });
+            expect(strangers.sendMessage).not.toHaveBeenCalled();
+            const left = bridgeWith({ room: null, members: [SARA] });
+            expect(await left.bridge.speakInDirectChat(BRICK, SARA, 'x', 't', { room: ROOM })).toEqual({ ok: false, reason: 'origin_gone' });
+        });
+
+        it('looks at the chat again right before the message and before each file: someone who joined while the line or an upload was on its way gets nothing', async () => {
+            const someone = '@someone:matrix.test';
+            const joins = (bridge: unknown) => (bridge as { roomMembers: Map<string, Set<string>> }).roomMembers.set(ROOM, new Set([SARA, BRICK_USER, someone]));
+            const field = { v: 1, state: 'done', line: 'Worked on its computer', startedAt: 1, steps: [] } as never;
+            const file = (id: string, name: string, mime: string, bytes: Buffer): AttachedFile => ({ id, name, mime, bytes: bytes.length, load: async () => bytes, delivered: async () => undefined });
+            // Someone joins while the "Worked on its computer" line goes out: the report text is not said
+            const line = bridgeWith({});
+            line.sendMessage.mockImplementationOnce(async () => {
+                joins(line.bridge);
+                return '$line';
+            });
+            expect(await line.bridge.speakInDirectChat(BRICK, SARA, 'Visa form is done.', 'k', { steps: { field, text: 'Worked on its computer' } } as never)).toEqual({ ok: false, reason: 'unsure' });
+            expect(line.sendMessage).toHaveBeenCalledTimes(1);
+            // The chat the work began in is gone for good for it
+            const began = bridgeWith({});
+            began.sendMessage.mockImplementationOnce(async () => {
+                joins(began.bridge);
+                return '$line';
+            });
+            expect(await began.bridge.speakInDirectChat(BRICK, SARA, 'x', 'k', { room: ROOM, steps: { field, text: 'Worked on its computer' } } as never)).toEqual({ ok: false, reason: 'origin_gone' });
+            // Someone joins while the first file uploads: that file and the next one do not go, and neither will be tried again
+            const upload = bridgeWith({});
+            upload.uploadMedia.mockImplementationOnce(async () => {
+                joins(upload.bridge);
+                return 'mxc://matrix.test/one';
+            });
+            const answer = await upload.bridge.speakInDirectChat(BRICK, SARA, 'done', 'computer-told:j:done', {
+                files: [file('f1', 'a.pdf', 'application/pdf', Buffer.from('a')), file('f2', 'b.pdf', 'application/pdf', Buffer.from('b'))],
+            });
+            expect(answer).toMatchObject({ ok: true, files: { attached: [], missed: [{ id: 'f1', again: false }, { id: 'f2', again: false }] } });
+            expect(upload.sendMessage).toHaveBeenCalledTimes(1);
+            expect(upload.sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, expect.objectContaining({ body: 'done' }), 'computer-told:j:done');
+        });
+
+        it('still says no_chat when there is no chat at all and nothing to say where it began, and keeps the goals’ own room check the same as it was', async () => {
+            const none = bridgeWith({ room: null });
+            expect(await none.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'no_chat' });
+            expect(await none.bridge.roomToSpeakIn(BRICK, SARA)).toEqual({ ok: false, reason: 'no_chat' });
+            expect(await bridgeWith({}).bridge.roomToSpeakIn(BRICK, SARA)).toEqual({ ok: true, roomId: ROOM });
+        });
+    });
+
+    it('says refused, never unsure, when the chat turned the message down for good, and unsure when it only did not answer', async () => {
+        const refused = bridgeWith({});
+        refused.sendMessage.mockRejectedValueOnce(Object.assign(new Error('forbidden'), { response: { status: 403 } }));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        expect(await refused.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'refused' });
+        const rate = bridgeWith({});
+        rate.sendMessage.mockRejectedValueOnce(Object.assign(new Error('slow down'), { response: { status: 429 } }));
+        expect(await rate.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'unsure' });
+        warn.mockRestore();
     });
 
     it('makes no chat for a person who has none', async () => {

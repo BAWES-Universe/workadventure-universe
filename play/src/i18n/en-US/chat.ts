@@ -1426,6 +1426,18 @@ const chat: BaseTranslation = {
             briefSize: "{count:number} {{file|files}} · {size}",
             briefNone: "Nothing yet",
             made: "Made for you",
+            // What its computer made: theirs here whether or not the chat took it
+            fromComputer: "Made on its computer",
+            resultDelivered: "In your chat with {name}",
+            resultWaiting: "Being sent to your chat",
+            resultNotDelivered: "Not in your chat. It's saved here.",
+            resultFailed: "Couldn't open that file. Try again.",
+            resultSent: "Sent to your chat",
+            // Results whose Brick was deleted: they are still yours
+            deletedBrickFiles: "Files from deleted Bricks",
+            deletedBrickFilesNote: "These are yours. They stay for a while, or until you delete them.",
+            deletedBrickFilesLoadFailed: "Couldn't read the files from deleted Bricks.",
+            deletedBrickFilesRetry: "Try again",
             sent: "You sent it",
             download: "Download",
             delete: "Delete",
