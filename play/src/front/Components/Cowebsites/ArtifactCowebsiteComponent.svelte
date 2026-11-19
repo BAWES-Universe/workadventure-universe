@@ -237,8 +237,8 @@
         // One that is only waiting for its time is cancelled too, and renewAddress does nothing until this opening ends.
         renewal++;
         renewIn(undefined);
-        // Only a version that is on show had a renewal, and it is set up again if this opening does not come on show
-        if (opened) renewalDropped = true;
+        // A version on show (if any) lost its renewal: it is set up again if this opening does not come on show
+        renewalDropped = true;
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
