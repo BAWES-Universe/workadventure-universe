@@ -82,8 +82,10 @@
     import PrivateReplyNote from "../../Bots/PrivateReplyNote.svelte";
     import { STARTER_IDEAS } from "../../Bricks/Brick";
     import {
+        APP_ASK_OWNER,
         APP_CONNECT,
         APP_OTHER,
+        APP_OWN_KEY,
         BRICK_APP_CARD,
         BRICK_OFFER_CARD,
         BRICK_STARTERS_CARD,
@@ -122,6 +124,9 @@
     import { bringGuestChatInto, guestBrickShownAt } from "../../Bricks/GuestBrickStore";
     import { brickChatLinks } from "../../Bricks/BrickChatLink";
     import KeySheetHost from "../../Bricks/Apps/KeySheetHost.svelte";
+    import GitHubKeySheet from "../../Bricks/Apps/GitHubKeySheet.svelte";
+    import { askOwnerInPopup } from "../../Bricks/Apps/GitHubOwnerOk";
+    import { parseMyAppPage } from "../../Bricks/Apps/Apps";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
     import {
@@ -749,6 +754,13 @@
         if (!offer || !ownBrick || !tappedKey || !matrixRoom) return false;
         const brickId = ownBrick.id;
         const room = matrixRoom;
+        // An organization that has not allowed Universe's GitHub app: ask its owner, or paste a key of their own
+        if (offer.state === "org" && offer.org && choice === APP_ASK_OWNER) {
+            return askOwner(offer.org, offer, tappedKey, room);
+        }
+        if (offer.state === "org" && offer.org && choice === APP_OWN_KEY) {
+            return openOwnKey(offer.org, offer, tappedKey, room);
+        }
         if (choice === APP_OTHER) {
             // Another kind of the same thing: the Apps page opens with the search already filled in
             openAppsPage({ search: offer.other?.search });
@@ -802,6 +814,93 @@
             .finally(() => {
                 connectingApp = false;
             });
+    }
+    // "Ask the owner" on the card for an organization that has not allowed Universe's GitHub app. Called straight from the tap:
+    // GitHub's window opens in the same tap, before anything is awaited, so the browser does not block it.
+    let askingOwner = false;
+    function askOwner(
+        org: string,
+        offer: { app: string; name: string },
+        tappedKey: string,
+        room: NonNullable<typeof matrixRoom>
+    ): Promise<boolean> | boolean {
+        if (askingOwner) return true;
+        askingOwner = true;
+        const text = $LL.chat.brick.appCard;
+        return askOwnerInPopup(org, {
+            askUrl: async (name, returnTo) => (await botApiService.getGitHubOwnerOk(name, returnTo)).askUrl,
+            finishSignIn: (state, code) => botApiService.finishGitHubSignIn(state, code),
+        })
+            .then(async (result) => {
+                if (result === "asked") {
+                    closeBrickCard(tappedKey);
+                    warningMessageStore.addWarningMessage(text.askedOwner({ org }));
+                } else if (result === "installed") {
+                    // An owner added the app on the organization: it reaches it now, and the Brick carries on
+                    closeBrickCard(tappedKey);
+                    await loadMyApps(true);
+                    await room.sendAppConnected({ app: offer.app, name: offer.name }).catch((error: unknown) => {
+                        console.warn("Could not tell a Brick to carry on", error);
+                    });
+                } else if (result === "blocked") {
+                    warningMessageStore.addWarningMessage(text.askOwnerBlocked());
+                }
+                return true;
+            })
+            .catch((error: unknown) => {
+                console.error("Could not ask an organization's owner", error);
+                warningMessageStore.addWarningMessage(text.askOwnerBlocked());
+                return true;
+            })
+            .finally(() => {
+                askingOwner = false;
+            });
+    }
+    // "Use my own GitHub key" on the same card: the sheet of the Apps page opens right here, and the Brick carries on once it is saved
+    let ownKeySheet:
+        | {
+              ownKeyPage: string;
+              org: string;
+              tappedKey: string;
+              app: { app: string; name: string };
+              room: NonNullable<typeof matrixRoom>;
+          }
+        | undefined;
+    async function openOwnKey(
+        org: string,
+        offer: { app: string; name: string; connectionId: string | null },
+        tappedKey: string,
+        room: NonNullable<typeof matrixRoom>
+    ): Promise<boolean> {
+        try {
+            const answer = offer.connectionId ? await botApiService.getMyApp(offer.connectionId) : undefined;
+            const ownKeyPage = parseMyAppPage(answer)?.github?.ownKeyPage;
+            if (!ownKeyPage) throw new Error("GitHub's key page did not come");
+            ownKeySheet = { ownKeyPage, org, tappedKey, app: { app: offer.app, name: offer.name }, room };
+        } catch (error) {
+            console.warn("Could not open the GitHub key sheet", error);
+            warningMessageStore.addWarningMessage($LL.chat.brick.appCard.askOwnerBlocked());
+        }
+        return true;
+    }
+    async function saveOwnKey(key: string): Promise<"saved" | "refused" | "failed"> {
+        const sheet = ownKeySheet;
+        if (!sheet) return "failed";
+        try {
+            await botApiService.saveGitHubKey(key);
+        } catch (error) {
+            const code = (error as { code?: unknown } | undefined)?.code;
+            console.warn("The GitHub key was not saved", error);
+            return code === "refused" ? "refused" : "failed";
+        }
+        // eslint-disable-next-line require-atomic-updates
+        ownKeySheet = undefined;
+        closeBrickCard(sheet.tappedKey);
+        await loadMyApps(true);
+        await sheet.room.sendAppConnected(sheet.app).catch((error: unknown) => {
+            console.warn("Could not tell a Brick to carry on", error);
+        });
+        return "saved";
     }
     // A tap on a card of the Brick for guests (#1997): a starter says what it says in the guest's words; "Make Brick mine"
     // opens the sign-in card and "Not now" closes the card.
@@ -1554,6 +1653,13 @@
                 </div>
             {/if}
             <KeySheetHost />
+            {#if ownKeySheet}
+                <GitHubKeySheet
+                    ownKeyPage={ownKeySheet.ownKeyPage}
+                    onSave={saveOwnKey}
+                    onClose={() => (ownKeySheet = undefined)}
+                />
+            {/if}
             <ul
                 use:brickChatLinks
                 bind:this={messageListContentRef}

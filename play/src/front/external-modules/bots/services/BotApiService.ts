@@ -1534,6 +1534,23 @@ export class BotApiService {
         };
     }
 
+    /**
+     * "Ask the owner" on a Brick's card for an organization that has not allowed Universe's GitHub app: GitHub's own page for adding
+     * the app on that organization (an owner installs it, anyone else sends the request GitHub emails to the owners), and the page for
+     * a key of the person's own. `redirectUrl` is the page the window goes back to.
+     */
+    async getGitHubOwnerOk(org: string, redirectUrl: string): Promise<{ askUrl: string; ownKeyPage: string }> {
+        const answer = (await this.appsCall(
+            `/api/me/apps/github/owner-ok?org=${encodeURIComponent(org)}&redirectUrl=${encodeURIComponent(redirectUrl)}`
+        )) as { askUrl?: unknown; ownKeyPage?: unknown } | undefined;
+        const page = (value: unknown) =>
+            typeof value === "string" && value.startsWith("https://github.com/") ? value : undefined;
+        const askUrl = page(answer?.askUrl);
+        const ownKeyPage = page(answer?.ownKeyPage);
+        if (!askUrl || !ownKeyPage) throw new Error("GitHub's page for this organization did not come");
+        return { askUrl, ownKeyPage };
+    }
+
     /** "Switch back to GitHub sign-in": the pasted key is deleted from Universe; the person signs in on GitHub again. */
     async dropGitHubKey(): Promise<unknown> {
         return await this.appsCall("/api/me/apps/github/key", { method: "DELETE" });

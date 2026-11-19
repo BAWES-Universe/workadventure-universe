@@ -73,6 +73,9 @@ export const BRICK_APP_CARD = "brick.app";
 export const APP_CONNECT = "connect";
 export const APP_OTHER = "other";
 export const APP_NOT_NOW = "not_now";
+/** On the card for an organization that has not allowed Universe's GitHub app. */
+export const APP_ASK_OWNER = "ask_owner";
+export const APP_OWN_KEY = "own_key";
 
 /**
  * A Brick's offer to connect an App (#2001) on the question card: "Connect your calendar?" with the App's own sign-in, a
@@ -81,6 +84,14 @@ export const APP_NOT_NOW = "not_now";
  */
 export function brickAppCard(offer: AppOffer, ll: TranslationFunctions): BotAsk {
     const text = ll.chat.brick.appCard;
+    if (offer.state === "org" && offer.org) {
+        // An organization that only lets in apps its owner allows (design 14 Nov, Part 3)
+        return ownCard(BRICK_APP_CARD, offer.ask || text.orgAsk({ org: offer.org }), [
+            { id: APP_ASK_OWNER, label: text.askOwner(), line: text.askOwnerLine() },
+            { id: APP_OWN_KEY, label: text.ownKey(), line: text.ownKeyLine() },
+            { id: APP_NOT_NOW, label: text.notNow(), line: text.notNowOrg() },
+        ]);
+    }
     const choices: { id: string; label: string; line: string }[] = [
         offer.state === "connected"
             ? { id: APP_CONNECT, label: text.letUse({ name: offer.name }), line: text.letUseLine() }

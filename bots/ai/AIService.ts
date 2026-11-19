@@ -134,7 +134,7 @@ import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTo
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
-import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
+import { OFFER_APP_TOOL, OFFER_GITHUB_OWNER_OK_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool, runGitHubOwnerOkTool } from './AppTools';
 import {
     InstantOffers,
     endInstantTask,
@@ -4296,12 +4296,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return runKeyTool(name, args, { where: side, botId: where.botId, userId: memory.userUuid, apps });
     }
 
-    /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
-    private async runAppToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+    /** Runs offer_app (or offer_github_owner_ok) for the person in this direct message. What the game shows for it waits with the reply. */
+    private async runAppToolCall(
+        args: Record<string, unknown>,
+        where: { adminApiService?: AdminApiService; botId?: string; playerId?: number },
+        tool: string = OFFER_APP_TOOL
+    ): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
         const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
         if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
-        return runAppTool(args, { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) });
+        const context = { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) };
+        return tool === OFFER_GITHUB_OWNER_OK_TOOL ? runGitHubOwnerOkTool(args, context) : runAppTool(args, context);
     }
 
     private filesOn(botId?: string, adminApiService?: AdminApiService): boolean {
@@ -5015,9 +5020,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         break;
 
                     case OFFER_APP_TOOL:
+                    case OFFER_GITHUB_OWNER_OK_TOOL:
                         result = await this.runAppToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { adminApiService, botId, playerId }
+                            { adminApiService, botId, playerId },
+                            toolCall.name
                         );
                         break;
 
