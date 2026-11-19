@@ -853,6 +853,21 @@ describe("a guest's chat when guests change, time passes and the chat is carried
         expect(get(room.typingMembers)).toEqual([]);
     });
 
+    it("stops showing typing when the guest changed while the answer was out and nobody looked at the chat since", async () => {
+        let guest = GUEST;
+        const bot = held();
+        const { room, answers, settle } = setup({ guestId: () => guest });
+        answers.push(bot.answer);
+        room.sendMessage("a1");
+        await settle();
+        expect(get(room.typingMembers)).toHaveLength(1);
+        // Another guest, with no refresh: the answer for the first one comes back late
+        guest = OTHER;
+        bot.releases[0](reply("Late answer."));
+        await tick();
+        expect(get(room.typingMembers)).toEqual([]);
+    });
+
     it("does not ask an expired history again when a chat that is open is used after the device keeps chats", async () => {
         const { room, device, asked, answers, said, settle } = setup();
         answers.push(

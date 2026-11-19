@@ -534,6 +534,11 @@ export class GuestBrickChatRoom implements ChatRoom {
             if (this.ownsTurn(turn)) {
                 this.typing.set([]);
                 this.listening.delete(index);
+            } else {
+                // The guest changed while this was being answered and nothing has looked at the chat held since: it is let go now, with
+                // what it was showing. A chat already started again has its own indicators, which are left alone
+                this.reread();
+                this.publish();
             }
         }
         // The chat was started again, or the guest changed, while this was being answered: the answer belongs to the one before
