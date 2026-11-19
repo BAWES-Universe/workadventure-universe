@@ -132,7 +132,8 @@ describe('worker-load.sh', () => {
         stub('docker', 'case "$1" in inspect) echo "stub";; esac; exit 0');
         stub('curl', 'exit 0');
         // The load generator: says how many people connected, then waits to be stopped
-        stub('node', `echo "${connected}" >&2; sleep 30 & wait`);
+        // (it ends when the measured stretch is ended, with SIGUSR1, as the real one does; SIGUSR2 starts the stretch and changes nothing)
+        stub('node', `trap : USR2; trap 'exit 0' USR1; echo "${connected}" >&2; sleep 30 >/dev/null 2>&1 & while kill -0 $! 2>/dev/null; do wait $!; done`);
         return { dir, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNS: 'lane:5:on' }, calls };
     }
     const sh = (script: string, args: string[], env: NodeJS.ProcessEnv, cwd: string) => spawnSync('sh', [join(root, 'scripts', script), ...args], { env, cwd, encoding: 'utf8', timeout: 60000 });
@@ -158,13 +159,26 @@ describe('worker-load.sh', () => {
         for (const f of ['on-5.load.log', 'on-5.container.txt', 'on-5.worker.log']) assert.doesNotMatch(readFileSync(join(out, f), 'utf8'), /OLD RUN/, `${f} is the earlier run's`);
     });
 
-    it('stops with the reason kept when not everyone connected, and goes on to measure when everyone did', () => {
+    it('stops with the reason kept when not everyone connected, and never starts the measured stretch', () => {
         const bad = stubs('0 of 5 people connected');
         mkdirSync(join(bad.dir, 'data'));
         const failed = sh('worker-load.sh', [join(bad.dir, 'data'), join(bad.dir, 'out'), '30'], bad.env, bad.dir);
         assert.equal(failed.status, 1);
         assert.match(readFileSync(join(bad.dir, 'out', 'on-5.INVALID.txt'), 'utf8'), /not all 5 people connected/);
         assert.doesNotMatch(readFileSync(bad.calls, 'utf8'), /kill -s USR2/);
+    });
+
+    it('goes on to measure when everyone connected: no INVALID record, and the measured stretch is started and ended', () => {
+        const good = stubs('5 of 5 people connected');
+        mkdirSync(join(good.dir, 'data'));
+        // 30 s is the shortest run: 10 s of lead-in and tail, and 10 s measured; the stubs make it as fast as the sleeps in the script allow
+        const ran = sh('worker-load.sh', [join(good.dir, 'data'), join(good.dir, 'out'), '30'], good.env, good.dir);
+        assert.equal(ran.status, 0, ran.stderr);
+        assert.equal(existsSync(join(good.dir, 'out', 'on-5.INVALID.txt')), false);
+        const calls = readFileSync(good.calls, 'utf8');
+        assert.match(calls, /docker kill -s USR2 worker-load/);
+        assert.match(calls, /docker kill -s USR1 worker-load/);
+        assert.ok(calls.indexOf('kill -s USR2') < calls.indexOf('kill -s USR1'), 'the stretch ends after it started');
     });
 });
 
@@ -199,7 +213,7 @@ describe('worker-soak.sh', () => {
         };
         stub('docker', 'case "$1" in inspect) echo "stub";; esac; exit 0');
         stub('curl', 'exit 0');
-        stub('node', 'echo "0 of 9 people connected" >&2; sleep 30 & wait');
+        stub('node', 'echo "0 of 9 people connected" >&2; sleep 30 >/dev/null 2>&1 & wait');
         mkdirSync(join(dir, 'data'));
         const out = join(dir, 'out');
         mkdirSync(out);
