@@ -139,6 +139,40 @@ function cleanReplayAddress(address: string): string {
     return emailFreePath(bare.replace(/[?#].*$/s, ""));
 }
 
+/**
+ * A srcset, each address cleaned and each size kept. Split as the HTML rule does: an address runs to the next whitespace, so a comma inside it
+ * ("?t=1,secret") belongs to it, and only a comma that ends an address (or ends a size, outside brackets) separates two.
+ */
+function cleanSrcset(value: string): string {
+    const kept: string[] = [];
+    const length = value.length;
+    let at = 0;
+    while (at < length) {
+        while (at < length && (value[at] === "," || /\s/.test(value[at]))) at++;
+        if (at >= length) break;
+        const start = at;
+        while (at < length && !/\s/.test(value[at])) at++;
+        let address = value.slice(start, at);
+        let size = "";
+        if (address.endsWith(",")) {
+            address = address.replace(/,+$/, "");
+        } else {
+            const sizeStart = at;
+            let depth = 0;
+            while (at < length) {
+                const letter = value[at];
+                if (letter === "(") depth++;
+                else if (letter === ")" && depth > 0) depth--;
+                else if (letter === "," && depth === 0) break;
+                at++;
+            }
+            size = value.slice(sizeStart, at).trim();
+        }
+        kept.push(size ? `${cleanReplayAddress(address)} ${size}` : cleanReplayAddress(address));
+    }
+    return kept.join(", ");
+}
+
 /** A value of a replay recording, cleaned: an address without its query and hash, no email, no secret-named attribute's value. */
 function cleanReplayValue(key: string, value: string): string {
     if (REPLAY_SECRET_KEYS.test(key) && !/^\*+$/.test(value)) return "[removed]";
@@ -147,18 +181,7 @@ function cleanReplayValue(key: string, value: string): string {
     // A relative address (/invite/sara%40example.test?token=x): its query and hash are cut, and an email in its path goes, encoded or not
     else if (REPLAY_ADDRESS_KEYS.test(key)) cleaned = emailFreePath(cleaned.replace(/[?#].*$/s, ""));
     // A list of addresses (srcset): each one is cleaned, its size stays
-    else if (REPLAY_SRCSET_KEYS.test(key)) {
-        cleaned = cleaned
-            .split(",")
-            .map((candidate) => {
-                const part = candidate.trim();
-                const space = part.search(/\s/);
-                return space < 0
-                    ? cleanReplayAddress(part)
-                    : `${cleanReplayAddress(part.slice(0, space))}${part.slice(space)}`;
-            })
-            .join(", ");
-    }
+    else if (REPLAY_SRCSET_KEYS.test(key)) cleaned = cleanSrcset(cleaned);
     // A style or a stylesheet's text (also rrweb's inlined one) names its images in url(...): their query and hash are cut as well
     if (/url\(/i.test(cleaned))
         cleaned = cleaned.replace(

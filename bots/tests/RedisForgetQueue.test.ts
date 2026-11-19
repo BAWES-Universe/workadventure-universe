@@ -200,8 +200,14 @@ describe('the forget queue: a refusal time never brings back a request another s
 /**
  * The same rules against the real scripts: the fake above re-implements them in JS, so a change to the Lua would not show there. Runs when a Redis
  * is given in BOTS_TEST_REDIS_URL (for example `redis-server --port 6390` and redis://127.0.0.1:6390), and is skipped when there is none.
+ * The CI job of the bots gives one (a Redis service) and sets BOTS_REQUIRE_REDIS: there, a missing Redis fails the run instead of skipping the tests.
  */
 const REAL_REDIS = process.env.BOTS_TEST_REDIS_URL;
+describe.runIf(process.env.BOTS_REQUIRE_REDIS === '1' && !REAL_REDIS)('the real Redis for the forget queue tests', () => {
+    it('is given when the run requires it (CI): the scripts are never left untested', () => {
+        expect(REAL_REDIS, 'BOTS_TEST_REDIS_URL is not set while BOTS_REQUIRE_REDIS=1').toBeTruthy();
+    });
+});
 describe.skipIf(!REAL_REDIS)('the forget queue against a real Redis (the scripts themselves)', () => {
     let client: ReturnType<typeof createClient>;
     let queue: RedisForgetQueue;

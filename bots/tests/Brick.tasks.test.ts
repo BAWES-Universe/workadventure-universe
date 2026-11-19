@@ -397,6 +397,19 @@ describe('setting a reminder', () => {
         expect(admin.changeBrickItem.mock.calls[0][2]).toMatchObject({ change: { cadence: { type: 'daily', time: '09:30', days: [0, 1, 2, 3, 4] } } });
     });
 
+    it('takes a new time of day written with zero seconds for a daily reminder, and refuses one with real seconds, through change_task and set_reminder', async () => {
+        const daily = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4] } })] });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:30:00' }, daily.context);
+        expect(daily.admin.changeBrickItem.mock.calls[0][2]).toMatchObject({ change: { cadence: { type: 'daily', time: '09:30', days: [0, 1, 2, 3, 4] } } });
+        const seconds = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4] } })] });
+        const refusedSeconds = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:30:45' }, seconds.context);
+        expect(seconds.admin.changeBrickItem).not.toHaveBeenCalled();
+        expect(String(refusedSeconds.error)).toContain('time of day');
+        const set = setUp();
+        await runTaskTool(SET_REMINDER_TOOL, { text: 'Water the plants', when: '2026-11-15 09:30:00', repeat: 'every_day' }, set.context);
+        expect(set.admin.setBrickItem.mock.calls[0][1]).toMatchObject({ cadence: { type: 'daily', time: '09:30' } });
+    });
+
     it('does not turn a repeating item into a one-off by "in 20 minutes" or by a new time on a check every few hours', async () => {
         const daily = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4, 5, 6] } })] });
         const soon = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', in_minutes: 20 }, daily.context);
