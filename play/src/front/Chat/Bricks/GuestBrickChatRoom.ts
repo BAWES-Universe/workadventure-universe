@@ -78,6 +78,12 @@ export interface GuestBrickDeps {
     sleep?: (ms: number) => Promise<void>;
 }
 
+/** Whose turn it is to be answered: the guest and the chat generation it was said in. Nothing else of the room ever answers it. */
+interface Turn {
+    guestId: string;
+    startedAt: number;
+}
+
 /** A send while files are still uploading joins them: the words and the files are one message to the Brick. */
 interface PendingUpload {
     texts: string[];
@@ -112,7 +118,12 @@ export class GuestBrickChatRoom implements ChatRoom {
     private notes: ChatMessage[] = [];
     /** The lines the guest wrote that have not had their turn yet: one is answered at a time, the others wait. */
     private waiting = new Set<number>();
+    /** One answer at a time within one chat: a chat that replaces it starts its own queue, so it never waits on a turn of the old one. */
     private queue: Promise<void> = Promise.resolve();
+    /** The chat that is held was written on the device by this room (or read from it): if the device has none later, it was taken. */
+    private savedStartedAt: number | undefined;
+    /** Which asking of what the Brick takes is the latest: an older answer never overwrites a newer one. */
+    private takesAsked = 0;
     /** The note of this line is being heard now: "Listening…" in its bubble. */
     private listening = new Set<number>();
     private pendingUpload: PendingUpload | undefined;
@@ -155,29 +166,51 @@ export class GuestBrickChatRoom implements ChatRoom {
     refresh(): void {
         this.reread();
         this.publish();
+        const asked = ++this.takesAsked;
         this.deps
             .takes?.()
-            .then((takes) => this.taking.set(takes))
-            .catch(() => this.taking.set({ files: false, notes: false }));
+            .then((takes) => {
+                if (asked === this.takesAsked) this.taking.set(takes);
+            })
+            .catch(() => {
+                if (asked === this.takesAsked) this.taking.set({ files: false, notes: false });
+            });
     }
 
-    /** The chat this guest has: one kept for someone else, or too old, is let go and the device's own is read. */
+    /**
+     * The chat this guest has: one kept for someone else, or too old, is let go and the device's own is read. Only a guest who is
+     * known can have one on the device: with no guest the device's chat is not shown, and nothing is read into the room (the
+     * chat that goes along at sign-in is read apart, whoever it was kept for).
+     */
     private reread(): void {
         const now = this.deps.now();
         const guestId = this.deps.guestId();
         const held = this.chat;
-        if (held && (now - held.savedAt > this.deps.keepMs || (guestId !== null && held.guestId !== guestId))) {
+        if (held && (now - held.savedAt > this.deps.keepMs || held.guestId !== (guestId ?? ""))) {
             this.chat = undefined;
-            this.waiting.clear();
+            this.resetTurns();
         }
         // Files still going up for a chat that is gone take no more words: what is typed now goes on its own
         if (this.pendingUpload && !this.stillOwns(this.pendingUpload.owner)) this.pendingUpload = undefined;
-        if (!this.chat) {
+        if (!this.chat && guestId !== null) {
             const raw = this.deps.readSaved();
             this.chat = parseGuestChat(raw, guestId, now, this.deps.keepMs);
+            if (this.chat) this.savedStartedAt = this.chat.startedAt;
             // Kept for someone else, or too old: it does not stay on the device
             if (!this.chat && raw !== null) this.deps.drop();
         }
+    }
+
+    /**
+     * What goes with a chat that is let go: the turns waiting or running for it, and what they were showing (typing, "Listening…", the
+     * game's own last words). The chat that comes next starts its own queue.
+     */
+    private resetTurns(): void {
+        this.waiting.clear();
+        this.listening.clear();
+        this.notes = [];
+        this.typing.set([]);
+        this.queue = Promise.resolve();
     }
 
     /** Who a send started for: the guest, and the chat when there was one. */
@@ -192,12 +225,12 @@ export class GuestBrickChatRoom implements ChatRoom {
     }
 
     private ensureChat(now: number): GuestChat {
-        // Another guest since the chat was last looked at (signed out, someone else here): their chat is never written in
-        const guestId = this.deps.guestId();
-        if (this.chat && guestId !== null && this.chat.guestId !== guestId) this.reread();
+        // Looked at again before every line: another guest since (signed out, someone else here), or a chat kept past its time,
+        // is let go, and what is said goes in a chat of its own
+        this.reread();
         if (!this.chat) {
             this.chat = newGuestChat(this.deps.guestId() ?? "", now);
-            this.waiting.clear();
+            this.resetTurns();
         }
         return this.chat;
     }
@@ -205,7 +238,13 @@ export class GuestBrickChatRoom implements ChatRoom {
     private persist(): void {
         const chat = this.chat;
         if (!chat?.guestId || chat.lines.length === 0) return;
+        // Written before, and gone from the device now: it was handed over to an account that signed in (or let go). A late
+        // answer never writes the whole of it back
+        if (this.savedStartedAt === chat.startedAt && this.deps.readSaved() === null) return;
         this.deps.save(serializeGuestChat(chat));
+        // Not written (the device is full or refuses): it is not "written before", so the next line tries again
+        if (this.deps.readSaved() === null) return;
+        this.savedStartedAt = chat.startedAt;
     }
 
     private publish(): void {
@@ -251,6 +290,10 @@ export class GuestBrickChatRoom implements ChatRoom {
     readonly sendMessage = (message: string): void => {
         const text = message.trim();
         if (!text) return;
+        // A chat kept past its time, or another guest's, is let go before these words can join anything
+        const held = this.chat;
+        this.reread();
+        if (this.chat !== held) this.publish();
         // Files of this send are still uploading: the words go with them, as one message. Files that went up for a chat
         // that is gone (signed out, another guest, a new chat) take no words of the chat here: those go on their own
         if (this.pendingUpload && !this.stillOwns(this.pendingUpload.owner)) this.pendingUpload = undefined;
@@ -277,12 +320,12 @@ export class GuestBrickChatRoom implements ChatRoom {
         };
         this.chat = withLine(chat, line);
         const index = this.chat.lines.length - 1;
-        const startedAt = this.chat.startedAt;
+        const turn: Turn = { guestId: this.chat.guestId, startedAt: this.chat.startedAt };
         this.waiting.add(index);
         this.persist();
         this.publish();
         // One answer at a time: the next waits for this one, and reads the chat as it stands then
-        this.queue = this.queue.then(() => this.answer(index, startedAt)).catch((error) => console.error(error));
+        this.queue = this.queue.then(() => this.answer(index, turn)).catch((error) => console.error(error));
     }
 
     /**
@@ -352,18 +395,21 @@ export class GuestBrickChatRoom implements ChatRoom {
     private async ask(
         request: GuestBrickRequest,
         index: number,
-        startedAt: number,
+        turn: Turn,
         tries = { lost: 0, renewed: false, waited: 0 }
     ): Promise<GuestAnswer> {
         let answer: GuestAnswer;
         const sleep = this.deps.sleep ?? waitMs;
+        // Before every try, a retry after a wait included: the request goes out under the game's token of the guest of this moment,
+        // so it is never made for a chat that is no longer theirs
+        if (!this.ownsTurn(turn)) return { kind: "failed" };
         try {
             answer = parseGuestAnswer(await this.deps.ask(request));
         } catch (error) {
             // The answer may have been made and lost: the same turn again gets it back, never a second one
             if (!request.note || tries.lost >= 1) throw error;
             await sleep(1000);
-            return this.ask(request, index, startedAt, { ...tries, lost: tries.lost + 1, waited: tries.waited + 1000 });
+            return this.ask(request, index, turn, { ...tries, lost: tries.lost + 1, waited: tries.waited + 1000 });
         }
         // Asked again after a lost connection, the first ask may still be running on the bot server ("busy" for this guest), or
         // the uploader can't be read just now while Orbit still keeps the answer ("not heard: busy"): keep waiting, a little
@@ -372,7 +418,7 @@ export class GuestBrickChatRoom implements ChatRoom {
         if (notNow && tries.lost >= 1 && tries.waited < LOST_ANSWER_WAIT_MS) {
             const delay = Math.min(1000 * 2 ** Math.max(0, tries.lost - 1), 8000);
             await sleep(delay);
-            return this.ask(request, index, startedAt, {
+            return this.ask(request, index, turn, {
                 ...tries,
                 lost: tries.lost + 1,
                 waited: tries.waited + delay,
@@ -381,15 +427,15 @@ export class GuestBrickChatRoom implements ChatRoom {
         if (answer.kind !== "upload" || answer.why !== "expired" || tries.renewed || !this.deps.refreshReceipt) {
             return answer;
         }
-        const fresh = await this.renewReceipts(index, startedAt);
+        const fresh = await this.renewReceipts(index, turn);
         if (!fresh) return { kind: "upload", why: "refused" };
-        return this.ask({ ...request, ...fresh }, index, startedAt, { ...tries, renewed: true });
+        return this.ask({ ...request, ...fresh }, index, turn, { ...tries, renewed: true });
     }
 
     /** Renews the receipts of a line's files (they ran out while the chat sat): kept on the device for the next try too. */
     private async renewReceipts(
         index: number,
-        startedAt: number
+        turn: Turn
     ): Promise<Pick<GuestBrickRequest, "files" | "note"> | undefined> {
         const refresh = this.deps.refreshReceipt;
         const line = this.chat?.lines[index];
@@ -401,7 +447,7 @@ export class GuestBrickChatRoom implements ChatRoom {
                     return { ...one, receipt: fresh.receipt, url: fresh.location };
                 })
             );
-            if (!this.chat || this.chat.startedAt !== startedAt) return undefined;
+            if (!this.ownsTurn(turn)) return undefined;
             this.updateLine(index, { ...line, media });
             return requestMedia(media);
         } catch {
@@ -434,12 +480,24 @@ export class GuestBrickChatRoom implements ChatRoom {
         });
     }
 
-    private async answer(index: number, startedAt: number): Promise<void> {
+    /**
+     * Whether a turn is still the one of the chat held and of the guest here now: the same chat (its generation), the same guest, and
+     * that guest still the game's. A turn of a chat that is gone leaves everything of the chat now held alone.
+     */
+    private ownsTurn(turn: Turn): boolean {
         const chat = this.chat;
-        if (!chat || chat.startedAt !== startedAt) {
-            this.waiting.delete(index);
-            return;
-        }
+        return (
+            !!chat &&
+            chat.startedAt === turn.startedAt &&
+            chat.guestId === turn.guestId &&
+            (this.deps.guestId() ?? "") === turn.guestId
+        );
+    }
+
+    private async answer(index: number, turn: Turn): Promise<void> {
+        const chat = this.chat;
+        // A turn of a chat that has gone (another guest, a new chat) never touches what waits in the chat now held
+        if (!chat || !this.ownsTurn(turn)) return;
         const line = chat.lines[index];
         const text = line && !line.label ? line.text : "";
         const hasNote = !!line?.media?.some((one) => one.kind === "note");
@@ -468,17 +526,25 @@ export class GuestBrickChatRoom implements ChatRoom {
                         ...requestMedia(line.media ?? []),
                     },
                     index,
-                    startedAt
+                    turn
                 );
             }
         } catch (error) {
             console.warn("The Brick for guests could not answer", error);
         } finally {
-            this.typing.set([]);
-            this.listening.delete(index);
+            // Only the turn of the chat held clears what it showed: a turn of a chat that went has had its indicators cleared with it
+            if (this.ownsTurn(turn)) {
+                this.typing.set([]);
+                this.listening.delete(index);
+            } else {
+                // The guest changed while this was being answered and nothing has looked at the chat held since: it is let go now, with
+                // what it was showing. A chat already started again has its own indicators, which are left alone
+                this.reread();
+                this.publish();
+            }
         }
-        // The chat was started again while this was being answered: the answer belongs to the one before
-        if (!this.chat || this.chat.startedAt !== startedAt) return;
+        // The chat was started again, or the guest changed, while this was being answered: the answer belongs to the one before
+        if (!this.chat || !this.ownsTurn(turn)) return;
         const now = this.deps.now();
         if (hasNote) {
             if (answer.kind === "reply") this.markNote(index, answer.heard);

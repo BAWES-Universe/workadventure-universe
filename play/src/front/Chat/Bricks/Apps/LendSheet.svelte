@@ -51,8 +51,15 @@
         if (!canSend) return;
         busy = true;
         failed = false;
-        const done = await onSubmit({ universeId, things: what === "all" ? null : ticked, usesPerDay: uses });
-        busy = false;
+        let done = false;
+        try {
+            done = await onSubmit({ universeId, things: what === "all" ? null : ticked, usesPerDay: uses });
+        } catch (error) {
+            // The sheet is never left shut for good: it says it did not go through, and a tap tries again
+            console.warn("The lend did not go through", error);
+        } finally {
+            busy = false;
+        }
         if (!done) failed = true;
     }
 </script>

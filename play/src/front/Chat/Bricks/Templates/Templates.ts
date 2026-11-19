@@ -1,3 +1,4 @@
+import { writable, type Readable } from "svelte/store";
 import { botApiService } from "../../../external-modules/bots/services/BotApiService";
 import { isRecord } from "./isRecord";
 import {
@@ -53,10 +54,15 @@ export function readTemplateLists(): Promise<Read<TemplateLists>> {
     });
 }
 
+/** Counts the star changes Orbit took: a list of templates drawn earlier reads itself again when this moves. */
+const starChanges = writable(0);
+export const templateStarChanges: Readable<number> = { subscribe: starChanges.subscribe };
+
 /** Star keeps a template for later. False when Orbit refused or could not be reached. */
 export async function setTemplateStar(templateId: string, starred: boolean): Promise<boolean> {
     try {
         await botApiService.starTemplate(templateId, starred);
+        starChanges.update((count) => count + 1);
         return true;
     } catch (error) {
         console.warn("Could not change the star of a template", error);
@@ -69,7 +75,12 @@ export async function setTemplateStar(templateId: string, starred: boolean): Pro
  * throws, so the card's answers are not kept (an answer that only meant Orbit did not say would hide the button for a while).
  */
 export async function readTemplateOfBrick(botId: string): Promise<TemplateCard | undefined> {
-    return parseTemplateOfBrick(await botApiService.getTemplateOfBrick(botId));
+    const answer = await botApiService.getTemplateOfBrick(botId);
+    // Only Orbit's own "no template" says there is none: an answer that cannot be read is not that, and is not kept as that
+    if (isRecord(answer) && answer.template === null) return undefined;
+    const card = parseTemplateOfBrick(answer);
+    if (!card) throw new Error("Could not read the template of a Brick");
+    return card;
 }
 
 /* ------------------------------ sharing, for the Brick's owner ------------------------------ */

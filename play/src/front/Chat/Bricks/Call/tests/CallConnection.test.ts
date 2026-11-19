@@ -68,7 +68,7 @@ describe("carrying a call with a Brick (game #2004)", () => {
     it("asks the bot server, joins the space it names, and is on once the bot is in it", async () => {
         const t = setup();
         expect(await t.connection.begin("b1", "Nora")).toEqual({ ok: true });
-        expect(t.deps.startCall).toHaveBeenCalledWith("b1");
+        expect(t.deps.startCall).toHaveBeenCalledWith("b1", expect.any(String));
         expect(t.deps.joinSpace).toHaveBeenCalledWith(SPACE, expect.any(AbortSignal));
         expect(t.state()?.phase).toBe("connecting");
         t.fake.joined.next({});
@@ -122,7 +122,7 @@ describe("carrying a call with a Brick (game #2004)", () => {
         t.fake.joined.next({});
         t.fake.left.next({});
         expect(t.state()).toMatchObject({ phase: "ended", endedBy: "bot" });
-        expect(t.deps.endCall).toHaveBeenCalledWith("b1");
+        expect(t.deps.endCall).toHaveBeenCalledWith("b1", expect.any(String));
         expect(t.deps.leaveSpace).toHaveBeenCalledWith(t.fake.space);
         await Promise.resolve();
         expect(t.gates.at(-1)).toBeUndefined();
@@ -179,6 +179,31 @@ describe("carrying a call with a Brick (game #2004)", () => {
         expect(t.deps.endCall).toHaveBeenCalledTimes(2);
         expect(t.deps.joinSpace).not.toHaveBeenCalled();
         expect(t.connection.isActive()).toBe(false);
+    });
+
+    it("names its call to the bot server, and every hang-up of that call names the same one, a new call another", async () => {
+        const t = setup();
+        let answer: (result: CallResult) => void = () => undefined;
+        t.deps.startCall.mockImplementationOnce(
+            () =>
+                new Promise<CallResult>((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const begun = t.connection.begin("b1", "Nora");
+        vi.advanceTimersByTime(CALL_CONNECT_TIMEOUT_MS);
+        // The first call gave up (its hang-up has gone) and its start answers late: handed back for that same call
+        answer({ started: true, spaceName: SPACE });
+        await begun;
+        const [, firstCall] = t.deps.startCall.mock.calls[0] as [string, string];
+        expect(firstCall).toMatch(/^[0-9a-f-]{36}$/);
+        expect(t.deps.endCall.mock.calls.map((call) => call[1])).toEqual([firstCall, firstCall]);
+        // The next call is another call, so a hang-up of the first that reaches the server late cannot end it
+        await t.connection.begin("b1", "Nora");
+        const [, secondCall] = t.deps.startCall.mock.calls[1] as [string, string];
+        expect(secondCall).not.toBe(firstCall);
+        t.connection.end();
+        expect(t.deps.endCall.mock.calls.at(-1)).toEqual(["b1", secondCall]);
     });
 
     it("gives up when the space is never joined", async () => {
@@ -245,7 +270,7 @@ describe("carrying a call with a Brick (game #2004)", () => {
     it("hangs the bot up when this browser cannot join the space", async () => {
         const t = setup({ joinFails: true });
         expect(await t.connection.begin("b1", "Nora")).toMatchObject({ ok: false, failure: "failed" });
-        expect(t.deps.endCall).toHaveBeenCalledWith("b1");
+        expect(t.deps.endCall).toHaveBeenCalledWith("b1", expect.any(String));
         expect(t.gates.at(-1)).toBeUndefined();
         expect(t.state()).toBeUndefined();
     });
@@ -265,7 +290,7 @@ describe("carrying a call with a Brick (game #2004)", () => {
         // Ending stops the join, which then fails
         rejectJoin(new Error("aborted"));
         expect(await begun).toEqual({ ok: false, failure: "cancelled" });
-        expect(t.deps.endCall).toHaveBeenCalledWith("b1");
+        expect(t.deps.endCall).toHaveBeenCalledWith("b1", expect.any(String));
         expect(t.connection.isActive()).toBe(false);
     });
 
@@ -311,7 +336,7 @@ describe("carrying a call with a Brick (game #2004)", () => {
         t.fake.joined.next({});
         t.fake.gone.next();
         expect(t.state()).toMatchObject({ phase: "ended", endedBy: "unavailable" });
-        expect(t.deps.endCall).toHaveBeenCalledWith("b1");
+        expect(t.deps.endCall).toHaveBeenCalledWith("b1", expect.any(String));
         await Promise.resolve();
         expect(t.gates.at(-1)).toBeUndefined();
         expect(t.mic.on).toBe(false);

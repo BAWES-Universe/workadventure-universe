@@ -24,14 +24,19 @@
     let failed = false;
     let openAppId: string | undefined;
 
+    // Only the newest read is applied: an older one (a retry that was slow) must not bring back an app that was disconnected since
+    let reads = 0;
+
     async function load() {
+        const mine = ++reads;
         try {
             const parsed = parseTeamApps(await botApiService.getUniverseApps(universe.id));
+            if (mine !== reads) return;
             if (parsed) apps = parsed;
             failed = !parsed;
         } catch (error) {
             console.warn("Could not read the universe's apps", error);
-            failed = true;
+            if (mine === reads) failed = true;
         }
     }
 

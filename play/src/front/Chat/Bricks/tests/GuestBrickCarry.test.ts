@@ -15,9 +15,14 @@ function chatWithWords(over: Partial<GuestChat> = {}): GuestChat {
 
 /** A device after sign-in: the chat it kept as a guest, and what Orbit and the bot server say to it. */
 function device(initial: GuestChat | null = chatWithWords()) {
-    const state: { chat: GuestChat | undefined; clock: number } = { chat: initial ?? undefined, clock: 0 };
+    const state: { chat: GuestChat | undefined; clock: number; current: boolean } = {
+        chat: initial ?? undefined,
+        clock: 0,
+        current: true,
+    };
     const steps: CarrySteps & { calls: string[] } = {
         calls: [],
+        current: () => state.current,
         read: () => state.chat,
         keep: (chat) => {
             state.chat = chat;
@@ -118,13 +123,31 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         let long = newGuestChat(GUEST, 1);
         for (let at = 1; at <= 300; at++) long = withLine(long, { from: "guest", text: `line ${at}`, at });
         const shared = device(long);
-        const other: CarrySteps = { ...shared.steps, carry: vi.fn<CarrySteps["carry"]>().mockResolvedValue("already") };
+        // Both tabs have sent their first part before either gets an answer: they really were at it together
+        let called = 0;
+        let openGate: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => {
+            openGate = resolve;
+        });
+        const hold = (answer: "sent" | "already") =>
+            vi.fn<CarrySteps["carry"]>(async () => {
+                called += 1;
+                if (called >= 2) openGate();
+                await gate;
+                return answer;
+            });
+        shared.steps.carry = hold("sent");
+        const other: CarrySteps = { ...shared.steps, carry: hold("already") };
         await Promise.all([carryGuestChatAlong(shared.steps), carryGuestChatAlong(other)]);
         const parts = (calls: Parameters<CarrySteps["carry"]>[]) =>
             calls.map(([, lines, part]) => ({ ids: lines.map((line) => line.id), part }));
         const mine = parts(vi.mocked(shared.steps.carry).mock.calls);
         const theirs = parts(vi.mocked(other.carry).mock.calls);
-        // Whatever each tab sent is a part the other made the same way: same lines, same names
+        // Both tabs sent, and the first part each sent is the very same one: same lines, same names
+        expect(mine.length).toBeGreaterThan(0);
+        expect(theirs.length).toBeGreaterThan(0);
+        expect(theirs[0]).toEqual(mine[0]);
+        // Whatever each tab sent is a part the other made the same way
         for (const part of theirs) expect(mine).toContainEqual(part);
         expect(shared.state.chat).toBeUndefined();
     });
@@ -228,12 +251,110 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
         vi.mocked(steps.carry).mockReset().mockResolvedValueOnce("already").mockResolvedValue("sent");
         await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
-        const parts = vi.mocked(steps.carry).mock.calls.map(([, , part]) => part);
-        expect(parts).toEqual([
-            { from: 0, to: 2, last: false },
+        const calls = vi.mocked(steps.carry).mock.calls;
+        // Unchanged: the part went first as the last one (nothing came after it yet), and goes again just so
+        expect(calls.map(([, , part]) => part)).toEqual([
+            { from: 0, to: 2, last: true },
             { from: 2, to: 3, last: true },
         ]);
+        expect(calls[0][1].map((line) => line.id)).toEqual(["1.0", "1.1"]);
         expect(state.chat).toBeUndefined();
+    });
+
+    it("sends a lost part again with the lines as they were sent, even when a line of the transcript changed since", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.carry).mockImplementationOnce(() => {
+            // The part went; the same line was kept again with other words before the answer was known
+            const lines = [...state.chat!.lines];
+            lines[1] = { ...lines[1], text: "Changed words." };
+            state.chat = { ...state.chat!, lines };
+            return Promise.reject(new Error("connection lost"));
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        vi.mocked(steps.carry).mockReset().mockResolvedValue("already");
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        expect(vi.mocked(steps.carry).mock.calls[0][1][1].text).toBe("I can only remember once I'm yours.");
+    });
+
+    it("keeps the new chat of another guest when Orbit refuses the old one after the chat was replaced", async () => {
+        const { state, steps } = device();
+        const other = { ...chatWithWords(), guestId: "9e9e9e9e-aaaa-4bbb-8ccc-0123456789ab", startedAt: 50 };
+        vi.mocked(steps.take).mockImplementation(() => {
+            state.chat = other;
+            return Promise.resolve(false);
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("none");
+        expect(steps.calls).not.toContain("drop");
+        expect(state.chat).toBe(other);
+    });
+
+    it("still drops the chat Orbit refused when it is the same chat that is on the device", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.take).mockResolvedValue(false);
+        await carryGuestChatAlong(steps);
+        expect(steps.calls).toContain("drop");
+        expect(state.chat).toBeUndefined();
+    });
+
+    it("keeps a reply saved while Orbit was being asked when it marks the chat as handed over", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.take).mockImplementation(() => {
+            state.chat = withLine(state.chat!, { from: "brick", text: "A reply made meanwhile.", at: 9 });
+            return Promise.resolve(true);
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        const lines = vi.mocked(steps.carry).mock.calls.flatMap(([, sent]) => sent.map((line) => line.text));
+        expect(lines).toContain("A reply made meanwhile.");
+    });
+
+    it("never moves the place reached back when another tab got further", async () => {
+        let long = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 450; at++) long = withLine(long, { from: "guest", text: `line ${at}`, at });
+        const { state, steps } = device(long);
+        let calls = 0;
+        const kept: Array<number | undefined> = [];
+        const keep = steps.keep;
+        steps.keep = (chat) => {
+            kept.push(chat.carriedTo);
+            keep(chat);
+        };
+        vi.mocked(steps.carry).mockImplementation(() => {
+            calls += 1;
+            // Another tab brought the first parts, and got further, while this one's first answer was on its way
+            if (calls === 1) state.chat = { ...state.chat!, carriedTo: 400 };
+            return Promise.resolve("sent");
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        const reached = kept.filter((to): to is number => to !== undefined);
+        expect(reached).toEqual([...reached].sort((a, b) => a - b));
+        expect(Math.min(...reached.slice(-2))).toBeGreaterThanOrEqual(400);
+        // Nothing before 400 is said again once the other tab had got that far
+        expect(vi.mocked(steps.carry).mock.calls.length).toBeLessThan(4);
+    });
+
+    it("sends a bot server from before only the lines it has not taken, after a line said while the message was on its way", async () => {
+        const { state, steps } = device();
+        steps.parts = vi.fn(() => Promise.resolve(false));
+        // A bot server from before says a carry once per chat (it keeps the carry id): the same id asked again is "already", with nothing said
+        const said = new Set<string>([GUEST]);
+        const reached: string[] = [];
+        let first = true;
+        vi.mocked(steps.carry).mockImplementation((carryId, lines) => {
+            if (first) {
+                first = false;
+                state.chat = withLine(state.chat!, { from: "brick", text: "Late answer.", at: 4 });
+            }
+            if (said.has(carryId)) return Promise.resolve("already");
+            said.add(carryId);
+            reached.push(...lines.map((line) => line.text));
+            return Promise.resolve("sent");
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        expect(steps.carry).toHaveBeenCalledTimes(2);
+        // Only the lines it had not taken are offered again, and nothing it had taken is said twice (a late answer cannot be
+        // said to a bot server that keeps one carry per chat: what that server does is its own)
+        expect(vi.mocked(steps.carry).mock.calls[1][1].map((line) => line.text)).toEqual(["Late answer."]);
+        expect(reached).toEqual([]);
     });
 
     it("leaves another guest's chat alone when a refusal comes back after the chat was replaced", async () => {
@@ -253,6 +374,38 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         refuse("refused");
         await expect(carrying).resolves.toBe("none");
         expect(state.chat).toBe(other);
+    });
+
+    it("leaves the chat alone when another account is signed in by the time the question comes back", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.take).mockImplementation(() => {
+            state.current = false;
+            return Promise.resolve(false);
+        });
+        const before = state.chat;
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        // Orbit's "not handed to you" is about the account that asked, not the one signed in now: the chat is not dropped
+        expect(state.chat).toBe(before);
+        expect(steps.calls).toEqual([]);
+        expect(steps.carry).not.toHaveBeenCalled();
+    });
+
+    it("says nothing and drops nothing when the account changed while a part was on its way", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.carry).mockImplementation(() => {
+            state.current = false;
+            return Promise.resolve("refused");
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        expect(state.chat).toBeDefined();
+        expect(steps.calls).not.toContain("drop");
+    });
+
+    it("does not start for an account that is no longer the one signed in", async () => {
+        const { state, steps } = device();
+        state.current = false;
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        expect(steps.take).not.toHaveBeenCalled();
     });
 
     it("counts a chat the bot server already said as brought", async () => {
@@ -277,6 +430,30 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         await expect(first).resolves.toBe("carried");
         expect(get(guestChatCarrying)).toBe(false);
         expect(steps.take).toHaveBeenCalledTimes(1);
+    });
+
+    it("never hands the run of one account to another: the second account waits for it and then carries by its own steps", async () => {
+        const first = device();
+        const second = device();
+        let release: (value: "sent") => void = () => undefined;
+        vi.mocked(first.steps.carry).mockReturnValue(
+            new Promise((resolve) => {
+                release = resolve;
+            })
+        );
+        const one = bringGuestChat(first.steps, "account-one");
+        expect(bringGuestChat(first.steps, "account-one")).toBe(one);
+        const two = bringGuestChat(second.steps, "account-two");
+        expect(two).not.toBe(one);
+        // The other account has not started before the first one is done
+        await Promise.resolve();
+        expect(second.steps.take).not.toHaveBeenCalled();
+        release("sent");
+        await expect(one).resolves.toBe("carried");
+        await expect(two).resolves.toBe("carried");
+        expect(second.steps.take).toHaveBeenCalledTimes(1);
+        expect(second.steps.carry).toHaveBeenCalledTimes(1);
+        expect(get(guestChatCarrying)).toBe(false);
     });
 
     it("says nothing is carrying when there is nothing to carry", async () => {

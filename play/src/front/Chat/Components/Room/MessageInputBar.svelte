@@ -42,6 +42,7 @@
     import { isVoiceNoteFileName, type VoiceNoteDetails } from "../../VoiceNote/VoiceNote";
     import { askForNotifications, replyMoment } from "../../../Notification/Push/NotificationAsk";
     import { typingExceptWorkingBots, workingBotIds } from "../../Bots/BotTyping";
+    import { holdsKeys, uploadAvailability } from "./ComposerRules";
     import { appendEmoji } from "./AppendEmoji";
     import { withoutBlankEdges } from "./BlankEdges";
     import { withWordsAdded } from "./ComposerWords";
@@ -119,6 +120,7 @@
     }
 
     let fileAttachementEnabled = false;
+    let voiceUploadEnabled = false;
     let isUploading = false;
     let uploadError: string | null = null;
     // The files an upload failed for, each with why, so the line can be rebuilt when one of them is removed.
@@ -250,7 +252,7 @@
 
     // Something that looks like a key, written to a Brick: held here and never sent (game #2044). The server takes it out too.
     // Tracked on its own: a partner that turns out to be a bot after the box opened holds the text too (Sentry on #2048)
-    $: keysHeldHere = partner?.isBot === true || room instanceof GuestBrickChatRoom;
+    $: keysHeldHere = holdsKeys(partner, room instanceof GuestBrickChatRoom);
     $: keyHeld = keysHeldHere && looksLikeAKeyPastedWords(message);
 
     function clearHeldKey() {
@@ -538,24 +540,28 @@
     let checkedTextOnly: boolean | undefined;
     async function checkUploads(textOnlyNow: boolean): Promise<void> {
         const ask = ++uploadCheck;
-        const isUploadEnabled = !textOnlyNow && gameManager.getCurrentGameScene().room.isChatUploadEnabled;
-        let enabled = isUploadEnabled;
+        const roomUploads = gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+        let uploaderConfigured = true;
         // Check CDN config for proximity chat before enabling the button
         // The nearby chat and the Brick for guests send files through the uploader: only when its bucket is set up
-        if ((room instanceof ProximityChatRoom || room instanceof GuestBrickChatRoom) && isUploadEnabled) {
+        if ((room instanceof ProximityChatRoom || room instanceof GuestBrickChatRoom) && roomUploads) {
             try {
                 const configResponse = await fetch(`${UPLOADER_URL}/config`);
                 if (configResponse.ok) {
                     const config = await configResponse.json();
-                    enabled = config.cdnConfigured;
+                    uploaderConfigured = config.cdnConfigured;
                 } else {
-                    enabled = false;
+                    uploaderConfigured = false;
                 }
             } catch {
-                enabled = false;
+                uploaderConfigured = false;
             }
         }
-        if (ask === uploadCheck) fileAttachementEnabled = enabled;
+        if (ask !== uploadCheck) return;
+        // Voice notes go through the same uploader but are not files: a room that takes notes and no files keeps its mic
+        const available = uploadAvailability(textOnlyNow, roomUploads, uploaderConfigured);
+        fileAttachementEnabled = available.files;
+        voiceUploadEnabled = available.voice;
     }
     $: if (checkedTextOnly !== undefined && textOnly !== checkedTextOnly) {
         checkedTextOnly = textOnly;
@@ -875,7 +881,7 @@
     let voiceActive = false;
     $: canRecordVoice =
         allowVoiceNotes &&
-        fileAttachementEnabled &&
+        voiceUploadEnabled &&
         !isUploading &&
         !(room instanceof ProximityChatRoom ? false : disabled) &&
         isEmptyMessage(message) &&

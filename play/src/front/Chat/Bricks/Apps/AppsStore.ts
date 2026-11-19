@@ -60,13 +60,17 @@ export function loadMyApps(afterChange = false): Promise<void> {
     if (!afterChange) return loading;
     if (!queued) {
         const asked = generation;
-        const waiting: Promise<void> = loading.then(() => {
+        // Starts the read behind this one. Another caller may have started a read of its own between the end of the one it waited
+        // for and now (its continuation ran first): then it waits behind that one too, never beside it
+        const start = (): Promise<void> | undefined => {
             // Signed out while it waited: the next person's apps are not read for a change that was not theirs
             if (asked !== generation) return undefined;
+            if (loading) return loading.then(start);
             // It starts now: later changes ask for a read of their own
             if (queued === waiting) queued = undefined;
             return read();
-        });
+        };
+        const waiting: Promise<void> = loading.then(start);
         queued = waiting;
     }
     return queued;

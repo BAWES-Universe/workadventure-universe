@@ -119,6 +119,7 @@ import AddManagerSheet from "../AddManagerSheet.svelte";
 import AppPage from "../AppPage.svelte";
 import AppsPage from "../AppsPage.svelte";
 import { forgetMyApps } from "../AppsStore";
+import GitHubWaitingSheet from "../GitHubWaitingSheet.svelte";
 import LendSheet from "../LendSheet.svelte";
 import MoreApps from "../MoreApps.svelte";
 import TeamAppPage from "../TeamAppPage.svelte";
@@ -670,6 +671,39 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("appShareSheet")).toBeNull();
         });
 
+        it("shows a restricted choice for a job whose app no longer names its fields, never as the whole answer", async () => {
+            game.getAppShare.mockResolvedValue(
+                sharedView({
+                    jobs: [
+                        shareJob({
+                            picked: true,
+                            inputs: [{ name: "query", required: true, picked: true }],
+                            returns: { names: null, picked: ["title", "url"] },
+                        }),
+                    ],
+                })
+            );
+            await open();
+            await click("appShareChange");
+            expect(byId("appShareGetBackAll")).toBeNull();
+            expect(allById("appShareGetBackKept").map((one) => words(one))).toEqual(["title", "url"]);
+        });
+
+        it("reads what is shared again when a change got no answer (a timeout), and keeps the old state as it was only for a definite refusal", async () => {
+            game.getAppShare.mockResolvedValue(sharedView());
+            game.changeAppShare.mockRejectedValue(new Error("offline"));
+            await open();
+            await click("appShareChange");
+            await tapSheet("Save");
+            expect(game.getAppShare).toHaveBeenCalledTimes(2);
+            game.getAppShare.mockClear();
+            // A definite refusal: nothing changed, nothing is read again
+            game.changeAppShare.mockRejectedValue(Object.assign(new Error("No."), { status: 409 }));
+            await click("appShareChange");
+            await tapSheet("Save");
+            expect(game.getAppShare).not.toHaveBeenCalled();
+        });
+
         it("stops at once with one tap and nothing to confirm, and then says Only you again", async () => {
             game.getAppShare.mockResolvedValueOnce(sharedView());
             await open();
@@ -1033,6 +1067,58 @@ describe("the Apps pages (#2001)", () => {
             expect(game.takeAppBack).toHaveBeenCalledWith("tavily", "u1");
         });
 
+        it("names the bots that stop when two or more use the lend, and says 'Bots there' only when none does", async () => {
+            const bot = (botId: string, botName: string) => ({
+                botId,
+                botName,
+                serverId: `s${botId}`,
+                enabled: true,
+                usesThisMonth: 1,
+            });
+            game.getMyApp.mockResolvedValue(
+                appPage({ lentTo: [lentRow({ bots: [bot("g", "Guide"), bot("s", "Scout")] })], canLendTo: [] })
+            );
+            await open();
+            await click("appTakeBack");
+            expect(words(byId("appTakeBackSheet"))).toContain(
+                "Guide and Scout stop using Tavily at once, also in a chat that is already open."
+            );
+            expect(words(byId("appTakeBackSheet"))).not.toContain("Bots there");
+            page?.$destroy();
+            game.getMyApp.mockResolvedValue(
+                appPage({
+                    lentTo: [
+                        lentRow({ bots: [bot("g", "Guide"), bot("s", "Scout"), bot("h", "Helper"), bot("k", "Kit")] }),
+                    ],
+                    canLendTo: [],
+                })
+            );
+            await open();
+            await click("appTakeBack");
+            expect(words(byId("appTakeBackSheet"))).toContain(
+                "Guide, Scout and 2 more stop using Tavily at once, also in a chat that is already open."
+            );
+            page?.$destroy();
+            game.getMyApp.mockResolvedValue(appPage({ lentTo: [lentRow({ bots: [] })], canLendTo: [] }));
+            await open();
+            await click("appTakeBack");
+            expect(words(byId("appTakeBackSheet"))).toContain(
+                "Bots there stop using Tavily at once, also in a chat that is already open."
+            );
+        });
+
+        it("closes the lend sheet and says nothing is wrong when the lend went through but reading the page again failed", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await open();
+            await click("appLendGo");
+            game.getMyApp.mockRejectedValue(new Error("down"));
+            await click("appLendConfirm");
+            warn.mockRestore();
+            expect(game.lendApp).toHaveBeenCalledTimes(1);
+            expect(byId("appLendSheet")).toBeNull();
+            expect(game.warn).not.toHaveBeenCalledWith("That didn't go through. Nothing changed.");
+        });
+
         it("asks nothing of anyone when Cancel is chosen on Take back", async () => {
             game.getMyApp.mockResolvedValue(appPage({ lentTo: [lentRow()], canLendTo: [] }));
             await open();
@@ -1220,6 +1306,27 @@ describe("the Apps pages (#2001)", () => {
             expect(words(byId("appPage"))).toContain("Your own key · @BAWES");
         });
 
+        it("does not let a key save that was started before a Cancel close the sheet that was opened after it", async () => {
+            let finish: (value: unknown) => void = () => undefined;
+            game.saveGitHubKey.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+            );
+            await open();
+            await click("gitHubUseKey");
+            await type("ghp_abcdefghij1234");
+            await click("gitHubKeySave");
+            await click("gitHubKeyCancel");
+            expect(byId("gitHubKeySheet")).toBeNull();
+            await click("gitHubUseKey");
+            await type("ghp_second1234567");
+            finish({ id: "gh", login: "BAWES" });
+            await settle();
+            expect(byId("gitHubKeySheet")).not.toBeNull();
+            expect((byId("gitHubKeyInput") as HTMLInputElement).value).toBe("ghp_second1234567");
+        });
+
         it("with the person's own key: works everywhere it does, switches back through GitHub's sign-in, and offers no key", async () => {
             game.getMyApp.mockResolvedValue(github({ ownKey: true }));
             await open();
@@ -1297,6 +1404,37 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("teamAppLoadFailed")).not.toBeNull();
             expect(byId("teamAppTryAgain")).not.toBeNull();
             expect(words(byId("teamAppPage"))).toContain("Belongs to BAWES Universe");
+        });
+
+        it("never lets a slow older read bring back a manager that a newer read no longer shows", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const withSara = { app: teamApp(), canAddAsManager: [], canLetUse: [{ id: "h", name: "Hala" }] };
+            const withoutSara = {
+                app: teamApp({ managers: [{ id: "k", name: "Khalid", owner: true, you: true }] }),
+                canAddAsManager: [],
+                canLetUse: [],
+            };
+            game.getTeamApp.mockResolvedValueOnce(withSara);
+            await open();
+            // The read after a change fails: Try again is offered, and is tapped twice
+            game.getTeamApp.mockRejectedValueOnce(new Error("offline"));
+            await click("teamAppLetUse");
+            let older: (value: unknown) => void = () => undefined;
+            game.getTeamApp.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        older = resolve;
+                    })
+            );
+            await click("teamAppTryAgain");
+            game.getTeamApp.mockResolvedValueOnce(withoutSara);
+            await click("teamAppTryAgain");
+            expect(allById("teamAppManager").map(words)).toEqual(["Khalid (you) Owns BAWES Universe"]);
+            older(withSara);
+            await settle();
+            expect(allById("teamAppManager").map(words)).toEqual(["Khalid (you) Owns BAWES Universe"]);
+            expect(byId("teamAppLoadFailed")).toBeNull();
+            warn.mockRestore();
         });
 
         it("offers no Let it use when Orbit sends nobody, and says Orbit's line when it refuses", async () => {
@@ -1413,6 +1551,31 @@ describe("the Apps pages (#2001)", () => {
             ]);
         });
 
+        it("never lets a slow older read bring back an app that a newer read no longer shows", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getUniverseApps.mockRejectedValueOnce(new Error("offline"));
+            page = new TeamAppsPage({
+                target,
+                props: { universe: { id: "u1", name: "BAWES Universe", apps: 2 }, onBack: () => {} },
+            });
+            await settle();
+            let older: (value: unknown) => void = () => undefined;
+            game.getUniverseApps.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        older = resolve;
+                    })
+            );
+            await click("teamAppsTryAgain");
+            game.getUniverseApps.mockResolvedValueOnce({ apps: [teamApp({ id: "a", name: "Notion" })] });
+            await click("teamAppsTryAgain");
+            expect(allById("teamAppRow")).toHaveLength(1);
+            older({ apps: [teamApp({ id: "a", name: "Notion" }), teamApp({ id: "b", name: "GitHub" })] });
+            await settle();
+            expect(allById("teamAppRow").map((row) => words(row).split(" ")[0])).toEqual(["Notion"]);
+            warn.mockRestore();
+        });
+
         it("says nothing is connected yet", async () => {
             game.getUniverseApps.mockResolvedValue({ apps: [] });
             page = new TeamAppsPage({
@@ -1508,6 +1671,60 @@ describe("the Apps pages (#2001)", () => {
     });
 
     describe("the sheets on their own", () => {
+        it("does not stay shut for good when the lend is rejected: it says so and a tap tries again", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const onSubmit = vi
+                .fn<() => Promise<boolean>>()
+                .mockRejectedValueOnce(new Error("down"))
+                .mockResolvedValue(true);
+            page = new LendSheet({
+                target,
+                props: {
+                    app: "Tavily",
+                    universes: [{ id: "u2", name: "Kuwait Makers", access: "manage" }],
+                    onSubmit,
+                    onClose: () => {},
+                },
+            });
+            await settle();
+            await click("appLendConfirm");
+            expect((byId("appLendConfirm") as HTMLButtonElement).disabled).toBe(false);
+            expect(byId("appLendFailed")).not.toBeNull();
+            await click("appLendConfirm");
+            expect(onSubmit).toHaveBeenCalledTimes(2);
+            warn.mockRestore();
+        });
+
+        it("shows the whole install link to copy by hand when the browser does not let it be copied", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const writeText = vi.fn<(text: string) => Promise<void>>().mockRejectedValueOnce(new Error("denied"));
+            Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+            page = new GitHubWaitingSheet({
+                target,
+                props: {
+                    account: "acme-corp",
+                    installUrl: "https://github.com/apps/bawes-universe/installations/new?target_id=42",
+                    onUseKey: () => {},
+                    onClose: () => {},
+                },
+            });
+            await settle();
+            expect(byId("gitHubCopyFailed")).toBeNull();
+            await click("gitHubCopyLink");
+            expect(words(byId("gitHubCopyFailed"))).toBe(
+                "Couldn't copy it. Select the whole link below and copy it yourself."
+            );
+            expect(words(byId("gitHubInstallFull"))).toBe(
+                "https://github.com/apps/bawes-universe/installations/new?target_id=42"
+            );
+            // a copy that works afterwards says so and drops the fallback
+            writeText.mockResolvedValue(undefined);
+            await click("gitHubCopyLink");
+            expect(byId("gitHubCopyFailed")).toBeNull();
+            expect(words(byId("gitHubCopyLink"))).toBe("Copied");
+            warn.mockRestore();
+        });
+
         it("shows 'You have Manage bots here' for a person who does not own the universe, and sends what was picked", async () => {
             const onSubmit = vi.fn(() => Promise.resolve(true));
             page = new LendSheet({

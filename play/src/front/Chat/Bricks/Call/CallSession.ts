@@ -199,7 +199,18 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
             }
             return state;
         case "end":
-            return { ...state, phase: "ended", endedBy: event.by, walkUp: undefined, hold: undefined };
+            // Whatever the bot was doing ends with the call, so a bar that is still drawn for a moment never says it is working
+            return {
+                ...state,
+                phase: "ended",
+                endedBy: event.by,
+                walkUp: undefined,
+                hold: undefined,
+                doing: "listening",
+                waitingNow: false,
+                work: undefined,
+                workLine: undefined,
+            };
     }
 }
 

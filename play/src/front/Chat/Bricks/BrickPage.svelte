@@ -179,7 +179,7 @@
                         <p class="bkp-visit-line bkp-blocked" data-testid="brickVisitBlocked">
                             {$LL.chat.brick.notTaken({ place: visit.place, name: brick.name })}
                         </p>
-                    {:else if canOfferBringAlong(brick, visit) && !home}
+                    {:else if canOfferBringAlong(brick, visit) && home === null}
                         <div class="bkp-visit">
                             <PageButton tall disabled={visitBusy} testId="brickBringAlong" on:click={bringAlong}
                                 ><IconWalk font-size="18" />{$LL.chat.brick.bringAlong()}</PageButton

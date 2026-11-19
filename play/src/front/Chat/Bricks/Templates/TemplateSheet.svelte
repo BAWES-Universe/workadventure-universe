@@ -209,7 +209,7 @@
                     </span>
                 </div>
 
-                {#if missing.length > 0}
+                {#if missing.length > 0 || preview.setupRequired}
                     <div class="bkg-cap gap" data-testid="templateSetup">{t.setupRequired()}</div>
                     {#each missing as need (need.key)}
                         <div class="bkg-tap" data-testid="templateNeed">
