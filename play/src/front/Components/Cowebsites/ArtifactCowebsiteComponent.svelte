@@ -358,8 +358,9 @@
         // Nothing was dropped (the opening came on show, or the version was never opened again): the timer in place is the right one
         if (!renewalDropped) return;
         renewalDropped = false;
-        if (opened && (renewWhenFree || (opened.version.url !== null && opened.version.urlHasMedia))) {
-            renewIn(renewWait(opened.version));
+        // A page whose address stopped (addressOver) waits behind the loading line for the renewal that this opening cut off: it is set up again at once
+        if (opened && (renewWhenFree || addressOver || (opened.version.url !== null && opened.version.urlHasMedia))) {
+            renewIn(addressOver ? 0 : renewWait(opened.version));
         }
         renewWhenFree = false;
     }

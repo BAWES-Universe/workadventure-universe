@@ -423,6 +423,10 @@ describe('the two tools of a Brick for keys', () => {
         // ...and only for its own request: the game echoes the id back, so an earlier checkout's result is ignored
         expect(description).toContain('request: waiting, session }');
         expect(description).toContain('e.data.request !== waiting');
+        // A "paid" that comes after its request ended (Check payment or Restore purchase found the purchase later) is heard, for the last request the page sent only
+        expect(description).toContain('let waiting = "", asked = ""');
+        expect(description).toContain('e.data.status === "paid" && !waiting && e.data.request === asked');
+        expect(description).toContain('waiting = asked = crypto.randomUUID()');
         // ...and only for its own document: the page makes a session id when its scripts start, sends it with every message and ignores an answer with another one
         expect(description).toContain('const session = crypto.randomUUID()');
         expect(description).toContain('e.data.session !== session');

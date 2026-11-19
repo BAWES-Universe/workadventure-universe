@@ -383,6 +383,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (signal.aborted) return { kind: 'stopped' };
                 if (lost) return { kind: 'look', cancelled: true };
                 await report(true);
+                // The last report can be the first one the job answers as stale: the turn is lost then, and is not read as ended
+                if (lost) return { kind: 'look', cancelled: true };
                 if (terminal && terminal.code !== 'stream_broke' && terminal.code !== 'stream_ended') return { kind: 'ended', words, failed: terminal.failed, fenced: terminal.fenced };
                 // The connection ended before the turn did: reconnect to it, a few times, then let the next look decide
                 if (reconnects >= timing.reconnectMs.length) return { kind: 'ended', words, failed: true, fenced: false };

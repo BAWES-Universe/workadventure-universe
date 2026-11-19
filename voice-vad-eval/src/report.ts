@@ -25,6 +25,8 @@ interface Raw {
     source: string;
     /** The hash of the source recording when it was scored (evaluate.ts). */
     sourceSha: string;
+    /** The hashes of the other recordings the clip was mixed from when it was scored, by key (none for a clip with no other recording). */
+    inputs?: Record<string, string>;
     speaker?: string;
     seconds: number;
     onset?: number;
@@ -393,6 +395,13 @@ for (const m of manifest) {
     let now = sourcesNow.get(r.source);
     if (now === undefined) sourcesNow.set(r.source, (now = sourceSha(data, r.source)));
     if (now !== r.sourceSha) throw new Error(`the source ${r.source} is not the recording that was scored for ${r.id} (${r.sourceSha} then, ${now} now): run the evaluation again`);
+    // The other recordings the clip was mixed from, each on its own hash
+    if (typeof r.inputs !== 'object' || r.inputs === null) throw new Error(`the raw results name no other recordings for ${r.id}: run the evaluation again`);
+    for (const [key, then] of Object.entries(r.inputs)) {
+        let inputNow = sourcesNow.get(key);
+        if (inputNow === undefined) sourcesNow.set(key, (inputNow = sourceSha(data, key)));
+        if (inputNow !== then) throw new Error(`the recording ${key}, mixed into ${r.id}, is not the one that was scored (${then} then, ${inputNow} now): run the evaluation again`);
+    }
 }
 writeFileSync(join(out, 'results.md'), md.join('\n'));
 
