@@ -33,7 +33,11 @@ function readSheet(look: string): Sheet {
         if (type === "IHDR") {
             width = data.readUInt32BE(0);
             height = data.readUInt32BE(4);
-            expect({ depth: data[8], colour: data[9], interlace: data[12] }).toEqual({ depth: 8, colour: 6, interlace: 0 });
+            expect({ depth: data[8], colour: data[9], interlace: data[12] }).toEqual({
+                depth: 8,
+                colour: 6,
+                interlace: 0,
+            });
         }
         if (type === "IDAT") parts.push(data);
         at += 12 + length;
