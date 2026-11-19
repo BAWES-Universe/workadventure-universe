@@ -24,6 +24,8 @@ export interface DidRun {
     outcome: RunOutcome | null;
     /** The result in a line, or why it failed. */
     result: string | null;
+    /** Run now: the person asked for this run; the clock did not set it off. */
+    manual: boolean;
 }
 
 const STATES: readonly RunState[] = ["claimed", "done", "failed", "dropped"];
@@ -48,7 +50,17 @@ function readRun(value: unknown): DidRun | null {
     const outcome = OUTCOMES.find((known) => known === one.outcome) ?? null;
     // A failed run says why in `error`; the others say what came of it in `result`
     const result = state === "failed" ? text(one.error) ?? text(one.result) : text(one.result);
-    return { runId, itemId: text(one.itemId) ?? "", words: text(one.words) ?? "", kind, at, state, outcome, result };
+    return {
+        runId,
+        itemId: text(one.itemId) ?? "",
+        words: text(one.words) ?? "",
+        kind,
+        at,
+        state,
+        outcome,
+        result,
+        manual: one.manual === true,
+    };
 }
 
 /** One page as Orbit sends it: the runs it can read, and the cursor for the next page (null at the end). */
@@ -69,7 +81,7 @@ export function sayRun(run: DidRun, now: number, ll: TranslationFunctions, local
     else if (run.outcome === "spoke") what = g.runSpoke();
     else if (run.outcome === "waiting") what = g.runWaiting();
     else what = g.runQuiet();
-    return `${sayMoment(run.at, now, ll, locale)} · ${what}`;
+    return `${sayMoment(run.at, now, ll, locale)} · ${run.manual ? `${g.runAsked()} · ` : ""}${what}`;
 }
 
 export type DidState = "loading" | "ready" | "failed";

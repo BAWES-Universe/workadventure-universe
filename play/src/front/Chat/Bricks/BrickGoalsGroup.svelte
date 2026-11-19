@@ -11,7 +11,9 @@
         groupGoalItems,
         sayBrief,
         sayDone,
+        saySnoozed,
         sayStatus,
+        sayTapProblem,
         sayWhen,
         type GoalItem,
         type GoalTap,
@@ -49,6 +51,9 @@
     let allDone = false;
     // The rows a tap is in flight for, so a second tap on the same row does nothing more
     let busy = new Set<string>();
+    // The rows Run now just started: the row itself does not change, so its button says so for a moment
+    let started = new Set<string>();
+    const STARTED_FOR_MS = 4000;
 
     $: parts = groupGoalItems($items);
     $: shownDone = allDone ? parts.done : parts.done.slice(0, FIRST_DONE);
@@ -63,8 +68,14 @@
         busy = new Set([...busy, item.id]);
         list.tap(item.id, action)
             .then((result) => {
-                if (result === "refused") warningMessageStore.addWarningMessage($LL.chat.brick.goals.tapFailed());
-                else if (result === "stale") warningMessageStore.addWarningMessage($LL.chat.brick.goals.tapStale());
+                const problem = sayTapProblem(result, $LL);
+                if (problem !== null) warningMessageStore.addWarningMessage(problem);
+                if (result === "started") {
+                    started = new Set([...started, item.id]);
+                    setTimeout(() => {
+                        started = new Set([...started].filter((id) => id !== item.id));
+                    }, STARTED_FOR_MS);
+                }
             })
             .catch((error) => console.error(error))
             .finally(() => {
@@ -88,7 +99,12 @@
     const by = (item: GoalItem, ll: TranslationFunctions) =>
         item.setBy === "brick" ? ll.chat.brick.goals.byBrick({ name }) : ll.chat.brick.goals.byYou();
     const sub = (item: GoalItem, ll: TranslationFunctions, lang: string) =>
-        [item.state === "paused" ? ll.chat.brick.goals.paused() : "", sayWhen(item, Date.now(), ll, lang), by(item, ll)]
+        [
+            item.state === "paused" ? ll.chat.brick.goals.paused() : "",
+            sayWhen(item, Date.now(), ll, lang),
+            saySnoozed(item, Date.now(), ll, lang),
+            by(item, ll),
+        ]
             .filter((bit) => bit !== "")
             .join(" · ");
 </script>
@@ -179,6 +195,14 @@
                                 >{$LL.chat.brick.goals.change()}</PageButton
                             >
                             <PageButton
+                                disabled={busy.has(item.id) || started.has(item.id)}
+                                testId="goalRun"
+                                on:click={() => tap(item, "run")}
+                                >{started.has(item.id)
+                                    ? $LL.chat.brick.goals.runStarted()
+                                    : $LL.chat.brick.goals.runNow()}</PageButton
+                            >
+                            <PageButton
                                 disabled={busy.has(item.id)}
                                 testId={item.state === "paused" ? "goalResume" : "goalPause"}
                                 on:click={() => tap(item, item.state === "paused" ? "resume" : "pause")}
@@ -210,24 +234,36 @@
                         >
                         {#if item.state === "paused" && item.goalId !== null && $items.some((one) => one.id === item.goalId && one.state === "paused")}
                             <!-- Paused with its goal: only the goal's own Resume brings it back, so no button of its own -->
-                        {:else if item.state === "paused"}
-                            <PageButton
-                                disabled={busy.has(item.id)}
-                                testId="goalResume"
-                                on:click={() => tap(item, "resume")}>{$LL.chat.brick.goals.resume()}</PageButton
-                            >
-                        {:else if item.kind === "reminder" && item.cadence.type === "once"}
-                            <PageButton
-                                disabled={busy.has(item.id)}
-                                testId="goalSnooze"
-                                on:click={() => tap(item, "snooze")}>{$LL.chat.brick.goals.snooze()}</PageButton
-                            >
                         {:else}
-                            <PageButton
-                                disabled={busy.has(item.id)}
-                                testId="goalPause"
-                                on:click={() => tap(item, "pause")}>{$LL.chat.brick.goals.pause()}</PageButton
-                            >
+                            <span class="bkg-acts">
+                                <PageButton
+                                    disabled={busy.has(item.id) || started.has(item.id)}
+                                    testId="goalRun"
+                                    on:click={() => tap(item, "run")}
+                                    >{started.has(item.id)
+                                        ? $LL.chat.brick.goals.runStarted()
+                                        : $LL.chat.brick.goals.runNow()}</PageButton
+                                >
+                                {#if item.state === "paused"}
+                                    <PageButton
+                                        disabled={busy.has(item.id)}
+                                        testId="goalResume"
+                                        on:click={() => tap(item, "resume")}>{$LL.chat.brick.goals.resume()}</PageButton
+                                    >
+                                {:else if item.kind === "reminder" && item.cadence.type === "once"}
+                                    <PageButton
+                                        disabled={busy.has(item.id)}
+                                        testId="goalSnooze"
+                                        on:click={() => tap(item, "snooze")}>{$LL.chat.brick.goals.snooze()}</PageButton
+                                    >
+                                {:else}
+                                    <PageButton
+                                        disabled={busy.has(item.id)}
+                                        testId="goalPause"
+                                        on:click={() => tap(item, "pause")}>{$LL.chat.brick.goals.pause()}</PageButton
+                                    >
+                                {/if}
+                            </span>
                         {/if}
                     </div>
                 {/each}
@@ -353,6 +389,15 @@
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
+    }
+    /* A row's own buttons: they wrap under each other on a narrow phone, so the words keep their room */
+    .bkg-acts {
+        display: flex;
+        flex: none;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+        max-width: 55%;
     }
     .bkg :global(.bkg-ico.ok) {
         color: #6ee7a8;

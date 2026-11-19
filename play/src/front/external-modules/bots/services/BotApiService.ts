@@ -513,6 +513,10 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing adminUrl.");
         }
 
+        // Which Orbit and account this request started with: when the game moves to another one while it is on its way, a 401 is not
+        // answered by asking the new one for a session and sending the same request there (#2006)
+        const startedWith = this.timeZoneGeneration;
+
         // Try to get Admin API session token first (async - may fetch new one if missing/expired). A keepalive
         // request goes out while the page closes, when renewing first would be cut off: it takes the session as it
         // is while that still works.
@@ -548,11 +552,13 @@ export class BotApiService {
                 sessionStorage.removeItem(SESSION_KEY);
                 sessionStorage.removeItem(SESSION_EXPIRES_KEY);
 
-                // If we have accessToken, try to fetch a new session token and retry
-                if (this.accessToken) {
+                // If we have accessToken, try to fetch a new session token and retry (only for the Orbit and account the request started with)
+                if (this.accessToken && startedWith === this.timeZoneGeneration) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
-                    if (newToken) {
-                        const retryUrl = `${this.adminUrl}${endpoint}`;
+                    // Asking for the session took time too: the game may have moved on meanwhile, and the request goes back only to the Orbit it
+                    // started with (the url it was first sent to), never to the one the game is on now
+                    if (newToken && startedWith === this.timeZoneGeneration) {
+                        const retryUrl = url;
                         const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
 
                         const retryResponse = await fetch(retryUrl, {
@@ -597,7 +603,8 @@ export class BotApiService {
 
     /**
      * Counts the times `initialize()` moved to another Orbit or account: an answer that belongs to an older count says
-     * nothing about the current one. A token renewed in the middle of a send does not change it.
+     * nothing about the current one. A token renewed in the middle of a send does not change it. A request that was on its way when
+     * the count changed is not sent again to the new Orbit with the new session.
      */
     private timeZoneGeneration = 0;
 
@@ -1565,6 +1572,41 @@ export class BotApiService {
         });
     }
 
+    /**
+     * "Other people" on an app's page for one Brick of the person's (game #2006): whether others can ask it for jobs from this app,
+     * which jobs, and the two limits. Never the app's link, key or account.
+     */
+    async getAppShare(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId));
+    }
+
+    /** "Let others use it": starts with the jobs picked (none picked is the one job there is). Answers what is shared. */
+    async startAppShare(
+        appId: string,
+        botId: string,
+        start: { jobs?: unknown[]; usesPerDayEveryone?: number; usesPerDayPerson?: number } = {}
+    ): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "POST", body: JSON.stringify(start) });
+    }
+
+    /** "Change": the whole list of jobs people can ask for (one left out stops at once) and the two limits. */
+    async changeAppShare(
+        appId: string,
+        botId: string,
+        change: { jobs?: unknown[]; usesPerDayEveryone?: number; usesPerDayPerson?: number }
+    ): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "PATCH", body: JSON.stringify(change) });
+    }
+
+    /** "Stop letting others use it": every later ask is refused at once, in a chat that is already open too. */
+    async stopAppShare(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "DELETE" });
+    }
+
+    private shareUrl(appId: string, botId: string): string {
+        return `/api/me/apps/${encodeURIComponent(appId)}/bricks/${encodeURIComponent(botId)}/share`;
+    }
+
     /** Disconnects one of the person's apps: every Brick and bot stops using it at once. */
     async disconnectMyApp(appId: string): Promise<unknown> {
         return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`, { method: "DELETE" });
@@ -1734,17 +1776,38 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/did${query}`, {});
     }
 
-    /** The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze or Keep going. Answers `{ item }`. */
-    async tapBrickItem(brickId: string, itemId: string, action: string): Promise<unknown> {
+    /**
+     * The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze, Keep going or Run now. Answers `{ item }`
+     * (and `{ run }` for Run now). `key` is Run now's own idempotency key: the same tap sent twice is one run.
+     */
+    async tapBrickItem(brickId: string, itemId: string, action: string, key?: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items/${encodeURIComponent(itemId)}`, {
             method: "PATCH",
-            body: JSON.stringify({ action }),
+            body: JSON.stringify(key === undefined ? { action } : { action, key }),
         });
     }
 
-    /** A Brick's files for its owner (game #2003): what it made, what they sent it, and what is on its computer. */
+    /**
+     * A Brick's files for its owner (game #2003): the first look at what it made, what they sent it, and what is on its
+     * computer, with every file counted.
+     */
     async getBrickFiles(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files`, {});
+    }
+
+    /**
+     * One page of a Brick's files, newest first: the files it made or the files they sent, from the `cursor` a page
+     * before gave (none: the newest), keeping only those with the words of `search` in their name. The list goes on by
+     * cursor however many files there are, and a file deleted meanwhile moves nothing else.
+     */
+    async getBrickFilesPage(
+        brickId: string,
+        page: { section: "made" | "sent"; cursor?: string | null; search?: string }
+    ): Promise<unknown> {
+        const query = new URLSearchParams({ section: page.section });
+        if (page.cursor) query.set("cursor", page.cursor);
+        if (page.search) query.set("q", page.search);
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files?${query.toString()}`, {});
     }
 
     /** Deletes a file the owner sent their Brick: the one change the files list allows. */

@@ -193,7 +193,7 @@ export async function callKeyApp(
     return answerOf(response.status, response.data);
 }
 
-const REASONS: readonly AppUseRefusal[] = ['gone', 'off', 'not_owner', 'incomplete'];
+const REASONS: readonly AppUseRefusal[] = ['gone', 'off', 'not_owner', 'incomplete', 'paused'];
 
 /** What the model is told for Orbit's answer, in plain words. Exported for tests. */
 export function answerOf(status: number, data: unknown): unknown {

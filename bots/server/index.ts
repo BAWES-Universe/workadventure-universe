@@ -25,7 +25,7 @@ import { TaskApps } from './BrickTaskApps';
 import { readWebPageForTool } from '../ai/AIService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
-import { askOrbitAboutAppUse } from '../mcp/AppUse';
+import { askOrbitAboutAppUse, sayOwnerNote, settleWithOrbit } from '../mcp/AppUse';
 import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
 import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
@@ -117,6 +117,16 @@ aiService.useAppUse(
         const serviceToken = process.env.BOT_SERVICE_TOKEN;
         return ADMIN_API_URL && serviceToken ? { adminApiUrl: ADMIN_API_URL, serviceToken } : null;
     })
+);
+// What a try at a shared job came to is told to Orbit (#2006); the owner is told once, in their own chat with the Brick, that the day's uses ran out
+aiService.useAppSettle(
+    settleWithOrbit(() => {
+        const serviceToken = process.env.BOT_SERVICE_TOKEN;
+        return ADMIN_API_URL && serviceToken ? { adminApiUrl: ADMIN_API_URL, serviceToken } : null;
+    }),
+    async (botId, note) => {
+        if (matrixBridge) await sayOwnerNote((matrixUserId, text, transactionId) => matrixBridge.speakInDirectChat(botId, matrixUserId, text, transactionId), botId, note);
+    }
 );
 const cardSurface: CardSurface = {
     send: (botId, roomId, content) => (dmCards ? dmCards.send(botId, roomId, content) : Promise.reject(new Error('Direct messages are off'))),

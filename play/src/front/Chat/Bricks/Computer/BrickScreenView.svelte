@@ -6,7 +6,7 @@
     import { onDestroy, onMount } from "svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { loadNoVnc } from "./novnc";
-    import { createScreenSession, type ScreenSession } from "./BrickScreenSession";
+    import { createScreenSession, documentVisibility, type ScreenSession } from "./BrickScreenSession";
     import { IconLoader2 } from "@wa-icons";
 
     export let brickId: string;
@@ -29,6 +29,8 @@
                 ticket: (mode) => botApiService.screenTicketForBrick(brickId, mode),
                 socketUrl: (ticket) => botApiService.screenSocketUrl(ticket),
                 load: loadNoVnc,
+                // A tab out of sight closes the screen and a tab seen again opens it
+                visibility: documentVisibility(document),
             },
             target,
             (isLive) => (live = isLive)

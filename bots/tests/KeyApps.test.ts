@@ -214,6 +214,13 @@ describe('what the model is told', () => {
         expect(resultOf('step', answerOf(503, { code: 'key_rejected' }))).toEqual(expect.not.objectContaining({ unknown: true }));
     });
 
+    it('says "paused" kindly, not "gone", when Orbit refuses with the team\'s pause', () => {
+        const result = answerOf(403, { allowed: false, reason: 'paused' }) as { error: string; outcome?: string };
+        expect(result.error).toContain('paused for a while');
+        expect(result.error).not.toMatch(/any more/);
+        expect(result.outcome).toBe('not_sent');
+    });
+
     it('treats a call that was already made as done, so a retry never makes a second one', () => {
         expect(answerOf(409, { code: 'already_asked' })).toMatchObject({ done: true });
     });

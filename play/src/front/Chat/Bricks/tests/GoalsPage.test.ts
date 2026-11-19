@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 const game = vi.hoisted(() => ({
     getAllBrickItems: vi.fn<() => Promise<unknown>>(),
-    tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string) => Promise<unknown>>(),
+    tapBrickItem: vi.fn<(brickId: string, itemId: string, action: string, key?: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the page reads on mount.
@@ -157,8 +157,8 @@ describe("Goals and tasks across all Bricks (#2002, mock t-7-all)", () => {
         ]);
         expect(text(rows[0])).toBe("Visa in hand before 12 DecBrick · On track · nothing needed from you");
         // A goal's own check first, then the soonest
-        expect(text(rows[1])).toMatch(/^Check my visa statusBrick · Daily, 8:00 AM Pause$/);
-        expect(text(rows[4])).toMatch(/^Plan the weekend menuRecipe Brick · Daily, 8:00 AM Pause$/);
+        expect(text(rows[1])).toMatch(/^Check my visa statusBrick · Daily, 8:00 AM Run now Pause$/);
+        expect(text(rows[4])).toMatch(/^Plan the weekend menuRecipe Brick · Daily, 8:00 AM Run now Pause$/);
         expect(text(rows[5])).toBe("This year's spending in one sheetBrick · Done 3 Nov · the sheet is in its chat");
         expect(all("goalsPageSnooze")).toHaveLength(1);
         expect(text(byId("goalsPageNote"))).toBe(
@@ -217,6 +217,52 @@ describe("Goals and tasks across all Bricks (#2002, mock t-7-all)", () => {
         all("goalsPageSnooze")[0].click();
         await settle();
         expect(game.warn).toHaveBeenCalledWith("Couldn't do that. Try again.");
+    });
+
+    it("runs one now on the row's own Brick, with a key of its own, says it started, and does not open the row", async () => {
+        await show([
+            row(),
+            row({ id: "w", brickId: RECIPE, kind: "watch", words: "Flight under KWD 90", cadence: daily }),
+        ]);
+        expect(all("goalsPageRun")).toHaveLength(2);
+        expect(text(all("goalsPageRun")[0])).toBe("Run now");
+        all("goalsPageRun")[1].click();
+        await settle();
+        expect(game.tapBrickItem).toHaveBeenLastCalledWith(RECIPE, "w", "run", expect.stringMatching(/^.{8,64}$/));
+        expect(onOpen).not.toHaveBeenCalled();
+        // The row itself does not change when it starts, so its button says so for a moment, and cannot be tapped again meanwhile
+        expect(text(all("goalsPageRun")[1])).toBe("Started");
+        expect(all("goalsPageRun")[1].hasAttribute("disabled")).toBe(true);
+        expect(game.warn).not.toHaveBeenCalled();
+    });
+
+    it("says why a run would not start: one is running, or the usage or the runs for today are used up", async () => {
+        await show([row()]);
+        const refuse = async (code: string, words: string) => {
+            game.tapBrickItem.mockRejectedValueOnce(Object.assign(new Error("no"), { code }));
+            all("goalsPageRun")[0].click();
+            await settle();
+            expect(game.warn).toHaveBeenLastCalledWith(words);
+        };
+        await refuse("busy", "It's running right now.");
+        await refuse("no_room", "Your usage for goals and tasks is used up for now. Try again when it's back.");
+        await refuse("runs_a_day", "That's the most runs for today.");
+        expect(text(all("goalsPageRun")[0])).toBe("Run now");
+    });
+
+    it("says a snoozed run under the row, with where the schedule goes on", async () => {
+        await show([
+            row({
+                id: "b",
+                kind: "schedule",
+                words: "Headlines",
+                cadence: { type: "every", minutes: 60 },
+                nextDueAt: "2099-11-15T13:10:00.000Z",
+                snoozedUntil: "2099-11-15T13:10:00.000Z",
+                nextRegularAt: "2099-11-15T14:00:00.000Z",
+            }),
+        ]);
+        expect(text(all("goalsPageRow")[0])).toMatch(/Every 1 hour · Snoozed until .* · Next regular run .*/);
     });
 
     it("says how to add one when there are none, and offers Try again when it cannot read", async () => {
