@@ -19,6 +19,9 @@ export const RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
 /** How old an expired receipt may be and still be renewed by the one who uploaded the file. */
 export const RECEIPT_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** The longest receipt the reader takes: what is signed never goes past it. */
+export const RECEIPT_MAX_CHARS = 4096;
+
 export type ReceiptPurpose = "chat-file" | "chat-note" | "guest-brick";
 export const RECEIPT_PURPOSES: readonly ReceiptPurpose[] = ["chat-file", "chat-note", "guest-brick"];
 
@@ -60,11 +63,35 @@ function base64url(value: Buffer | string): string {
   return Buffer.from(value).toString("base64url");
 }
 
-export function signReceipt(claims: Omit<ReceiptClaims, "iss" | "v" | "kid">, secret: string): string {
-  const full: ReceiptClaims = { iss: "uploader", v: RECEIPT_VERSION, kid: RECEIPT_KID, ...claims };
+function encode(full: ReceiptClaims, secret: string): string {
   const body = base64url(JSON.stringify(full));
   const mac = createHmac("sha256", receiptKey(secret, full.kid)).update(body).digest();
   return `${body}.${base64url(mac)}`;
+}
+
+/** A type as a file's own header gives it (`type/subtype`, 127 characters each at most), or the plain "bytes" type when it is not one. */
+function safeType(type: string): string {
+  return /^[\w.+-]{1,127}\/[\w.+-]{1,127}$/.test(type) ? type : "application/octet-stream";
+}
+
+/**
+ * Signs a receipt that the reader will take: its length is kept within RECEIPT_MAX_CHARS by normalizing the file's type, then by
+ * shortening its name (the one thing a device picks freely), so an upload with an odd name or type never gets a receipt that
+ * cannot be read or renewed.
+ */
+export function signReceipt(claims: Omit<ReceiptClaims, "iss" | "v" | "kid">, secret: string): string {
+  const full: ReceiptClaims = { iss: "uploader", v: RECEIPT_VERSION, kid: RECEIPT_KID, ...claims };
+  let token = encode(full, secret);
+  if (token.length <= RECEIPT_MAX_CHARS) return token;
+  full.type = safeType(full.type);
+  token = encode(full, secret);
+  while (token.length > RECEIPT_MAX_CHARS && full.name.length > 1) {
+    // Base64 makes every 3 bytes 4 characters: cut what is over, and a little more, until it fits
+    const over = Math.ceil(((token.length - RECEIPT_MAX_CHARS) * 3) / 4) + 8;
+    full.name = full.name.slice(0, Math.max(1, full.name.length - over));
+    token = encode(full, secret);
+  }
+  return token;
 }
 
 /**
@@ -77,7 +104,7 @@ export function readReceipt(
   now: number = Date.now(),
   allowExpiredFor = 0
 ): ReceiptClaims | null {
-  if (typeof token !== "string" || token.length > 4096) return null;
+  if (typeof token !== "string" || token.length > RECEIPT_MAX_CHARS) return null;
   const [body, mac, extra] = token.split(".");
   if (!body || !mac || extra !== undefined) return null;
   let claims: ReceiptClaims;

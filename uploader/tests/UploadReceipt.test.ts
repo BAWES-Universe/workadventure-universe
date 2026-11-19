@@ -171,6 +171,21 @@ describe("upload receipts (voice notes for every bot, plan v3 section 5)", () =>
     expect(readReceipt(token, SECRET)?.sub).toBe(guest);
   });
 
+  it("never signs a receipt longer than the reader takes, whatever type or name an upload carried", () => {
+    const make = (type: string, name: string) =>
+      signReceipt({ sub: guest, aud: "chat-file", fid: "f", bkt: null, loc: "https://uploader.example/upload-file/f", sha256: "h".repeat(64), name, type, size: 1, len: "unmeasured", iat: 1, exp: Date.now() + 1000 }, SECRET);
+    // A type that is not one is replaced, so the receipt is read and renewed as any other
+    const odd = make("application/" + "a".repeat(4096), "voice.ogg");
+    expect(odd.length).toBeLessThanOrEqual(4096);
+    expect(readReceipt(odd, SECRET)).toMatchObject({ sub: guest, name: "voice.ogg", type: "application/octet-stream" });
+    // A name of many characters that escape long in JSON is cut to fit
+    const long = make("audio/ogg", "\u00e9\"".repeat(255).repeat(8));
+    expect(long.length).toBeLessThanOrEqual(4096);
+    expect(readReceipt(long, SECRET)).toMatchObject({ sub: guest, type: "audio/ogg" });
+    // An ordinary one is untouched
+    expect(readReceipt(make("audio/ogg", "note.ogg"), SECRET)).toMatchObject({ name: "note.ogg", type: "audio/ogg" });
+  });
+
   it("refuses a receipt whose claims were changed", () => {
     const token = signReceipt(
       { sub: guest, aud: "chat-file", fid: "f", bkt: null, loc: "l", sha256: "h", name: "n", type: "t", size: 1, len: "unmeasured", iat: 1, exp: Date.now() + 1000 },
