@@ -234,6 +234,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // The restore that page asked for, kept as it asked: Restore purchase answers it, while that page is still the one on show
     // `latest` is the last request that same document made while turned away (its pay tap after its restore): its page waits on that one, so it hears the end under it too
     let deferredRestore: { request: string; from: number; session: string; latest?: string } | null = null;
+    // The request the page that is being served made last while its payment was on its way, and was told busy: the page waits on that one now
+    // (it dropped the id of the checkout it started), so a purchase that is found is told under it too. Cleared when a new request is taken.
+    let lateAsker: { request: string; from: number; session: string } | null = null;
     let memoryCode: string | null = null;
 
     const publish = (next: PayLine) => {
@@ -372,6 +375,19 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         }
     };
 
+    /**
+     * The purchase is made: the page that asked something else while it was on its way (and was told busy) waits on that request, and hears
+     * it under it too, once. Only a purchase is told this way: any other end says nothing the page that moved on could use.
+     */
+    const tellLatestPaid = (test: boolean, ...told: string[]) => {
+        const one = lateAsker;
+        if (!one) return;
+        lateAsker = null;
+        if (!told.includes(one.request) && one.from === opening() && stillSpeaking(one.request, one.session)) {
+            tellEnd("paid", one.request, one.from, test, one.session);
+        }
+    };
+
     // Every status goes out under the id of the request its checkout was started for, never under whichever request is newest
     const end = (
         update: Partial<PayLine>,
@@ -389,7 +405,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
         });
         tellEnd(status, request, from, test, asker ?? sessions.get(request));
-        if (update.paid) tellDeferredPaid(test);
+        if (update.paid) {
+            tellDeferredPaid(test);
+            tellLatestPaid(test, request);
+        }
     };
 
     const frameReady = () => {
@@ -508,6 +527,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         activeRequest = request;
         activeFrom = from;
         deferredRestore = null;
+        lateAsker = null;
         held.clear();
         // The wish for this tap: made here, never by the page. A start sent again after a lost answer carries the same one, so it finds the order it made
         const intentId = random(24);
@@ -647,6 +667,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         const asker = sessions.get(request);
         lastRestore = { request, from, session: asker };
         deferredRestore = null;
+        lateAsker = null;
         held.clear();
         void (async () => {
             try {
@@ -730,6 +751,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             // The same id from another document (another session) is another request too.
             if (data.request !== activeRequest || activeFrom !== opening() || session !== askedBefore) {
                 tellRequest("busy", data.request, false, session);
+                // The same page asked something else while its own payment is on its way: it waits on this request now
+                if (activeFrom === opening() && session === askedBefore) {
+                    lateAsker = { request: data.request, from: opening(), session };
+                }
                 if (activeFrom !== opening() || session !== askedBefore) {
                     restoreOwed = true;
                     // Its own restore, as it asked: Restore purchase answers that page under its own request, while it is the page on show
@@ -799,7 +824,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (deferred?.latest && deferred.latest !== asked.request) {
                     tellEnd(told, deferred.latest, asked.from, test, asked.session);
                 }
-                if (update.paid) tellDeferredPaid(test);
+                if (update.paid) {
+                    tellDeferredPaid(test);
+                    tellLatestPaid(test, asked.request, deferred?.latest ?? "");
+                }
             };
             try {
                 let answer = await askWithin(
@@ -824,6 +852,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     // An order that was found by asking for the buyer's purchases is the one to ask about from now on, not the wish of an earlier checkout
                     if (!asked.intentId) {
                         target = { intentId: null, request: asked.request, from: asked.from, session: asked.session };
+                    }
+                    // The page turned away twice (its restore, then its pay tap) waits on its latest request: the end of this order is told under it too
+                    if (deferred?.latest && deferred.latest !== asked.request) {
+                        lateAsker = { request: deferred.latest, from: asked.from, session: deferred.session };
                     }
                     return adopt(answer.orderId, resumeOf(answer), asked.request, asked.from, asked.session);
                 }
