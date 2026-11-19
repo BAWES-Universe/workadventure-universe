@@ -49,15 +49,6 @@ const okAnswer = (username?: string, usernameFromAccount = username !== undefine
     },
 });
 
-async function openTheGame() {
-    const manager = connectionManager as unknown as {
-        _currentRoom: unknown;
-        checkAuthUserConnexion(token: string): Promise<unknown>;
-    };
-    manager._currentRoom = { key: "http://play.example.com/@/u/w/r", opidWokaNamePolicy: "user_input" };
-    await manager.checkAuthUserConnexion(gameToken);
-}
-
 const GUEST = `header.${window.btoa(JSON.stringify({ identifier: "5b522f38-d7d2-4e37-be94-2476cb1efdfe" }))}.signature`;
 
 // Orbit could not keep the guest's chat when the guest signed in: it answers "retry", and the same sign-in is asked again. The guest id has to go
