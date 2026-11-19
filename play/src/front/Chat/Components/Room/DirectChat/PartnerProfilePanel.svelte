@@ -272,11 +272,7 @@
 
         <PinnedSummary {room} />
 
-        <ArtifactsSummary
-            {room}
-            botName={partner.isBot ? name : undefined}
-            botId={botIdFromChatId(partner.chatId)}
-        />
+        <ArtifactsSummary {room} botName={partner.isBot ? name : undefined} botId={botIdFromChatId(partner.chatId)} />
 
         <SharedSummary {room} />
 
