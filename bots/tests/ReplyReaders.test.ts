@@ -76,6 +76,55 @@ describe('ReplyReaders', () => {
         expect(readers.forOneReaderIn(SPACE)).toEqual([REPLY]);
     });
 
+    it('holds a new reply back, and lets go of none, when 3,000 replies are still being written', () => {
+        const readers = new ReplyReaders();
+        readers.starts(SPACE, 7, true);
+        expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
+        for (let i = 1; i < 3000; i++) readers.readerOf(SPACE, `bot-bot-test-player-9-n${i}`, now(false));
+        // One more unfinished reply: no room, so it is held back (null) and nothing is kept for it
+        expect(readers.readerOf(SPACE, 'bot-bot-test-player-9-over', now(false))).toBeNull();
+        expect(readers.knownReaderOf('bot-bot-test-player-9-over')).toBeNull();
+        // The oldest unfinished reply was not let go of: a late piece of it still goes to its reader alone, whoever walked up
+        readers.starts(SPACE, 7, false);
+        expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
+        // A reply that ends makes room for the held one, which then asks again and is bound
+        readers.complete('bot-bot-test-player-9-n1');
+        expect(readers.readerOf(SPACE, 'bot-bot-test-player-9-over', now(false))).toBeUndefined();
+        expect(readers.knownReaderOf('bot-bot-test-player-9-over')).toBeUndefined();
+        expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
+    });
+
+    it('lets go of an unfinished reply at the 3,000 limit only when it was abandoned a day ago', () => {
+        vi.useFakeTimers();
+        try {
+            const readers = new ReplyReaders();
+            readers.starts(SPACE, 7, true);
+            readers.readerOf(SPACE, REPLY, now(false));
+            for (let i = 1; i < 3000; i++) readers.readerOf(SPACE, `bot-bot-test-player-9-n${i}`, now(false));
+            vi.advanceTimersByTime(23 * 60 * 60_000);
+            expect(readers.readerOf(SPACE, 'bot-bot-test-player-9-over', now(false))).toBeNull();
+            vi.advanceTimersByTime(2 * 60 * 60_000);
+            expect(readers.readerOf(SPACE, 'bot-bot-test-player-9-over', now(false))).toBeUndefined();
+            // The abandoned one is gone: nothing asks about it as a reply it knows
+            expect(readers.knownReaderOf(REPLY)).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('says a reply it knows, a reply for everyone, and one it does not know, for a line about a reply', () => {
+        const readers = new ReplyReaders();
+        readers.starts(SPACE, 7, true);
+        readers.readerOf(SPACE, REPLY, now(false));
+        readers.starts(SPACE, 9, false);
+        readers.readerOf(SPACE, 'bot-bot-test-player-9-open', now(false));
+        expect(readers.knownReaderOf(REPLY)).toBe('room-1_7');
+        expect(readers.knownReaderOf('bot-bot-test-player-9-open')).toBeUndefined();
+        expect(readers.knownReaderOf('bot-bot-test-player-7-never')).toBeNull();
+        // Asking never binds a reply
+        expect(readers.knownReaderOf('bot-bot-test-player-7-never')).toBeNull();
+    });
+
     it('keeps each space and person to themselves, and decides afresh once they have left', () => {
         const readers = new ReplyReaders();
         readers.starts(SPACE, 7, true);
@@ -271,6 +320,34 @@ describe('BotClient: who a reply is sent to', () => {
 
         bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
         expect(speech.final).toHaveBeenCalledWith(SPACE, REPLY, 'Your interview is at 10.', 'room-1_7');
+    });
+
+    it('sends the speaking and stopped marks of a finished reply to its reader alone, and none for a reply it let go of or never saw', async () => {
+        const { bot, internals, init, join } = setup();
+        Object.assign(internals, { speech: { begin: vi.fn(), final: vi.fn(), hush: vi.fn() }, voice: voice(true) });
+        await init([KHALID]);
+        bot.replyStarts(SPACE, 7, true);
+        bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+        await join(SARA);
+        const marks = bot as unknown as { sendSpeaking(s: string, r: string, on: boolean): void; sendSpeechStopped(s: string, r: string): void };
+
+        // Its last piece went out long ago, and its voice is only now heard: the mark still goes to that person alone
+        marks.sendSpeaking(SPACE, REPLY, true);
+        marks.sendSpeechStopped(SPACE, REPLY);
+        const sentMarks = () =>
+            ((bot as unknown as { send: ReturnType<typeof vi.fn> }).send.mock.calls as unknown[][])
+                .map((call) => (call[0] as { message?: { publicEvent?: { spaceEvent?: { event?: { spaceStreamMessage?: Record<string, unknown> } } } } })?.message?.publicEvent?.spaceEvent?.event?.spaceStreamMessage)
+                .filter((piece): piece is Record<string, unknown> => !!piece && (piece.speaking !== undefined || piece.stoppedBySpeech !== undefined))
+                .map((piece) => ({ reply: piece.responseId, onlyFor: piece.onlyFor }));
+        expect(sentMarks()).toEqual([
+            { reply: REPLY, onlyFor: 'room-1_7' },
+            { reply: REPLY, onlyFor: 'room-1_7' },
+        ]);
+
+        // A reply the bot let go of (here: never started) is not decided afresh by a late mark, so it is not sent to the room
+        marks.sendSpeaking(SPACE, 'bot-bot-test-player-7-gone', true);
+        marks.sendSpeechStopped(SPACE, 'bot-bot-test-player-7-gone');
+        expect(sentMarks()).toHaveLength(2);
     });
 
     it('hands a reply for everyone to the voice as before, with nobody on it', async () => {

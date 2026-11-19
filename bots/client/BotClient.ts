@@ -2333,9 +2333,11 @@ export class BotClient {
         return onlyFor ? { onlyFor } : null;
     }
 
-    /** Who a line about a reply is for, as the reply: `{}` for everyone, null when it is for one person who cannot be named yet (the line is then not sent). */
-    private onlyForOf(spaceName: string, responseId: string): { onlyFor?: string } | null {
-        const onlyFor = this.readerOf(spaceName, responseId);
+    /** Who a line about a reply is for, as the reply: `{}` for everyone, null when the reply is not known here (the line is then not sent). */
+    private onlyForOf(_spaceName: string, responseId: string): { onlyFor?: string } | null {
+        // A line about a reply (a mark, a note) never decides who the reply is for: it follows the reader the reply started with, and when
+        // the reply is no longer known (it ended long ago) nothing is sent
+        const onlyFor = this.readers.knownReaderOf(responseId);
         if (onlyFor === null) return null;
         return onlyFor ? { onlyFor } : {};
     }
@@ -2350,7 +2352,7 @@ export class BotClient {
         if (!this.speech || !newcomer || newcomer === this.spaces.get(spaceName)) return;
         if (this.voice?.keepsToOne(spaceName) !== false) return;
         for (const responseId of this.readers.forOneReaderIn(spaceName)) {
-            if (this.readerOf(spaceName, responseId) === newcomer) continue;
+            if (this.readers.knownReaderOf(responseId) === newcomer) continue;
             const how = this.speech.hush(spaceName, responseId);
             if (how) this.sendKeptQuiet(spaceName, responseId, how);
         }
