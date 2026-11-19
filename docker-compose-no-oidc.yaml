@@ -3,6 +3,9 @@ services:
   play:
     environment:
       # Disable OIDC by unsetting the OIDC environment variables
+      OPENID_CLIENT_ID: ""
+      OPENID_CLIENT_SECRET: ""
+      OPENID_CLIENT_ISSUER: ""
       OPID_CLIENT_ID: ""
       OPID_CLIENT_SECRET: ""
       OPID_CLIENT_ISSUER: ""

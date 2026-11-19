@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Universe are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers match the `VERSION` file and the [GitHub releases](https://github.com/BAWES-Universe/workadventure-universe/releases), where every release also lists each pull request in full.
+All notable changes to Universe are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers match the [GitHub releases](https://github.com/BAWES-Universe/workadventure-universe/releases), where every release also lists each pull request in full. The `VERSION` file is only set when a release is cut, so on `universe-develop` it can be behind the newest entry here.
 
 Universe is released together with Orbit ([workadventure-universe-admin](https://github.com/BAWES-Universe/workadventure-universe-admin)); see its changelog for the other half.
 
