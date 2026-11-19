@@ -117,15 +117,29 @@
     let renewTimer: ReturnType<typeof setTimeout> | undefined;
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
+    /** Counts the openings that came on show: a checkout asked for by the page of one is never told to the page of another. */
+    let opening = 0;
     /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
     let addressOver = false;
 
     // A page that takes payments asks for its checkout by message (game #2044); only this window's own frame is listened to
-    let frameElement: HTMLIFrameElement | undefined;
+    let frameElement: HTMLIFrameElement | null | undefined;
+    // Whether the page in the frame on show has loaded: a frame has a window before its page is there, and a payment result
+    // sent in that time reaches nobody. Cleared each time the frame is drawn again (a new element, or another address).
+    let frameLoaded = false;
+    let frameDrawn: { element: HTMLIFrameElement | null | undefined; url: string | null | undefined } | undefined;
+    function watchFrame(element: HTMLIFrameElement | null | undefined, url: string | null | undefined) {
+        if (frameDrawn && frameDrawn.element === element && frameDrawn.url === url) return;
+        frameDrawn = { element, url };
+        frameLoaded = false;
+    }
+    $: watchFrame(frameElement, opened?.version.url);
     const payments = pagePayments({
         artifactId: id,
         chat: () => actualCowebsite.chat,
         frame: () => frameElement?.contentWindow,
+        loaded: () => frameLoaded,
+        opening: () => opening,
         openWindow: () => window.open("about:blank", "_blank"),
     });
     const payLine = payments.line;
@@ -212,6 +226,9 @@
 
     async function load(version: number | undefined) {
         const mine = ++request;
+        // A renewal of the version on show that is still on its way is out of date from the moment another opening starts:
+        // if it answers "kept private" while this opening is still loading, it must not put away the opening that is coming
+        renewal++;
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
@@ -221,6 +238,10 @@
             if (destroyed || mine !== request) return;
             opened = answer;
             shownNumber = answer.version.number;
+            // What this opening shows is newer than any renewal of a version that was on show before it: that one is not used,
+            // also when the same version is on show again (1, then 2, then 1)
+            renewal++;
+            opening++;
             text = undefined;
             textFailed = false;
             summaryStore.set({
@@ -245,6 +266,8 @@
                 switchFailed = true;
                 versionStore.set(opened.version.number);
                 phase = "ready";
+                // A renewal of the one showing that was on its way was dropped when this opening started: look after it again
+                if (opened.version.url !== null && opened.version.urlHasMedia) renewIn(RENEW_RETRY_MS);
                 return;
             }
             phase = "failed";
@@ -354,6 +377,15 @@
     // so nothing is drawn until it is opened again at a new one.
     function redrawIfStopped() {
         if (addressStopped()) drawFromNewAddress();
+    }
+
+    // The frame has loaded: what a checkout ended with while the buyer was in Code view (it has no frame then) is told to it now.
+    // From an address that has stopped it shows nothing, so it waits for the frame of the new one.
+    function onFrameLoad() {
+        // From an address that has stopped it shows nothing: it is not a page that can hear anything
+        frameLoaded = !addressStopped();
+        if (frameLoaded) payments.frameReady();
+        redrawIfStopped();
     }
 
     // The list drops down from the button. On a phone the window sits behind the chat, so the list ends above the chat,
@@ -717,7 +749,7 @@
                     allow=""
                     data-testid="artifactFrame"
                     bind:this={frameElement}
-                    on:load={redrawIfStopped}
+                    on:load={onFrameLoad}
                 />
                 {#if $payLine.checking || $payLine.problem || $payLine.paid}
                     <div class="pay-line" role="status" data-testid="artifactPayLine">
@@ -728,7 +760,11 @@
                         {:else if $payLine.problem}
                             <p>{payProblemText($payLine.problem)}</p>
                         {:else}
-                            <p>{$LL.chat.artifacts.payChecking()}</p>
+                            <p>
+                                {$payLine.slow
+                                    ? $LL.chat.artifacts.payTakingLonger()
+                                    : $LL.chat.artifacts.payChecking()}
+                            </p>
                             {#if $payLine.resume}
                                 <a
                                     class="pay-go"

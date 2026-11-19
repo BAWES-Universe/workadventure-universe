@@ -280,6 +280,21 @@ describe("Brick templates (#2008)", () => {
             orbit.getTemplateOfBrick.mockRejectedValueOnce(new Error("offline"));
             await expect(readTemplateOfBrick("b1")).rejects.toThrow("offline");
         });
+
+        it("fails, rather than saying nothing is shared, when the answer cannot be read", async () => {
+            for (const unreadable of [
+                null,
+                undefined,
+                {},
+                { error: "boom" },
+                { template: { id: 7 } },
+                { template: "x" },
+            ]) {
+                orbit.getTemplateOfBrick.mockResolvedValueOnce(unreadable);
+                // eslint-disable-next-line no-await-in-loop
+                await expect(readTemplateOfBrick("b1")).rejects.toThrow("Could not read the template of a Brick");
+            }
+        });
     });
 
     describe("sharing", () => {

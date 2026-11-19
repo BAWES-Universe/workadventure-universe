@@ -24,10 +24,14 @@ let loading: Promise<void> | undefined;
 // Counts what changed the usage after it was read: a read that began before "Ask for more" went through must not undo it
 let changes = 0;
 
-/** Whether an answer carries an older stamp than the usage held: Orbit's own order, never the game's clock. */
-function isOlder(answer: MyUsage, held: MyUsage | undefined): boolean {
-    const heldVersion = held?.version ?? null;
-    return answer.version !== null && heldVersion !== null && answer.version < heldVersion;
+// The newest stamp this account's usage ever carried: an answer without a stamp in between does not make an older stamped one new
+let highVersion: number | null = null;
+// Moves on when the person signs out (or another signs in): what an earlier account's read or request did is not this one's
+let account = 0;
+
+/** Whether an answer carries an older stamp than the newest one seen: Orbit's own order, never the game's clock. */
+function isOlder(answer: MyUsage): boolean {
+    return answer.version !== null && highVersion !== null && answer.version < highVersion;
 }
 
 // Counts the reads that must not be believed any more: a read that began before it changed is ignored when it ends
@@ -35,9 +39,29 @@ let epoch = 0;
 // The read waiting for the one in flight to end (see refreshMyUsage)
 let queued: Promise<void> | undefined;
 
+let watching = false;
+/**
+ * Forgets what was read when the account really changes: another account or Orbit in place (the game initialises again for it), or
+ * the person signing out. Set up on the first read, so a page that never reads the usage watches nothing.
+ */
+function watchAccount(): void {
+    if (watching) return;
+    watching = true;
+    botApiService.onIdentityChange(() => forgetMyUsage());
+    let signedIn = get(userIsConnected);
+    // Lives as long as the game: never stopped
+    // eslint-disable-next-line svelte/no-ignored-unsubscribe
+    userIsConnected.subscribe((now) => {
+        if (signedIn && !now) forgetMyUsage();
+        signedIn = now;
+    });
+}
+
 function startRead(): Promise<void> {
+    watchAccount();
     const startedAt = changes;
     const startedEpoch = epoch;
+    const startedAccount = account;
     const read: Promise<void> = botApiService
         .getMyUsage()
         .then((answer) => {
@@ -45,7 +69,10 @@ function startRead(): Promise<void> {
             if (startedEpoch !== epoch) return;
             const parsed = parseUsage(answer);
             // Orbit's answer is older than what the person did meanwhile: keep what they did
-            if (parsed && changes === startedAt && !isOlder(parsed, get(usage))) usage.set(parsed);
+            if (parsed && changes === startedAt && !isOlder(parsed)) {
+                if (parsed.version !== null) highVersion = Math.max(highVersion ?? parsed.version, parsed.version);
+                usage.set(parsed);
+            }
             failed.set(!parsed);
         })
         .catch((error: unknown) => {
@@ -54,7 +81,8 @@ function startRead(): Promise<void> {
         })
         .finally(() => {
             if (loading === read) loading = undefined;
-            settled.set(true);
+            // The first read of another account is the one that says this one is settled, not one an earlier account left out
+            if (startedAccount === account) settled.set(true);
         });
     loading = read;
     return read;
@@ -74,11 +102,16 @@ export function refreshMyUsage(): Promise<void> {
     if (!get(userIsConnected)) return Promise.resolve();
     epoch++;
     if (!loading) return startRead();
-    queued ??= loading.then(() => {
-        queued = undefined;
+    if (queued) return queued;
+    const mine = account;
+    const entry: Promise<void> = loading.then(() => {
+        // Another account since (or signed out): this read was for the one before
+        if (queued === entry) queued = undefined;
+        if (mine !== account || !get(userIsConnected)) return undefined;
         return startRead();
     });
-    return queued;
+    queued = entry;
+    return entry;
 }
 
 /**
@@ -86,12 +119,15 @@ export function refreshMyUsage(): Promise<void> {
  * Orbit refused or could not be reached: nothing was sent. Without a category it is the computer's, as it always was.
  */
 export async function askMyUsageForMore(category: CreditCategory = "computer"): Promise<boolean> {
+    const askedBy = account;
     try {
         await botApiService.askForMoreUsage(category);
     } catch (error) {
         console.warn("Could not ask for more", error);
         return false;
     }
+    // The person signed out (or another signed in) while it was out: it was taken for them, and says nothing of this account's usage
+    if (askedBy !== account) return true;
     changes++;
     usage.update((current) => {
         if (!current) return current;
@@ -117,4 +153,6 @@ export function forgetMyUsage(): void {
     queued = undefined;
     epoch++;
     changes = 0;
+    highVersion = null;
+    account++;
 }

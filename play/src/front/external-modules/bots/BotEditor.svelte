@@ -417,7 +417,8 @@
         if (capturedPreviousBot && !bot && botApiService.isInitialized()) {
             // Find the bot that was just placed
             const placedBot = get(selectedBotStore);
-            if (placedBot && placedBot.id === capturedPreviousBot.id) {
+            // A Brick's spot goes to its home by its own path (onBrickPlaced): nothing of it is saved as a room bot's behavior
+            if (placedBot && placedBot.id === capturedPreviousBot.id && !capturedPreviousBot.brickHome) {
                 // Save the position to API (fire and forget)
                 void (async () => {
                     try {

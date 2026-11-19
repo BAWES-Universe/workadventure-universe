@@ -86,9 +86,13 @@
                 taken = new Set();
                 changedAgain = true;
                 onDone(read.value);
-            } else {
+            } else if (read.ok || read.why === "gone") {
+                // Orbit says no update remains (the offer is gone, or this Brick is not made from a template any more)
                 onDone(read.ok ? read.value : undefined);
                 closeModal();
+            } else {
+                // Could not be read: what is offered is not known, so the sheet stays, and the person is told
+                warningMessageStore.addWarningMessage(t.updateFailed());
             }
             return;
         }

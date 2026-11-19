@@ -134,6 +134,22 @@ describe("a Brick's page after template parts were taken (#2008)", () => {
         });
     });
 
+    it("counts what Orbit has now as saved even where the person is typing, so going back to the old text is sent", () => {
+        // Orbit had "Be brief.", the person typed "Be brief, and funny.", the update stored the music companion text
+        const here = bot({ chatInstructions: "Be brief, and funny.", description: "My own line" });
+        const after = brickAfterTemplate(here, brickSavedOf(bot()), fresh, ["instructions", "description"]);
+        expect(after.bot.chatInstructions).toBe("Be brief, and funny.");
+        expect(after.bot.description).toBe("My own line");
+        expect(after.saved.chatInstructions).toBe(brickSavedOf(fresh).chatInstructions);
+        expect(after.saved.description).toBe(brickSavedOf(fresh).description);
+        // They go back to the text Orbit had before the update: it is not what Orbit stores now, so it is sent
+        const back = { ...after.bot, chatInstructions: "Be brief.", description: "Your own Brick" };
+        expect(brickChangeBetween(after.saved, brickSavedOf(back))).toEqual({
+            chatInstructions: "Be brief.",
+            description: "Your own Brick",
+        });
+    });
+
     it("changes nothing when nothing that the page shows was taken", () => {
         const here = bot();
         const after = brickAfterTemplate(here, brickSavedOf(here), fresh, ["firstThing", "routines"]);

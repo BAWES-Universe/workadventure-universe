@@ -84,6 +84,13 @@
         if (open && phase === "ready") refresh().catch((error) => console.error(error));
     }
 
+    // A change the maker made here (sharing, stopping) is the newest state: a read that began before it never replaces it
+    function installed(next: MakerTemplate) {
+        refreshing++;
+        template = next;
+        choices = next.choices;
+    }
+
     async function refresh() {
         const mine = ++refreshing;
         const read = await readMakerTemplate(brickId);
@@ -136,8 +143,7 @@
             audience: template?.audience ?? null,
             shared,
             onShared: (next: MakerTemplate) => {
-                template = next;
-                choices = next.choices;
+                installed(next);
                 readLook().catch((error) => console.error(error));
             },
         });
@@ -154,8 +160,7 @@
             warningMessageStore.addWarningMessage(t.stopFailed());
             return;
         }
-        template = next;
-        choices = next.choices;
+        installed(next);
         readLook().catch((error) => console.error(error));
     }
 </script>

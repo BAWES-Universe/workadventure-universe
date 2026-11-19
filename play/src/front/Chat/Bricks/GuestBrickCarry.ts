@@ -37,7 +37,7 @@ export interface CarrySteps {
 export type CarryOutcome = "none" | "carried" | "later";
 
 export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutcome> {
-    const chat = steps.read();
+    let chat = steps.read();
     if (!chat) return "none";
     if (!chat.carryTaken) {
         let handedOver: boolean;
@@ -47,15 +47,19 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             console.warn("Could not ask for the chat this device had as a guest", error);
             return "later";
         }
+        // What the device holds now: signing out, or another guest's chat, can replace it while the question is open. What Orbit
+        // answers is about the chat it was asked about, never about the one there now
+        const current = steps.read();
+        if (!current || current.guestId !== chat.guestId || current.startedAt !== chat.startedAt) return "none";
         if (!handedOver) {
             // Not handed to this account (never talked, another account has it, no Brick): it stays no longer
             steps.drop();
             return "none";
         }
-        // Signing out can drop the chat while the question is open: then there is nothing left to keep
-        if (steps.read()?.guestId !== chat.guestId) return "none";
-        // Orbit hands a chat over once: from here on it is only brought, never asked for again
-        steps.keep({ ...chat, carryTaken: true });
+        // Orbit hands a chat over once: from here on it is only brought, never asked for again. Kept as the device holds it
+        // now, so a line said while the question was open stays
+        chat = { ...current, carryTaken: true };
+        steps.keep(chat);
     }
     // In parts, in order (plan v3 section 7): each part is kept as said before the next, so a carry cut short goes on where it
     // stopped, and the device keeps its chat until every line is in. A line said while this runs (an answer that came back
@@ -74,15 +78,17 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
         const now = steps.read();
         // Signed out, or another guest's chat since: nothing more of this one to bring
         if (!now || now.guestId !== chat.guestId || now.startedAt !== chat.startedAt) return "none";
+        // Another tab may have brought more since: the place reached never moves back
+        from = Math.max(from, now.carriedTo ?? 0);
         if (from >= now.lines.length) {
             steps.drop();
             return "carried";
         }
-        // A bot server from before takes one message: the newest lines that fit, as it always did. A part that may have been
-        // said already (its answer lost) goes again with the very same lines; lines said since wait for the next part
-        const pending = now.carryingTo !== undefined && now.carryingTo > from ? now.carryingTo : undefined;
-        const part = inParts ? carriedPart(now, from, pending) : carriedTail(now);
-        if (inParts && pending === undefined) steps.keep({ ...now, carryingTo: part.to });
+        // A part that may have been said already (its answer lost) goes again exactly as it went, lines and all: lines said since
+        // wait for the next part. A bot server from before takes one message: the newest lines that fit, never ones it took
+        const pending = inParts && now.carrying?.from === from ? now.carrying : undefined;
+        const part = pending ?? (inParts ? carriedPart(now, from) : carriedTail(now, from));
+        if (inParts && !pending) steps.keep({ ...now, carrying: part });
         let result: "sent" | "already" | "wait" | "refused";
         try {
             result = inParts
@@ -105,9 +111,10 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             await steps.sleep(ASK_AGAIN_MS);
             continue;
         }
-        from = part.to;
+        from = Math.max(part.to, after.carriedTo ?? 0);
         const kept: GuestChat = { ...after, carriedTo: from };
-        delete kept.carryingTo;
+        // Only the part that was just said stops being on its way: another tab may have one of its own
+        if (after.carrying && after.carrying.to <= from) delete kept.carrying;
         steps.keep(kept);
     }
     /* eslint-enable no-await-in-loop */
@@ -117,21 +124,33 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
 const carrying = writable(false);
 export const guestChatCarrying: Readable<boolean> = { subscribe: carrying.subscribe };
 
-let running: Promise<CarryOutcome> | undefined;
+/** The carry in progress, and whose it is: one at a time for an account, and never one account's run for another's open. */
+let running: { account: string; done: Promise<CarryOutcome> } | undefined;
 
-/** Runs the carry once at a time, and says while it runs. */
-export function bringGuestChat(steps: CarrySteps): Promise<CarryOutcome> {
-    if (running) return running;
-    if (!steps.read()) return Promise.resolve("none");
+/**
+ * Runs the carry once at a time, and says while it runs. The same account asking again gets the run in progress; another account
+ * (signed out and in again on this page) waits for it to end and then runs its own, reading what the device holds then.
+ */
+export function bringGuestChat(steps: CarrySteps, account = ""): Promise<CarryOutcome> {
+    if (running && running.account === account) return running.done;
+    if (!running && !steps.read()) return Promise.resolve("none");
+    const before = running?.done;
     carrying.set(true);
-    running = carryGuestChatAlong(steps)
+    const mine: { account: string; done: Promise<CarryOutcome> } = {
+        account,
+        done: (before ?? Promise.resolve("none" as const)).then(() => carryGuestChatAlong(steps)),
+    };
+    mine.done = mine.done
         .catch((error: unknown) => {
             console.error("Could not bring a guest's chat along", error);
             return "later" as const;
         })
         .finally(() => {
-            running = undefined;
-            carrying.set(false);
+            if (running === mine) {
+                running = undefined;
+                carrying.set(false);
+            }
         });
-    return running;
+    running = mine;
+    return mine.done;
 }
