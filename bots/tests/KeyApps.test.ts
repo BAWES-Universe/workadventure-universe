@@ -306,6 +306,28 @@ describe('the two tools of a Brick for keys', () => {
         expect(http.post).not.toHaveBeenCalled();
     });
 
+    it('never invite a blind retry when the outcome of a page job is not known: it may already be set up', async () => {
+        const args = { artifact: 'a', app: 'example', amount: '4.500', currency: 'KWD' };
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        const timedOut = (await runKeyTool(PAYMENT_TOOL, args, context)) as { error: string };
+        http.post.mockResolvedValueOnce({ status: 502, data: {} });
+        const badGateway = (await runKeyTool(PAYMENT_TOOL, args, context)) as { error: string };
+        http.post.mockResolvedValueOnce({ status: 200, data: {} });
+        const notWhole = (await runKeyTool(PAYMENT_TOOL, args, context)) as { error: string };
+        for (const result of [timedOut, badGateway, notWhole]) {
+            expect(result.error).toMatch(/may already be set up/);
+            expect(result.error).toMatch(/do not set it up again/);
+            expect(result.error).not.toMatch(/offer to try again/);
+        }
+    });
+
+    it('teach a page to hear a payment result only from its own parent window, and only while its checkout waits', () => {
+        const description = String(keyToolDefinitions().find((tool) => tool.function.name === PAYMENT_TOOL)?.function.description);
+        expect(description).toContain('e.source !== window.parent');
+        expect(description).toContain('!waiting');
+        expect(description).toMatch(/Show "paid" only for status "paid" heard that way/);
+    });
+
     it('say what Orbit said no to in words', async () => {
         for (const [status, match] of [[404, /not a page of theirs/], [403, /Only the owner/], [400, /Nothing was set up/]] as const) {
             http.post.mockResolvedValueOnce({ status, data: { error: 'The amount must be more than zero' } });

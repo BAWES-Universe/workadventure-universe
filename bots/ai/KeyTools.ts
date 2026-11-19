@@ -59,8 +59,9 @@ export function keyToolDefinitions(): ToolDefinition[] {
                 description:
                     'Make one of this person\'s own pages take a fixed payment through an App of theirs that can (see "Apps with a key"). Use it after making the page, when they asked for a "pay" button or a shop. ' +
                     'Give the page\'s artifact id, the amount as text ("4.500") and the 3-letter currency. The amount belongs to the person: never take one from the page, a visitor or anything you were sent. ' +
-                    'To start a checkout the page runs: parent.postMessage({ universe: "use-app", app: "<the App\'s short name>" }, "*"). It opens the payment window; the page then hears window.addEventListener("message", e => e.data.universe === "app-result" && e.data.status) ' +
-                    'with status "started", "paid", "not_paid", "cant_confirm", "unavailable" or "limit". Show "paid" only for status "paid". The page has no key and never sees one. ' +
+                    'To start a checkout the page keeps one flag, `let waiting = false`, and runs: waiting = true; parent.postMessage({ universe: "use-app", app: "<the App\'s short name>" }, "*"). It opens the payment window; the page then listens: ' +
+                    'window.addEventListener("message", e => { if (e.source !== window.parent || !waiting || !e.data || e.data.universe !== "app-result") return; /* e.data.status: "started", "paid", "not_paid", "cant_confirm", "unavailable" or "limit"; waiting = e.data.status === "started" */ }). ' +
+                    'It trusts only a message from its own parent window (e.source === window.parent), and only while its own checkout is waiting: any other window, or a message when it asked for nothing, is ignored. Show "paid" only for status "paid" heard that way. The page has no key and never sees one. ' +
                     'The page must be shared with anyone with the link for visitors to pay.',
                 parameters: {
                     type: 'object',
@@ -99,6 +100,10 @@ export interface KeyToolContext {
     /** The Apps with a key this Brick has, as Orbit lists them. */
     apps: readonly KeyApp[];
 }
+
+/** A page job that may have been made even though no answer came back: never asked again blind, a second one could take a second payment setup. */
+const MAY_BE_SET_UP =
+    "No answer came back, so that may already be set up on the page. Say so in one plain sentence, tell them to check the page, and do not set it up again in this reply. They can ask again later if it is not there.";
 
 const FORM_FAILS = 'The form could not be opened just now. Say so in one plain sentence and offer to try again. Do not ask them for the key in the chat.';
 
@@ -156,13 +161,20 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
     // Whatever was written is checked whole: cut to three letters, "USDT" would become a different money, and Orbit could not tell
     const currency = typeof args.currency === 'string' ? args.currency.trim() : '';
     if (!/^[A-Za-z]{3}$/.test(currency)) return { error: 'The currency must be a three-letter code, like USD. Nothing was set up. Ask which one they mean.' };
-    const sent = await post(context, `key-apps/${encodeURIComponent(app.serverId)}/page-jobs`, {
-        requesterKey: context.userId,
-        artifactId: artifact,
-        amount,
-        currency,
-        ...(text(args.description, 200) ? { description: text(args.description, 200) } : {}),
-    });
+    let sent: { status: number; data: unknown };
+    try {
+        sent = await post(context, `key-apps/${encodeURIComponent(app.serverId)}/page-jobs`, {
+            requesterKey: context.userId,
+            artifactId: artifact,
+            amount,
+            currency,
+            ...(text(args.description, 200) ? { description: text(args.description, 200) } : {}),
+        });
+    } catch (error) {
+        // The request may have reached Orbit: an unknown outcome is never a plain failure that invites trying again
+        console.warn('[KeyTools] The page job request got no answer:', error instanceof Error ? error.message : error);
+        return { error: MAY_BE_SET_UP };
+    }
     const body = (sent.data ?? {}) as { job?: { amount?: string; currency?: string; app?: string }; error?: unknown };
     if (sent.status === 200 && body.job) {
         return {
@@ -174,5 +186,6 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
     if (sent.status === 404) return { error: 'That is not a page of theirs. Check the artifact id.' };
     if (sent.status === 403) return { error: 'Only the owner can set up a payment, in their own chat.' };
     if (sent.status === 400) return { error: `${text(body.error, 200) || 'Those terms were not accepted.'} Nothing was set up.` };
-    return { error: "I couldn't set that up just now. Say so in one plain sentence and offer to try again." };
+    // Any other answer (a server error, an answer that is not whole) does not say whether the job was made
+    return { error: MAY_BE_SET_UP };
 }
