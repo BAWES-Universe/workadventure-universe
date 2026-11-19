@@ -79,13 +79,14 @@ export class ArtifactRequestError extends Error {
     }
 }
 
-async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+async function post<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     let response: Response;
     try {
         response = await fetch(`${ABSOLUTE_PUSHER_URL}artifacts/${path}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: localUserStore.getAuthToken() ?? "" },
             body: JSON.stringify(body),
+            signal,
         });
     } catch {
         throw new ArtifactRequestError(0, "offline");
@@ -175,7 +176,9 @@ export interface ArtifactPay {
 export function payOnArtifact(
     id: string,
     chat: ArtifactChat | undefined,
-    request: { start?: boolean; order?: string } = {}
+    request: { start?: boolean; order?: string } = {},
+    /** Lets the caller stop waiting for the answer for good (the request is dropped, its answer never read) */
+    signal?: AbortSignal
 ): Promise<ArtifactPay> {
-    return post<ArtifactPay>(`${encodeURIComponent(id)}/pay`, { chat, ...request });
+    return post<ArtifactPay>(`${encodeURIComponent(id)}/pay`, { chat, ...request }, signal);
 }

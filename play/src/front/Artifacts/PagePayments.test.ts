@@ -98,7 +98,7 @@ describe("a page that takes payments, in the game's window", () => {
         });
         await flush();
         // The message carried no amount and none is sent
-        expect(pay).toHaveBeenNthCalledWith(1, "a1", undefined, { start: true });
+        expect(pay).toHaveBeenNthCalledWith(1, "a1", undefined, { start: true }, expect.any(AbortSignal));
         expect(popup.location.href).toBe("https://checkout.examplepay.com/c1");
         expect(popup.opener).toBeNull();
         expect(get(payments.line)).toMatchObject({ checking: true, resume: null });
@@ -197,15 +197,22 @@ describe("a page that takes payments, in the game's window", () => {
         expect(told()).toEqual(["limit"]);
     });
 
-    it("does not stay starting when the server never answers the start, and can be asked again", async () => {
+    it("does not stay starting when the server never answers the start, and can be asked again once that start is dropped", async () => {
         const close = vi.fn();
         const popup = { location: { href: "" }, close } as unknown as Window;
+        let dropped = false;
         const pay = vi
             .fn()
             .mockImplementationOnce(
-                () =>
-                    new Promise<ArtifactPay>(() => {
-                        // never answers
+                (_id: unknown, _chat: unknown, _request: unknown, signal: AbortSignal) =>
+                    new Promise<ArtifactPay>((_resolve, reject) => {
+                        // Never answers, and rejects when it is dropped
+                        const onAbort = () => {
+                            signal.removeEventListener("abort", onAbort);
+                            dropped = true;
+                            reject(new ArtifactRequestError(0, "offline"));
+                        };
+                        signal.addEventListener("abort", onAbort);
                     })
             )
             .mockResolvedValueOnce({
@@ -222,14 +229,21 @@ describe("a page that takes payments, in the game's window", () => {
         expect(get(payments.line)).toMatchObject({ checking: false, problem: "unavailable" });
         expect(close).toHaveBeenCalled();
         expect(toldAll()).toEqual([{ universe: "app-result", status: "unavailable", request: "first" }]);
-        // Nothing is stuck: another start is taken
+        // Its answer may still come, so no second checkout is made meanwhile: another request is told it is busy, under its own id
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        await flush();
+        expect(pay).toHaveBeenCalledTimes(1);
+        expect(toldAll().at(-1)).toEqual({ universe: "app-result", status: "busy", request: "second" });
+        // Dropped for good after two minutes: nothing is stuck, and another start is taken
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(dropped).toBe(true);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "third" });
         await flush();
         expect(pay).toHaveBeenCalledTimes(2);
         payments.destroy();
     });
 
-    it("takes up a checkout that was made while its answer stalled, with its link on the line, when nothing else is on its way", async () => {
+    it("takes up a checkout that was made while its answer stalled, under the request it was started for, with its link on the line", async () => {
         let answerLate: (value: ArtifactPay) => void = () => undefined;
         const pay = vi
             .fn()
@@ -239,12 +253,17 @@ describe("a page that takes payments, in the game's window", () => {
                         answerLate = resolve;
                     })
             )
-            .mockResolvedValue({ status: "checking", checkoutUrl: null, testPayment: false });
+            .mockResolvedValueOnce({ status: "checking", checkoutUrl: null, testPayment: false })
+            .mockResolvedValue({ status: "paid", checkoutUrl: null, testPayment: false });
         const payments = make(pay, () => null);
-        ask(payments);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
         await flush();
         await vi.advanceTimersByTimeAsync(31_000);
         expect(get(payments.line).problem).toBe("unavailable");
+        // The page taps again while the first start is still out: refused as busy, no second checkout is made
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        await flush();
+        expect(pay).toHaveBeenCalledTimes(1);
         answerLate({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" } as ArtifactPay);
         await flush();
         // The order is not lost: the window shows it again, with the link to go on, and asks how it stands
@@ -254,11 +273,19 @@ describe("a page that takes payments, in the game's window", () => {
             resume: { url: "https://checkout.examplepay.com/c1", app: "Example" },
         });
         await vi.advanceTimersByTimeAsync(3_000);
-        expect(pay).toHaveBeenLastCalledWith("a1", undefined, { order: "o1" });
+        expect(pay).toHaveBeenCalledWith("a1", undefined, { order: "o1" });
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line).paid).toEqual({ test: false });
+        // Everything about that order went out under the first request's id, and the second one only heard "busy"
+        expect(toldAll()).toEqual([
+            { universe: "app-result", status: "unavailable", request: "first" },
+            { universe: "app-result", status: "busy", request: "second" },
+            { universe: "app-result", status: "paid", request: "first" },
+        ]);
         payments.destroy();
     });
 
-    it("leaves a checkout whose answer came late alone when another one is already on its way", async () => {
+    it("never gives a late order the id of a request that was made after it, and takes a new request once it ended", async () => {
         let answerLate: (value: ArtifactPay) => void = () => undefined;
         const pay = vi
             .fn()
@@ -268,18 +295,27 @@ describe("a page that takes payments, in the game's window", () => {
                         answerLate = resolve;
                     })
             )
+            .mockResolvedValueOnce({ status: "not_paid", checkoutUrl: null })
             .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" })
-            .mockResolvedValue({ status: "checking", checkoutUrl: null, testPayment: false });
+            .mockResolvedValue({ status: "paid", checkoutUrl: null, testPayment: false });
         const payments = make(pay, () => null);
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
         await flush();
         await vi.advanceTimersByTimeAsync(31_000);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
-        await flush();
-        expect(get(payments.line).resume?.url).toBe("https://checkout.examplepay.com/c2");
         answerLate({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" } as ArtifactPay);
         await flush();
-        expect(get(payments.line).resume?.url).toBe("https://checkout.examplepay.com/c2");
+        await vi.advanceTimersByTimeAsync(3_000);
+        // The late order ended as not paid, under the first id; only now is a new request taken, under its own id
+        expect(toldAll().at(-1)).toEqual({ universe: "app-result", status: "not_paid", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(toldAll().map((one) => `${one.request}:${one.status}`)).toEqual([
+            "first:unavailable",
+            "first:not_paid",
+            "second:started",
+            "second:paid",
+        ]);
         payments.destroy();
     });
 
