@@ -36,7 +36,10 @@ describe("calling a Brick names the call (#2004)", () => {
             spaceName: "call__x",
         });
         await expect(api.endCall("b1", "uuid-1", "call-1234-5678")).resolves.toBe(true);
-        const bodies = fetchMock.mock.calls.map(([url, init]) => [String(url), JSON.parse(init?.body as string)]);
+        const bodies = fetchMock.mock.calls.map(([url, init]) => [
+            typeof url === "string" ? url : "",
+            JSON.parse(init?.body as string),
+        ]);
         expect(bodies).toEqual([
             ["https://bots.test/api/bots/b1/call", { playerUuid: "uuid-1", callId: "call-1234-5678" }],
             ["https://bots.test/api/bots/b1/call/end", { playerUuid: "uuid-1", callId: "call-1234-5678" }],
