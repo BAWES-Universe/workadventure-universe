@@ -232,7 +232,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // A page of another opening asked while a payment was on its way and was told so: Restore purchase is offered when this one ends
     let restoreOwed = false;
     // The restore that page asked for, kept as it asked: Restore purchase answers it, while that page is still the one on show
-    let deferredRestore: { request: string; from: number; session: string } | null = null;
+    // `latest` is the last request that same document made while turned away (its pay tap after its restore): its page waits on that one, so it hears the end under it too
+    let deferredRestore: { request: string; from: number; session: string; latest?: string } | null = null;
     let memoryCode: string | null = null;
 
     const publish = (next: PayLine) => {
@@ -365,6 +366,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         deferredRestore = null;
         if (waiting && waiting.from === opening() && stillSpeaking(waiting.request, waiting.session)) {
             tellEnd("paid", waiting.request, waiting.from, test, waiting.session);
+            if (waiting.latest && waiting.latest !== waiting.request) {
+                tellEnd("paid", waiting.latest, waiting.from, test, waiting.session);
+            }
         }
     };
 
@@ -729,6 +733,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     restoreOwed = true;
                     // Its own restore, as it asked: Restore purchase answers that page under its own request, while it is the page on show
                     if (data.restore === true) deferredRestore = { request: data.request, from: opening(), session };
+                    // The same document asked for something else since (its pay tap): it waits on that request now, and hears the end under it too
+                    else if (
+                        deferredRestore &&
+                        deferredRestore.session === session &&
+                        deferredRestore.from === opening()
+                    ) {
+                        deferredRestore.latest = data.request;
+                    }
                 }
             }
             return;
@@ -783,6 +795,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
                 });
                 if (asked.request) tellEnd(told, asked.request, asked.from, test, asked.session);
+                if (deferred?.latest && deferred.latest !== asked.request) {
+                    tellEnd(told, deferred.latest, asked.from, test, asked.session);
+                }
                 if (update.paid) tellDeferredPaid(test);
             };
             try {

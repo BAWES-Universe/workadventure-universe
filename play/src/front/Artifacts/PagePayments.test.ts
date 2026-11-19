@@ -1795,6 +1795,61 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         payments.destroy();
     });
 
+    it("tells a page turned away twice (its restore, then its pay tap) the purchase under its latest request too, since that is the one it waits on", async () => {
+        const pay = vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "paid", testPayment: false });
+        const payments = make(pay);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await flush();
+        showing = 2;
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load",
+            session: "s2",
+            restore: true,
+        });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r2", session: "s2" });
+        await flush();
+        framePost.mockClear();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(heard()).toEqual([
+            { universe: "app-result", status: "paid", request: "load", session: "s2" },
+            { universe: "app-result", status: "paid", request: "r2", session: "s2" },
+        ]);
+        payments.destroy();
+
+        // The same through Restore purchase, after a payment that did not go through
+        const later = make(
+            vi
+                .fn()
+                .mockResolvedValueOnce(checkout)
+                .mockResolvedValueOnce({ status: "not_paid" })
+                .mockResolvedValue({ status: "paid", testPayment: false, paidAt: "2026-11-19T10:00:00.000Z" })
+        );
+        showing = 1;
+        ask(later, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await flush();
+        showing = 2;
+        ask(later, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load",
+            session: "s2",
+            restore: true,
+        });
+        ask(later, frameWindow, { universe: "use-app", app: "examplepay", request: "r2", session: "s2" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        framePost.mockClear();
+        later.restorePurchase();
+        await flush();
+        expect(heard()).toEqual([
+            { universe: "app-result", status: "paid", request: "load", session: "s2" },
+            { universe: "app-result", status: "paid", request: "r2", session: "s2" },
+        ]);
+        later.destroy();
+    });
+
     it("tells the end of an order a Restore purchase found to the document that asked for the restore, never to a later one with the same request id", async () => {
         const pay = vi
             .fn()
