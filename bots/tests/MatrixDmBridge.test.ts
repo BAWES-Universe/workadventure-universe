@@ -27,6 +27,9 @@ function makeClient(): any {
         setTyping: vi.fn(async () => undefined),
         getJoinedMembers: vi.fn(async () => [ALICE, BOT_USER]),
         getRecentMessages: vi.fn(async (): Promise<MatrixEvent[]> => []),
+        getMessagesPage: vi.fn(async (): Promise<{ events: MatrixEvent[]; end?: string }> => ({ events: [], end: undefined })),
+        redactEvent: vi.fn(async () => undefined),
+        forgetRoom: vi.fn(async () => undefined),
         uploadMedia: vi.fn(async () => 'mxc://matrix.test/abc'),
         downloadMedia: vi.fn(async () => ({ data: Buffer.from('hi'), contentType: 'text/plain' })),
     };
@@ -43,6 +46,16 @@ function makeDeps(): any {
             rememberDmRoom: vi.fn(async (r: string, b: string) => void rooms.set(r, b)),
             getDmRoomBot: vi.fn(async (r: string) => rooms.get(r) ?? null),
             forgetDmRoom: vi.fn(async (r: string) => void rooms.delete(r)),
+            // The owed-forget record the purge writes before it leaves a room (R29): an in-memory copy of the shared store's
+            ...(() => {
+                const owed = new Set<string>();
+                return {
+                    rememberPendingForget: vi.fn(async (u: string, r: string) => void owed.add(`${u}|${r}`)),
+                    pendingForgetsOf: vi.fn(async (u: string) => [...owed].filter((k) => k.startsWith(`${u}|`)).map((k) => k.slice(u.length + 1))),
+                    allPendingForgets: vi.fn(async () => [...owed].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) }))),
+                    clearPendingForget: vi.fn(async (u: string, r: string) => void owed.delete(`${u}|${r}`)),
+                };
+            })(),
         },
     };
 }
@@ -677,16 +690,17 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledTimes(1);
     });
 
-    it('leaves and forgets the room when the person leaves', async () => {
+    it('closes the chat for the person when they leave, and stays in the room until the bot is deleted', async () => {
         await bridge.onEvent(invite());
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        // The chat is closed for the person, but the bot stays in the room: a bot that has left cannot redact what it said, so it leaves only when deleted (R29)
+        expect(client.leaveRoom).not.toHaveBeenCalled();
         expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         await bridge.onEvent(message('hello?'));
         expect(deps.reply).not.toHaveBeenCalled();
     });
 
-    it('stays when someone other than the person leaves, then leaves with the person', async () => {
+    it('stays when someone other than the person leaves, then closes the chat with the person', async () => {
         await bridge.onEvent(invite());
         await bridge.onEvent(message('hi'));
         const carol = '@carol:matrix.test';
@@ -699,10 +713,12 @@ describe('MatrixDmBridge', () => {
         await bridge.onEvent(message('still here'));
         expect(deps.reply).toHaveBeenCalledTimes(2);
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        // The person leaving closes the chat for them (the bot stays in the room until it is deleted)
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
     });
 
-    it('after a restart, reads who is left before leaving', async () => {
+    it('after a restart, reads who is left before closing the chat', async () => {
         await bridge.onEvent(invite());
         const restarted = new MatrixDmBridge(config, client as never, deps);
         const carol = '@carol:matrix.test';
@@ -711,7 +727,8 @@ describe('MatrixDmBridge', () => {
         client.getJoinedMembers.mockRejectedValueOnce(new Error('down'));
         const again = new MatrixDmBridge(config, client as never, deps);
         await again.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
     });
 
     const noteStates = () =>
@@ -1133,12 +1150,12 @@ describe('MatrixDmBridge', () => {
         expect(noteStates()).toEqual(['resting']);
     });
 
-    it('leaves with the person even when the bot is resting, and drops what was waiting', async () => {
+    it('closes the chat with the person even when the bot is resting, and drops what was waiting', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue(resting as never);
         await bridge.onEvent(message('left while resting'));
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
         deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
         await bridge.checkWaiting();
         expect(deps.reply).not.toHaveBeenCalled();
@@ -1535,7 +1552,7 @@ describe('MatrixDmBridge', () => {
         }
     });
 
-    it('a deleted bot says goodbye once Orbit has said so three times a minute apart, then leaves and forgets the chat', async () => {
+    it('a deleted bot chat is cleared once Orbit has said so three times a minute apart: what it said is redacted, then it leaves and forgets the room', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         try {
             await bridge.onEvent(invite());
@@ -1549,11 +1566,10 @@ describe('MatrixDmBridge', () => {
             expect(client.leaveRoom).not.toHaveBeenCalled();
             aMinuteLater();
             await bridge.onEvent(message('Anyone?'));
-            expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble', 'gone']);
-            expect(client.sendMessage.mock.calls.at(-1)[2].body).toBe(
-                "Guide isn't around anymore. The bot was removed, so this chat is closed."
-            );
-            expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+            // No goodbye note: it would carry the Brick's name, and everything the Brick said in the room is redacted before it leaves (R29)
+            expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble']);
+            expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM, 'Brick deleted');
+            expect(client.forgetRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
             expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         } finally {
             vi.useRealTimers();
@@ -1581,7 +1597,7 @@ describe('MatrixDmBridge', () => {
         }
     });
 
-    it('a bot deleted while someone waits says goodbye to them and leaves, without waiting for another message', async () => {
+    it('a bot deleted while someone waits has its chat cleared and left, without waiting for another message', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false } as never);
         await bridge.onEvent(message('Hola, ¿estás ahí?'));
@@ -1599,9 +1615,8 @@ describe('MatrixDmBridge', () => {
         } finally {
             vi.useRealTimers();
         }
-        expect(noteStates()).toEqual(['resting', 'gone']);
-        expect(client.sendMessage.mock.calls.at(-1)[2][BOT_STATUS_KEY].lang).toBe('es');
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(noteStates()).toEqual(['resting']);
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM, 'Brick deleted');
         expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         expect(deps.reply).not.toHaveBeenCalled();
     });
