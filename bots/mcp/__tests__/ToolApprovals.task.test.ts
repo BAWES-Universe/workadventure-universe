@@ -94,7 +94,7 @@ class FakeOrbit {
     async revokeGrants() {}
 }
 
-function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, run = vi.fn(async () => [{ type: 'text', text: 'Created WEB-12' }]), checked: GateDecision = RUN, theirs?: () => boolean) {
+function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, run = vi.fn(async () => [{ type: 'text', text: 'Created WEB-12' }]), checked: GateDecision = RUN, theirs?: () => boolean, more: Partial<ConstructorParameters<typeof ToolApprovals>[0]> = {}) {
     return new ToolApprovals({
         orbit: orbit as never,
         cards: {
@@ -107,6 +107,7 @@ function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, r
         gate: { decide: async () => checked } as never,
         tools: { find: async () => ENTRY, run },
         ...(theirs ? { roomStillTheirs: theirs } : {}),
+        ...more,
         now: () => 1_000,
     });
 }
@@ -284,6 +285,153 @@ describe('a goal’s card and who is in the room', () => {
         // And now that a card is shown, asking again joins it
         const again = await approvals.propose(input());
         expect((again as unknown as { result: { message: string } }).result.message).toMatch(/already asked/);
+        expect(sent).toHaveLength(1);
+    });
+});
+
+describe('a goal’s card tapped from a room it was not sent to', () => {
+    const tap = { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } as never };
+    const OTHER_ROOM = '!elsewhere:matrix.test';
+
+    it('is not run, and not drawn there, after a restart: only the person’s own direct chat counts', async () => {
+        await make(orbit, sent).propose(input());
+        const runs = vi.fn(async () => [{ type: 'text', text: 'Created WEB-12' }]);
+        const directRoomIs = vi.fn(async (_bot: string, room: string) => room === ROOM);
+        const restarted = make(orbit, sent, runs, RUN, undefined, { directRoomIs });
+        const shown = sent.length;
+        await restarted.handleTap('b1', OTHER_ROOM, SARA, tap);
+        await settle();
+        expect(runs).not.toHaveBeenCalled();
+        expect(sent).toHaveLength(shown);
+        expect(orbit.actions.get('act_1')!.status).toBe('waiting');
+        // From her own chat, the same tap counts
+        await restarted.handleTap('b1', ROOM, SARA, tap);
+        await settle();
+        expect(runs).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not believed when the chat the tap came from cannot be told, or the tap names no chat user', async () => {
+        await make(orbit, sent).propose(input());
+        const runs = vi.fn(async () => [{ type: 'text', text: 'Created WEB-12' }]);
+        const broken = make(orbit, sent, runs, RUN, undefined, {
+            directRoomIs: async () => {
+                throw new Error('chat down');
+            },
+        });
+        await broken.handleTap('b1', ROOM, SARA, tap);
+        const noUser = make(orbit, sent, runs, RUN, undefined, { directRoomIs: async () => true });
+        await noUser.handleTap('b1', ROOM, { uuid: SARA.uuid }, tap);
+        await settle();
+        expect(runs).not.toHaveBeenCalled();
+    });
+});
+
+describe('a goal’s card that could not be shown, remembered for every bot server', () => {
+    function sharedStore() {
+        const marked = new Set<string>();
+        return {
+            marked,
+            store: {
+                mark: async (id: string) => void marked.add(id),
+                marked: async (id: string) => marked.has(id),
+                clear: async (id: string) => void marked.delete(id),
+            },
+        };
+    }
+
+    it('is shown by another server, or after a restart, instead of joining a card nobody has', async () => {
+        orbit.cancelFails = true;
+        const { marked, store } = sharedStore();
+        let theirs = false;
+        const first = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        expect((await first.propose(input())).kind).toBe('failed');
+        expect(marked.has('act_1')).toBe(true);
+        // Another runner, which never saw the failure, asks for the same step once the chat is theirs again
+        theirs = true;
+        const other = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        expect((await other.propose(input())).kind).toBe('waiting');
+        expect(sent).toHaveLength(1);
+        expect(marked.has('act_1')).toBe(false);
+        // Now that a card is shown, it joins that card
+        const later = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        const again = await later.propose(input());
+        expect((again as unknown as { result: { message: string } }).result.message).toMatch(/already asked/);
+        expect(sent).toHaveLength(1);
+    });
+
+    it('is shown again by the server that failed, not twice, once another server has shown it', async () => {
+        orbit.cancelFails = true;
+        const { store } = sharedStore();
+        let theirs = false;
+        const first = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        expect((await first.propose(input())).kind).toBe('failed');
+        // Another bot server shows the card and clears the shared note
+        theirs = true;
+        expect((await make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store }).propose(input())).kind).toBe('waiting');
+        expect(sent).toHaveLength(1);
+        // The first server asks for the same step again: its own old note must not send a second card
+        const again = await first.propose(input());
+        expect((again as unknown as { result: { message: string } }).result.message).toMatch(/already asked/);
+        expect(sent).toHaveLength(1);
+    });
+
+    it('still believes its own note when it could not be written to the shared store', async () => {
+        orbit.cancelFails = true;
+        const marked = new Set<string>();
+        let writable = false;
+        const store = {
+            mark: async (id: string) => {
+                if (!writable) throw new Error('down');
+                marked.add(id);
+            },
+            marked: async (id: string) => marked.has(id),
+            clear: async (id: string) => void marked.delete(id),
+        };
+        let theirs = false;
+        const first = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        expect((await first.propose(input())).kind).toBe('failed');
+        // The store is back, but it never heard of the failure: this server still knows the step has no card, and shows it
+        writable = true;
+        theirs = true;
+        expect((await first.propose(input())).kind).toBe('waiting');
+        expect(sent).toHaveLength(1);
+    });
+
+    it('holds a shown card at once, so a tap made while the shared note is being cleared is not undone', async () => {
+        const { store } = sharedStore();
+        let release: () => void = () => undefined;
+        const slow = { ...store, clear: (id: string) => new Promise<void>((resolve) => (release = () => resolve(void store.clear(id)))) };
+        orbit.cancelFails = true;
+        const approvals = make(orbit, sent, undefined, RUN, () => true, { unshownCards: slow });
+        // A saved step that has no card yet: it is shown now, and the shared note is cleared slowly
+        expect((await make(orbit, sent, undefined, RUN, () => false, { unshownCards: store }).propose(input())).kind).toBe('failed');
+        orbit.cancelFails = false;
+        const proposing = approvals.propose(input());
+        for (let i = 0; i < 20 && sent.length < 1; i++) await settle();
+        expect(sent).toHaveLength(1);
+        // The person taps the visible card before the note is cleared
+        await approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } as never });
+        release();
+        await proposing;
+        await settle();
+        expect((approvals as unknown as { cards: Map<string, { waiting: boolean }> }).cards.get('act_1')?.waiting).toBe(false);
+    });
+
+    it('does not fail a goal’s ask when the shared store cannot be read or written', async () => {
+        const down = {
+            mark: async () => {
+                throw new Error('down');
+            },
+            marked: async () => {
+                throw new Error('down');
+            },
+            clear: async () => {
+                throw new Error('down');
+            },
+        };
+        const approvals = make(orbit, sent, undefined, RUN, undefined, { unshownCards: down });
+        expect((await approvals.propose(input())).kind).toBe('waiting');
+        expect((await make(orbit, sent, undefined, RUN, undefined, { unshownCards: down }).propose(input())).kind).toBe('waiting');
         expect(sent).toHaveLength(1);
     });
 });

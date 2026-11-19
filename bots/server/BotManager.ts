@@ -10,6 +10,7 @@ import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { PersistentMemory } from '../memory/PersistentMemory';
+import { RedisForgetQueue } from '../memory/ForgetQueue';
 import { MemoryStorage } from '../memory/MemoryStorage';
 import { ResponseProcessor } from '../ai/ResponseProcessor';
 import { AIService } from '../ai/AIService';
@@ -52,6 +53,8 @@ export interface BotInstance {
 interface LiveCall {
     client: BotClient;
     spaceName: string;
+    /** Which call this is, as its caller named it when it asked (the space's name carries it): an end request for another call leaves it alone. */
+    callId: string;
     /** Hangs the call up if its caller never joins the space; cleared when they do, or when the call ends. */
     joinTimer?: ReturnType<typeof setTimeout>;
 }
@@ -173,7 +176,7 @@ export class BotManager {
      * Calls being set up (before they are in `calls`): a hang-up or a newer start while the settings are fetched and the
      * client is built cancels the setup, so a caller who already hung up is never connected afterwards.
      */
-    private startingCalls: Map<string, { cancelled: boolean }> = new Map();
+    private startingCalls: Map<string, { cancelled: boolean; callId?: string }> = new Map();
     private adminApiService: AdminApiService;
     /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
     private accessGate: BotAccessGate;
@@ -340,6 +343,11 @@ export class BotManager {
 
         // Initialize bot registry
         await this.botRegistry.connect();
+        // Forgets Orbit has not taken yet are kept in the shared store, for every bot server and across a restart or a redeploy (#2031)
+        if (this.conversationMemory instanceof PersistentMemory) this.conversationMemory.setForgetQueue(new RedisForgetQueue(
+                    () => this.botRegistry.forgetQueueClient(),
+                    () => this.botRegistry.forgetQueueInUse()
+                ));
         
         // Register this server with capacity
         const capacity = parseInt(process.env.BOT_SERVER_CAPACITY || '100', 10);
@@ -1084,6 +1092,28 @@ export class BotManager {
         }
     }
 
+    private instanceIds = new WeakMap<object, number>();
+    private nextInstanceId = 1;
+
+    /**
+     * The bots a room has and how each stands, so a Brick that is connected again (a home sync replaced it) or taken away while the game was
+     * asked for its rooms is seen as a change: the game's count and ours are then of two moments, and the room is left alone this time.
+     */
+    private standingBotsOf(roomId: string): string {
+        const room = this.roomsWithBots.get(roomId);
+        if (!room) return '';
+        return [...room.botIds]
+            .sort()
+            .map((botId) => {
+                const instance = this.bots.get(botId);
+                if (!instance) return `${botId}=none`;
+                let id = this.instanceIds.get(instance);
+                if (id === undefined) this.instanceIds.set(instance, (id = this.nextInstanceId++));
+                return `${botId}=${id}/${instance.status}`;
+            })
+            .join(',');
+    }
+
     private noteVisitorChange(roomUrl: string): void {
         this.visitorChanges.set(roomUrl, (this.visitorChanges.get(roomUrl) ?? 0) + 1);
     }
@@ -1131,7 +1161,17 @@ export class BotManager {
         // Where its person stands is where it first appears. Without it the Brick is not put on the map at all (never at the
         // map's corner, to walk across the whole room): the caller says "no position yet" and tries again with one
         if (!start) return { botId: null, reason: 'no_position' };
-        await this.withVisitorOp(roomUrl, () => this.spawnBot(mine.botId, mine, { position: start }));
+        // One start of a bot at a time, the home start's lock too: a Brick that also lives in a room is started there under the same lock,
+        // and two starts at once would connect two clients for one bot, one of them with nobody to track it
+        const started = await this.withBotStartLock(mine.botId, async () => {
+            // Read inside the lock: the home start may have connected it while this one waited
+            const meanwhile = this.bots.get(mine.botId);
+            if (meanwhile && meanwhile.status === 'connected') return false;
+            await this.withVisitorOp(roomUrl, () => this.spawnBot(mine.botId, mine, { position: start }));
+            return true;
+        });
+        // Already standing (as a room Brick): it is one bot, and its person is not a second visit to it
+        if (!started) return { botId: mine.botId };
         this.visitors.set(uuid, { botId: mine.botId, roomUrl, ...(since ? { since } : {}) });
         this.noteVisitorChange(roomUrl);
         return { botId: mine.botId };
@@ -1212,10 +1252,10 @@ export class BotManager {
         }
     }
 
-    async startCall(botId: string, callerUuid: string): Promise<{ spaceName: string }> {
+    async startCall(botId: string, callerUuid: string, callId?: string): Promise<{ spaceName: string }> {
         const key = callKey(botId, callerUuid);
         // Registered at once, before anything is awaited: a hang-up or a newer start cancels it
-        const starting = { cancelled: false };
+        const starting: { cancelled: boolean; callId?: string } = { cancelled: false, callId };
         const earlier = this.startingCalls.get(key);
         if (earlier) earlier.cancelled = true;
         this.startingCalls.set(key, starting);
@@ -1223,7 +1263,7 @@ export class BotManager {
         if (starting.cancelled) throw new BotUnavailableError('The call was ended before it started');
         const cancelledError = () => new BotUnavailableError('The call was ended before it started');
         try {
-            return await this.startCallSetUp(botId, callerUuid, key, starting, cancelledError);
+            return await this.startCallSetUp(botId, callerUuid, key, starting, cancelledError, callId ?? randomUUID());
         } finally {
             if (this.startingCalls.get(key) === starting) this.startingCalls.delete(key);
         }
@@ -1234,7 +1274,8 @@ export class BotManager {
         callerUuid: string,
         key: string,
         starting: { cancelled: boolean },
-        cancelledError: () => Error
+        cancelledError: () => Error,
+        callId: string
     ): Promise<{ spaceName: string }> {
         const config = await this.adminApiService.getBotConfiguration(botId);
         if (starting.cancelled) throw cancelledError();
@@ -1244,11 +1285,11 @@ export class BotManager {
         if (config.voiceEnabled !== true) {
             throw new BotCannotCallError();
         }
-        const spaceName = callSpaceName({ botId, callerUuid, callId: randomUUID() });
+        const spaceName = callSpaceName({ botId, callerUuid, callId });
         const client = await this.buildClient(botId, config, { callOnly: true });
         // Hung up while it was being built: nothing was connected, so nothing is left to end
         if (starting.cancelled) throw cancelledError();
-        const call: LiveCall = { client, spaceName };
+        const call: LiveCall = { client, spaceName, callId };
         // Two starts for the same person and bot can both be here: the one registered last wins, and the one that
         // was registered first (maybe already connected) is ended, so none is left running with no entry.
         // Registered before it connects: a later start for the same person ends this one instead of racing it.
@@ -1300,16 +1341,23 @@ export class BotManager {
         return { spaceName };
     }
 
-    /** The call is over (the caller hung up): the bot leaves its space and closes its connection. Never throws. */
-    async endCall(botId: string, callerUuid: string): Promise<boolean> {
+    /**
+     * The call is over (the caller hung up): the bot leaves its space and closes its connection. Never throws.
+     * With `callId` (the one the caller named when it asked) only that call is ended, whether it is live or still being set
+     * up: a late hang-up for an earlier call must not end the newer call that replaced it. Without one, whatever call this
+     * person has with this bot is ended.
+     */
+    async endCall(botId: string, callerUuid: string, callId?: string): Promise<boolean> {
         const key = callKey(botId, callerUuid);
         const starting = this.startingCalls.get(key);
-        if (starting) {
+        const cancelsStart = starting !== undefined && (callId === undefined || starting.callId === callId);
+        if (starting && cancelsStart) {
             starting.cancelled = true;
             this.startingCalls.delete(key);
         }
-        const ended = await this.endLiveCall(key);
-        return ended || starting !== undefined;
+        const live = this.calls.get(key);
+        const ended = !live || (callId !== undefined && live.callId !== callId) ? false : await this.endLiveCall(key);
+        return ended || cancelsStart;
     }
 
     private async endLiveCall(key: string): Promise<boolean> {
@@ -1497,6 +1545,8 @@ export class BotManager {
                         const standsElsewhere = !existingInstance || existingInstance.config.roomUrl !== bot.roomUrl;
                         if (bot.brick?.home && (waited || standsElsewhere)) {
                             const now = await this.adminApiService.getHomedBricks(bot.roomUrl).catch(() => undefined);
+                            // Orbit could not be asked again: the room is kept listed, so the room check reads it again and the Brick comes then
+                            if (now === undefined) this.homedReadFailed.add(roomId);
                             // Orbit says it lives elsewhere now, or cannot say: it is not started or replaced on the strength of a
                             // list that may be older than a move or a take-out. The next sync of the room brings it
                             if (!now?.some((current) => current.botId === bot.botId)) return;
@@ -1760,7 +1810,7 @@ export class BotManager {
         // What the game counts in a room and what this server counts must be of the same moment: a visiting Brick put on the
         // map, or taken off, while the game was asked is a count from two moments, and the room is left alone this time
         const visitingBefore = new Map<string, string>();
-        const placementOf = (roomId: string) => `${this.visitingBrickCount(roomId)}:${this.visitorChanges.get(roomId) ?? 0}:${this.visitorOpsInFlight.get(roomId) ?? 0}`;
+        const placementOf = (roomId: string) => `${this.visitingBrickCount(roomId)}:${this.visitorChanges.get(roomId) ?? 0}:${this.visitorOpsInFlight.get(roomId) ?? 0}:${this.standingBotsOf(roomId)}`;
         for (const roomId of this.roomsWithBots.keys()) visitingBefore.set(roomId, placementOf(roomId));
         const waRooms = await this.queryWorkAdventureRooms();
         console.log(`[BotManager] WA rooms query returned ${waRooms.size} rooms`);

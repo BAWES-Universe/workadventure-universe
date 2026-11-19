@@ -3,11 +3,11 @@
  * machine has it (the bots image always does); the bounds are shown with a stand-in.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { NoteLength, ffmpegArgs, writtenSeconds, type RunResult } from '../voice/NoteLength';
+import { NoteLength, ffmpegArgs, runCommand, writtenSeconds, type RunResult } from '../voice/NoteLength';
 
 const FFMPEG = '/usr/bin/ffmpeg';
 const real = existsSync(FFMPEG) ? describe : describe.skip;
@@ -22,6 +22,41 @@ const tone = (seconds: number, codec: 'libopus' | 'aac', format: 'ogg' | 'ipod')
     } finally {
         rmSync(folder, { recursive: true, force: true });
     }
+};
+
+const OGG_CRC = (() => {
+    const table: number[] = [];
+    for (let i = 0; i < 256; i++) {
+        let r = i << 24;
+        for (let bit = 0; bit < 8; bit++) r = r & 0x80000000 ? ((r << 1) ^ 0x04c11db7) >>> 0 : (r << 1) >>> 0;
+        table.push(r >>> 0);
+    }
+    return table;
+})();
+const oggCrc = (bytes: Uint8Array) => {
+    let crc = 0;
+    for (const byte of bytes) crc = (((crc << 8) >>> 0) ^ OGG_CRC[((crc >>> 24) & 0xff) ^ byte]) >>> 0;
+    return crc;
+};
+
+/**
+ * The same Ogg Opus file with the length its container advertises rewritten (the last page's position says `seconds`), while every
+ * packet of audio stays: what a file that lies about its length looks like. The Opus pre-skip is 312 samples at 48 kHz.
+ */
+const advertising = (ogg: Uint8Array, seconds: number) => {
+    const out = new Uint8Array(ogg);
+    const view = new DataView(out.buffer);
+    let lastPage = 0;
+    let end = 0;
+    for (let at = 0; at < out.length; ) {
+        lastPage = at;
+        at += 27 + out[at + 26] + out.slice(at + 27, at + 27 + out[at + 26]).reduce((sum, size) => sum + size, 0);
+        end = at;
+    }
+    view.setBigInt64(lastPage + 6, BigInt(Math.round(seconds * 48000) + 312), true);
+    view.setUint32(lastPage + 22, 0, true);
+    view.setUint32(lastPage + 22, oggCrc(out.slice(lastPage, end)), true);
+    return out;
 };
 
 real('with the real ffmpeg', () => {
@@ -52,9 +87,21 @@ real('with the real ffmpeg', () => {
     });
 
     it('never trusts the header: a file that says it is short but holds more is measured by what it holds', async () => {
-        // A long note cut into a container whose header was written for a short one is still decoded to the end, up to the limit
+        // Nine seconds of audio in a container that says it is one second long
         const long = tone(9, 'libopus', 'ogg');
-        expect(await length.measure(long)).toEqual({ ok: false, reason: 'too-long' });
+        const lying = advertising(long, 1);
+        const folder = mkdtempSync(join(tmpdir(), 'lying-'));
+        let header = 0;
+        try {
+            writeFileSync(join(folder, 'lying.ogg'), lying);
+            // ffprobe comes with ffmpeg; where it does not, the fixture is still checked by the measurement below
+            if (existsSync('/usr/bin/ffprobe')) header = Number(execFileSync('/usr/bin/ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', join(folder, 'lying.ogg')]).toString().trim());
+        } finally {
+            rmSync(folder, { recursive: true, force: true });
+        }
+        // The fixture does what it says: its container says about one second, under this limit of five
+        expect(header).toBeLessThan(2);
+        expect(await length.measure(lying)).toEqual({ ok: false, reason: 'too-long' });
     });
 });
 
@@ -101,5 +148,13 @@ describe('the bounds', () => {
         ).toEqual({ ok: false, reason: 'unavailable' });
         expect(await make(fake({ stderr: 'out_time_us=301500000\n' })).measure(new Uint8Array(5))).toEqual({ ok: false, reason: 'too-long' });
         expect(await make(fake({ stderr: 'out_time_us=300900000\n' })).measure(new Uint8Array(5))).toMatchObject({ ok: true, seconds: 300.9 });
+    });
+});
+
+describe('runCommand keeps the end of what a command wrote to stderr', () => {
+    it('so the last progress line is still there after a lot of earlier output', async () => {
+        const result = await runCommand('/bin/sh', ['-c', "head -c 300000 /dev/zero | tr '\\0' x >&2; echo 'out_time=00:09:59.00' >&2"], new Uint8Array(), { timeoutMs: 10_000, maxOutputBytes: 1000 });
+        expect(result.stderr.length).toBeLessThanOrEqual(64_000);
+        expect(result.stderr).toContain('out_time=00:09:59.00');
     });
 });

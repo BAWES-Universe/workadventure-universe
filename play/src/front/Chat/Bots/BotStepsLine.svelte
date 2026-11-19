@@ -74,11 +74,17 @@
                     {/each}
                 </ol>
             {/if}
-        {:else if single && single.shows?.length && shown.state !== "stopped"}
-            <!-- A lone step that sent something still opens to say what it did (#2061) -->
+        {:else if single && single.shows?.length}
+            <!-- A lone step that sent something still opens to say what it did (#2061), also when the reply was stopped: what it sent stays reachable -->
             <ol class="bot-steps-list alone" data-testid="botStepsSingleOpen">
                 <BotStepItem step={single} iconSize={16} />
             </ol>
+            {#if shown.state === "stopped"}
+                <div class="bot-steps-row static" data-testid="botStepsStopped">
+                    <IconX class="bot-steps-icon bad" font-size={16} />
+                    <span class="bot-steps-words"><span class="bad">{$LL.chat.botSteps.stopped()}</span></span>
+                </div>
+            {/if}
         {:else if single}
             <div class="bot-steps-row static" data-testid="botStepsSingle">
                 {#if single.state === "failed" || shown.state === "stopped"}

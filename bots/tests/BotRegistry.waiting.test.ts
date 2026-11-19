@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BotRegistry } from '../server/BotRegistry';
 
 /**
@@ -123,10 +123,12 @@ describe('BotRegistry waiting messages', () => {
         const down = Object.create(BotRegistry.prototype) as BotRegistry;
         Object.assign(down, { redis: { isOpen: false }, sharedStoreSeen: true });
         await expect(down.getDmRoomOf('b1', '@a:x')).rejects.toThrow('The shared store is down');
+        await expect(down.getDmRoomBot('!r:x')).rejects.toThrow('The shared store is down');
 
         const never = Object.create(BotRegistry.prototype) as BotRegistry;
         Object.assign(never, { redis: null, sharedStoreSeen: false });
         await expect(never.getDmRoomOf('b1', '@a:x')).resolves.toBeNull();
+        await expect(never.getDmRoomBot('!r:x')).resolves.toBeNull();
     });
 
     it('says so when it cannot keep a direct room while a store that was in use is down, and does nothing when there never was one', async () => {
@@ -139,5 +141,96 @@ describe('BotRegistry waiting messages', () => {
         Object.assign(never, { redis: null, sharedStoreSeen: false });
         await expect(never.rememberDmRoomOf('b1', '@a:x', '!r:x')).resolves.toBeUndefined();
         await expect(never.rememberDmRoom('!r:x', 'b1')).resolves.toBeUndefined();
+    });
+});
+
+describe('while Redis reconnects (the connection is open but not ready)', () => {
+    const registryWith = (redis: Record<string, unknown>) => {
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(registry, { redis, sharedStoreSeen: true, serverId: 's1' });
+        return registry;
+    };
+
+    it('counts as down: nothing is sent to a queue that waits for Redis, and a caller that must be certain is told', async () => {
+        const hGet = vi.fn();
+        const set = vi.fn();
+        const registry = registryWith({ isOpen: true, isReady: false, hGet, set });
+        expect(registry.hasSharedStore()).toBe(false);
+        await expect(registry.getDmRoomOf('b1', '@a:x')).rejects.toThrow('The shared store is down');
+        await expect(registry.claimDirectChat('b1', '@a:x', 1000)).rejects.toThrow('The shared store is down');
+        // Not "unknown": a room nobody is in any more would have its waiting message thrown away
+        await expect(registry.getDmRoomBot('!r:x')).rejects.toThrow('The shared store is down');
+        expect(hGet).not.toHaveBeenCalled();
+        expect(set).not.toHaveBeenCalled();
+    });
+
+    it('is used again as soon as it is ready', async () => {
+        const hGet = vi.fn(async () => '!room:x');
+        const registry = registryWith({ isOpen: true, isReady: true, hGet });
+        expect(registry.hasSharedStore()).toBe(true);
+        await expect(registry.getDmRoomOf('b1', '@a:x')).resolves.toBe('!room:x');
+    });
+
+    it('stops without waiting for a connection that is not ready: it is cut off, not asked to quit', async () => {
+        const quit = vi.fn(() => new Promise<void>(() => undefined));
+        const disconnect = vi.fn(async () => undefined);
+        const registry = registryWith({ isOpen: true, isReady: false, quit, disconnect });
+        await registry.disconnect();
+        expect(quit).not.toHaveBeenCalled();
+        expect(disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it('cuts a connection off when it is ready but does not answer a quit', async () => {
+        vi.useFakeTimers();
+        try {
+            const quit = vi.fn(() => new Promise<void>(() => undefined));
+            const disconnect = vi.fn(async () => undefined);
+            const registry = registryWith({ isOpen: true, isReady: true, quit, disconnect, hSet: vi.fn(), expire: vi.fn(), sMembers: vi.fn(async () => []), sRem: vi.fn(), del: vi.fn(), hGetAll: vi.fn(async () => ({})), multi: vi.fn() });
+            const stopping = registry.disconnect().catch(() => undefined);
+            await vi.advanceTimersByTimeAsync(10_000);
+            await stopping;
+            expect(disconnect).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('still closes the connection when Redis is ready but never answers the shutdown cleanup', async () => {
+        vi.useFakeTimers();
+        try {
+            const silent = () => new Promise<never>(() => undefined);
+            const quit = vi.fn(() => new Promise<void>(() => undefined));
+            const disconnect = vi.fn(async () => undefined);
+            const registry = registryWith({ isOpen: true, isReady: true, quit, disconnect, hSet: vi.fn(silent), keys: vi.fn(silent), get: vi.fn(silent), del: vi.fn(silent) });
+            const stopping = registry.disconnect().catch(() => undefined);
+            await vi.advanceTimersByTimeAsync(10_000);
+            await stopping;
+            // Neither cleanup call held it: the connection was reached, and cut off when it did not quit either
+            expect(quit).toHaveBeenCalled();
+            expect(disconnect).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('gives up hearing Brick changes when the first connect does not finish, and cuts that connection off', async () => {
+        const listener = { isOpen: true, isReady: false, on: vi.fn(), connect: vi.fn(() => new Promise<void>(() => undefined)), subscribe: vi.fn(), quit: vi.fn(), disconnect: vi.fn(async () => undefined) };
+        const registry = registryWith({ isOpen: true, isReady: true, duplicate: () => listener });
+        Object.assign(registry, { brickListenerConnectMs: 20 });
+        await expect(registry.onBrickChanged(() => undefined)).rejects.toThrow('in time');
+        expect(listener.subscribe).not.toHaveBeenCalled();
+        expect(listener.disconnect).toHaveBeenCalled();
+        expect(listener.quit).not.toHaveBeenCalled();
+        expect((registry as unknown as { brickListener: unknown }).brickListener).toBeNull();
+    });
+
+    it('says so when it cannot forget a direct room while a store that was in use is down, so a purge tries again, and does nothing when there never was one', async () => {
+        const down = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(down, { redis: { isOpen: false }, sharedStoreSeen: true });
+        await expect(down.forgetDmRoom('!r:x')).rejects.toThrow('The shared store is down');
+
+        const never = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(never, { redis: null, sharedStoreSeen: false });
+        await expect(never.forgetDmRoom('!r:x')).resolves.toBeUndefined();
     });
 });

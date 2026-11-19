@@ -171,6 +171,11 @@ export interface MatrixDmBridgeDeps {
     /** `fresh` skips any cache, for checking whether a resting bot is back. */
     getBotConfig(botId: string, fresh?: boolean): Promise<BotConfiguration | null>;
     checkAccess(botId: string, chatId: string): Promise<DmAccessResult>;
+    /**
+     * Whether this person really has this App connected for this Brick (game #2001), asked before the Brick carries on as if they had.
+     * Without it, or when Orbit cannot say, the continuation is not carried on.
+     */
+    appConnected?(botId: string, userUuid: string, app: string): Promise<boolean>;
     reply(botId: string, person: DmPerson, text: string, attachments: DmAttachment[], hooks: DmReplyHooks): Promise<DmReply | null>;
     /** Optional shared store so the bot still knows its rooms after a restart. */
     rooms?: {
@@ -180,7 +185,8 @@ export interface MatrixDmBridgeDeps {
         /** The same store, read the other way: the direct chat of a bot and a person (#1993). */
         rememberDmRoomOf?(botId: string, matrixUserId: string, roomId: string): Promise<void>;
         getDmRoomOf?(botId: string, matrixUserId: string): Promise<string | null>;
-        forgetDmRoomOf?(botId: string, matrixUserId: string): Promise<void>;
+        /** With the room that was seen, forgets only while the store still points at that room (a newer chat stays). */
+        forgetDmRoomOf?(botId: string, matrixUserId: string, roomId?: string): Promise<void>;
         /** Every link of this bot to a person's chat, whoever they are (a purged Brick keeps none, also for people who left before a restart). Throws while the store is down. */
         forgetDmRoomsOfBot?(botId: string): Promise<void>;
         /**
@@ -241,11 +247,21 @@ const RESTING_LINE_REPEAT_MS = 6 * 60 * 60 * 1000;
 const NOTE_TIMES_MAX = 5000;
 /** A message left with a resting bot is answered when it is back within this long; older ones are dropped. */
 const WAITING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long a lookup of the room's bot that cannot be answered strictly (a tap, a person or the bot leaving) waits for a store that is
+ * reconnecting, asking again every ROOM_LOOKUP_POLL_MS, before it counts the room as unknown. Before the shared store started to say that it
+ * is down, such a lookup queued behind the reconnect and was answered when Redis came back.
+ */
+const ROOM_LOOKUP_WAIT_MS = 5_000;
+const ROOM_LOOKUP_POLL_MS = 250;
 /** How often bots with waiting messages (only those) are checked for being back. */
 const WAITING_CHECK_MS = 5 * 60 * 1000;
 const WAITING_BODY_MAX = 4000;
 /** A waiting message the bot fails to answer goes back in line this many times before the person is asked to resend it. */
 const WAITING_MAX_ATTEMPTS = 3;
+/** A message whose chat could not be looked up (the store was down) is tried again after this long, then twice as long, up to the cap. */
+const UNPLACED_RETRY_MS = 2000;
+const UNPLACED_RETRY_MAX_MS = 60_000;
 /**
  * Orbit must say "no such bot" this many times, each at least BOT_GONE_SPACING_MS after the last, before a chat is
  * closed as deleted: its proxy can answer "not found" for a while when Orbit restarts. The bot server's other "gone"
@@ -347,6 +363,9 @@ function ownEventToRedact(event: MatrixEvent, userId: string): boolean {
 
 export class MatrixDmBridge implements MatrixEventHandler {
     private roomBots = new Map<string, string>();
+    /** Settable for tests: how long a non-strict room lookup waits for the store to come back. */
+    private roomLookupWaitMs = ROOM_LOOKUP_WAIT_MS;
+    private roomLookupPollMs = ROOM_LOOKUP_POLL_MS;
     private botNames = new Map<string, string>();
     private accessCache = new Map<string, { result: DmAccessResult; at: number }>();
     /** When each kind of note last went to a chat, keyed `room|state`; and the resting bot's own line, keyed by room. */
@@ -377,19 +396,29 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private drains = new Map<string, Promise<void>>();
     private stopping = false;
     private waitingTimer: NodeJS.Timeout | undefined;
+    /** The newest message of a chat whose bot could not be looked up because the store was unreachable: tried again, never lost. */
+    /** `at`: when the message was sent, not when it was last kept, so a message kept again and again still ages out like a waiting one. */
+    private unplaced = new Map<string, { event: MatrixEvent; at: number }>();
+    private unplacedTimer: NodeJS.Timeout | undefined;
+    private unplacedDelay = UNPLACED_RETRY_MS;
     private handledEvents = new Set<string>();
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
     private roomMembers = new Map<string, Set<string>>();
+    /**
+     * By room: the looks at who is in it that wait for the homeserver. Each one is given the joins and leaves that arrive meanwhile, so an
+     * answer read before them never undoes them (a third person who joined is still counted).
+     */
+    private memberLooks = new Map<string, Set<Map<string, boolean>>>();
     /** By bot and person: the room of their direct chat, so a line for it needs no message from them first (#1993). */
     private directRooms = new Map<string, string>();
     /** By bot and person: answers they got in nearby chat that are not in their direct chat yet (#1993). */
-    private nearbyAnswers = new Map<string, { text: string; at: number }[]>();
+    private nearbyAnswers = new Map<string, { text: string; at: number; txnId: string }[]>();
     /** Waits before looking again at a chat a person just made from an answer, which the bot may still be joining. */
     private openedRetryDelaysMs = [3000, 10_000];
     /** By bot and person: such a chat is being looked at again. */
     private lookingAgain = new Set<string>();
     /** By bot and person, when there is no shared store: until when one device is making their chat (#1995). */
-    private directChatClaims = new Map<string, number>();
+    private directChatClaims = new Map<string, { until: number; token: string }>();
     /** The hand-overs of a guest's chat already brought into a chat (#1997), so one is never brought twice. */
     private carriedChats = new Set<string>();
     /** The hand-overs being brought right now, so an ask that comes meanwhile waits for how that ends. */
@@ -441,6 +470,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         this.stopping = true;
         clearInterval(this.waitingTimer);
         this.waitingTimer = undefined;
+        clearTimeout(this.unplacedTimer);
+        this.unplacedTimer = undefined;
         for (const [botId, queue] of this.drainQueues) {
             for (const event of queue.splice(0)) await this.rememberWaiting(botId, event, attemptsOf(event));
         }
@@ -479,20 +510,26 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * from a person in their own two-person chat with the bot; whether they may chat with it is checked as for any message.
      * Never throws; a lost answer costs nothing, since the card already said what happened.
      */
+    /** The App a continuation line from the system is about. Only this bridge sets it, never the content of a message. */
+    private connectedNotes = new WeakMap<MatrixEvent, { app: string; name: string }>();
+
     private async onAppConnected(event: MatrixEvent): Promise<void> {
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const connected = connectedAppOf(event.content);
         if (!connected || !this.firstSighting(event.event_id)) return;
         const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Start your answer with the one word “Connected.” in their language, then carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
         try {
-            await this.onMessage({
+            const carried: MatrixEvent = {
                 type: 'm.room.message',
                 room_id: event.room_id,
                 sender: event.sender,
                 event_id: `$app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
                 origin_server_ts: Date.now(),
-                content: { msgtype: 'm.text', body: note, [APP_CONNECTED_KEY]: connected },
-            });
+                content: { msgtype: 'm.text', body: note },
+            };
+            // Said by the bridge, outside the message's own content: a person's message can hold any content at all
+            this.connectedNotes.set(carried, connected);
+            await this.onMessage(carried);
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not carry on after an App was connected in ${event.room_id}:`, error?.message ?? error);
         }
@@ -591,7 +628,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const now = Date.now();
             const waiting = (this.nearbyAnswers.get(key) ?? []).filter((answer) => now - answer.at <= NEARBY_ANSWER_WAIT_MS);
             this.nearbyAnswers.delete(key);
-            this.nearbyAnswers.set(key, [...waiting, { text, at: now }].slice(-NEARBY_ANSWERS_PER_CHAT));
+            this.nearbyAnswers.set(key, [...waiting, { text, at: now, txnId: randomUUID() }].slice(-NEARBY_ANSWERS_PER_CHAT));
             if (this.nearbyAnswers.size > NEARBY_ANSWERS_MAX) this.nearbyAnswers.delete(this.nearbyAnswers.keys().next().value!);
             const roomId = await this.directRoomOf(botId, matrixUserId);
             if (roomId) await this.sendNearbyAnswers(botId, matrixUserId, roomId);
@@ -631,6 +668,25 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    /** Who is in the room now: what the homeserver says, with every join and leave that came while it was being asked. Throws when it can't be read. */
+    private async readMembers(botUserId: string, roomId: string): Promise<Set<string>> {
+        const meanwhile = new Map<string, boolean>();
+        let looks = this.memberLooks.get(roomId);
+        if (!looks) this.memberLooks.set(roomId, (looks = new Set()));
+        looks.add(meanwhile);
+        try {
+            const members = new Set(await this.client.getJoinedMembers(botUserId, roomId));
+            for (const [member, joined] of meanwhile) {
+                if (joined) members.add(member);
+                else members.delete(member);
+            }
+            return members;
+        } finally {
+            looks.delete(meanwhile);
+            if (looks.size === 0) this.memberLooks.delete(roomId);
+        }
+    }
+
     /** Whether this room is the bot's and only the bot and this person are in it. Null when that could not be read. */
     private async isTheirDirectChat(botId: string, matrixUserId: string, roomId: string): Promise<boolean | null> {
         let bot: string | null;
@@ -642,10 +698,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (bot !== botId) return false;
         const botUserId = this.botUserId(botId);
         // Asked afresh: who is in the room decides that nobody else reads what goes there
-        const joined = await this.client.getJoinedMembers(botUserId, roomId).catch(() => null);
+        const joined = await this.readMembers(botUserId, roomId).catch(() => null);
         if (!joined) return null;
-        this.roomMembers.set(roomId, new Set(joined));
-        return joined.length === 2 && joined.includes(botUserId) && joined.includes(matrixUserId);
+        this.roomMembers.set(roomId, joined);
+        return joined.size === 2 && joined.has(botUserId) && joined.has(matrixUserId);
     }
 
     /** Whether this room has exactly the bot and the person in it (asked afresh): null when that could not be looked at just now. */
@@ -705,7 +761,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // Not theirs any more (the bot left, or someone joined): forgotten. Unreadable just now: asked again next time
         if (theirs === false) {
             if (this.directRooms.get(key) === roomId) this.directRooms.delete(key);
-            await this.deps.rooms?.forgetDmRoomOf?.(botId, matrixUserId).catch(() => undefined);
+            await this.deps.rooms?.forgetDmRoomOf?.(botId, matrixUserId, roomId).catch(() => undefined);
         }
         return { roomId: null, unsure: theirs === null };
     }
@@ -774,7 +830,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // The same transaction id for every try of this hand-over (of this part): a try that failed after the homeserver had taken
         // the message is not sent twice. Past the homeserver's memory of it, the game still draws a named line once
         const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`).digest('hex');
-        const content = { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines, ...(part ? { [GUEST_CHAT_PART_KEY]: { v: 1, from: part.from, to: part.to, last: part.last } } : {}) };
+        // Who is in the room is looked at again right before each part goes: someone may have joined since it was looked at
+        if (!this.stillTheirs(known.roomId, this.botUserId(botId), matrixUserId)) return 'wait';
+        // The receipt names the upload for the bot server only; it never goes into the chat
+        const carried = lines.map((line) => (line.media ? { ...line, media: line.media.map(({ receipt: _receipt, ...one }) => one) } : line));
+        const content = { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: carried, ...(part ? { [GUEST_CHAT_PART_KEY]: { v: 1, from: part.from, to: part.to, last: part.last } } : {}) };
         await this.say(botId, () => this.client.sendMessage(this.botUserId(botId), known.roomId!, content, txnId));
         return 'sent';
     }
@@ -784,10 +844,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * this claim: a look that took longer than the claim lasts never lets go of another device's claim made since.
      */
     private letGoOfClaim(botId: string, matrixUserId: string, claim: string): void {
-        this.directChatClaims.delete(MatrixDmBridge.pair(botId, matrixUserId));
+        this.letGoOfOwnClaim(MatrixDmBridge.pair(botId, matrixUserId), claim);
         this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId, claim).catch((error: any) => {
             console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
         });
+    }
+
+    /** Lets this device's own record of a claim go, only while it is still this token's: a claim another look took since stays. */
+    private letGoOfOwnClaim(key: string, token: string): void {
+        if (this.directChatClaims.get(key)?.token === token) this.directChatClaims.delete(key);
     }
 
     private async claimDirectChat(botId: string, matrixUserId: string, claim: string): Promise<boolean> {
@@ -803,11 +868,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (shared !== null && shared !== undefined) return shared;
         const key = MatrixDmBridge.pair(botId, matrixUserId);
         const now = Date.now();
-        if ((this.directChatClaims.get(key) ?? 0) > now) return false;
-        for (const [other, until] of this.directChatClaims) {
-            if (until <= now) this.directChatClaims.delete(other);
+        if ((this.directChatClaims.get(key)?.until ?? 0) > now) return false;
+        for (const [other, held] of this.directChatClaims) {
+            if (held.until <= now) this.directChatClaims.delete(other);
         }
-        this.directChatClaims.set(key, now + DIRECT_CHAT_CLAIM_MS);
+        this.directChatClaims.set(key, { until: now + DIRECT_CHAT_CLAIM_MS, token: claim });
         return true;
     }
 
@@ -822,7 +887,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const token = randomUUID();
         let first = true;
         const hold = () => {
-            this.directChatClaims.set(key, Date.now() + DIRECT_CHAT_CLAIM_MS);
+            this.directChatClaims.set(key, { until: Date.now() + DIRECT_CHAT_CLAIM_MS, token });
             const takeOver = first;
             first = false;
             this.deps.rooms?.holdDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS, token, takeOver).catch((error: any) => {
@@ -835,7 +900,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         timer.unref?.();
         return () => {
             clearInterval(timer);
-            this.directChatClaims.delete(key);
+            this.letGoOfOwnClaim(key, token);
             this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId, token).catch((error: any) => {
                 console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
             });
@@ -1020,12 +1085,18 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const later = this.nearbyAnswers.get(key) ?? [];
             this.nearbyAnswers.delete(key);
             this.nearbyAnswers.set(key, [...due.slice(from), ...later].slice(-NEARBY_ANSWERS_PER_CHAT));
+            // Put back above the cap, the oldest pair makes room, as when an answer is first kept
+            while (this.nearbyAnswers.size > NEARBY_ANSWERS_MAX) {
+                const oldest = this.nearbyAnswers.keys().next().value!;
+                if (oldest === key) break;
+                this.nearbyAnswers.delete(oldest);
+            }
         };
         for (let index = 0; index < due.length; index++) {
             // Each send waits, so who is in the room is looked at again before every one of them
             if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return keepWaiting(index);
             try {
-                await this.say(botId, () => this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true }));
+                await this.say(botId, () => this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true }, due[index].txnId));
             } catch (error: any) {
                 keepWaiting(index);
                 console.warn(`[MatrixDmBridge] Could not keep an answer of bot ${botId} in ${roomId}:`, error?.message ?? error);
@@ -1035,18 +1106,24 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /**
-     * Whether, by what the bot was last told, only the bot and this person are in the room. A room it was told nothing
-     * about counts as theirs: the caller has just read its members, and a membership event is what would say otherwise.
+     * Whether, by what the bot was last told, only the bot and this person are in the room. A room whose members are not known is NOT
+     * theirs: every caller has read the members just before (which keeps them), so a room with none was forgotten meanwhile (the bot left it,
+     * or it was removed) while an await was pending, and nothing may be sent into a room whose roster is not confirmed.
      */
     private stillTheirs(roomId: string, botUserId: string, matrixUserId: string): boolean {
         const members = this.roomMembers.get(roomId);
-        if (!members) return true;
+        if (!members) return false;
         return members.size === 2 && members.has(botUserId) && members.has(matrixUserId);
     }
 
     /** Whether this room is still only the bot's and this person's, by what the bot was last told (asked right before a card goes into it). */
     roomStillTheirs(botId: string, roomId: string, matrixUserId: string): boolean {
         return this.stillTheirs(roomId, this.botUserId(botId), matrixUserId);
+    }
+
+    /** Whether this room is the direct chat of the bot and this person, which is still only theirs (read from the chat, never taken from the tap). */
+    async isDirectRoomOf(botId: string, roomId: string, matrixUserId: string): Promise<boolean> {
+        return (await this.directRoomOf(botId, matrixUserId).catch(() => null)) === roomId;
     }
 
     private botUserId(botId: string): string {
@@ -1418,7 +1495,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (room !== roomId) continue;
             this.directRooms.delete(key);
             const cut = key.indexOf('|');
-            await this.deps.rooms?.forgetDmRoomOf?.(key.slice(0, cut), key.slice(cut + 1)).catch(() => undefined);
+            await this.deps.rooms?.forgetDmRoomOf?.(key.slice(0, cut), key.slice(cut + 1), roomId).catch(() => undefined);
         }
         this.lastRestingLine.delete(roomId);
         for (const state of ['resting', 'unready', 'no_access', 'limited']) this.lastNote.delete(`${roomId}|${state}`);
@@ -1430,12 +1507,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const known = this.roomBots.get(roomId);
         if (known) return known;
         let stored: string | null;
-        try {
-            stored = (await this.deps.rooms?.getDmRoomBot(roomId)) ?? null;
-        } catch (error: any) {
-            if (strict) throw error;
-            console.warn(`[MatrixDmBridge] Could not look up the bot for ${roomId}:`, error?.message ?? error);
-            return null;
+        // Strict callers decide for themselves what to do with a store that is down; the others ask again for a while, then count the room as unknown
+        const giveUpAt = Date.now() + this.roomLookupWaitMs;
+        for (;;) {
+            try {
+                stored = (await this.deps.rooms?.getDmRoomBot(roomId)) ?? null;
+                break;
+            } catch (error: any) {
+                if (strict) throw error;
+                if (Date.now() + this.roomLookupPollMs > giveUpAt || this.stopping) {
+                    console.warn(`[MatrixDmBridge] Could not look up the bot for ${roomId}:`, error?.message ?? error);
+                    return null;
+                }
+                await new Promise((resolve) => setTimeout(resolve, this.roomLookupPollMs));
+            }
         }
         if (stored) this.roomBots.set(roomId, stored);
         return stored;
@@ -1463,6 +1548,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const members = this.roomMembers.get(event.room_id);
         if (members && membership === 'join') members.add(event.state_key!);
         if (members && membership !== 'join' && membership !== 'invite') members.delete(event.state_key!);
+        // A look at who is in the room is waiting for the homeserver: it takes this change too
+        if (membership === 'join' || (membership !== 'invite' && membership !== undefined)) {
+            for (const look of this.memberLooks.get(event.room_id) ?? []) look.set(event.state_key!, membership === 'join');
+        }
 
         if (botId) {
             if (membership === 'invite') {
@@ -1498,13 +1587,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const botUserId = this.botUserId(botId);
         let members = this.roomMembers.get(roomId);
         if (!members) {
-            const joined = await this.client.getJoinedMembers(botUserId, roomId).catch((error) => {
+            const joined = await this.readMembers(botUserId, roomId).catch((error) => {
                 // Unknown members: leave as the person most likely was the only one, and say so.
                 console.warn(`[MatrixDmBridge] Could not read the members of ${roomId}, leaving it:`, error?.message ?? error);
                 return null;
             });
             if (!joined) return false;
-            members = new Set(joined.filter((member) => member !== leaving));
+            joined.delete(leaving);
+            members = joined;
             this.roomMembers.set(roomId, members);
         }
         return [...members].some((member) => member !== botUserId && member !== leaving);
@@ -1656,7 +1746,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
      */
     private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }): Promise<void> {
         const content = event.content ?? {};
-        const botId = await this.botForRoom(event.room_id);
+        let botId: string | null;
+        try {
+            botId = await this.botForRoom(event.room_id, true);
+        } catch (error: any) {
+            // The store that says which bot is in this chat is unreachable (a reconnect, say). That is not a chat without a
+            // bot, so the message is kept here and tried again, never dropped.
+            console.warn(`[MatrixDmBridge] Could not look up the bot for ${event.room_id}, will try again:`, error?.message ?? error);
+            this.keepUnplaced(event);
+            return;
+        }
         if (!botId) return;
         // A Brick whose chats are being purged answers nothing and writes nothing more
         if (this.purgedBots.has(botId)) return;
@@ -1684,7 +1783,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // Someone added a third person: the room is no longer a one-to-one chat, so the bot stays quiet.
         let members = this.roomMembers.get(event.room_id);
         if (!members) {
-            const joined = await this.client.getJoinedMembers(botUserId, event.room_id).catch((error) => {
+            const joined = await this.readMembers(botUserId, event.room_id).catch((error) => {
                 console.warn(`[MatrixDmBridge] Could not read the members of ${event.room_id}:`, error?.message ?? error);
                 return null;
             });
@@ -1692,7 +1791,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await couldNotAnswer();
                 return;
             }
-            members = new Set(joined);
+            members = joined;
             this.roomMembers.set(event.room_id, members);
         }
         if (members.size !== 2 || !members.has(event.sender)) {
@@ -1786,6 +1885,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (!catchUp) await this.sendNoteNowAndThen(botId, event.room_id, 'unready', language, config);
             return;
         }
+        // A line from the system after an App was connected (game #2001) is believed only when the bridge said it and Orbit
+        // confirms the person has that App connected for this Brick; otherwise it is dropped (a lost answer costs nothing)
+        let connectedApp = this.connectedNotes.get(event) ?? null;
+        if (connectedApp) {
+            const confirmed = await this.deps.appConnected?.(botId, user.uuid, connectedApp.app).catch(() => false);
+            if (confirmed !== true) {
+                console.info(`[MatrixDmBridge] Not carrying on after an App was connected in ${event.room_id}: not confirmed as connected`);
+                return;
+            }
+        }
 
         const read = await this.readMessage(botUserId, content);
         const { attachments, failed } = read;
@@ -1844,7 +1953,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 // "Make it" tapped on the Brick's suggestion (#1996)
                 ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
                 // An App was connected from a card (game #2001): a line from the system, nothing is learned about the person from it
-                ...(event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true, connectedApp: connectedAppOf(content[APP_CONNECTED_KEY])! } : {}),
+                ...(connectedApp ? { note: true, connectedApp } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -1966,7 +2075,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
             }
             // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
-            const justConnected = reply.text ? connectedAppOf(content[APP_CONNECTED_KEY]) : null;
+            const justConnected = reply.text ? connectedApp : null;
             if (justConnected) {
                 await out
                     .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
@@ -2083,6 +2192,46 @@ export class MatrixDmBridge implements MatrixEventHandler {
         await this.sendNoteNowAndThen(botId, roomId, 'resting', language, config);
     }
 
+    /** Keep a message whose chat could not be looked up, and try again soon. Only the newest of a chat is kept, as for waiting messages. */
+    private keepUnplaced(event: MatrixEvent): void {
+        if (this.stopping) return;
+        const kept = this.unplaced.get(event.room_id);
+        if (!kept || (event.origin_server_ts ?? 0) >= (kept.event.origin_server_ts ?? 0)) this.unplaced.set(event.room_id, { event, at: event.origin_server_ts ?? Date.now() });
+        this.scheduleUnplaced();
+    }
+
+    private scheduleUnplaced(): void {
+        if (this.unplacedTimer || this.stopping || this.unplaced.size === 0) return;
+        this.unplacedTimer = setTimeout(() => {
+            this.unplacedTimer = undefined;
+            void this.retryUnplaced();
+        }, this.unplacedDelay);
+        this.unplacedTimer.unref?.();
+    }
+
+    /** Try the kept messages again. Each goes through the same path as when it arrived, so it is answered or kept again. */
+    private async retryUnplaced(): Promise<void> {
+        const entries = [...this.unplaced.entries()];
+        this.unplaced.clear();
+        // Whatever fails again is kept again by handleMessage, and waits twice as long this time
+        this.unplacedDelay = Math.min(this.unplacedDelay * 2, UNPLACED_RETRY_MAX_MS);
+        for (const [roomId, { event, at }] of entries) {
+            if (this.stopping) return;
+            if (Date.now() - at >= WAITING_MAX_AGE_MS) continue;
+            // The person wrote again since and got an answer: only the newest message is answered, as when nothing failed.
+            if ((event.origin_server_ts ?? 0) <= (this.answeredLive.get(roomId) ?? -1)) continue;
+            if ((event.origin_server_ts ?? 0) <= (this.answeringLive.get(roomId) ?? -1)) {
+                // A newer message there is being answered right now: wait to see whether that answer lands, never answer after it
+                this.keepUnplaced(event);
+                continue;
+            }
+            await this.handleMessage(event, false).catch((error) =>
+                console.warn(`[MatrixDmBridge] Could not answer a message kept while the store was down in ${roomId}:`, error?.message ?? error)
+            );
+        }
+        if (this.unplaced.size === 0) this.unplacedDelay = UNPLACED_RETRY_MS;
+    }
+
     /** Keep the latest message in this chat for the bot to answer once it is back on. `attempts` counts failed answers. */
     private async rememberWaiting(botId: string, event: MatrixEvent, attempts = 0): Promise<void> {
         // Nothing is kept for a Brick being purged, also by an answer that was already under way when the purge began
@@ -2098,8 +2247,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (Object.keys(info).length > 0) kept.info = info;
         for (const key of ['org.matrix.msc3245.voice', 'm.voice'] as const) if (content[key] !== undefined) kept[key] = {};
         // A line from the system after an App was connected (game #2001) must still be told apart from the person's own words
-        const connected = connectedAppOf(content[APP_CONNECTED_KEY]);
-        if (connected) kept[APP_CONNECTED_KEY] = connected;
+        const connected = this.connectedNotes.get(event);
         const message = JSON.stringify({
             event_id: event.event_id,
             room_id: event.room_id,
@@ -2107,7 +2255,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             origin_server_ts: event.origin_server_ts ?? Date.now(),
             type: 'm.room.message',
             content: kept,
-            ...(attempts > 0 ? { unsigned: { universe_attempts: attempts } } : {}),
+            ...(attempts > 0 || connected ? { unsigned: { ...(attempts > 0 ? { universe_attempts: attempts } : {}), ...(connected ? { universe_connected_app: connected } : {}) } } : {}),
         });
         if (this.deps.waiting?.hasSharedStore()) {
             try {
@@ -2158,7 +2306,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (config === null) {
                 // Deleted: whoever left a message gets the goodbye now, and the bot leaves that chat.
                 for (const event of this.readWaiting(await this.takeWaiting(botId))) {
-                    if ((await this.botForRoom(event.room_id)) !== botId) continue;
+                    let roomBot: string | null;
+                    try {
+                        roomBot = await this.botForRoom(event.room_id, true);
+                    } catch {
+                        // The room store is down for a moment (a reconnect, say): "no bot there" would throw the message away, so it waits for the next check
+                        await this.rememberWaiting(botId, event, attemptsOf(event));
+                        continue;
+                    }
+                    if (roomBot !== botId) continue;
                     await this.closeChat(botId, event.room_id, detectLanguage(String(event.content?.body ?? '')));
                 }
             } else {
@@ -2194,6 +2350,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 continue;
             }
             if (Date.now() - (event.origin_server_ts ?? 0) >= WAITING_MAX_AGE_MS) continue;
+            // Written by this bridge when it kept the message; never read from a live event
+            const connected = connectedAppOf(event.unsigned?.universe_connected_app);
+            if (connected) this.connectedNotes.set(event, connected);
             const kept = newestByRoom.get(event.room_id);
             // Local copies come after the shared store's, so on a tie the later one (written last) wins.
             if (!kept || (event.origin_server_ts ?? 0) >= (kept.origin_server_ts ?? 0)) newestByRoom.set(event.room_id, event);
@@ -2316,6 +2475,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         );
         await listening;
         // The person's replies are used up: nothing was heard, and the reply path shows the usual limit card for the note
+        // Not the same as reason 'allowance' (the person's listening minutes, or the hearing provider's own limit, were used up): that one means the note could not be heard, so it shows as a failed transcript below, on purpose.
         if ('reason' in heard && heard.reason === 'reply-limit') return '';
         if (heard.ok) {
             const words = tidyTranscript(heard.text, hearing.limits.maxChars);

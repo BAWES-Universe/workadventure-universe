@@ -74,6 +74,19 @@ describe('what a reply sends with it (#1993)', () => {
         });
     });
 
+    describe('an answer for one person alone (it was offered no tools)', () => {
+        it('runs none of the tools the model asks for anyway', async () => {
+            const bot = client();
+            const results = await service()['executeToolCalls'](SENDS, bot as never, undefined, undefined, 'uuid-khalid', SPACE, 'bot1', KHALID, undefined, undefined, false, undefined, undefined, undefined, false, false, true);
+
+            expect(results.map((one) => Boolean(one.result.error))).toEqual([true, true, true, true]);
+            expect(bot.sendImage).not.toHaveBeenCalled();
+            expect(bot.sendFile).not.toHaveBeenCalled();
+            expect(bot.sendAudio).not.toHaveBeenCalled();
+            expect(bot.sendVideo).not.toHaveBeenCalled();
+        });
+    });
+
     describe('what a tool made', () => {
         const made = (...urls: string[]) => [{ id: 't1', name: 'generate_media', result: { urls } }];
         const send = (ai: AIService, bot: unknown, results: unknown, only?: number) =>
@@ -146,6 +159,43 @@ describe('what a reply sends with it (#1993)', () => {
             expect(bot.sendMediaMessage).toHaveBeenCalledTimes(1);
             expect(bot.sendMediaMessage).toHaveBeenCalledWith(SPACE, 'https://cdn.example.test/logo.png', 'image', 'image/png', 'Our logo', undefined, KHALID, undefined);
             expect(memory.pendingMedia.map((item) => item.url)).toEqual(['https://cdn.example.test/song.mp3']);
+        });
+
+        it('made for one person in an answer that was stopped goes to that person alone, even when a reply other people read sends it', () => {
+            const bot = client();
+            const now = Date.now();
+            // A shared reply began at `now`; a private answer for Khalid queued this a moment later and was stopped before it sent it
+            const memory = waiting(now + 5);
+            (memory.pendingMedia[0] as { audience?: number }).audience = KHALID;
+            service(memory)['flushPendingMedia'](bot as never, SPACE, 'bot1', KHALID, now, undefined);
+
+            expect(bot.sendMediaMessage).toHaveBeenCalledWith(SPACE, 'https://cdn.example.test/song.mp3', 'audio', 'audio/mpeg', 'Your song', undefined, KHALID, KHALID);
+            expect(memory.pendingMedia).toEqual([]);
+        });
+
+        it('goes to the person the memory is about as they are now, not to the id it was queued with before they came back', () => {
+            const bot = client();
+            const now = Date.now();
+            const OTHER = 77;
+            // A memory restored for a person who came back as player 77: the item still carries the id Khalid had (and someone else may hold now)
+            const memory = waiting(now - 60_000);
+            (memory.pendingMedia[0] as { audience?: number }).audience = KHALID;
+            service(memory)['flushPendingMedia'](bot as never, SPACE, 'bot1', OTHER, undefined, undefined);
+
+            expect(bot.sendMediaMessage).toHaveBeenCalledWith(SPACE, 'https://cdn.example.test/song.mp3', 'audio', 'audio/mpeg', 'Your song', undefined, OTHER, OTHER);
+        });
+
+        it('is queued with the person it is for when an answer for them alone makes it', () => {
+            const memory = { pendingMedia: [] as Array<{ audience?: number }>, maxPendingMedia: 5 };
+            const results = [{ id: 't1', name: 'generate_media', result: { urls: ['https://cdn.example.test/chart.png'] } }];
+            service(memory)['preQueueToolResults'](results, new Set(), 'bot1', KHALID, false, KHALID);
+            service(memory)['preQueueToolResults'](
+                [{ id: 't2', name: 'generate_media', result: { urls: ['https://cdn.example.test/other.png'] } }],
+                new Set(),
+                'bot1',
+                KHALID
+            );
+            expect(memory.pendingMedia.map((item) => item.audience)).toEqual([KHALID, undefined]);
         });
     });
 });

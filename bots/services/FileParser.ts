@@ -970,7 +970,7 @@ export class FileParser {
     /** The code of a DNS failure that may pass on its own (a timeout, a resolver that failed or refused), or undefined. */
     private static dnsNotNow(error: unknown): string | undefined {
         const code = (error as { code?: unknown } | null)?.code;
-        return typeof code === 'string' && /^(ETIMEOUT|ESERVFAIL|ECONNREFUSED|EAI_AGAIN|ECANCELLED|ETIMEDOUT)$/.test(code) ? code : undefined;
+        return typeof code === 'string' && /^(ETIMEOUT|ESERVFAIL|EREFUSED|ECONNREFUSED|EAI_AGAIN|ECANCELLED|ETIMEDOUT)$/.test(code) ? code : undefined;
     }
 
     /**

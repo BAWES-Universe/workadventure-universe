@@ -9,7 +9,8 @@ import { DmReplyService } from './DmReplyService';
 import { GUEST_FILE_BYTES_MAX, type GuestBrickMedia, type GuestUpload } from './GuestBrickService';
 import { checkReceipt, readReceiptFile } from './UploadReceipts';
 import { FileParser } from '../services/FileParser';
-import { uploadAttachment } from '../matrix/uploadAttachment';
+import { uploadAttachmentWithLink } from '../matrix/uploadAttachment';
+import { storeOf } from '../services/ChatFiles';
 import type { CarriedMedia, GuestChatNote } from '../matrix/MatrixDmBridge';
 import { sharedNoteHearing } from '../voice/NoteHearingWiring';
 
@@ -55,6 +56,10 @@ const COPIES_KEPT_MS = 60 * 60 * 1000;
 const COPIES_MAX = 2000;
 /** Copies made for a hand-over, by guest and file, so a carry asked again (its chat was not there yet) never copies twice. */
 const copies = new Map<string, { at: number; url: string }>();
+/** `over`: the file was not copied because it was bigger than the budget left for the carry that started the copy (its size). */
+type Copied = { ok: true; url: string; type: string; size: number } | { ok: false; over?: number };
+/** Copies being made right now, by the same key: a carry asked again while the first is still copying waits for it instead of copying a second time. */
+const copying = new Map<string, Promise<Copied>>();
 
 /** Orbit or the storage could not be asked just now: nothing of this part is said, and the device asks again later. */
 export class CarryNotNowError extends Error {}
@@ -107,24 +112,42 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
                 media.push({ ...shown, url: known.url });
                 continue;
             }
-            const upload = await copy.read(receipt);
-            // The uploader couldn't be asked just now: nothing of this part is said, and the device asks again later
-            if ('why' in upload && upload.why === 'not-now') throw new CarryNotNowError('Could not read a file just now');
-            if (!upload.ok || bytes + upload.bytes.byteLength > CARRIED_COPY_BYTES_MAX) {
+            const left = CARRIED_COPY_BYTES_MAX - bytes;
+            let made = await copyOnce(key, receipt, left, now, copy);
+            // A copy that a carry with less budget started and refused for its size is not a "no" for this one: it asks for its own
+            if (!made.ok && 'over' in made && made.over !== undefined && made.over <= left) made = await copyOnce(key, receipt, left, now, copy);
+            if (!made.ok || made.size > left) {
                 media.push(gone());
                 continue;
             }
-            bytes += upload.bytes.byteLength;
-            // Storage that fails now fails the part, which the device asks again; a copy made is remembered, so it is made once
-            const url = await copy.store(upload.bytes, upload.type, upload.name).catch((error: unknown) => {
-                throw new CarryNotNowError(`Could not copy a file: ${error instanceof Error ? error.message : String(error)}`);
-            });
-            if (url) copies.set(key, { at: now, url });
-            media.push(url ? { ...shown, type: upload.type, url } : gone());
+            bytes += made.size;
+            media.push({ ...shown, type: made.type, url: made.url });
         }
         out.push({ ...line, media });
     }
     return out;
+}
+
+/** One copy of a file by its key, shared by every carry that asks while it is being made. The budget is the asker's who started it. */
+function copyOnce(key: string, receipt: string, left: number, now: number, copy: CarryCopy): Promise<Copied> {
+    const running = copying.get(key);
+    if (running) return running;
+    const work = (async (): Promise<Copied> => {
+        const upload = await copy.read(receipt);
+        // The uploader couldn't be asked just now: nothing of this part is said, and the device asks again later
+        if ('why' in upload && upload.why === 'not-now') throw new CarryNotNowError('Could not read a file just now');
+        if (!upload.ok) return { ok: false };
+        if (upload.bytes.byteLength > left) return { ok: false, over: upload.bytes.byteLength };
+        // Storage that fails now fails the part, which the device asks again; a copy made is remembered, so it is made once
+        const url = await copy.store(upload.bytes, upload.type, upload.name).catch((error: unknown) => {
+            throw new CarryNotNowError(`Could not copy a file: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        if (!url) return { ok: false };
+        copies.set(key, { at: now, url });
+        return { ok: true, url, type: upload.type, size: upload.bytes.byteLength };
+    })().finally(() => copying.delete(key));
+    copying.set(key, work);
+    return work;
 }
 
 /** The copy steps of this server: Orbit's hand-over, the guest's receipt, the uploader as the bot server. Null when guests can't send files. */
@@ -135,6 +158,22 @@ export function buildCarryCopy(admin: AdminApiService, guestId: string, userUuid
     return {
         handed: () => admin.guestChatHandedTo(guestId, userUuid),
         read: (receipt) => readGuestUpload(guestId, receipt, secret, uploaderUrl, undefined, undefined, true),
-        store: (bytes, type, name) => uploadAttachment(Buffer.from(bytes), type, name),
+        store: async (bytes, type, name) => {
+            const uploaded = await uploadAttachmentWithLink(Buffer.from(bytes), type, name);
+            if (!uploaded) return null;
+            // The uploader's own lasting link is written with the address it is reached at from outside, which a browser can open; the bot
+            // server's own address for it (UPLOADER_URL) may be a name inside its network
+            return uploaded.lasting ?? lastingLinkOf(uploaded.location, uploaderUrl);
+        },
     };
+}
+
+/**
+ * Where a copy in the person's storage can be opened next week. The uploader answers with a signed link when the bucket has no public
+ * one, and a signed link runs out: it is kept as the uploader's own lasting `/chat-file/<bucket>/<id>` link, which sends on to a fresh one.
+ */
+export function lastingLinkOf(location: string, uploaderUrl: string): string {
+    const store = storeOf(location);
+    if (!('bucket' in store)) return location;
+    return `${uploaderUrl.replace(/\/+$/, '')}/chat-file/${encodeURIComponent(store.bucket)}/${encodeURIComponent(store.fileId)}`;
 }

@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 export type MeasuredNote = { ok: true; seconds: number; bytes: Uint8Array; filename: string } | { ok: false; reason: 'too-long' | 'broken' | 'unavailable' };
 
@@ -143,6 +144,7 @@ export function runCommand(command: string, args: string[], input: Uint8Array, l
         const out: Buffer[] = [];
         let outBytes = 0;
         let err = '';
+        const decoder = new StringDecoder('utf8');
         let stopped: RunResult['stopped'];
         let started = false;
         const stop = (why: NonNullable<RunResult['stopped']>) => {
@@ -161,8 +163,8 @@ export function runCommand(command: string, args: string[], input: Uint8Array, l
             else out.push(chunk);
         });
         child.stderr.on('data', (chunk: Buffer) => {
-            // Only the progress lines are kept, and only so much of them
-            if (err.length < 64_000) err += chunk.toString('utf8');
+            // Only the progress lines are kept, and only so much of them: the END, because the last progress line is the one that says how long it ran
+            err = (err + decoder.write(chunk)).slice(-64_000);
         });
         child.stdin.on('error', () => undefined);
         child.on('close', (code) => {

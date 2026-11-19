@@ -303,7 +303,14 @@ describe('The Brick for guests reads what a guest sends', () => {
         // The model ran: the try stays counted, never given back or marked failed, so a retry is not counted again
         expect(admin.finishGuestBrickReply).not.toHaveBeenCalledWith('turn-1', { failed: true });
         expect(notes.answerFailed).not.toHaveBeenCalled();
-        // The device asks again with the same turn: Orbit says it was counted already, and the note has its words but no answer
+        // The device asks again at once: the note is still in its answering state for this turn, so Orbit refuses it as busy
+        // and nothing runs a second time
+        admin.claimGuestBrickReply.mockResolvedValueOnce({ allowed: true, counted: false } as GuestBrickAllowance);
+        notes.guestNote.mockResolvedValueOnce({ kind: 'refused', why: 'busy' });
+        expect(await service.reply(ask({ note: 'n1' }))).toEqual({ kind: 'unheard', why: 'busy' });
+        expect(generate).toHaveBeenCalledTimes(1);
+        expect(admin.finishGuestBrickReply).toHaveBeenCalledTimes(1);
+        // Later, a turn is granted the answer lease again: Orbit says it was counted already, and the note has its words but no answer
         admin.claimGuestBrickReply.mockResolvedValueOnce({ allowed: true, counted: false } as GuestBrickAllowance);
         expect(await service.reply(ask({ note: 'n1' }))).toEqual({ kind: 'unheard', why: 'uncertain' });
         expect(generate).toHaveBeenCalledTimes(1);
@@ -474,6 +481,35 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         const offline = copySteps({ handed: vi.fn(async () => Promise.reject(new Error('timeout'))) });
         await expect(copyCarriedMedia(`g-${Math.random()}`, readCarriedLines([LINE]), offline)).rejects.toBeInstanceOf(CarryNotNowError);
         expect(offline.read).not.toHaveBeenCalled();
+    });
+
+    it('on a retry of a part with two files, reuses the file already stored and stores only the one that failed', async () => {
+        const two = [
+            {
+                from: 'guest' as const,
+                text: 'two files',
+                at: 9,
+                media: [
+                    { kind: 'file' as const, name: 'a.png', type: 'image/png', receipt: 'r-a' },
+                    { kind: 'file' as const, name: 'b.png', type: 'image/png', receipt: 'r-b' },
+                ],
+            },
+        ];
+        const steps = copySteps();
+        // The first file is stored; storing the second fails
+        steps.store.mockResolvedValueOnce('https://cdn.test/a.png').mockRejectedValueOnce(new Error('storage down'));
+        const guest = `g-${Math.random()}`;
+        await expect(copyCarriedMedia(guest, readCarriedLines(two), steps)).rejects.toBeInstanceOf(CarryNotNowError);
+        expect(steps.store).toHaveBeenCalledTimes(2);
+
+        // The same part again: the first file's copy is reused, and only the second is stored
+        steps.store.mockResolvedValueOnce('https://cdn.test/b.png');
+        const again = await copyCarriedMedia(guest, readCarriedLines(two), steps);
+        expect(steps.store).toHaveBeenCalledTimes(3);
+        expect(again[0].media?.map((one) => one.url)).toEqual(['https://cdn.test/a.png', 'https://cdn.test/b.png']);
+        // Orbit's receipt for the first file was read once only, and the second twice (once for the try that failed)
+        expect(steps.read.mock.calls.filter((call) => call[0] === 'r-a')).toHaveLength(1);
+        expect(steps.read.mock.calls.filter((call) => call[0] === 'r-b')).toHaveLength(2);
     });
 
     it('keeps the name of each line a device brings in parts', () => {

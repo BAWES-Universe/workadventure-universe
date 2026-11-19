@@ -83,9 +83,11 @@ async function viewer(url: string) {
             message.writeUInt32BE(code, 4);
             socket.send(message);
         },
-        pointer: (x: number, y: number) => {
+        // `buttons` is the RFB button mask (1 = left): a click is the button down, then up
+        pointer: (x: number, y: number, buttons = 0) => {
             const message = Buffer.alloc(6);
             message[0] = 5;
+            message[1] = buttons;
             message.writeUInt16BE(x, 2);
             message.writeUInt16BE(y, 4);
             socket.send(message);
@@ -132,6 +134,8 @@ rig('the screen gateway against a real screen server', () => {
     const typeHi = async (view: Awaited<ReturnType<typeof viewer>>) => {
         // Click into the terminal, then type "hi" and Enter (key symbols for h, i and Return)
         view.pointer(100, 100);
+        view.pointer(100, 100, 1);
+        view.pointer(100, 100, 0);
         await new Promise((resolve) => setTimeout(resolve, 200));
         for (const code of [0x68, 0x69, 0xff0d]) {
             view.key(code, true);
