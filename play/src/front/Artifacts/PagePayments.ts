@@ -33,6 +33,8 @@ export const NO_PAY_LINE: PayLine = { checking: false, problem: null, resume: nu
 /** How often an order is asked about, and for how long. The server asks the service itself at most once every few seconds. */
 const POLL_MS = 3_000;
 const POLL_FOR_MS = 20 * 60_000;
+/** How long the start of a checkout may wait for an answer before the window says it did not start (it is never left "starting"). */
+const START_FOR_MS = 30_000;
 /** How often a closed checkout tab is looked for: on its own clock, not the status questions' */
 const TAB_WATCH_MS = 1_000;
 
@@ -132,6 +134,13 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         timer = setTimeout(() => void poll(), POLL_MS);
     };
 
+    /** A checkout is on its way: the line says so, and its order is asked about until it ends. */
+    const adopt = (orderId: string, url: string, app: string, popup: Window | null) => {
+        busy = true;
+        line.set({ ...NO_PAY_LINE, checking: true, resume: popup ? null : { url, app } });
+        watch(orderId, { url, app, popup });
+    };
+
     const onMessage = (event: MessageEvent) => {
         const frame = options.frame();
         if (!frame || event.source !== frame) return;
@@ -156,8 +165,31 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             popup = null;
         }
         void (async () => {
+            // The start waits only so long. A checkout that was made while the answer stalled is not lost: when its answer comes after
+            // the window has said "unavailable" and nothing else is on its way, it is taken up as the checkout (its link is on the line).
+            let stalled = false;
+            let startTimer: ReturnType<typeof setTimeout> | undefined;
+            const started = pay(options.artifactId, options.chat(), { start: true });
+            const timeout = new Promise<"stalled">((resolve) => {
+                startTimer = setTimeout(() => resolve("stalled"), START_FOR_MS);
+            });
+            // Taken up in whichever way the start ends, so a late answer never leaves an unhandled rejection
+            started.catch(() => undefined);
             try {
-                const answer = await pay(options.artifactId, options.chat(), { start: true });
+                const first = await Promise.race([started, timeout]);
+                if (first === "stalled") {
+                    stalled = true;
+                    popup?.close();
+                    if (!destroyed) end({ problem: "unavailable" }, "unavailable");
+                    const late = await started;
+                    if (destroyed || busy) return;
+                    const lateUrl = safeCheckout(late.checkoutUrl);
+                    if (!late.orderId || !lateUrl) return;
+                    adopt(late.orderId, lateUrl, late.app ?? "", null);
+                    return;
+                }
+                if (startTimer) clearTimeout(startTimer);
+                const answer = first;
                 const url = safeCheckout(answer.checkoutUrl);
                 if (destroyed) {
                     popup?.close();
@@ -168,17 +200,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     return end({ problem: "unavailable" }, "unavailable");
                 }
                 if (popup) popup.location.href = url;
-                line.set({
-                    ...NO_PAY_LINE,
-                    checking: true,
-                    resume: popup ? null : { url, app: answer.app ?? "" },
-                });
+                adopt(answer.orderId, url, answer.app ?? "", popup);
                 tell("started");
-                watch(answer.orderId, { url, app: answer.app ?? "", popup });
             } catch (error) {
+                if (startTimer) clearTimeout(startTimer);
                 popup?.close();
-                if (destroyed) return;
-                const limit = error instanceof ArtifactRequestError && error.code === "limit";
+                // A start that failed after the window gave up on it has nothing more to say
+                if (destroyed || stalled) return;
+                const limit = error instanceof ArtifactRequestError && (error.code === "limit" || error.status === 429);
                 end({ problem: limit ? "limit" : "unavailable" }, limit ? "limit" : "unavailable");
             }
         })();

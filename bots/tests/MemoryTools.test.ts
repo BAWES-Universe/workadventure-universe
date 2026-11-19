@@ -31,7 +31,10 @@ describe('the memory tools', () => {
     });
 
     it('say so when nothing is remembered', async () => {
-        const empty = new ConversationMemory().getOrCreateMemory('bot', 2);
+        const nobody = new ConversationMemory();
+        nobody.useHeard(() => heardInDm());
+        nobody.addMessage('bot', 2, 'hello', 'person', 'dm');
+        const empty = nobody.getMemory('bot', 2)!;
         const answer = (await runMemoryTool(WHAT_I_REMEMBER_TOOL, {}, { memory: empty, forget: vi.fn() })) as { things: unknown[]; note: string };
         expect(answer.things).toEqual([]);
         expect(answer.note).toContain('nothing');

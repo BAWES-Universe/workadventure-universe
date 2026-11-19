@@ -3936,7 +3936,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 mine.running--;
             }
             // The turn this run belongs to ended while it was in flight (an update cut the reply short): nothing else will close its receipt
-            if (turn.over) void endInstantTask(admin, botId, userId, mine);
+            if (turn.over) {
+                void endInstantTask(admin, botId, userId, mine).then(() => {
+                    // Orbit did not take this late close: a turn that began meanwhile did not know of the task (it had nothing to close then), so it
+                    // is owed by that turn from now, and asked again by each turn that follows until it is taken
+                    const current = memory?.instantTurn;
+                    if (current && current !== turn && instantTaskPending(mine) && !(current.owed ?? []).includes(mine)) (current.owed ??= []).push(mine);
+                });
+            }
             // What Orbit offers may change with a run (credit spent, a pause): read it again next time
             if (ran.ended !== 'failed') this.instantOffers.forget(botId, userId);
             if (ran.stop) mine.stopped = ran.result;

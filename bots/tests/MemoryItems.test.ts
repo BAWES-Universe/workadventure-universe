@@ -310,7 +310,8 @@ describe('PersistentMemory: Forget of one thing', () => {
         const record = memory.getMemory(BOT, SARA);
         memory.loadedMemoriesByUuid.set(`${BOT}_uuid-sara`, memory.cloneMemory(record));
         memory.pendingSaves.set(`${BOT}_${SARA}`, record);
-        return memory as PersistentMemory & Record<string, any>;
+        // Typed loosely on purpose: the tests reach into its private maps and timers
+        return memory;
     }
 
     const lofi = memoryItemKey('pref', null, 'lo-fi');
@@ -695,7 +696,8 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
         const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueue: store });
         await memory.forgetQueueReady;
         memory.useHeard(() => heardInDm());
-        return memory as PersistentMemory & Record<string, any>;
+        // Typed loosely on purpose: the tests reach into its private maps and timers
+        return memory;
     };
     const forgetWhileDown = async (memory: PersistentMemory & Record<string, any>) => {
         memory.setUserUuid(BOT, SARA, 'uuid-sara', true);
@@ -841,7 +843,8 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         await memory.forgetQueueReady;
         memory.useHeard(() => heardInDm());
         memory.setUserUuid(BOT, SARA, 'uuid-sara', true);
-        return memory as PersistentMemory & Record<string, any>;
+        // Typed loosely on purpose: the tests reach into its private maps and timers
+        return memory;
     };
     const told = () => hoisted.axios.post.mock.calls.filter((call) => String(call[0]).endsWith('/items'));
     /** What Orbit hands back after an archive is restored: everything the person had before the forget. */
@@ -850,7 +853,7 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         if (drawnAt) record.personalInfo.drawnFrom = Object.fromEntries(preferences.map((one) => [`pref:${one}`, drawnAt]));
         return record;
     };
-    const load = async (memory: PersistentMemory & Record<string, any>, records: BotPlayerMemory[]) => {
+    const load = async (memory: any, records: BotPlayerMemory[]) => {
         vi.spyOn(memory.memoryStorage, 'loadMemories').mockResolvedValue(records);
         await memory.loadMemories(BOT);
         return memory.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`) as BotPlayerMemory;
@@ -1251,7 +1254,7 @@ describe('BotPlayerMemory copies', () => {
     it('keeps its own copy of when each thing was said', () => {
         const memory: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local' });
         const original = {
-            ...new ConversationMemory().getOrCreateMemory(BOT, SARA),
+            ...(new ConversationMemory() as any).getOrCreateMemory(BOT, SARA),
         } as BotPlayerMemory;
         original.personalInfo.drawnFrom = { name: 5 };
         const copy = memory.cloneMemory(original);

@@ -75,7 +75,7 @@ function setUp(over: { settings?: Record<string, unknown>; refused?: { status: n
             }),
         })),
         listBrickItems: vi.fn(async () => ({ ok: true as const, items: over.items ?? [item()] })),
-        changeBrickItem: vi.fn(async () => ({ ok: true as const, item: item({ nextDueAt: '2026-11-15T14:00:00.000Z' }) })),
+        changeBrickItem: vi.fn(async (_botId: string, _itemId: string, _change: Record<string, unknown>) => ({ ok: true as const, item: item({ nextDueAt: '2026-11-15T14:00:00.000Z' }) })),
     };
     const context: TaskToolContext = { admin: admin as unknown as TaskToolContext['admin'], botId: BRICK, userId: SARA, now: () => NOW };
     return { admin, context };

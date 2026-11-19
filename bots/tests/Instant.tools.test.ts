@@ -49,11 +49,11 @@ const respond = (status: number, data: unknown) => request.mockResolvedValueOnce
 
 afterEach(() => {
     vi.clearAllMocks();
-    delete process.env.BOT_SERVICE_TOKEN;
+    vi.unstubAllEnvs();
 });
 
 function admin(): AdminApiService {
-    process.env.BOT_SERVICE_TOKEN = 'service-token';
+    vi.stubEnv('BOT_SERVICE_TOKEN', 'service-token');
     return new AdminApiService('https://orbit.example', 'admin-token');
 }
 
@@ -141,7 +141,7 @@ describe('Orbit’s Instant routes, from the bot server', () => {
             expect(await ask()).toEqual({ status: 'rejected' });
         }
         expect(request).toHaveBeenCalledTimes(4);
-        delete process.env.BOT_SERVICE_TOKEN;
+        vi.stubEnv('BOT_SERVICE_TOKEN', undefined);
         expect(await new AdminApiService('https://orbit.example', 'admin-token').instantRun(BRICK, { requesterKey: 'a', tool: 'T', arguments: {}, callId: 'c' })).toEqual({ status: 'rejected' });
     });
 
@@ -1126,6 +1126,29 @@ describe('in a Brick’s owner chat (AIService)', () => {
         await slow;
         await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1));
         expect(orbit.closeTaskReceipt).toHaveBeenCalledWith(BRICK, 'uuid-alice', { taskKey: orbit.instantRun.mock.calls[0][1].taskKey, state: 'done' });
+    });
+
+    it('a late close Orbit does not take stays owed to the turns that follow, even when the turn that began meanwhile did not know of it', async () => {
+        let letRunGo: (answer: InstantRunAnswer) => void = () => undefined;
+        const running = new Promise<InstantRunAnswer>((resolve) => (letRunGo = resolve));
+        const { ai, orbit, memory } = service({
+            instantRun: vi.fn().mockReturnValueOnce(running),
+            closeTaskReceipt: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
+        });
+        ai.noteBrick(BRICK, { isDefault: false });
+        ai.startInstantTurn(BRICK, memory);
+        const slow = ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
+        // A new turn begins while the run is still out: it has nothing of this task to close yet
+        ai.startInstantTurn(BRICK, memory);
+        letRunGo({ status: 'done', data: 1, chargedMicros: 1 });
+        await slow;
+        // The late run closes its own task, and Orbit does not take it
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        // The next turn asks again, and Orbit takes it
+        ai.startInstantTurn(BRICK, memory);
+        await vi.waitFor(() => expect(orbit.closeTaskReceipt).toHaveBeenCalledTimes(2));
     });
 
     it('a close Orbit still does not take stays owed from turn to turn until it does', async () => {

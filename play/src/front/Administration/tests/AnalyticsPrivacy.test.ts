@@ -35,6 +35,24 @@ describe("withoutQueryOrHash", () => {
         );
     });
 
+    it("blanks an email that is percent-encoded in the path, once or twice over, and keeps the rest of the path", () => {
+        expect(withoutQueryOrHash("https://a.test/invite/sara%40example.test?x=1")).toBe(
+            "https://a.test/invite/[email]"
+        );
+        expect(withoutQueryOrHash("https://a.test/invite/Sara%2540Example.test/room")).toBe(
+            "https://a.test/invite/[email]/room"
+        );
+        expect(withoutQueryOrHash("https://a.test/u/sara%2Bnote%40example.test")).toBe("https://a.test/u/[email]");
+        expect(
+            keepPrivate({ properties: { $current_url: "https://a.test/invite/sara%40example.test#h" } })?.properties
+                ?.$current_url
+        ).toBe("https://a.test/invite/[email]");
+        // Not an email: kept as it was, escapes and all
+        expect(withoutQueryOrHash("https://a.test/%C3%A9t%C3%A9/room%20one")).toBe(
+            "https://a.test/%C3%A9t%C3%A9/room%20one"
+        );
+    });
+
     it("returns what is not an address as it was", () => {
         expect(withoutQueryOrHash("not an address")).toBe("not an address");
     });
@@ -139,6 +157,46 @@ describe("keepPrivate", () => {
         });
         expect(event?.properties?.$current_url).toBe("https://play.test/@/uni/room");
         expect(event?.properties?.$snapshot_data).toEqual([{ type: 2, data: { node } }]);
+    });
+
+    it("cleans the attributes of the replay's elements, however deep, and keeps the rest of the recording", () => {
+        let node: Record<string, unknown> = {
+            tagName: "a",
+            attributes: {
+                href: "https://play.test/invite?token=secret&email=sara@example.test",
+                "data-invite-token": "abc123",
+                "data-owner": "sara@example.test",
+                class: "link",
+            },
+        };
+        for (let level = 0; level < 40; level++) {
+            node = {
+                tagName: "div",
+                attributes: level === 0 ? { src: "/join?code=zzz#room", title: "plain" } : {},
+                childNodes: [node],
+            };
+        }
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("secret");
+        expect(text).not.toContain("abc123");
+        expect(text).not.toContain("sara@example.test");
+        expect(text).not.toContain("code=zzz");
+        expect(text).not.toContain("#room");
+        expect(text).toContain("https://play.test/invite");
+        expect(text).toContain('"/join"');
+        expect(text).toContain('"title":"plain"');
+        expect(text).toContain('"class":"link"');
+        expect(text).toContain("[removed]");
+    });
+
+    it("does not send a replay recording too large to be checked whole", () => {
+        const huge = { type: 2, data: { values: new Array<string>(500_001).fill("*") } };
+        const event = keepPrivate({
+            properties: { $current_url: "https://play.test/@/uni/room?x=1", $snapshot_data: [huge] },
+        });
+        expect(event?.properties).not.toHaveProperty("$snapshot_data");
+        expect(event?.properties?.$current_url).toBe("https://play.test/@/uni/room");
     });
 
     it("lets a missing event through", () => {

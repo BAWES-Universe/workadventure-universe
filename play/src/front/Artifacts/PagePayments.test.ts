@@ -189,6 +189,100 @@ describe("a page that takes payments, in the game's window", () => {
         expect(told()).toEqual(["unavailable"]);
     });
 
+    it("says it is too many tries on the server's own rate limit (429), however it words it", async () => {
+        const limited = make(vi.fn().mockRejectedValueOnce(new ArtifactRequestError(429, "too_many_requests")));
+        ask(limited);
+        await flush();
+        expect(get(limited.line).problem).toBe("limit");
+        expect(told()).toEqual(["limit"]);
+    });
+
+    it("does not stay starting when the server never answers the start, and can be asked again", async () => {
+        const close = vi.fn();
+        const popup = { location: { href: "" }, close } as unknown as Window;
+        const pay = vi
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<ArtifactPay>(() => {
+                        // never answers
+                    })
+            )
+            .mockResolvedValueOnce({
+                orderId: "o2",
+                checkoutUrl: "https://checkout.examplepay.com/c2",
+                app: "Example",
+            });
+        const payments = make(pay, () => popup);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(29_000);
+        expect(get(payments.line)).toMatchObject({ checking: false, problem: null });
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(get(payments.line)).toMatchObject({ checking: false, problem: "unavailable" });
+        expect(close).toHaveBeenCalled();
+        expect(toldAll()).toEqual([{ universe: "app-result", status: "unavailable", request: "first" }]);
+        // Nothing is stuck: another start is taken
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        await flush();
+        expect(pay).toHaveBeenCalledTimes(2);
+        payments.destroy();
+    });
+
+    it("takes up a checkout that was made while its answer stalled, with its link on the line, when nothing else is on its way", async () => {
+        let answerLate: (value: ArtifactPay) => void = () => undefined;
+        const pay = vi
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<ArtifactPay>((resolve) => {
+                        answerLate = resolve;
+                    })
+            )
+            .mockResolvedValue({ status: "checking", checkoutUrl: null, testPayment: false });
+        const payments = make(pay, () => null);
+        ask(payments);
+        await flush();
+        await vi.advanceTimersByTimeAsync(31_000);
+        expect(get(payments.line).problem).toBe("unavailable");
+        answerLate({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" } as ArtifactPay);
+        await flush();
+        // The order is not lost: the window shows it again, with the link to go on, and asks how it stands
+        expect(get(payments.line)).toMatchObject({
+            checking: true,
+            problem: null,
+            resume: { url: "https://checkout.examplepay.com/c1", app: "Example" },
+        });
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(pay).toHaveBeenLastCalledWith("a1", undefined, { order: "o1" });
+        payments.destroy();
+    });
+
+    it("leaves a checkout whose answer came late alone when another one is already on its way", async () => {
+        let answerLate: (value: ArtifactPay) => void = () => undefined;
+        const pay = vi
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<ArtifactPay>((resolve) => {
+                        answerLate = resolve;
+                    })
+            )
+            .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" })
+            .mockResolvedValue({ status: "checking", checkoutUrl: null, testPayment: false });
+        const payments = make(pay, () => null);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(31_000);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        await flush();
+        expect(get(payments.line).resume?.url).toBe("https://checkout.examplepay.com/c2");
+        answerLate({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" } as ArtifactPay);
+        await flush();
+        expect(get(payments.line).resume?.url).toBe("https://checkout.examplepay.com/c2");
+        payments.destroy();
+    });
+
     it("says it is too many tries on a limit, and refuses an address that is not https", async () => {
         const limited = make(vi.fn().mockRejectedValueOnce(new ArtifactRequestError(429, "limit")));
         ask(limited);
