@@ -1,6 +1,6 @@
 <script lang="ts">
     import { getContext, hasContext, onDestroy, onMount } from "svelte";
-    import { get, readable } from "svelte/store";
+    import { readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { ChatRoom } from "../../../Connection/ChatConnection";
@@ -44,11 +44,8 @@
     // summary, which reads the same one
     $: list = chat ? chatArtifactsList(chat, botIdFromChatId(partnerChatId)) : undefined;
     $: state = list ?? noList;
-    let refreshed: typeof list;
-    $: if (list && list !== refreshed) {
-        refreshed = list;
-        if (!get(list).loaded) list.refresh().catch((error) => console.error(error));
-    }
+    // The newest page again whenever this is another list (the summary has usually read it already)
+    $: list?.refresh().catch((error) => console.error(error));
     const roomName = room.name;
     const nameByChatId: Readable<Map<string, string>> = hasContext(NAME_BY_CHAT_ID_CONTEXT)
         ? getContext(NAME_BY_CHAT_ID_CONTEXT)
