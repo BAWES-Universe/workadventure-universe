@@ -72,6 +72,12 @@ export interface PagePaymentsOptions {
     /** Opens the checkout's window straight from the tap's moment; undefined when the browser blocked it. */
     openWindow?: () => Window | null;
     pay?: typeof payOnArtifact;
+    /**
+     * Which opening of the artifact is on show: a number that changes each time another version (or the same one again) is
+     * opened. The page that asked for a checkout is gone with its opening, so how that checkout ends is never told to the page
+     * of another one, whose own requests may use the same ids. The buyer's line is kept either way.
+     */
+    opening?: () => number;
 }
 
 export interface PagePayments {
@@ -107,37 +113,45 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // was being drawn again): kept for this artifact's own frame, by the request it was started for, and told to it when it is
     // there again. Told once and forgotten; a new request from the page also forgets it (the page asked again, so it has heard).
     // Never sent to any other window: the frame is always asked from the artifact's own element.
-    const held = new Map<string, string>();
+    const held = new Map<string, { status: string; from: number }>();
+    const opening = () => options.opening?.() ?? 0;
     const HELD_MAX = 8;
 
     // How a checkout ended is the page's only word of it, so it is never dropped for want of a frame
-    const tellEnd = (status: string, request: string) => {
+    const tellEnd = (status: string, request: string, from: number) => {
+        // The page that asked is gone with its opening: nobody is told
+        if (opening() !== from) return;
         if (options.frame()) return tellRequest(status, request);
         if (destroyed) return;
         held.delete(request);
-        held.set(request, status);
+        held.set(request, { status, from });
         if (held.size > HELD_MAX) held.delete(held.keys().next().value as string);
     };
 
     // Every status goes out under the id of the request its checkout was started for, never under whichever request is newest
-    const end = (update: Partial<PayLine>, status: string, request: string) => {
+    const end = (update: Partial<PayLine>, status: string, request: string, from: number) => {
         busy = false;
         line.set({ ...NO_PAY_LINE, ...update });
-        tellEnd(status, request);
+        tellEnd(status, request, from);
     };
 
     const frameReady = () => {
         if (destroyed || !options.frame()) return;
         const waiting = [...held];
         held.clear();
-        for (const [request, status] of waiting) tellRequest(status, request);
+        for (const [request, one] of waiting) if (one.from === opening()) tellRequest(one.status, request);
     };
 
     /**
      * Asks about an order every few seconds until it ends. Two things the asking alone cannot do are done here: the deadline has its own
      * clock, so a question that never gets an answer cannot keep "checking" past it, and a checkout tab the buyer closed gets its link back.
      */
-    const watch = (orderId: string, checkout: { url: string; app: string; popup: Window | null }, request: string) => {
+    const watch = (
+        orderId: string,
+        checkout: { url: string; app: string; popup: Window | null },
+        request: string,
+        from: number
+    ) => {
         let over = false;
         let linkBack = false;
         const finish = (update: Partial<PayLine>, status: string) => {
@@ -147,7 +161,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             if (timer) clearTimeout(timer);
             if (deadline) clearTimeout(deadline);
             if (tabWatch) clearInterval(tabWatch);
-            end(update, status, request);
+            end(update, status, request, from);
         };
         // Twenty minutes without an answer: said plainly, never a silent end. The order may still be counted later.
         deadline = setTimeout(() => finish({ problem: "cant_confirm" }, "cant_confirm"), POLL_FOR_MS);
@@ -180,11 +194,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     };
 
     /** A checkout is on its way: the line says so, and its order is asked about until it ends. */
-    const adopt = (orderId: string, url: string, app: string, popup: Window | null, request: string) => {
+    const adopt = (orderId: string, url: string, app: string, popup: Window | null, request: string, from: number) => {
         busy = true;
         activeRequest = request;
         line.set({ ...NO_PAY_LINE, checking: true, resume: popup ? null : { url, app } });
-        watch(orderId, { url, app, popup }, request);
+        watch(orderId, { url, app, popup }, request, from);
     };
 
     const onMessage = (event: MessageEvent) => {
@@ -213,6 +227,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             popup = null;
         }
         const request = data.request;
+        // The opening the page is in now: what comes of this checkout is for that page alone
+        const from = opening();
         void (async () => {
             // The start is waited for as long as STALLED_START_FOR_MS. After START_FOR_MS the buyer's window says it is taking
             // longer and the blank pop-up is closed (the link is offered on the line instead); the page is told nothing until the
@@ -248,7 +264,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     if (second === "gave_up") {
                         // Dropped for good: its answer is never read, so no link to an order it may have made reaches anyone
                         abort.abort();
-                        if (!destroyed) end({ problem: "unavailable" }, "unavailable", request);
+                        if (!destroyed) end({ problem: "unavailable" }, "unavailable", request, from);
                         return;
                     }
                     answer = second;
@@ -263,16 +279,16 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 }
                 if (!answer.orderId || !url) {
                     popup?.close();
-                    return end({ problem: "unavailable" }, "unavailable", request);
+                    return end({ problem: "unavailable" }, "unavailable", request, from);
                 }
                 if (popup) popup.location.href = url;
-                adopt(answer.orderId, url, answer.app ?? "", popup, request);
-                tellRequest("started", request);
+                adopt(answer.orderId, url, answer.app ?? "", popup, request, from);
+                if (opening() === from) tellRequest("started", request);
             } catch (error) {
                 popup?.close();
                 if (destroyed) return;
                 const limit = error instanceof ArtifactRequestError && (error.code === "limit" || error.status === 429);
-                end({ problem: limit ? "limit" : "unavailable" }, limit ? "limit" : "unavailable", request);
+                end({ problem: limit ? "limit" : "unavailable" }, limit ? "limit" : "unavailable", request, from);
             } finally {
                 mine.clear();
                 if (startInFlight === mine) startInFlight = undefined;

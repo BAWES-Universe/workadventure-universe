@@ -117,6 +117,8 @@
     let renewTimer: ReturnType<typeof setTimeout> | undefined;
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
+    /** Counts the openings that came on show: a checkout asked for by the page of one is never told to the page of another. */
+    let opening = 0;
     /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
     let addressOver = false;
 
@@ -126,6 +128,7 @@
         artifactId: id,
         chat: () => actualCowebsite.chat,
         frame: () => frameElement?.contentWindow,
+        opening: () => opening,
         openWindow: () => window.open("about:blank", "_blank"),
     });
     const payLine = payments.line;
@@ -224,6 +227,7 @@
             // What this opening shows is newer than any renewal of a version that was on show before it: that one is not used,
             // also when the same version is on show again (1, then 2, then 1)
             renewal++;
+            opening++;
             text = undefined;
             textFailed = false;
             summaryStore.set({

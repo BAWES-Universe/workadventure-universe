@@ -594,14 +594,21 @@ describe("how a checkout ended while the artifact's frame was away (Code view)",
     const checkout = { orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" };
     // The window of the artifact's frame as it is now: none while the buyer reads the code
     let current: Window | undefined;
+    // Which opening of the artifact is on show; another version coming on show changes it
+    let showing = 1;
     const make = (pay: (...args: unknown[]) => Promise<ArtifactPay>) =>
         pagePayments({
             artifactId: "a1",
             chat: () => undefined,
             frame: () => current,
+            opening: () => showing,
             openWindow: () => null,
             pay: pay as never,
         });
+
+    beforeEach(() => {
+        showing = 1;
+    });
 
     it("keeps how it ended and tells the frame that comes back, under the request it was started for, once", async () => {
         current = frameWindow;
@@ -686,5 +693,62 @@ describe("how a checkout ended while the artifact's frame was away (Code view)",
         current = frameWindow;
         payments.frameReady();
         expect(told()).toEqual(["started"]);
+    });
+
+    it("never tells the page of another opening how a checkout ended, held or live; the buyer's line stays", async () => {
+        current = frameWindow;
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        expect(told()).toEqual(["started"]);
+
+        // Version 2 comes on show (a new frame, its own page that may use the same request ids)
+        showing = 2;
+        // Live: the frame is there, and the status is not for it
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line).paid).not.toBeNull();
+        expect(told()).toEqual(["started"]);
+        payments.frameReady();
+        expect(told()).toEqual(["started"]);
+    });
+
+    it("drops a held status when another opening comes on show before the frame is back", async () => {
+        current = frameWindow;
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        current = undefined;
+        await vi.advanceTimersByTimeAsync(3_000);
+        // Held for the page that asked; then another version opens and its frame loads
+        showing = 2;
+        current = frameWindow;
+        payments.frameReady();
+        expect(told()).toEqual(["started"]);
+    });
+
+    it("does not tell 'started' to a page of another opening when the start answers late", async () => {
+        current = frameWindow;
+        let answer: (value: ArtifactPay) => void = () => {};
+        const pay = vi.fn().mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve as (value: ArtifactPay) => void;
+                })
+        );
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        showing = 2;
+        answer(checkout as unknown as ArtifactPay);
+        await flush();
+        expect(told()).toEqual([]);
     });
 });
