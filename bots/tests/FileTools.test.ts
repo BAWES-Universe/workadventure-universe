@@ -270,7 +270,11 @@ describe('in a reply other people read (game #1993)', () => {
 
         expect(ctx.admin.findBotFiles.mock.calls[0][0]).toEqual(everyone);
         expect(ctx.admin.readBotFile.mock.calls[0][0]).toEqual(everyone);
-        for (const got of ctx.admin.getBotFile.mock.calls) expect(got[0]).toEqual(everyone);
+        // The lookup is required to have happened (a loop over no calls would pass), asked about the file with who was there
+        expect(ctx.admin.getBotFile).toHaveBeenCalledTimes(1);
+        expect(ctx.admin.getBotFile).toHaveBeenCalledWith(everyone, 'f212');
+        // ...and the tool went on to send it
+        expect(ctx.send).toHaveBeenCalledTimes(1);
     });
 
     it('when nothing is found, never says whether the person has it somewhere else: it offers direct messages, and guesses at nothing', async () => {
@@ -375,6 +379,24 @@ describe('the file tools in AIService', () => {
         (ai as unknown as { conversationMemory: unknown }).conversationMemory = { getMemory: () => memory };
         return ai;
     };
+
+    it('says what it held for the group when the round ends, and says nothing of it when the reply was cancelled', async () => {
+        const ai = withFiles();
+        const turn = { fileDerived: { joined: () => false } } as never;
+        // A round that ends without its closing chunk, as a cancelled reply does
+        const round = async function* () {
+            yield { content: 'what it found in the files', done: false };
+        };
+        const said = async (signal?: AbortSignal) => {
+            const out: Array<{ content?: string }> = [];
+            for await (const chunk of ai['heldForGroup'](round() as never, turn, signal)) out.push(chunk);
+            return out.map((chunk) => chunk.content).join('');
+        };
+        expect(await said()).toBe('what it found in the files');
+        const cancelled = new AbortController();
+        cancelled.abort();
+        expect(await said(cancelled.signal)).toBe('');
+    });
 
     it('holds back an earlier file or card for everyone here when someone has walked up since the reply started (#1993)', () => {
         const ai = withFiles();
@@ -643,6 +665,8 @@ describe('the file tools in AIService', () => {
             await run(withFiles({}), [find, open, again], bot, admin, ['uuid-sara']);
 
             expect(askedOf(admin.findBotFiles)[0]).toEqual(everyone);
+            // The file was looked up, and only ever asked about with everyone who is there
+            expect(admin.getBotFile).toHaveBeenCalled();
             for (const asked of askedOf(admin.getBotFile)) expect(asked).toEqual(everyone);
             // Everyone there was there for it, so it goes into the space for all of them, asked about once more as it goes out
             expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg', undefined, expect.any(Function));
@@ -664,16 +688,12 @@ describe('the file tools in AIService', () => {
                     return 'https://cdn.example.com/new.mp3';
                 }),
             };
-            const refused = await ai['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/song.mp3', {
-                botClient: bot as never,
-                spaceName: 'bubble-1',
-                botId: 'bot1',
-                playerId: 7,
-                mayGo: () => !ai['someoneCameSince'](bot as never, 'bubble-1', 7, ['uuid-sara']),
-            });
+            // Through the tool itself, so the guard the tool supplies is the one that is tested: Omar appears while the upload waits
+            const results = await run(ai, [again], bot, orbit(), ['uuid-sara']);
 
+            // Asked once as it went out, and refused: only Sara was there when the file was looked up
             expect(asked).toEqual([false]);
-            expect(refused).toMatch(/Someone else just joined, so it wasn't sent/);
+            expect(JSON.stringify(results[0].result)).toMatch(/Someone else just joined, so it wasn't sent/);
         });
 
         it('does not send it when someone walked up while it was looked up: they were not asked about', async () => {

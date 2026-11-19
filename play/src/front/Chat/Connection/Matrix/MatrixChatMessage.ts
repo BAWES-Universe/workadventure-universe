@@ -73,23 +73,23 @@ export class MatrixChatMessage implements ChatMessage {
     reactions: MapStore<string, MatrixChatMessageReaction>;
     relations: MatrixChatRelation | undefined;
     readonly canDelete: Writable<boolean>;
-    readonly botStatus: BotStatusNote | undefined;
-    readonly botStatusAt: number | undefined;
-    readonly roomLink: BotRoomLink | undefined;
-    readonly replyLimit: BotReplyLimit | undefined;
-    readonly toolSignIn: BotToolSignIn | undefined;
-    readonly artifact: ArtifactCard | undefined;
-    readonly answeredNearby: boolean;
+    botStatus: BotStatusNote | undefined;
+    botStatusAt: number | undefined;
+    roomLink: BotRoomLink | undefined;
+    replyLimit: BotReplyLimit | undefined;
+    toolSignIn: BotToolSignIn | undefined;
+    artifact: ArtifactCard | undefined;
+    answeredNearby: boolean;
     /** A Brick's fixed "what I can do" answer (#1995): shown in the person's language, with its ideas under it. */
-    readonly brickIdeas: boolean;
+    brickIdeas: boolean;
     /** The Bricks a Brick made while writing this answer (#1996). */
-    readonly brickMade: MadeBrick[];
+    brickMade: MadeBrick[];
     /** A Brick's suggestion of a Brick for a job that keeps coming back (#1996). */
-    readonly brickOffer: BrickOffer | undefined;
+    brickOffer: BrickOffer | undefined;
     /** A Brick's offer to connect an App (#2001): "Connect your calendar?". */
-    readonly appOffer: AppOffer | undefined;
+    appOffer: AppOffer | undefined;
     /** The chat someone had with the Brick for guests, brought along when they signed in (#1997). */
-    readonly guestChat: GuestChatLine[];
+    guestChat: GuestChatLine[];
     /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
     readonly ask: Writable<BotAsk | undefined>;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
@@ -107,27 +107,19 @@ export class MatrixChatMessage implements ChatMessage {
     constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean, private isDirect = false) {
         this.id = event.getId() ?? uuidv4();
         this.type = this.mapMatrixMessageTypeToChatMessage();
-        this.botStatus = readBotStatusNote(event.getSender(), event.getOriginalContent());
-        // The homeserver's clock can differ from ours: the SDK's local timestamp is the send time on our clock.
-        this.botStatusAt = this.botStatus ? event.localTimestamp : undefined;
-        this.roomLink = readBotRoomLink(event.getSender(), event.getOriginalContent(), window.location.origin);
-        this.replyLimit = readBotReplyLimit(
-            event.getSender(),
-            event.getOriginalContent(),
-            room.getMember(event.getSender() ?? "")?.name ?? ""
-        );
-        this.toolSignIn = readBotToolSignIn(
-            event.getSender(),
-            event.getOriginalContent(),
-            room.getMember(event.getSender() ?? "")?.name ?? ""
-        );
-        this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
-        this.answeredNearby = readAnsweredNearby(event.getSender(), event.getOriginalContent());
-        this.brickIdeas = readBrickIdeas(event.getSender(), event.getOriginalContent());
-        this.brickMade = readBrickMade(event.getSender(), event.getOriginalContent());
-        this.brickOffer = readBrickOffer(event.getSender(), event.getOriginalContent());
-        this.appOffer = readAppOffer(event.getSender(), event.getOriginalContent());
-        this.guestChat = readGuestChat(event.getSender(), event.getOriginalContent());
+        const cards = this.readCards();
+        this.botStatus = cards.botStatus;
+        this.botStatusAt = cards.botStatusAt;
+        this.roomLink = cards.roomLink;
+        this.replyLimit = cards.replyLimit;
+        this.toolSignIn = cards.toolSignIn;
+        this.artifact = cards.artifact;
+        this.answeredNearby = cards.answeredNearby;
+        this.brickIdeas = cards.brickIdeas;
+        this.brickMade = cards.brickMade;
+        this.brickOffer = cards.brickOffer;
+        this.appOffer = cards.appOffer;
+        this.guestChat = cards.guestChat;
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.transcriptOf = readNoteTranscript(event.getSender(), this.stepsContent());
         this.transcriptNotice = this.transcriptOf !== undefined;
@@ -212,11 +204,64 @@ export class MatrixChatMessage implements ChatMessage {
         this.relations?.destroy();
     }
 
+    /**
+     * What a bot's message carries besides its text, read from the event's content. Read again once an encrypted message is
+     * decrypted: before that the content is only the cipher, so none of it was there to read.
+     */
+    private readCards() {
+        const sender = this.event.getSender();
+        const content = this.event.getOriginalContent();
+        const botStatus = readBotStatusNote(sender, content);
+        return {
+            botStatus,
+            // The homeserver's clock can differ from ours: the SDK's local timestamp is the send time on our clock.
+            botStatusAt: botStatus ? this.event.localTimestamp : undefined,
+            roomLink: readBotRoomLink(sender, content, window.location.origin),
+            replyLimit: readBotReplyLimit(sender, content, this.room.getMember(sender ?? "")?.name ?? ""),
+            toolSignIn: readBotToolSignIn(sender, content, this.room.getMember(sender ?? "")?.name ?? ""),
+            artifact: readArtifactField(sender, content),
+            answeredNearby: readAnsweredNearby(sender, content),
+            brickIdeas: readBrickIdeas(sender, content),
+            brickMade: readBrickMade(sender, content),
+            brickOffer: readBrickOffer(sender, content),
+            appOffer: readAppOffer(sender, content),
+            guestChat: readGuestChat(sender, content),
+        };
+    }
+
+    /**
+     * Told when a late decryption changed what the message carries besides its text (ideas, an offer, Bricks made, a guest's chat).
+     * The timeline draws those from the list of messages, which does not change when only a field of one does: the room that holds
+     * this message sets it to say so to the list.
+     */
+    onCardsChanged: (() => void) | undefined;
+
     private updateMessageContentOnDecryptedEvent() {
         // Until it is decrypted, the event's type is m.room.encrypted: an image or file only shows as one now.
         this.type = this.mapMatrixMessageTypeToChatMessage();
+        const cards = this.readCards();
+        const changed = JSON.stringify(cards) !== JSON.stringify(this.currentCards());
+        Object.assign(this, cards);
         this.content.set(this.getMessageContent());
         this.loadMediaUrl();
+        if (changed) this.onCardsChanged?.();
+    }
+
+    private currentCards() {
+        return {
+            botStatus: this.botStatus,
+            botStatusAt: this.botStatusAt,
+            roomLink: this.roomLink,
+            replyLimit: this.replyLimit,
+            toolSignIn: this.toolSignIn,
+            artifact: this.artifact,
+            answeredNearby: this.answeredNearby,
+            brickIdeas: this.brickIdeas,
+            brickMade: this.brickMade,
+            brickOffer: this.brickOffer,
+            appOffer: this.appOffer,
+            guestChat: this.guestChat,
+        };
     }
 
     /** Files need the access token to download (authenticated media): the URL arrives once fetched. */

@@ -49,7 +49,7 @@ describe("under a reply a bot wrote for this person alone (#1993)", () => {
     const onContinue = vi.fn();
     const note = () => target.querySelector("[data-testid=botPrivateReplyNote]");
     const button = () => target.querySelector<HTMLButtonElement>("[data-testid=botContinuePrivately]");
-    const show = async (botChatId: string | undefined = BOT_CHAT_ID) => {
+    const show = async (botChatId: string | undefined) => {
         shown = new PrivateReplyNote({ target, props: { botChatId, onContinue } });
         await tick();
     };
@@ -69,13 +69,13 @@ describe("under a reply a bot wrote for this person alone (#1993)", () => {
     });
 
     it("always says only they see it, in the mock's words", async () => {
-        await show();
+        await show(BOT_CHAT_ID);
         expect(note()?.textContent?.trim()).toBe("Only you see this reply");
     });
 
     it('offers "Continue privately" to someone signed in who may message this bot, and one tap carries on', async () => {
         state.signedIn.set(true);
-        await show();
+        await show(BOT_CHAT_ID);
         expect(button()).toBeNull();
 
         state.mayMessage.get(BOT_ID)!.set(true);
@@ -89,7 +89,7 @@ describe("under a reply a bot wrote for this person alone (#1993)", () => {
     });
 
     it("offers nothing to a guest: a guest has no direct messages", async () => {
-        await show();
+        await show(BOT_CHAT_ID);
         state.mayMessage.get(BOT_ID)!.set(true);
         await tick();
         expect(button()).toBeNull();
@@ -98,6 +98,8 @@ describe("under a reply a bot wrote for this person alone (#1993)", () => {
 
     it("offers nothing when the bot has no chat address to carry on at", async () => {
         state.signedIn.set(true);
+        // Even where this bot's direct messages are open to the person, with no address there is nowhere to carry on
+        state.mayMessage.set(BOT_ID, writable(true));
         await show(undefined);
         expect(button()).toBeNull();
         await show("@sara:matrix.test");

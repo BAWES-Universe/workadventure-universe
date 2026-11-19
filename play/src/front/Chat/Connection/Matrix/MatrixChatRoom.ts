@@ -549,7 +549,15 @@ export class MatrixChatRoom
     private readonly noteBubbles = new Map<string, MatrixChatMessage>();
     private readonly noteTranscripts = new Map<string, Pick<NoteTranscriptNotice, "state" | "text">>();
 
+    /** A late decryption that changes the cards of a message tells the list, which the timeline draws them from. */
+    private keepListCurrent(message: MatrixChatMessage) {
+        message.onCardsChanged = () => {
+            if (this.messages.get(message.id) === message) this.messages.update(message);
+        };
+    }
+
     private trackTranscript(message: MatrixChatMessage) {
+        this.keepListCurrent(message);
         if (message.transcriptOf) {
             this.applyTranscript(message.transcriptOf);
         } else if (message.type === "audio") {

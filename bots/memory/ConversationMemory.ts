@@ -115,6 +115,8 @@ export interface PendingMedia {
     again?: boolean;
     /** What the file is called, when it has a name of its own (a file sent again); otherwise the link's last part. */
     name?: string;
+    /** Set when it was made for the one person this memory is about (an answer for them alone, #1993): whatever turn sends it later, it goes to them alone, as they are in the space then. The id is only a marker; it is not used to address it, since a player id can belong to someone else after a restore. */
+    audience?: number;
 }
 
 export interface BotPlayerMemory {
@@ -357,7 +359,7 @@ export class ConversationMemory {
      */
     forgetThings?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<number>;
     /** As forgetThings, and how many of them Orbit has not taken yet: those are tried again, but not if this process restarts. */
-    forgetThingsReported?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number }>;
+    forgetThingsReported?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number; durable?: boolean }>;
 
     /**
      * A reply only this person read, in a space where other people were (#1993): kept as said with nobody else there,

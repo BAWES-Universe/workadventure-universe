@@ -256,7 +256,7 @@ describe('who has the computer in a chat (#2000)', () => {
         computerOnFor(botId: string, playerId: number, admin?: unknown): Promise<boolean>;
         runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: unknown; botId?: string; playerId?: number }): Promise<Record<string, unknown>>;
     };
-    function service(admin: Record<string, unknown>, userUuid: string | null = 'uuid-alice') {
+    function service(admin: Record<string, unknown>, userUuid: string | null = 'uuid-alice', isGuest?: boolean) {
         const ai = Object.create(AIService.prototype) as AIService;
         Object.assign(ai, {
             helperBricks: new Set<string>(),
@@ -265,7 +265,7 @@ describe('who has the computer in a chat (#2000)', () => {
             brickOwners: new Map<string, string>(),
             computerOnCache: new Map(),
             adminApiService: { isConfigured: () => true, ...admin },
-            conversationMemory: { getMemory: () => ({ userUuid: userUuid ?? undefined }) },
+            conversationMemory: { getMemory: () => ({ userUuid: userUuid ?? undefined, ...(isGuest === undefined ? {} : { isGuest }) }) },
         });
         return ai as unknown as Ai;
     }
@@ -301,5 +301,15 @@ describe('who has the computer in a chat (#2000)', () => {
         ai.noteBrick(BRICK, { isDefault: false });
         expect(await ai.runComputerToolCall({ job: 'Taxi booking' }, { botId: BRICK, playerId: 1 })).toMatchObject({ queued: true });
         expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', writes: undefined });
+    });
+
+    it('sends the speaker\'s guest status from the chat\'s own memory with the job', async () => {
+        for (const isGuest of [false, true]) {
+            const startComputerJob = vi.fn().mockResolvedValue({ ok: true, job: { id: 'j1', status: 'queued', queuedFor: 'turn' }, restoredFrom: null });
+            const ai = service({ startComputerJob }, 'uuid-alice', isGuest);
+            ai.noteBrick(BRICK, { isDefault: false });
+            await ai.runComputerToolCall({ job: 'Taxi booking' }, { botId: BRICK, playerId: 1 });
+            expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', isGuest, writes: undefined });
+        }
     });
 });

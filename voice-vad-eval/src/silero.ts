@@ -96,10 +96,16 @@ export class SileroStream {
         return probs;
     }
 
-    /** After missing audio or a new path: old state must not colour what comes next. */
+    /**
+     * After missing audio or a new path: old state must not colour what comes next. Queued behind the audio already pushed, like
+     * every push, so an inference still pending cannot write the old state back over the cleared one; what is pushed after
+     * it starts from nothing.
+     */
     reset(): void {
-        this.state = new Float32Array(STATE);
-        this.context = new Float32Array(CONTEXT);
-        this.filled = 0;
+        this.chain = this.chain.then(() => {
+            this.state = new Float32Array(STATE);
+            this.context = new Float32Array(CONTEXT);
+            this.filled = 0;
+        });
     }
 }

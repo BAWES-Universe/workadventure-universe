@@ -45,9 +45,11 @@ def levelled(x):
     peak = float(np.max(np.abs(x))) if len(x) else 0.0
     return x * min(30.0, 0.7 / peak) if peak > 0 else x
 
-VAD = webrtcvad.Vad(3)
 def voice(x):
     """Where the WebRTC detector finds a voice: start of the first and end of the last run of at least 30 ms, and the total."""
+    # A new detector for every recording: it keeps its state (hangover frames, filters, its model of the noise) between frames and
+    # between calls, so one that ended in speech would colour the start of the next recording
+    VAD = webrtcvad.Vad(3)
     pcm = (np.clip(x, -1, 1) * 32767).astype(np.int16)
     flags = [VAD.is_speech(pcm[i:i + 160].tobytes(), 16000) for i in range(0, len(pcm) - 159, 160)]
     first = last = None
@@ -167,10 +169,22 @@ elif mode == "sources":
 else:
     wav_dir = sys.argv[3]
     print("file\tid\tfrom\tto\twhisper\tvoice_ms")
-    for line in open(os.path.join(wav_dir, "index.tsv"), encoding="utf8").read().split("\n")[1:]:
-        if not line:
-            continue
-        file, clip_id, a, b = line.split("\t")
-        x = levelled(read(os.path.join(wav_dir, file)))
+    index = [line.split("\t") for line in open(os.path.join(wav_dir, "index.tsv"), encoding="utf8").read().split("\n")[1:] if line]
+    # The noise clips of one recording come at different levels (-45, -35, -25 dBFS) and are compared with each other: they
+    # share one gain, taken from the loudest of them, so the difference between the levels is kept. Each speech recording is
+    # levelled by itself, as before
+    noise_gain = {}
+    for file, clip_id, _a, _b in index:
+        kind, source = clip_id.split("|")[:2]
+        if kind == "noise":
+            noise_gain[source] = max(noise_gain.get(source, 0.0), float(np.max(np.abs(read(os.path.join(wav_dir, file)))) or 0.0))
+    for file, clip_id, a, b in index:
+        kind, source = clip_id.split("|")[:2]
+        raw = read(os.path.join(wav_dir, file))
+        if kind == "noise":
+            peak = noise_gain[source]
+            x = raw * min(30.0, 0.7 / peak) if peak > 0 else raw
+        else:
+            x = levelled(raw)
         lang = "ar" if "|ar/" in clip_id else "en"
         print("\t".join([file, clip_id, a, b, whisper(lang, x), str(voice(x)[2])]), flush=True)

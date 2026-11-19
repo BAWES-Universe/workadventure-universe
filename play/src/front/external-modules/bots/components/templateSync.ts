@@ -14,11 +14,15 @@ export function templateSync<Fresh>(
     let unsynced = new Map<string, number>();
     let stamp = 0;
     let running: Promise<boolean> | undefined;
+    // Counts each time another Brick's page opens: a read that was on its way for a page that has since closed (even one that is
+    // open again, A then B then A) is never shown, and what it was reading is not counted as read
+    let generation = 0;
 
     async function once(): Promise<boolean> {
         const taken = new Map(unsynced);
         if (taken.size === 0) return true;
         const parts = [...taken.keys()];
+        const mine = generation;
         let fresh: Fresh;
         try {
             fresh = await read();
@@ -26,6 +30,7 @@ export function templateSync<Fresh>(
             console.warn("Could not read a Brick after a template update", error);
             return false;
         }
+        if (mine !== generation) return true;
         apply(fresh, parts);
         // Parts taken (or taken again) while this read was on its way stay for the next one
         for (const [part, seen] of taken) if (unsynced.get(part) === seen) unsynced.delete(part);
@@ -34,17 +39,21 @@ export function templateSync<Fresh>(
 
     /** Reads until nothing is left: true once the page shows everything that was taken, false when Orbit could not be reached. */
     async function sync(): Promise<boolean> {
+        const mine = generation;
         for (let round = 0; round < 3; round++) {
-            if (unsynced.size === 0) return true;
+            // Another Brick's page has opened since: what this look was for is gone
+            if (mine !== generation || unsynced.size === 0) return true;
             if (!running) {
-                running = once().finally(() => {
-                    running = undefined;
+                const reading: Promise<boolean> = once().finally(() => {
+                    // Only its own: a read begun for the page that is open now is not let go of by one that ends late
+                    if (running === reading) running = undefined;
                 });
+                running = reading;
             }
             // eslint-disable-next-line no-await-in-loop
             if (!(await running)) return false;
         }
-        return unsynced.size === 0;
+        return mine !== generation || unsynced.size === 0;
     }
 
     return {
@@ -54,7 +63,10 @@ export function templateSync<Fresh>(
         },
         /** Another Brick's page: nothing is waiting any more. */
         clear() {
+            generation++;
             unsynced = new Map();
+            // A read on its way is for the page that closed: the page that opens now makes its own
+            running = undefined;
         },
         /** Whether one of these parts is waiting to be read. */
         waitsFor(parts: readonly string[]): boolean {

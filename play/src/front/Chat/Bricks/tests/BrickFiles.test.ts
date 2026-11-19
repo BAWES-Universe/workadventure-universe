@@ -106,7 +106,7 @@ describe("a Brick's files (#2003)", () => {
             expect(read.made.files.map((one) => one.id)).toEqual(["f1"]);
             expect(read.computer).toBeNull();
             expect(parseBrickFiles(undefined).count).toBe(0);
-            expect(parseBrickFiles({ computer: { state: "dreaming" } }).computer).toBeNull();
+            expect(parseBrickFiles(answer({ computer: { state: "dreaming" } })).computer).toBeNull();
         });
     });
 

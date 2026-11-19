@@ -40,14 +40,13 @@ function wokaPicture(look: string): PictureStore {
         const stopCatalog = botWokaCatalogStore.subscribe((catalog) => {
             const texture = findWokaTexture(catalog, look);
             if (!texture) {
-                // The WOKAs were read and this one is no longer offered: no picture rather than the last one drawn
-                // (also when nothing was drawn yet here: a list that shows it again would get the last picture otherwise)
-                if (catalog) {
-                    stopPicture?.();
-                    stopPicture = undefined;
-                    drawnUrl = undefined;
-                    set(undefined);
-                }
+                // The WOKAs were read and this one is no longer offered, or the list was dropped (the room changed): no
+                // picture rather than the last one drawn, also when nothing was drawn yet here (a list that shows it again
+                // would get the last picture otherwise)
+                stopPicture?.();
+                stopPicture = undefined;
+                drawnUrl = undefined;
+                set(undefined);
                 return;
             }
             if (texture.url === drawnUrl) return;

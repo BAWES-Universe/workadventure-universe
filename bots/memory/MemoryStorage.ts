@@ -211,12 +211,15 @@ export class MemoryStorage {
      * Tell Orbit these things are dropped from memory, by Forget id (#2003). Orbit keeps sending a Forget until it hears
      * this; the Forget itself stays, so a restored row cannot bring the thing back. True when Orbit took it.
      */
-    async acknowledgeItemForgets(botId: string, itemIds: string[]): Promise<boolean> {
-        if (!this.isConfigured() || !this.botServiceToken || !botId || itemIds.length === 0) return false;
+    async acknowledgeItemForgets(botId: string, forgets: Array<string | { id: string; at?: number }>): Promise<boolean> {
+        const items = forgets.map((one) => (typeof one === 'string' ? { id: one } : { id: one.id, ...(one.at && one.at > 0 ? { at: one.at } : {}) }));
+        if (!this.isConfigured() || !this.botServiceToken || !botId || items.length === 0) return false;
         try {
+            // Each carries when it was forgotten: Orbit marks a Forget dropped only if it is not newer than that, so a thing forgotten again
+            // meanwhile is handed out again. `itemIds` stays for an Orbit that reads only that
             await axios.post(
                 `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/forgotten`,
-                { itemIds },
+                { itemIds: items.map((one) => one.id), items },
                 { headers: { Authorization: `Bearer ${this.botServiceToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
             );
             return true;
@@ -226,25 +229,35 @@ export class MemoryStorage {
         }
     }
 
+    /** Whether there is an Orbit to tell about a forget at all (when not, nothing is owed and nothing needs to be kept). */
+    canTellOrbit(): boolean {
+        return this.isConfigured() && !!this.botServiceToken;
+    }
+
     /**
      * Tell Orbit one thing a person asked this bot to forget in the chat ("forget that"), by its key. Orbit keeps it as
      * forgotten whether or not it has saved the thing yet. True when Orbit took it, or when it never can (no Orbit set up).
      */
     async reportForgottenItem(botId: string, userUuid: string, itemKey: string, kind: string, at?: number): Promise<boolean> {
+        return (await this.reportForgottenItemOutcome(botId, userUuid, itemKey, kind, at)).taken;
+    }
+
+    /** As reportForgottenItem, and the status Orbit answered with when it did not take it (none when it could not be reached). */
+    async reportForgottenItemOutcome(botId: string, userUuid: string, itemKey: string, kind: string, at?: number): Promise<{ taken: boolean; status?: number }> {
         // No Orbit to tell, or nothing to name: this never changes, so there is nothing to try again later (not a failure)
-        if (!this.isConfigured() || !this.botServiceToken || !botId || !userUuid || !itemKey) return true;
+        if (!this.isConfigured() || !this.botServiceToken || !botId || !userUuid || !itemKey) return { taken: true };
         try {
             await axios.post(
                 `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/items`,
                 { userUuid, itemKey, kind, ...(at ? { at } : {}) },
                 { headers: { Authorization: `Bearer ${this.botServiceToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
             );
-            return true;
+            return { taken: true };
         } catch (error) {
             console.warn(`[MemoryStorage] Could not tell Orbit what was forgotten for bot ${botId}: ${describeSaveError(error)}`);
             // Orbit answered that this can never be taken (gone, or cannot be processed): telling it again changes nothing, so it is let go
             const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-            return status !== undefined && PERMANENT_REFUSALS.has(status);
+            return { taken: status !== undefined && PERMANENT_REFUSALS.has(status), status };
         }
     }
 

@@ -7,7 +7,9 @@ listening**: nobody could listen in the environment this was run in. Where the t
 - **Whisper** (base, multilingual, int8, through sherpa-onnx 2.0.1): which words it hears, in the recording's language.
   A sound tag such as `[Music]` or `(crunching)` counts as "no words".
 - **The WebRTC project's voice detector** (webrtcvad, strictest mode, 10 ms frames, at least 30 ms in a row): where it finds
-  a voice. Every recording is brought to the same loudness first, so a quiet one is not judged on loudness. This detector
+  a voice. Every speech recording is brought to the same loudness first, so a quiet one is not judged on loudness; the noise clips
+  of one recording (-45, -35 and -25 dBFS) share one gain, so the difference between their levels is kept. Each recording starts a new
+  detector, so nothing of the one before is left in it. This detector
   reacts to many noises once they are made loud, so by itself it never makes a recording "speech".
 
 **What was looked at.**

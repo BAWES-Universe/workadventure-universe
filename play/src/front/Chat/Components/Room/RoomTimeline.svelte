@@ -133,7 +133,12 @@
         offerCardKey,
         startersCardKey,
     } from "../../Bricks/ClosedBrickCards";
-    import { loadMyBricks, myBricksByChatId, myBricksStore, withMyBricks } from "../../Bricks/MyBricksStore";
+    import {
+        loadMyBricksAfterPending,
+        myBricksByChatId,
+        myBricksStore,
+        withMyBricks,
+    } from "../../Bricks/MyBricksStore";
     import { openDirectChatRoom } from "../../Utils";
     import BrickComputerBar from "../../Bricks/Computer/BrickComputerBar.svelte";
     import Message from "./Message.svelte";
@@ -686,7 +691,16 @@
     function readBricksOnceFor(messageId: string | undefined) {
         if (!messageId || bricksReadFor === messageId) return;
         bricksReadFor = messageId;
-        loadMyBricks().catch((error) => console.error(error));
+        // A read already out may have started before the Brick was made: this one starts after it, and the message counts as
+        // read only when that read listed the Bricks (when it could not, the next change asks again)
+        loadMyBricksAfterPending()
+            .then((listed) => {
+                if (!listed && bricksReadFor === messageId) bricksReadFor = undefined;
+            })
+            .catch((error) => {
+                console.error(error);
+                if (bricksReadFor === messageId) bricksReadFor = undefined;
+            });
     }
     async function tapBrickCard(card: BotAsk, tap: BotAskTap): Promise<boolean> {
         if (tap.action === "close") {
@@ -771,7 +785,7 @@
         const text = $LL.chat.brick.appCard;
         return connectFromCard(offer, brickId, {
             connectListedApp: (key) => botApiService.connectListedApp(key),
-            signIn: (appId) => signInInPopup(appId),
+            signIn: (makeApp, alreadyConnected) => signInInPopup(makeApp, { alreadyConnected }),
             connectReadyMade: ({ key, name }) =>
                 connectApp({ kind: "readyMade", key, name, blurb: "", connectionId: null }),
             isConnected: async (appId) => {
@@ -784,7 +798,11 @@
         })
             .then((result) => {
                 if (result === "connected") closeBrickCard(tappedKey);
-                else if (result === "stopped")
+                // Connected and let use it, but the Brick could not be told to carry on: said, and only that is left to ask
+                else if (result === "not_resumed") {
+                    warningMessageStore.addWarningMessage(text.couldNotResume({ name: offer.name }));
+                    closeBrickCard(tappedKey);
+                } else if (result === "stopped")
                     warningMessageStore.addWarningMessage(text.signInStopped({ name: offer.name }));
                 else if (result === "unchecked")
                     warningMessageStore.addWarningMessage(text.signInUnchecked({ name: offer.name }));

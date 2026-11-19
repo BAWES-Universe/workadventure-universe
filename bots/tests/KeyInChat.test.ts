@@ -38,4 +38,21 @@ describe('keyInChatReply', () => {
             expect(keyInChatReply(language).length).toBeGreaterThan(10);
         }
     });
+
+    it('says what the Brick did not keep, that the message is still in the chat, and to delete it and change the key, in every language', () => {
+        const english = keyInChatReply('en');
+        expect(english).toMatch(/didn't read it or keep it/);
+        expect(english).toMatch(/still in this chat/);
+        expect(english).toMatch(/delete it and change that key/);
+        // It no longer says the key "isn't saved" as if nothing of it remained
+        expect(english).not.toMatch(/isn't saved/);
+        const seen = new Set<string>([english]);
+        for (const language of ['ar', 'ca', 'de', 'es', 'fr', 'it', 'ja', 'ko', 'nl', 'pt', 'zh'] as const) {
+            const words = keyInChatReply(language);
+            // Its own words, longer than the old notice, which only said it was not read or saved
+            expect(seen.has(words)).toBe(false);
+            seen.add(words);
+            expect(words.length).toBeGreaterThan(80);
+        }
+    });
 });

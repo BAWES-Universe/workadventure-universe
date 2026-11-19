@@ -6,7 +6,7 @@
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import BrickPicture from "../BrickPicture.svelte";
-    import { parseShare, pickedTitles, shareRefusal, type Share, type ShareJobChoice } from "./AppShare";
+    import { parseShare, pickedTitles, shareRefusal, shareRefused, type Share, type ShareJobChoice } from "./AppShare";
     import AppRow from "./AppRow.svelte";
     import ShareSheet from "./ShareSheet.svelte";
     import { IconUsers } from "@wa-icons";
@@ -26,6 +26,9 @@
     $: text = $LL.chat.brick.apps;
     $: words = $LL.chat.brick.apps.share;
     let share: Share | undefined;
+    // What the open sheet was made from: the row may be read again (an answer that never came) while the sheet stays, with its draft and its failure line
+    let sheetShare: Share | undefined;
+    $: if (share) sheetShare = share;
     let loadFailed = false;
     let busy = false;
     let sheet: "start" | "change" | undefined;
@@ -70,6 +73,13 @@
             console.warn("What is shared was not changed", error);
             refusal = shareRefusal(error, text.workFailed());
             if (!sheet) warningMessageStore.addWarningMessage(refusal);
+            // An answer that never came (or a fault) may have gone through: what is shared is read again, as when stopping, so the row never
+            // keeps showing the old permissions. A definite refusal left it as it was
+            if (!shareRefused(error)) {
+                share = undefined;
+                loadFailed = false;
+                await load();
+            }
             return false;
         } finally {
             // eslint-disable-next-line require-atomic-updates
@@ -184,16 +194,19 @@
     {/if}
 </div>
 
-{#if share && sheet}
-    <ShareSheet
-        app={appName}
-        brick={brickName}
-        {share}
-        starting={sheet === "start"}
-        {refusal}
-        onSubmit={submit}
-        onClose={() => (sheet = undefined)}
-    />
+{#if sheet}
+    {@const shown = share ?? sheetShare}
+    {#if shown}
+        <ShareSheet
+            app={appName}
+            brick={brickName}
+            share={shown}
+            starting={sheet === "start"}
+            {refusal}
+            onSubmit={submit}
+            onClose={() => (sheet = undefined)}
+        />
+    {/if}
 {/if}
 
 <style>
