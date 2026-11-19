@@ -48,6 +48,9 @@ import { ConversationMemory } from '../memory/ConversationMemory';
 import { heardInDm } from '../memory/Heard';
 import { MarkerWatch, PRIVATE_MARKER, PrivateAnswers, answeredPrivatelyLine, continuedIn, privateBodyOf } from '../ai/PrivateAnswers';
 
+/** A file the lookup finds: `items` is the field the service reads from Orbit's answer. */
+const MINUTES = { type: 'file', ref: 'f9', name: 'Q3-minutes.pdf', kind: 'document', source: 'person', createdAt: '2026-11-17T09:00:00Z', inThisChat: true };
+
 const BOT = 'bot-1';
 const KHALID = 7;
 const SARA_ID = 9;
@@ -533,7 +536,7 @@ describe('AIService: private answers in a group (#1993)', () => {
             // Omar walks up while Orbit looks the files up
             adminApi.findBotFiles = vi.fn(async () => {
                 here.others = [SARA, OMAR];
-                return { files: [], hidden: false };
+                return { items: [MINUTES], files: [], hidden: false };
             });
             const { room } = await say('What do the minutes say?');
 
@@ -548,7 +551,7 @@ describe('AIService: private answers in a group (#1993)', () => {
             Object.assign(botClient, { getFullConfig: () => ({}) });
             (service as unknown as { orbitKeepsFiles: boolean }).orbitKeepsFiles = true;
             adminApi.isConfigured = () => true;
-            adminApi.findBotFiles = vi.fn(async () => ({ files: [], hidden: false }));
+            adminApi.findBotFiles = vi.fn(async () => ({ items: [MINUTES], files: [], hidden: false }));
             const { room } = await say('What do the minutes say?');
             expect(room).toContain('layoffs');
         });
@@ -556,7 +559,6 @@ describe('AIService: private answers in a group (#1993)', () => {
 
     describe('files named or read for the group, when someone walks up while the model is answering', () => {
         const OMAR = 'uuid-omar';
-        const MINUTES = { type: 'file', ref: 'f9', name: 'Q3-minutes.pdf', kind: 'document', source: 'person', createdAt: '2026-11-17T09:00:00Z', inThisChat: true };
         /** A model whose answer takes a moment, and Omar walks up in that moment. */
         const answersWhileOmarComes = (here: { others: string[] | undefined }, words: string, walksUp: boolean, tool = false) => {
             let calls = 0;
@@ -593,6 +595,29 @@ describe('AIService: private answers in a group (#1993)', () => {
             const { say, here } = await withFiles();
             answersWhileOmarComes(here, 'The minutes say the layoffs start on Monday.', true, true);
             const { room } = await say('What do the minutes say?');
+            expect(room).not.toContain('layoffs');
+            expect(room).toContain('Someone else just joined');
+        });
+
+        it('keeps the files check on the second try made when the first said it saved a page nobody saved', async () => {
+            const { say, here, service } = await withFiles();
+            let calls = 0;
+            (service as any).generateTurn = async function* (...args: any[]) {
+                calls++;
+                const facts = args[16];
+                if (calls === 1) {
+                    // The first answer read files, said it saved a page, and saved none
+                    Object.assign(facts, { guard: true, artifactTools: true, fileDerived: { joined: () => here.others?.includes(OMAR) === true } });
+                    yield { content: 'Rebuilt it, v2 is dark.', done: false };
+                } else {
+                    // The second look at the files timed out, so it sets nothing; Omar walks up while it answers
+                    here.others = [SARA, OMAR];
+                    yield { content: 'The minutes say the layoffs start on Monday.', done: false };
+                }
+                yield { content: '', done: true, metadata: { tokensUsed: 10, promptTokens: 5, completionTokens: 5, latency: 5, error: false, truncated: false } };
+            };
+            const { room } = await say('Rebuild the minutes page');
+            expect(calls).toBe(2);
             expect(room).not.toContain('layoffs');
             expect(room).toContain('Someone else just joined');
         });

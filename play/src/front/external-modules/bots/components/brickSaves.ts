@@ -145,12 +145,15 @@ export function brickAfterTemplate(
     const theirs = brickSavedOf(fresh);
     let next: BotData = bot;
     const after: BrickSaved = { ...saved, behavior: { ...saved.behavior } };
-    if (taken.includes("description") && now.description === saved.description) {
-        next = { ...next, description: fresh.description };
+    // What Orbit has is what is saved, whatever is on the page: the baseline always moves to it, so a part the person is
+    // editing is sent by the next save and is never mistaken for unchanged. Only what is shown waits for the person.
+    if (taken.includes("description")) {
+        if (now.description === saved.description) next = { ...next, description: fresh.description };
         after.description = theirs.description;
     }
-    if (taken.includes("instructions") && now.chatInstructions === saved.chatInstructions) {
-        next = { ...next, chatInstructions: fresh.chatInstructions };
+    if (taken.includes("instructions")) {
+        if (now.chatInstructions === saved.chatInstructions)
+            next = { ...next, chatInstructions: fresh.chatInstructions };
         after.chatInstructions = theirs.chatInstructions;
     }
     if (taken.includes("look") && fresh.characterTexture) {

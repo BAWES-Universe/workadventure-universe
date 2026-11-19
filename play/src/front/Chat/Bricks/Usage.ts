@@ -78,6 +78,8 @@ export interface BotSpend {
 }
 
 export type ActivityState = "done" | "refunded";
+/** How a task came to end: every action worked, some did (partly done), or none did. */
+export type ActivityOutcome = "done" | "partial" | "refunded";
 export type ActivityPayer = "you" | "universe" | "sponsor";
 
 /** One line of a receipt: what was used and what it took ("Nothing" is a note). */
@@ -85,6 +87,21 @@ export interface ReceiptLine {
     label: string;
     amountMicros: number | null;
     note: string | null;
+}
+
+/** What Orbit says of a line whose price is not known yet. The page says it as "amount unavailable", never as a number or as "Nothing". */
+export const PRICE_NOT_KNOWN = "Price not known yet";
+
+/** One Instant action of a task and how it ended. Only the App and the outcome: never what was asked or answered. */
+export interface ActivityAction {
+    label: string;
+    outcome: "worked" | "failed";
+    /** "Gmail · didn't work" (Orbit's words) */
+    text: string;
+    /** "Nothing taken" for an action that did not work; null for one that did */
+    takenText: string | null;
+    /** What this one action took, when Orbit says (a failed one took nothing); null when it does not say */
+    amountMicros: number | null;
 }
 
 /** One task, in Activity. */
@@ -99,6 +116,12 @@ export interface ActivityItem {
     payer: ActivityPayer;
     payerName: string | null;
     lines: ReceiptLine[];
+    /** How the task came to end. `state` stays "done" for a task that partly worked, since something worked. */
+    outcome: ActivityOutcome;
+    /** Orbit's sentence under a partly done receipt ("Two steps worked and one didn't. Nothing was taken for the one that didn't."); null otherwise */
+    outcomeNote: string | null;
+    /** Each Instant action of the task; empty for a task with none (an older Orbit, or a computer's) */
+    actions: ActivityAction[];
 }
 
 /** This month's computer time. Only for someone whose Brick uses a computer. */
@@ -262,9 +285,33 @@ function parseLines(value: unknown): ReceiptLine[] {
     return out;
 }
 
+const ACTIONS_MAX = 20;
+
+function parseActions(value: unknown): ActivityAction[] {
+    if (!Array.isArray(value)) return [];
+    const out: ActivityAction[] = [];
+    for (const item of value) {
+        if (!isRaw(item)) continue;
+        const label = short(item.label);
+        const text = short(item.text);
+        if (!label || !text || (item.outcome !== "worked" && item.outcome !== "failed")) continue;
+        out.push({
+            label,
+            outcome: item.outcome,
+            text,
+            // A failed action took nothing, whatever else it says
+            takenText: item.outcome === "failed" ? short(item.takenText) ?? null : null,
+            amountMicros: item.outcome === "failed" ? null : micros(item.amountMicros) ?? null,
+        });
+        if (out.length >= ACTIONS_MAX) break;
+    }
+    return out;
+}
+
 function parseActivity(value: unknown): ActivityItem[] {
     if (!Array.isArray(value)) return [];
     const out: ActivityItem[] = [];
+    const seen = new Set<string>();
     for (const item of value) {
         if (!isRaw(item)) continue;
         const id = typeof item.id === "string" && /^[\w-]{1,64}$/.test(item.id) ? item.id : undefined;
@@ -272,14 +319,28 @@ function parseActivity(value: unknown): ActivityItem[] {
         const at = when(item.at);
         // One task that cannot be read is left out, never the whole list
         if (!id || !title || !at) continue;
+        // A receipt has one row: the same id twice is one task (its first row), never two rows that open the same receipt
+        if (seen.has(id)) continue;
         // A task the system is still looking up (an older Orbit may send it as "checking") is not a state anyone can act on: it is
-        // left out and shows when it has settled
+        // left out and shows when it has settled. It does not take the id: a later row of the same task that has settled is its row
         if (item.state === "checking") continue;
+        seen.add(id);
+        const state = item.state === "refunded" ? "refunded" : "done";
+        const actions = parseActions(item.actions);
+        // Partly done needs a step that worked and one that did not; an older Orbit that sends neither is done or refunded as before
+        const partly =
+            state !== "refunded" &&
+            item.outcome === "partial" &&
+            actions.some((action) => action.outcome === "worked") &&
+            actions.some((action) => action.outcome === "failed");
         out.push({
             id,
             title,
             at,
-            state: item.state === "refunded" ? "refunded" : "done",
+            state,
+            outcome: state === "refunded" ? "refunded" : partly ? "partial" : "done",
+            outcomeNote: partly ? short(item.outcomeNote) ?? null : null,
+            actions,
             spentMicros: micros(item.spentMicros) ?? null,
             category: item.category === "apps" || item.category === "computer" ? item.category : null,
             payer: item.payer === "universe" ? "universe" : item.payer === "sponsor" ? "sponsor" : "you",
@@ -405,6 +466,25 @@ export function availableText(microsValue: number, locale: string | undefined): 
 /** What was taken, rounded up to the cent so it never understates: "$0.06", "$0.92". Something taken is never "$0.00". */
 export function spentText(microsValue: number, locale: string | undefined): string {
     return dollarText(Math.ceil(Math.max(0, microsValue) / CENT), locale);
+}
+
+/** More than nothing and less than one cent: said as that, never as "$0" or "$0.01". */
+export const isUnderACent = (microsValue: number): boolean => microsValue > 0 && microsValue < CENT;
+
+/**
+ * What is available, as the page says it: "Less than $0.01" for a positive amount under a cent (it is not "$0": something is
+ * there), otherwise cut down to the cent as `availableText` does. `tiny` is the words for the amount under a cent.
+ */
+export function availableLabel(microsValue: number, locale: string | undefined, tiny: string): string {
+    return isUnderACent(microsValue) ? tiny : availableText(microsValue, locale);
+}
+
+/**
+ * What was taken, as the page says it: "less than $0.01" for a positive amount under a cent (it is not "$0.01": that is more than
+ * was taken), "$0" for a true zero, otherwise rounded up to the cent as `spentText` does.
+ */
+export function spentLabel(microsValue: number, locale: string | undefined, tiny: string): string {
+    return isUnderACent(microsValue) ? tiny : spentText(microsValue, locale);
 }
 
 /**

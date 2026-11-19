@@ -89,6 +89,6 @@ export function sayNow(now: number, timeZone: string): string {
 
 /** The time of day (HH:mm) in "2026-11-15 16:00", for a reminder that comes every day. */
 export function timeOfDayOf(local: unknown): string | null {
-    const match = typeof local === 'string' ? /^\d{4}-\d{2}-\d{2}[ T]([01]\d|2[0-3]):([0-5]\d)(?::\d{2})?$/.exec(local.trim()) : null;
+    const match = typeof local === 'string' ? /^\d{4}-\d{2}-\d{2}[ T]([01]\d|2[0-3]):([0-5]\d)(?::00)?$/.exec(local.trim()) : null;
     return match ? `${match[1]}:${match[2]}` : null;
 }

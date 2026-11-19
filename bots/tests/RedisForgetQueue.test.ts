@@ -2,7 +2,8 @@
  * The forgets Orbit has not taken yet, kept in the bot servers' shared store (Redis): one entry per thing, so two bot servers never
  * overwrite each other, written together in one transaction, and a damaged entry never stops a bot server starting.
  */
-import { describe, expect, it } from 'vitest';
+import { createClient } from 'redis';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forgetKeyOf, MAX_FORGOTTEN_ITEMS, PUT_SCRIPT, REMOVE_SCRIPT, RedisForgetQueue, type ForgetQueueRedis } from '../memory/ForgetQueue';
 
 /** The few Redis hash commands the queue uses, in memory. `execs` counts transactions. */
@@ -20,7 +21,7 @@ function fakeRedis() {
                 // The two scripts, as Redis runs them: a put does not replace a later ask, a removal does not remove one
                 eval: (script: string, options: { keys: string[]; arguments: string[] }) => {
                     steps.push(() => {
-                        const [field, second, third] = options.arguments;
+                        const [field, second, third, fourth] = options.arguments;
                         const stored = hash(options.keys[0]).get(field);
                         const rank = (since: number) => (since === 0 ? Infinity : since);
                         let storedSince: number | undefined;
@@ -30,6 +31,7 @@ function fakeRedis() {
                             storedSince = undefined;
                         }
                         if (script === PUT_SCRIPT) {
+                            if (stored === undefined && fourth === 'existing') return;
                             if (storedSince !== undefined && rank(storedSince) > rank(Number(third))) return;
                             hash(options.keys[0]).set(field, second);
                         } else if (script === REMOVE_SCRIPT) {
@@ -173,5 +175,91 @@ describe('the forget queue in the shared store', () => {
         await queue.write({ pending: { put: [], del: [] }, ledger: { put: [forgotten('a', 0)], del: [] } });
         await queue.write({ pending: { put: [], del: [] }, ledger: { put: [forgotten('a', 50)], del: [{ key, since: 50 }] } });
         expect(JSON.parse(redis.hash('bots:forgets:ledger').get(key)!).since).toBe(0);
+    });
+});
+
+describe('the forget queue: a refusal time never brings back a request another server saw Orbit take', () => {
+    it('updates an entry that is still there, and creates nothing when it is gone', async () => {
+        const redis = fakeRedis();
+        const queue = new RedisForgetQueue(() => redis.client);
+        const key = forgetKeyOf(pending('a'));
+        await queue.write({ pending: { put: [pending('a')], del: [] }, ledger: { put: [], del: [] } });
+        // Still there: the refusal time is written
+        await queue.write({ pending: { put: [], del: [], refuse: [{ ...pending('a'), refusedSince: 99 }] }, ledger: { put: [], del: [] } });
+        expect(JSON.parse(redis.hash('bots:forgets:pending').get(key)!).refusedSince).toBe(99);
+        // Another server saw Orbit take it and removed it: this one only has a refusal time to write, and it does not create the request again
+        await queue.write({ pending: { put: [], del: [{ key, since: 10 }] }, ledger: { put: [], del: [] } });
+        await queue.write({ pending: { put: [], del: [], refuse: [{ ...pending('a'), refusedSince: 120 }] }, ledger: { put: [], del: [] } });
+        expect(redis.hash('bots:forgets:pending').has(key)).toBe(false);
+        // A new request still creates
+        await queue.write({ pending: { put: [pending('a', 30)], del: [] }, ledger: { put: [], del: [] } });
+        expect(redis.hash('bots:forgets:pending').has(key)).toBe(true);
+    });
+});
+
+/**
+ * The same rules against the real scripts: the fake above re-implements them in JS, so a change to the Lua would not show there. Runs when a Redis
+ * is given in BOTS_TEST_REDIS_URL (for example `redis-server --port 6390` and redis://127.0.0.1:6390), and is skipped when there is none.
+ * The CI job of the bots gives one (a Redis service) and sets BOTS_REQUIRE_REDIS: there, a missing Redis fails the run instead of skipping the tests.
+ */
+const REAL_REDIS = process.env.BOTS_TEST_REDIS_URL;
+describe.runIf(process.env.BOTS_REQUIRE_REDIS === '1' && !REAL_REDIS)('the real Redis for the forget queue tests', () => {
+    it('is given when the run requires it (CI): the scripts are never left untested', () => {
+        expect(REAL_REDIS, 'BOTS_TEST_REDIS_URL is not set while BOTS_REQUIRE_REDIS=1').toBeTruthy();
+    });
+});
+describe.skipIf(!REAL_REDIS)('the forget queue against a real Redis (the scripts themselves)', () => {
+    let client: ReturnType<typeof createClient>;
+    let queue: RedisForgetQueue;
+    const read = async (hash: string) => Object.fromEntries(Object.entries(await client.hGetAll(hash)).map(([field, value]) => [field, JSON.parse(value)]));
+    beforeAll(async () => {
+        client = createClient({ url: REAL_REDIS });
+        await client.connect();
+        queue = new RedisForgetQueue(() => client as unknown as ForgetQueueRedis);
+    });
+    afterAll(async () => {
+        await client.quit();
+    });
+    const empty = async () => void (await client.del(['bots:forgets:pending', 'bots:forgets:ledger']));
+
+    it('does not replace a later ask with an older put, and "0" (whenever it was said) is the latest of all', async () => {
+        await empty();
+        const key = forgetKeyOf(pending('a'));
+        await queue.write({ pending: { put: [pending('a', 30)], del: [] }, ledger: { put: [forgotten('a', 0)], del: [] } });
+        await queue.write({ pending: { put: [pending('a', 20)], del: [] }, ledger: { put: [forgotten('a', 50)], del: [] } });
+        expect((await read('bots:forgets:pending'))[key].since).toBe(30);
+        expect((await read('bots:forgets:ledger'))[key].since).toBe(0);
+        // A newer put does replace
+        await queue.write({ pending: { put: [pending('a', 40)], del: [] }, ledger: { put: [], del: [] } });
+        expect((await read('bots:forgets:pending'))[key].since).toBe(40);
+    });
+
+    it('does not remove a later ask with a stale removal, and removes the same or an earlier one', async () => {
+        await empty();
+        const key = forgetKeyOf(pending('a'));
+        await queue.write({ pending: { put: [pending('a', 30)], del: [] }, ledger: { put: [forgotten('a', 0)], del: [] } });
+        await queue.write({ pending: { put: [], del: [{ key, since: 10 }] }, ledger: { put: [], del: [{ key, since: 50 }] } });
+        expect(Object.keys(await read('bots:forgets:pending'))).toEqual([key]);
+        expect(Object.keys(await read('bots:forgets:ledger'))).toEqual([key]);
+        await queue.write({ pending: { put: [], del: [{ key, since: 30 }] }, ledger: { put: [], del: [{ key, since: 0 }] } });
+        expect(await read('bots:forgets:pending')).toEqual({});
+        expect(await read('bots:forgets:ledger')).toEqual({});
+    });
+
+    it('writes a refusal time only to an entry that is still there', async () => {
+        await empty();
+        const key = forgetKeyOf(pending('a'));
+        await queue.write({ pending: { put: [], del: [], refuse: [{ ...pending('a'), refusedSince: 99 }] }, ledger: { put: [], del: [] } });
+        expect(await read('bots:forgets:pending')).toEqual({});
+        await queue.write({ pending: { put: [pending('a')], del: [] }, ledger: { put: [], del: [] } });
+        await queue.write({ pending: { put: [], del: [], refuse: [{ ...pending('a'), refusedSince: 99 }] }, ledger: { put: [], del: [] } });
+        expect((await read('bots:forgets:pending'))[key].refusedSince).toBe(99);
+    });
+
+    it('reads what it wrote, oldest first with the untimed one last', async () => {
+        await empty();
+        await queue.write({ pending: { put: [], del: [] }, ledger: { put: [forgotten('untimed', 0), forgotten('late', 90), forgotten('early', 5)], del: [] } });
+        expect((await queue.load()).ledger.map((entry) => entry.itemKey)).toEqual(['early', 'late', 'untimed']);
+        await empty();
     });
 });

@@ -438,6 +438,8 @@ export class GuestBrickChatRoom implements ChatRoom {
         turn: Turn
     ): Promise<Pick<GuestBrickRequest, "files" | "note"> | undefined> {
         const refresh = this.deps.refreshReceipt;
+        // A turn of a chat that was replaced (another guest, or a new chat) reads a line of that other chat: nothing is asked for it
+        if (!this.ownsTurn(turn)) return undefined;
         const line = this.chat?.lines[index];
         if (!refresh || !line?.media) return undefined;
         try {

@@ -114,8 +114,13 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
             }
             const left = CARRIED_COPY_BYTES_MAX - bytes;
             let made = await copyOnce(key, receipt, left, now, copy);
-            // A copy that a carry with less budget started and refused for its size is not a "no" for this one: it asks for its own
-            if (!made.ok && 'over' in made && made.over !== undefined && made.over <= left) made = await copyOnce(key, receipt, left, now, copy);
+            // A copy that a carry with less budget started and refused for its size is not a "no" for this one: it asks for its own. Other carries with
+            // less budget may start the next copy first (a carry with many lines of the same file starts one after another), so it asks again for as long as
+            // that is what it hears. It ends: every copy that is started ends, and a copy this carry starts itself is given its own budget, which fits.
+            while (!made.ok && 'over' in made && made.over !== undefined && made.over <= left) {
+                // eslint-disable-next-line no-await-in-loop
+                made = await copyOnce(key, receipt, left, now, copy);
+            }
             if (!made.ok || made.size > left) {
                 media.push(gone());
                 continue;

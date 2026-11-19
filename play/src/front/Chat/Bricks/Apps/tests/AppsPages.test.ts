@@ -704,6 +704,25 @@ describe("the Apps pages (#2001)", () => {
             expect(game.getAppShare).not.toHaveBeenCalled();
         });
 
+        it("keeps the sheet, its picks and its failure line open when a save got no answer and what is shared is read again", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            game.startAppShare.mockRejectedValue(new Error("offline"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 1);
+            await tapSheet("Let others use it");
+            warn.mockRestore();
+            // It was read again (the answer may have gone through), and the sheet is still there with what was picked and a failure shown
+            expect(game.getAppShare).toHaveBeenCalledTimes(2);
+            expect(byId("appShareSheet")).not.toBeNull();
+            expect(byId("appShareFailed")).not.toBeNull();
+            expect(allById("appShareJobPick").map((one) => one.getAttribute("aria-checked"))).toEqual([
+                "false",
+                "true",
+            ]);
+        });
+
         it("stops at once with one tap and nothing to confirm, and then says Only you again", async () => {
             game.getAppShare.mockResolvedValueOnce(sharedView());
             await open();

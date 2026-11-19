@@ -706,6 +706,36 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         expect(get(get(room.messages).at(-1)!.content).body).toBe("Got it.");
     });
 
+    it("asks nobody to renew a receipt for a turn of a chat that was replaced while its answer was out", async () => {
+        let guest = GUEST;
+        const releases: Array<(answer: unknown) => void> = [];
+        const bot = {
+            releases,
+            answer: () =>
+                new Promise<unknown>((resolve) => {
+                    releases.push(resolve);
+                }),
+        };
+        const tick = async () => {
+            await Array.from({ length: 20 }).reduce<Promise<void>>(
+                (turn) => turn.then(() => undefined),
+                Promise.resolve()
+            );
+        };
+        const { room, answers, settle, deps } = withMedia({ guestId: () => guest });
+        answers.push(bot.answer);
+        await room.sendFiles(files("menu.png"));
+        await settle();
+        // Another guest, with a line at the same place, while the answer of the first is out; it comes back as expired
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.refresh();
+        await room.sendFiles(files("door.png"));
+        await settle();
+        bot.releases[0]({ kind: "upload", why: "expired" });
+        await tick();
+        expect(deps.refreshReceipt).not.toHaveBeenCalled();
+    });
+
     it("says a file is gone when the bot server can't read it", async () => {
         const { room, answers, settle } = withMedia();
         answers.push(() => Promise.resolve({ kind: "upload", why: "refused" }));
@@ -859,6 +889,34 @@ describe("a guest's chat when guests change, time passes and the chat is carried
         await tick();
         // b1 was asked before b2's turn: it never saw b2 in its history
         expect(asked.find((one) => one.message === "b1")?.history).toEqual([]);
+    });
+
+    it("keeps a new guest's waiting lines out of the history of their earlier line even when an old guest's queued turns, at the same places, run first", async () => {
+        let guest = GUEST;
+        const bot = held();
+        const { room, asked, answers, settle } = setup({ guestId: () => guest });
+        answers.push(bot.answer, bot.answer, bot.answer, bot.answer);
+        room.sendMessage("a1");
+        room.sendMessage("a2");
+        room.sendMessage("a3");
+        await settle();
+        guest = OTHER;
+        room.sendMessage("b1");
+        room.sendMessage("b2");
+        room.sendMessage("b3");
+        await settle();
+        // The old guest's answer comes back: their queued turns (the same places as b2 and b3) run now, while b1 is still out
+        bot.releases[0](reply("Answer to a1"));
+        await tick();
+        // b1's answer comes, and b2 is asked with the chat as it stands: b3 is still waiting and is not in it
+        bot.releases[1](reply("Answer to b1"));
+        await tick();
+        const b2 = asked.find((one) => one.message === "b2");
+        expect(b2?.history).toEqual([
+            { from: "guest", text: "b1" },
+            { from: "brick", text: "Answer to b1" },
+        ]);
+        expect(b2?.history.map((one) => one.text)).not.toContain("b3");
     });
 
     it("clears what the old chat was showing when the guest changes: no typing, no leftover note of an answer that failed", async () => {

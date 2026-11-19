@@ -11,7 +11,7 @@ vi.mock('axios', () => ({ default: hoisted.axios, ...hoisted.axios }));
 
 import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
 import { PersistentMemory } from '../memory/PersistentMemory';
-import { forgetKeyOf, RedisForgetQueue, type ForgetFileContents, type ForgetQueueChanges, type ForgetQueueRedis, type ForgetQueueStore } from '../memory/ForgetQueue';
+import { forgetKeyOf, MAX_FORGOTTEN_ITEMS, RedisForgetQueue, type ForgetFileContents, type ForgetQueueChanges, type ForgetQueueRedis, type ForgetQueueStore } from '../memory/ForgetQueue';
 import { parseItemForgets } from '../memory/ForgetNotice';
 import { dropItems, memoryItemKey, memoryItemsOf, visibleItems } from '../memory/MemoryItems';
 import { heardInDm } from '../memory/Heard';
@@ -680,6 +680,39 @@ describe('PersistentMemory: a forgotten thing is not brought back by a snapshot,
         expect(save).not.toHaveBeenCalled();
     });
 
+    it('does not write a person back over a Forget of them when the cleanup of old memories let their memory go while the save waited for Orbit', async () => {
+        const memory = held();
+        const save = vi.spyOn(memory.memoryStorage, 'saveMemory').mockResolvedValue(undefined);
+        let finish: () => void = () => undefined;
+        vi.spyOn(memory, 'reportUnreportedForgets').mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+        memory.scheduleDebouncedSave(BOT, SARA);
+        const saving = memory.flushDebouncedSave(BOT, SARA);
+        // The save holds its snapshot apart; the memory itself is evicted, so a Forget of the whole person finds no active memory
+        memory.memories.clear();
+        expect(memory.getAllMemories().has(`${BOT}_${SARA}`)).toBe(false);
+        memory.forget(BOT, { everyone: false, userUuids: ['uuid-sara'], rows: [{ id: 'row-3', userUuid: 'uuid-sara' }] });
+        finish();
+        await saving;
+        expect(save).not.toHaveBeenCalled();
+    });
+
+    it('does not write a person back over a Forget of them when their memory was evicted before the save timer fired', async () => {
+        const memory = held();
+        const save = vi.spyOn(memory.memoryStorage, 'saveMemory').mockResolvedValue(undefined);
+        await vi.advanceTimersByTimeAsync(10);
+        save.mockClear();
+        memory.scheduleDebouncedSave(BOT, SARA);
+        // The cleanup of old memories let the active memory go, but the save still waits on its timer with the old snapshot
+        memory.memories.clear();
+        expect(memory.pendingSaves.has(`${BOT}_${SARA}`)).toBe(true);
+        memory.forget(BOT, { everyone: false, userUuids: ['uuid-sara'], rows: [{ id: 'row-4', userUuid: 'uuid-sara' }] });
+        expect(memory.pendingSaves.has(`${BOT}_${SARA}`)).toBe(false);
+        expect(memory.debounceTimers.has(`${BOT}_${SARA}`)).toBe(false);
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+        await memory.flushDebouncedSave(BOT, SARA);
+        expect(save).not.toHaveBeenCalled();
+    });
+
     it('still saves when nothing was forgotten while Orbit was being told', async () => {
         const memory = held();
         const save = vi.spyOn(memory.memoryStorage, 'saveMemory').mockResolvedValue(undefined);
@@ -698,6 +731,8 @@ class FakeForgetStore implements ForgetQueueStore {
     ledger = new Map<string, Record<string, unknown>>();
     /** Reads and writes fail while the store cannot be reached. */
     unreachable = false;
+    /** The next write is applied and then fails (a timeout that came after the store had done it). */
+    failAfterApplying = false;
     /** False while there is no shared store at all (never reached). */
     present = true;
     inUse() {
@@ -725,7 +760,19 @@ class FakeForgetStore implements ForgetQueueStore {
             }
         };
         apply(this.pending, changes.pending.put, changes.pending.del);
+        // As in Redis: a refusal time is written only to an entry that is still there
+        for (const entry of changes.pending.refuse ?? []) {
+            const key = forgetKeyOf(entry as never);
+            const stored = this.pending.get(key);
+            if (stored && rank(stored.since) <= rank(entry.since)) this.pending.set(key, { ...entry });
+        }
         apply(this.ledger, changes.ledger.put, changes.ledger.del);
+        if (this.failAfterApplying) {
+            // The store did it; the answer never came, and the store then stays away
+            this.failAfterApplying = false;
+            this.unreachable = true;
+            throw new Error('Shared store did not answer in time');
+        }
     }
     contents() {
         return { pending: [...this.pending.values()], ledger: [...this.ledger.values()] };
@@ -829,6 +876,41 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
         expect(memory.unreportedItemForgets.size).toBe(0);
         expect(saved()).toEqual([]);
         expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not tell Orbit what was forgotten'));
+        warn.mockRestore();
+    });
+
+    it('removes what a write put when the store applied it and then did not answer, once Orbit has taken the forget', async () => {
+        const memory = await start();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        store.failAfterApplying = true;
+        await forgetWhileDown(memory);
+        // The store has it (the put was applied), and this process does not know that; the store is away from now on
+        expect(store.contents().pending).toHaveLength(1);
+        up();
+        await memory.reportUnreportedForgets();
+        // Orbit took the forget: it is let go here, but the store cannot be told yet
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(store.contents().pending).toHaveLength(1);
+        // The store is back: what the first write may have put is removed
+        store.unreachable = false;
+        await memory.persistUnreported();
+        clearTimeout(memory.unreportedRetryTimer);
+        expect(store.contents().pending).toEqual([]);
+        warn.mockRestore();
+    });
+
+    it('does not bring back a request another server saw Orbit take when this one then writes only that Orbit refused it', async () => {
+        const memory = await start();
+        await forgetWhileDown(memory);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        expect(saved()).toHaveLength(1);
+        // Another bot server told Orbit and removed the request from the shared store; this one still holds it and is refused (404) meanwhile
+        store.pending.clear();
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'no route', response: { status: 404 } });
+        await memory.reportUnreportedForgets();
+        clearTimeout(memory.unreportedRetryTimer);
+        expect([...memory.unreportedItemForgets.values()][0].refusedSince).toBeGreaterThan(0);
+        expect(saved()).toEqual([]);
         warn.mockRestore();
     });
 
@@ -996,6 +1078,164 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         clearTimeout(second.unreportedRetryTimer);
     });
 
+    /** A second bot server that started before anything was forgotten, and the forget another server then stored. */
+    const secondServerWithForgetStored = async () => {
+        const first = await start();
+        first.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await first.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(first.unreportedRetryTimer);
+        const empty = new FakeForgetStore();
+        const second: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local', forgetQueue: empty });
+        await second.forgetQueueReady;
+        vi.spyOn(second.memoryStorage, 'loadMemories').mockResolvedValue([first.cloneMemory(talkingRecord('uuid-sara', ['lo-fi', 'jazz']))]);
+        await second.loadMemories(BOT);
+        expect(second.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.preferences).toEqual(['lo-fi', 'jazz']);
+        return { second, empty };
+    };
+
+    it('drops a thing another server forgot from a memory this server already holds, not only from one it loads next', async () => {
+        const { second, empty } = await secondServerWithForgetStored();
+        // The forget reaches the shared store; this server reads it on a refresh with nothing to load
+        empty.pending = new Map(store.pending);
+        empty.ledger = new Map(store.ledger);
+        second.queueRefreshedAt = 0;
+        await second.refreshForgetQueue();
+        expect(second.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.preferences).toEqual(['jazz']);
+        clearTimeout(second.unreportedRetryTimer);
+    });
+
+    it('drops a recorded forget from a snapshot and an active memory whose own uuid is still "temp-..", by whose they are (Sentry)', async () => {
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        memory.getMemory(BOT, SARA).userUuid = 'temp-1';
+        const snapshot = talkingRecord('uuid-sara', ['lo-fi', 'jazz']);
+        snapshot.userUuid = 'temp-1';
+        memory.loadedMemoriesByUuid.set(`${BOT}_uuid-sara`, snapshot);
+        memory.ledgerForget({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', since: 0 });
+        expect(memory.getMemory(BOT, SARA).personalInfo.preferences).toContain('lo-fi');
+        memory.dropRecordedForgetsFromHeld();
+        expect(snapshot.personalInfo.preferences).toEqual(['jazz']);
+        expect(memory.getMemory(BOT, SARA).personalInfo.preferences).not.toContain('lo-fi');
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('drops a recorded forget from a snapshot and an active memory of a person whose id has an underscore (an email)', async () => {
+        const memory = await start();
+        const EMAIL = 'sara_k@example.com';
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        memory.getMemory(BOT, SARA).userUuid = EMAIL;
+        memory.uuidTracking.set(`${BOT}_${SARA}`, { userUuid: EMAIL, isLogged: true });
+        const snapshot = talkingRecord(EMAIL, ['lo-fi', 'jazz']);
+        memory.loadedMemoriesByUuid.set(`${BOT}_${EMAIL}`, snapshot);
+        memory.ledgerForget({ botId: BOT, userUuid: EMAIL, itemKey: lofi, kind: 'pref', since: 0 });
+        memory.dropRecordedForgetsFromHeld();
+        expect(snapshot.personalInfo.preferences).toEqual(['jazz']);
+        expect(memory.getMemory(BOT, SARA).personalInfo.preferences).not.toContain('lo-fi');
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('lets a load that comes while the store is being read wait for that same read, and counts the half minute from when it is done', async () => {
+        const { second, empty } = await secondServerWithForgetStored();
+        empty.pending = new Map(store.pending);
+        empty.ledger = new Map(store.ledger);
+        second.queueRefreshedAt = 0;
+        let release: () => void = () => undefined;
+        const realLoad = empty.load.bind(empty);
+        const load = vi.spyOn(empty, 'load').mockImplementation(async () => {
+            await new Promise<void>((resolve) => (release = resolve));
+            return realLoad();
+        });
+        const first = second.refreshForgetQueue();
+        const other = second.refreshForgetQueue();
+        let otherDone = false;
+        void other.then(() => (otherDone = true));
+        await new Promise((resolve) => setImmediate(resolve));
+        // The second caller has not passed through: the read is still out, and so is the snapshot it would have filtered
+        expect(otherDone).toBe(false);
+        expect(load).toHaveBeenCalledTimes(1);
+        release();
+        await Promise.all([first, other]);
+        expect(load).toHaveBeenCalledTimes(1);
+        expect(second.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.preferences).toEqual(['jazz']);
+        clearTimeout(second.unreportedRetryTimer);
+    });
+
+    it('reads the store again at the next load when a read failed, instead of waiting half a minute', async () => {
+        const { second, empty } = await secondServerWithForgetStored();
+        second.queueRefreshedAt = 0;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const load = vi.spyOn(empty, 'load').mockRejectedValueOnce(new Error('Shared store is not connected'));
+        await second.refreshForgetQueue();
+        expect(second.queueRefreshedAt).toBe(0);
+        await second.refreshForgetQueue();
+        expect(load).toHaveBeenCalledTimes(2);
+        expect(second.queueRefreshedAt).toBeGreaterThan(0);
+        warn.mockRestore();
+        clearTimeout(second.unreportedRetryTimer);
+    });
+
+    it('lets go of the earliest timed forget when the ledger is full, and keeps one with no time (0), as the shared store does', async () => {
+        const memory = await start();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        memory.ledgerForget({ botId: BOT, userUuid: 'uuid-sara', itemKey: 'pref:untimed', since: 0 });
+        for (let at = 1; at <= MAX_FORGOTTEN_ITEMS; at++) memory.ledgerForget({ botId: BOT, userUuid: 'uuid-sara', itemKey: `pref:timed-${at}`, since: at });
+        expect(memory.forgottenLedger.size).toBe(MAX_FORGOTTEN_ITEMS);
+        // The first inserted is the untimed one: it is not the one that went
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:untimed`)).toBe(true);
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:timed-1`)).toBe(false);
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:timed-2`)).toBe(true);
+        warn.mockRestore();
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('lets go of many at once when the ledger is far over its limit, in one pass', async () => {
+        const memory = await start();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        memory.ledgerForget({ botId: BOT, userUuid: 'uuid-sara', itemKey: 'pref:untimed', since: 0 });
+        for (let at = 1; at <= MAX_FORGOTTEN_ITEMS + 50; at++) {
+            memory.forgottenLedger.set(`${BOT}|uuid-sara|pref:timed-${at}`, { botId: BOT, userUuid: 'uuid-sara', itemKey: `pref:timed-${at}`, since: at });
+        }
+        memory.capLedger();
+        expect(memory.forgottenLedger.size).toBe(MAX_FORGOTTEN_ITEMS);
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:untimed`)).toBe(true);
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:timed-51`)).toBe(false);
+        expect(memory.forgottenLedger.has(`${BOT}|uuid-sara|pref:timed-52`)).toBe(true);
+        // Said once for the whole pass, not once for each one let go
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('does not bring back an entry that was let go while the read waited for this server\'s own writes', async () => {
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        down();
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        clearTimeout(memory.unreportedRetryTimer);
+        expect(store.contents().pending).toHaveLength(1);
+        // A write of ours is still out when the refresh starts
+        let finishWrite: () => void = () => undefined;
+        memory.queueWriting = new Promise<void>((resolve) => (finishWrite = resolve));
+        memory.queueRefreshedAt = 0;
+        const refreshing = memory.refreshForgetQueue();
+        await new Promise((resolve) => setImmediate(resolve));
+        // The Brick is deleted for good meanwhile: the read that follows still sees the entry in the store
+        memory.purgeForgottenFor(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        const real = store.load.bind(store);
+        vi.spyOn(store, 'load').mockImplementation(async () => {
+            const kept = await real();
+            expect(kept.pending).toHaveLength(1);
+            return kept;
+        });
+        finishWrite();
+        await refreshing;
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(memory.forgottenLedger.size).toBe(0);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
     it('does not bring back a forget Orbit took while the shared store was being read (Sentry)', async () => {
         const memory = await start();
         memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
@@ -1144,12 +1384,10 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         await memory.queueWriting;
         expect(memory.unreportedItemForgets.size).toBe(0);
         expect(store.contents().ledger).toEqual([]);
-        // The timer is armed, so the write is tried again without anything else happening
+        // The timer is armed, so the write is tried again without anything else happening: it is left to run, not called by the test
         expect(memory.unreportedRetryTimer).not.toBeNull();
-        clearTimeout(memory.unreportedRetryTimer);
-        memory.unreportedRetryTimer = null;
         store.unreachable = false;
-        await memory.reportUnreportedForgets();
+        await vi.advanceTimersByTimeAsync(30_000);
         expect(store.contents().ledger).toEqual([expect.objectContaining({ itemKey: lofi, since: 5000 })]);
         expect(memory.unreportedRetryTimer).toBeNull();
         warn.mockRestore();

@@ -59,6 +59,8 @@ const DM_STATUS_TIMEOUT_MS = 10000;
 const GUEST_REPLY_TIMEOUT_MS = 130000;
 /** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
 const DIRECT_CHAT_TIMEOUT_MS = 5000;
+/** How long the exchange of the sign-in for an Orbit session may take, answer and body: past this it is no session, and the next call asks again */
+const SESSION_EXCHANGE_MS = 15_000;
 /** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
 const BRICK_WRITE_TIMEOUT_MS = 20_000;
 
@@ -200,7 +202,12 @@ export class BotApiService {
             this.resetTimeZoneKept();
             identityChanged = true;
         }
-        if (identityChanged) this.identityListeners.forEach((listener) => listener());
+        if (identityChanged) {
+            // Another account or Orbit: the looking after of a Brick's visit was for the one before, and its checks would speak with
+            // the credentials of the one now. One for the same account, Orbit and room goes on
+            this.stopVisitRecheck();
+            this.identityListeners.forEach((listener) => listener());
+        }
 
         try {
             this.botServerUrl = resolveCredentialUrl(
@@ -311,11 +318,14 @@ export class BotApiService {
             }
             const loginAttempt = this.fetchSessionTokenFromAdminApi();
             this.sessionTokenPromise = loginAttempt;
-            const token = await loginAttempt;
-            if (this.sessionTokenPromise === loginAttempt) {
-                this.sessionTokenPromise = null;
+            try {
+                return await loginAttempt;
+            } finally {
+                // Only the attempt that is still the cached one is let go: a newer one is not touched
+                if (this.sessionTokenPromise === loginAttempt) {
+                    this.sessionTokenPromise = null;
+                }
             }
-            return token;
         }
 
         return null;
@@ -365,6 +375,10 @@ export class BotApiService {
         const adminUrl = this.adminUrl;
         if (!adminUrl) return null;
 
+        // The exchange is shared by every caller that waits for the sign-in, so it has a deadline of its own that covers the answer and
+        // its body: one that never answers ends as "no session" for all of them, and the next call asks again
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), SESSION_EXCHANGE_MS);
         try {
             const response = await fetch(`${adminUrl}/api/auth/session`, {
                 method: "POST",
@@ -372,6 +386,7 @@ export class BotApiService {
                     Authorization: `Bearer ${accessToken}`,
                 },
                 credentials: "omit",
+                signal: stop.signal,
             });
 
             if (!response.ok) {
@@ -412,6 +427,8 @@ export class BotApiService {
                 console.error("[BotApiService] Error fetching session token from Admin API:", error);
             }
             return null;
+        } finally {
+            clearTimeout(timer);
         }
     }
 
@@ -516,6 +533,9 @@ export class BotApiService {
         // Which Orbit and account this request started with: when the game moves to another one while it is on its way, a 401 is not
         // answered by asking the new one for a session and sending the same request there (#2006)
         const startedWith = this.timeZoneGeneration;
+        // The Orbit it is for is taken now, before anything is waited for: a session lookup that ends after the game moved to another
+        // Orbit never sends this request there, nor with a session of the other account
+        const origin = this.adminUrl;
 
         // Try to get Admin API session token first (async - may fetch new one if missing/expired). A keepalive
         // request goes out while the page closes, when renewing first would be cut off: it takes the session as it
@@ -523,7 +543,11 @@ export class BotApiService {
         const sessionToken =
             (options.keepalive ? this.unexpiredSessionToken() : null) ?? (await this.getAdminApiSessionToken());
 
-        const url = `${this.adminUrl}${endpoint}`;
+        if (startedWith !== this.timeZoneGeneration || origin !== this.adminUrl) {
+            throw new Error("The game moved to another Orbit or account before this request went out.");
+        }
+
+        const url = `${origin}${endpoint}`;
 
         // Build headers
         const headers: Record<string, string> = {
@@ -545,15 +569,17 @@ export class BotApiService {
             const refusal = await this.readRefusal(response);
 
             // If 401 and we were using session token, clear it and try to refresh
-            if (response.status === 401 && sessionToken) {
+            // Only for the Orbit and account the request started with: the cache now belongs to the one the game is on, and the
+            // request (its body may carry credentials) goes nowhere else
+            if (response.status === 401 && sessionToken && startedWith === this.timeZoneGeneration) {
                 if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                     console.warn("[BotApiService] Session token may be expired, clearing cache and refreshing");
                 }
                 sessionStorage.removeItem(SESSION_KEY);
                 sessionStorage.removeItem(SESSION_EXPIRES_KEY);
 
-                // If we have accessToken, try to fetch a new session token and retry (only for the Orbit and account the request started with)
-                if (this.accessToken && startedWith === this.timeZoneGeneration) {
+                // If we have accessToken, try to fetch a new session token and retry
+                if (this.accessToken) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
                     // Asking for the session took time too: the game may have moved on meanwhile, and the request goes back only to the Orbit it
                     // started with (the url it was first sent to), never to the one the game is on now
@@ -642,10 +668,14 @@ export class BotApiService {
         this.timeZoneSending = true;
         this.timeZoneTries++;
         try {
-            await this.fetch("/api/me/preferences", {
-                method: "PUT",
-                body: JSON.stringify({ key: "timeZone", value: zone }),
-            });
+            // With a deadline over the session lookup and the request both: one that never answers must not keep the slot for good
+            await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, (signal) =>
+                this.fetch("/api/me/preferences", {
+                    method: "PUT",
+                    body: JSON.stringify({ key: "timeZone", value: zone }),
+                    signal,
+                })
+            );
             // An answer from an Orbit or an account the player has since left says nothing about the new one
             if (this.timeZoneGeneration === generation) this.timeZoneKept = true;
         } catch {
@@ -1285,22 +1315,35 @@ export class BotApiService {
      * caller's usual failure shows instead of a switch or button that waits for good.
      */
     private async brickWrite(endpoint: string, options: RequestInit): Promise<unknown> {
+        return await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, async (signal) => {
+            // The answer's body is read inside the same deadline: headers that come in time with a body that never
+            // ends would otherwise hold the switch as long as the connection lives
+            const response = await this.fetch(endpoint, { ...options, signal });
+            return (await response.json()) as unknown;
+        });
+    }
+
+    /**
+     * One request, the sign-in that comes first in it and the reading of its answer, all under one deadline: past it the request is
+     * dropped and this throws with `timeoutMessage`. Raced as well as aborted, because the sign-in does not listen for the abort. What
+     * `run` does after the deadline has been given up on is not reported again.
+     */
+    private async withDeadline<T>(
+        timeoutMessage: string,
+        ms: number,
+        run: (signal: AbortSignal) => Promise<T>
+    ): Promise<T> {
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
-        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
         const late = new Promise<never>((_resolve, reject) => {
             timer = setTimeout(() => {
                 stop.abort();
-                reject(new Error("Orbit did not answer in time"));
-            }, BRICK_WRITE_TIMEOUT_MS);
+                reject(new Error(timeoutMessage));
+            }, ms);
         });
         try {
-            // The answer's body is read inside the same deadline: headers that come in time with a body that never
-            // ends would otherwise hold the switch as long as the connection lives
-            const answer = (async () => {
-                const response = await this.fetch(endpoint, { ...options, signal: stop.signal });
-                return (await response.json()) as unknown;
-            })();
+            const answer = run(stop.signal);
+            answer.catch(() => undefined);
             return await Promise.race([answer, late]);
         } finally {
             clearTimeout(timer);
@@ -1436,24 +1479,11 @@ export class BotApiService {
      * is `undefined`, not an error. Throws when Orbit refuses or can't be reached.
      */
     private async appsCall(endpoint: string, options: RequestInit = {}): Promise<unknown> {
-        const stop = new AbortController();
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const late = new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(() => {
-                stop.abort();
-                reject(new Error("Orbit did not answer in time"));
-            }, BRICK_WRITE_TIMEOUT_MS);
+        return await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, async (signal) => {
+            const response = await this.fetch(endpoint, { ...options, signal });
+            const body = await response.text();
+            return body ? (JSON.parse(body) as unknown) : undefined;
         });
-        try {
-            const answer = (async () => {
-                const response = await this.fetch(endpoint, { ...options, signal: stop.signal });
-                const body = await response.text();
-                return body ? (JSON.parse(body) as unknown) : undefined;
-            })();
-            return await Promise.race([answer, late]);
-        } finally {
-            clearTimeout(timer);
-        }
     }
 
     /** The apps the person connected, with the Bricks of theirs that use each, and the Bricks they have. */
@@ -2022,24 +2052,25 @@ export class BotApiService {
     ): Promise<boolean | undefined> {
         const roomId = this.roomId;
         if (!this.botServerUrl || !roomId) return undefined;
+        // The sync after an ended visit takes the looking after of the visit that ends off as it STARTS: whatever it hears, or does not
+        // hear (it may run out of time), says nothing about a visit that is started after it
+        if (options?.ending) this.stopVisitRecheck();
         const generation = this.visitRecheckGeneration;
+        // Of the syncs that may change the looking after (walking in, bringing along; not its own checks nor the end of a visit),
+        // only the latest one sent decides: an older one that is answered later says nothing about a visit started since
+        // A check of its own does not count as one of them, but it carries the count it was sent under: answered after a newer sync, it is
+        // passed by it, so a "not here" from before a Bring along never stops the looking after that sync started
+        const serial = options?.ending ? undefined : options?.recheck ? this.visitSyncSerial : ++this.visitSyncSerial;
         try {
             // With a deadline over the request and the body, like Orbit's visit calls: the Brick page's buttons wait for this,
             // so a bot server that never answers must not leave them disabled
-            const stop = new AbortController();
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            const late = new Promise<never>((_resolve, reject) => {
-                timer = setTimeout(() => {
-                    stop.abort();
-                    reject(new Error("The bot server did not answer in time"));
-                }, BRICK_WRITE_TIMEOUT_MS);
-            });
-            let answer: { present?: unknown; reason?: unknown } | null;
-            try {
-                const reply = (async () => {
+            const answer = await this.withDeadline<{ present?: unknown; reason?: unknown } | null>(
+                "The bot server did not answer in time",
+                BRICK_WRITE_TIMEOUT_MS,
+                async (signal) => {
                     const response = await this.fetchBotServer("/api/bricks/visit/sync", {
                         method: "POST",
-                        signal: stop.signal,
+                        signal,
                         body: JSON.stringify({
                             roomId,
                             ...(position ?? {}),
@@ -2051,13 +2082,8 @@ export class BotApiService {
                         }),
                     });
                     return (await response.json()) as { present?: unknown; reason?: unknown } | null;
-                })();
-                // (a reply that fails after the deadline has been given up on is not reported again)
-                reply.catch(() => undefined);
-                answer = await Promise.race([reply, late]);
-            } finally {
-                clearTimeout(timer);
-            }
+                }
+            );
             const present = typeof answer?.present === "boolean" ? answer.present : undefined;
             // "Not now" rather than "none": the person is not in the game's list of the room yet, Orbit or the place for it
             // could not be had for a moment. A later check may find the Brick; a plain "none" means there is nothing to bring
@@ -2067,11 +2093,13 @@ export class BotApiService {
                 answer?.reason === "no_position";
             // While a Brick walks with its person here it is looked after: a Brick that dropped off the map (its connection
             // broke, the bot server restarted) is put back by the next sync, and Orbit hears the person is still here
-            if (options?.ending) this.stopVisitRecheck();
+            // The end of a visit changes nothing when it is answered: it stopped the looking after when it was sent
+            if (options?.ending) return present;
             // An answer to a sync sent before the room or the visit changed: it says nothing about now (the looking after was
             // stopped since), so it neither stops the new room's looking after nor starts one for a visit that ended
-            else if (generation !== this.visitRecheckGeneration) return present;
-            else if (present === true) {
+            if (generation !== this.visitRecheckGeneration) return present;
+            if (serial !== undefined && serial !== this.visitSyncSerial) return present;
+            if (present === true) {
                 this.visitRecheckMisses = 0;
                 this.startVisitRecheck();
             } else if (present === false && options?.entry && maybeLater) {
@@ -2083,11 +2111,22 @@ export class BotApiService {
                 // looking after stops only after a few such answers in a row, not on the first
                 this.visitRecheckMisses += 1;
                 if (!options?.recheck || this.visitRecheckMisses >= BotApiService.VISIT_RECHECK_MISSES)
-                    this.stopVisitRecheck();
+                    // The looking after's own third miss ends it but does not void a walk in or Bring along still on its way: those
+                    // are judged by their own count, so a "here" from one of them still starts the looking after again
+                    this.stopVisitRecheck(!options?.recheck);
             }
             return present;
         } catch (error) {
             console.warn("Could not put the Brick beside you", error);
+            // A walk in or a Bring along that could not be answered (a deadline, the bot server for a moment) is looked at again in a minute,
+            // as an answer of "not here yet" is: unless the visit ended or another sync was sent since
+            if (
+                !options?.ending &&
+                serial !== undefined &&
+                serial === this.visitSyncSerial &&
+                generation === this.visitRecheckGeneration
+            )
+                this.startVisitRecheck();
             return undefined;
         }
     }
@@ -2105,6 +2144,8 @@ export class BotApiService {
     private visitRecheckMisses = 0;
     /** Counts each stop of the looking after, so a sync answered after a stop cannot change it. */
     private visitRecheckGeneration = 0;
+    /** Counts the syncs that may change the looking after, so the answer of an older one is never the one that decides. */
+    private visitSyncSerial = 0;
 
     private startVisitRecheck(): void {
         if (this.visitRecheck !== undefined) return;
@@ -2115,8 +2156,8 @@ export class BotApiService {
         }, BotApiService.VISIT_RECHECK_MS);
     }
 
-    private stopVisitRecheck(): void {
-        this.visitRecheckGeneration += 1;
+    private stopVisitRecheck(voidInFlight = true): void {
+        if (voidInFlight) this.visitRecheckGeneration += 1;
         this.visitRecheckMisses = 0;
         if (this.visitRecheck === undefined) return;
         clearInterval(this.visitRecheck);
@@ -2148,23 +2189,26 @@ export class BotApiService {
         files?: string[];
         note?: string;
     }): Promise<unknown> {
-        // The request and the reading of the answer both stop at the deadline: a call that hangs would hold back every later turn
-        const stop = new AbortController();
-        const timer = setTimeout(() => stop.abort(), GUEST_REPLY_TIMEOUT_MS);
         try {
-            const response = await this.fetchBotServer("/api/guest-brick/reply", {
-                method: "POST",
-                body: JSON.stringify(request),
-                signal: stop.signal,
-            });
-            return (await response.json()) as unknown;
+            // The session lookup, the request and the reading of the answer all stop at the deadline: a call that hangs anywhere in
+            // them would hold back every later turn
+            return await this.withDeadline(
+                "The Brick for guests did not answer in time",
+                GUEST_REPLY_TIMEOUT_MS,
+                async (signal) => {
+                    const response = await this.fetchBotServer("/api/guest-brick/reply", {
+                        method: "POST",
+                        body: JSON.stringify(request),
+                        signal,
+                    });
+                    return (await response.json()) as unknown;
+                }
+            );
         } catch (error) {
             // A guest who must wait, or an answer that failed, comes with its own kind: it is the answer, not a fault
             const body = (error as { body?: unknown }).body;
             if (body && typeof body === "object" && "kind" in body) return body;
             throw error;
-        } finally {
-            clearTimeout(timer);
         }
     }
 
@@ -2327,10 +2371,18 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing botServerUrl.");
         }
 
+        // Which Orbit account and bot server this request started with, taken before anything is waited for (as in fetch())
+        const startedWith = this.timeZoneGeneration;
+        const origin = this.botServerUrl;
+
         // Try to get Admin API session token first (preferred method)
         const sessionToken = await this.getAdminApiSessionToken();
 
-        const url = `${this.botServerUrl}${endpoint}`;
+        if (startedWith !== this.timeZoneGeneration || origin !== this.botServerUrl) {
+            throw new Error("The game moved to another Orbit or account before this request went out.");
+        }
+
+        const url = `${origin}${endpoint}`;
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
@@ -2361,30 +2413,11 @@ export class BotApiService {
 
         if (!response.ok) {
             const errorText = await response.text();
-            let errorMessage = `Bot-server API error: ${response.status}`;
-            let isSessionExpired = false;
-            let errorCode: string | undefined;
-            let errorBody: unknown;
-
-            try {
-                const errorJson = JSON.parse(errorText);
-                errorBody = errorJson;
-                errorMessage = errorJson.message || errorJson.error || errorMessage;
-                errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
-                // Check if it's a session expiration error
-                if (
-                    errorMessage.toLowerCase().includes("session expired") ||
-                    errorMessage.toLowerCase().includes("session invalid") ||
-                    errorMessage.toLowerCase().includes("invalid or expired session token")
-                ) {
-                    isSessionExpired = true;
-                }
-            } catch {
-                errorMessage = errorText || errorMessage;
-            }
+            const { isSessionExpired } = this.readBotServerRefusal(response.status, errorText);
 
             // If 401 and we were using session token, clear it and try to refresh
-            if (response.status === 401 && sessionToken) {
+            // Only for the account the request started with: the cache now belongs to the one the game is on
+            if (response.status === 401 && sessionToken && startedWith === this.timeZoneGeneration) {
                 if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                     console.warn(
                         "[BotApiService] Bot server session token may be expired, clearing cache and refreshing"
@@ -2396,17 +2429,23 @@ export class BotApiService {
                 // If we have accessToken, try to fetch a new session token and retry
                 if (this.accessToken) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
-                    if (newToken) {
-                        const retryUrl = `${this.botServerUrl}${endpoint}`;
+                    // Asking for the session took time too: the request goes back only to the bot server it started with, and only
+                    // while the game is still on the account it started with
+                    if (newToken && startedWith === this.timeZoneGeneration) {
                         const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
 
-                        const retryResponse = await fetch(retryUrl, {
+                        const retryResponse = await fetch(url, {
                             ...options,
                             headers: retryHeaders,
                         });
 
                         if (retryResponse.ok) {
                             return retryResponse;
+                        }
+                        // The renewed session was taken and the bot server gave its own answer (the owner's refusal, say): that is
+                        // the answer, not "your session has expired"
+                        if (retryResponse.status !== 401) {
+                            throw this.botServerFailure(retryResponse.status, await retryResponse.text());
                         }
                     }
                 }
@@ -2425,15 +2464,48 @@ export class BotApiService {
                 throw authError;
             }
 
-            const failure = new Error(errorMessage) as Error & { status?: number; code?: string; body?: unknown };
-            failure.status = response.status;
-            failure.code = errorCode;
-            // What the bot server answered with, for a caller that reads more than its message (a hello that is used up says until when)
-            failure.body = errorBody;
-            throw failure;
+            throw this.botServerFailure(response.status, errorText);
         }
 
         return response;
+    }
+
+    /** What a refusal of the bot server says: its words, whether the session is what it refused, its code and its whole body. */
+    private readBotServerRefusal(
+        status: number,
+        errorText: string
+    ): { message: string; isSessionExpired: boolean; code: string | undefined; body: unknown } {
+        let message = `Bot-server API error: ${status}`;
+        let isSessionExpired = false;
+        let code: string | undefined;
+        let body: unknown;
+        try {
+            const errorJson = JSON.parse(errorText);
+            body = errorJson;
+            message = errorJson.message || errorJson.error || message;
+            code = typeof errorJson.code === "string" ? errorJson.code : undefined;
+            // Check if it's a session expiration error
+            if (
+                message.toLowerCase().includes("session expired") ||
+                message.toLowerCase().includes("session invalid") ||
+                message.toLowerCase().includes("invalid or expired session token")
+            ) {
+                isSessionExpired = true;
+            }
+        } catch {
+            message = errorText || message;
+        }
+        return { message, isSessionExpired, code, body };
+    }
+
+    private botServerFailure(status: number, errorText: string): Error {
+        const { message, code, body } = this.readBotServerRefusal(status, errorText);
+        const failure = new Error(message) as Error & { status?: number; code?: string; body?: unknown };
+        failure.status = status;
+        failure.code = code;
+        // What the bot server answered with, for a caller that reads more than its message (a hello that is used up says until when)
+        failure.body = body;
+        return failure;
     }
 
     /**
@@ -2591,11 +2663,11 @@ export class BotApiService {
      * and answers with the space's name for this browser to join. The owner's "Call" rule is checked there (Orbit).
      * Never throws: a refusal comes back as `failure`, so the caller can tell the person why.
      */
-    async startCall(botId: string, playerUuid: string): Promise<CallResult> {
+    async startCall(botId: string, playerUuid: string, callId?: string): Promise<CallResult> {
         try {
             const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call`, {
                 method: "POST",
-                body: JSON.stringify({ playerUuid }),
+                body: JSON.stringify({ playerUuid, callId }),
             });
             const body = (await response.json()) as { started?: unknown; spaceName?: unknown } | null;
             if (body?.started === true && typeof body.spaceName === "string" && body.spaceName !== "") {
@@ -2614,12 +2686,16 @@ export class BotApiService {
         }
     }
 
-    /** The person hangs up: the bot leaves the call. Never throws: the bot also leaves when this browser does. */
-    async endCall(botId: string, playerUuid: string): Promise<boolean> {
+    /**
+     * The person hangs up: the bot leaves the call. Never throws: the bot also leaves when this browser does.
+     * `callId` is the one the call was started with: only that call is ended, so a hang-up that arrives late cannot end
+     * a newer call of the same person with the same bot.
+     */
+    async endCall(botId: string, playerUuid: string, callId?: string): Promise<boolean> {
         try {
             const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call/end`, {
                 method: "POST",
-                body: JSON.stringify({ playerUuid }),
+                body: JSON.stringify({ playerUuid, callId }),
             });
             return ((await response.json()) as { ended?: unknown } | null)?.ended === true;
         } catch {

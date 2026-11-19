@@ -31,6 +31,18 @@ describe('what Orbit answers to a job that did not start', () => {
         expect(await service(async () => ({ data: { ok: false, reason: 'off' } })).orbit.startComputerJob('b', 'u', { title: 'x' })).toEqual({ ok: false, reason: 'off' });
     });
 
+    it('sends whether the person is a guest with the id when it is known, and leaves it out when it is not', async () => {
+        const known = service(async () => ({ data: { ok: true, job: { id: 'j', status: 'queued', queuedFor: null } } }));
+        await known.orbit.startComputerJob('b', 'u', { title: 'x', isGuest: false });
+        expect(known.call).toHaveBeenCalledWith('post', 'api/bots/b/computer-jobs', { userId: 'u', isGuest: false, title: 'x' });
+        const guest = service(async () => ({ data: { ok: true, job: { id: 'j', status: 'queued', queuedFor: null } } }));
+        await guest.orbit.startComputerJob('b', 'u', { title: 'x', isGuest: true });
+        expect((guest.call.mock.calls[0] as unknown[])[2]).toMatchObject({ isGuest: true });
+        const unknown = service(async () => ({ data: { ok: true, job: { id: 'j', status: 'queued', queuedFor: null } } }));
+        await unknown.orbit.startComputerJob('b', 'u', { title: 'x' });
+        expect((unknown.call.mock.calls[0] as unknown[])[2]).not.toHaveProperty('isGuest');
+    });
+
     it('throws for an answer it cannot get (Orbit down), so the caller says the computer could not be reached', async () => {
         await expect(service(async () => { throw new Error('503'); }).orbit.startComputerJob('b', 'u', { title: 'x' })).rejects.toThrow('503');
     });

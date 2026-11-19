@@ -182,6 +182,57 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         expect(await result).toBe("stopped");
     });
 
+    it("is stopped from outside while the connection, the check or the sign-in request is still out: the window closes at once and nothing goes on", async () => {
+        // The app's connection is still being made
+        const connecting = new AbortController();
+        const making = new Promise<string>(() => {
+            // never answers
+        });
+        const first = signInInPopup(() => making, { signal: connecting.signal });
+        connecting.abort();
+        expect(await first).toBe("stopped");
+        expect(popup.close).toHaveBeenCalled();
+        expect(game.startAppSignIn).not.toHaveBeenCalled();
+
+        // The "already connected" question is still out; a late "true" is no "done" for a sign-in that was stopped
+        popup.close.mockClear();
+        const asking = new AbortController();
+        let answer: (value: boolean) => void = () => undefined;
+        const alreadyConnected = vi.fn(
+            () =>
+                new Promise<boolean>((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const second = signInInPopup("c1", { signal: asking.signal, alreadyConnected });
+        await vi.waitFor(() => expect(alreadyConnected).toHaveBeenCalled());
+        asking.abort();
+        expect(await second).toBe("stopped");
+        expect(popup.close).toHaveBeenCalled();
+        answer(true);
+        await Promise.resolve();
+        expect(game.startAppSignIn).not.toHaveBeenCalled();
+
+        // The sign-in request is still out
+        popup.close.mockClear();
+        const starting = new AbortController();
+        let address: (value: string) => void = () => undefined;
+        game.startAppSignIn.mockImplementationOnce(
+            () =>
+                new Promise<string>((resolve) => {
+                    address = resolve;
+                })
+        );
+        const third = signInInPopup("c1", { signal: starting.signal });
+        await vi.waitFor(() => expect(game.startAppSignIn).toHaveBeenCalledTimes(1));
+        starting.abort();
+        expect(await third).toBe("stopped");
+        expect(popup.close).toHaveBeenCalled();
+        address("https://github.com/login/oauth/authorize?late=1");
+        await Promise.resolve();
+        expect(popup.location.href).toBe("");
+    });
+
     it("is stopped from outside: the window closes and nothing stays listening", async () => {
         const controller = new AbortController();
         const removed = vi.spyOn(window, "removeEventListener");
@@ -200,5 +251,27 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         early.abort();
         expect(await signInInPopup("c1", { signal: early.signal })).toBe("stopped");
         expect(popup.location.href).not.toBe("");
+    });
+
+    it("never starts the app's connection when it is stopped before it began", async () => {
+        const early = new AbortController();
+        early.abort();
+        const factory = vi.fn(() => Promise.resolve("c1"));
+        const open = vi.spyOn(window, "open");
+        open.mockClear();
+        expect(await signInInPopup(factory, { signal: early.signal })).toBe("stopped");
+        expect(factory).not.toHaveBeenCalled();
+        // No window is opened for a sign-in that was already stopped
+        expect(open).not.toHaveBeenCalled();
+    });
+
+    it("says it was stopped, not blocked, when it was stopped before the browser would have blocked the window", async () => {
+        const early = new AbortController();
+        early.abort();
+        const open = vi.spyOn(window, "open").mockReturnValue(null);
+        expect(await signInInPopup("c1", { signal: early.signal })).toBe("stopped");
+        expect(open).not.toHaveBeenCalled();
+        // Not stopped: a blocked window is still blocked
+        expect(await signInInPopup("c1", { signal: new AbortController().signal })).toBe("blocked");
     });
 });

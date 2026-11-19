@@ -227,6 +227,87 @@ describe("keepPrivate", () => {
         expect(text).toContain("[removed]");
     });
 
+    it("keeps a comma inside a srcset address as part of that address: nothing after it is left unredacted", () => {
+        const node = {
+            tagName: "img",
+            attributes: {
+                srcset: "https://a.test/image?t=1,secret-token 1x, /pics/b.png?sig=x,y-secret 2x,https://c.test/c.png#frag-secret 3x",
+                "data-srcset": "/pics/d.png?k=1,secret2,/pics/e.png 1x",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("secret");
+        expect(text).not.toContain("frag");
+        expect(text).toContain("https://a.test/image 1x, /pics/b.png 2x, https://c.test/c.png 3x");
+        // No whitespace after the commas: it is all one address, so all of it is cleaned
+        expect(text).toContain('"data-srcset":"/pics/d.png 1x"');
+    });
+
+    it("cuts the query and hash of the addresses in a replay's style, srcset and stylesheet text, and leaves an ordinary style alone", () => {
+        const node = {
+            tagName: "div",
+            attributes: {
+                style: 'background-image: url("https://a.test/image?token=abc123"); color: red',
+                srcset: "https://a.test/image?token=abc123 1x, /local/image2.png?token=abc123#x 2x",
+                "data-srcset": "https://a.test/image3?token=abc123 480w",
+                class: "plain",
+            },
+            childNodes: [
+                {
+                    tagName: "style",
+                    attributes: {
+                        _cssText:
+                            ".a { background: url(/pics/bg.png?token=abc123#frag) } .b { background: url('data:image/png;base64,AAAA') }",
+                    },
+                },
+                { tagName: "span", attributes: { style: "color: red" } },
+            ],
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=abc123");
+        expect(text).not.toContain("#frag");
+        expect(text).toContain('url(\\"https://a.test/image\\")');
+        expect(text).toContain("https://a.test/image 1x, /local/image2.png 2x");
+        expect(text).toContain("https://a.test/image3 480w");
+        expect(text).toContain("url(/pics/bg.png)");
+        // A data address is no address to hide, and an ordinary style is as it was
+        expect(text).toContain("data:image/png;base64,AAAA");
+        expect(text).toContain('"style":"color: red"');
+    });
+
+    it("keeps an escaped bracket or quote inside a style's address, so nothing after it is left in the recording", () => {
+        const node = {
+            tagName: "style",
+            attributes: {
+                _cssText:
+                    ".a { background: url(/pics/a\\)b.png?token=secret1) } .b { background: url(\"/pics/c\\\"d.png?token=secret2\") } .c { background: url('/pics/e\\')f.png?token=secret3') } .d { background: url(/pics/ok.png?token=secret4) }",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=");
+        expect(text).not.toContain("secret");
+        expect(text).toContain("url(/pics/a\\\\)b.png)");
+        expect(text).toContain("url(/pics/ok.png)");
+    });
+
+    it("keeps an escaped line break inside a quoted style address, so nothing after it is left in the recording", () => {
+        const node = {
+            tagName: "style",
+            attributes: {
+                _cssText:
+                    ".a { background: url(\"/img/a\\\nb.png?token=secret1\") } .b { background: url('/img/c\\\r\nd.png?token=secret2') } .c { background: url(/img/ok.png?token=secret3) }",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=");
+        expect(text).not.toContain("secret");
+        expect(text).toContain("url(/img/ok.png)");
+    });
+
     it("does not send a replay recording too large to be checked whole", () => {
         const huge = { type: 2, data: { values: new Array<string>(500_001).fill("*") } };
         const event = keepPrivate({

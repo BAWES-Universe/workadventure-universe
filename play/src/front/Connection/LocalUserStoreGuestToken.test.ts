@@ -65,6 +65,30 @@ describe("LocalUserStore guest token kept aside for sign-in (#1430)", () => {
         expect(localUserStore.peekGuestTokenAside()).toBeNull();
     });
 
+    it("runs out 30 minutes after the last renewal, not after it was kept", () => {
+        localUserStore.setAuthToken(GUEST);
+        const start = Date.now();
+        localUserStore.keepGuestTokenAside(start);
+        const minute = 60 * 1000;
+        // A try that has to be made again at minute 29 gives it 30 more minutes
+        localUserStore.renewGuestTokenAside(start + 29 * minute);
+        expect(localUserStore.peekGuestTokenAside(start + 40 * minute)).toBe(GUEST);
+        expect(localUserStore.peekGuestTokenAside(start + 59 * minute)).toBe(GUEST);
+        expect(localUserStore.peekGuestTokenAside(start + 60 * minute)).toBeNull();
+    });
+
+    it("does not bring back one that already ran out, and renews nothing when none is kept", () => {
+        localUserStore.setAuthToken(GUEST);
+        const start = Date.now();
+        localUserStore.keepGuestTokenAside(start);
+        localUserStore.renewGuestTokenAside(start + 31 * 60 * 1000);
+        expect(localUserStore.peekGuestTokenAside(start + 31 * 60 * 1000)).toBeNull();
+        expect(localUserStore.peekGuestTokenAside(start + 32 * 60 * 1000)).toBeNull();
+        localUserStore.dropGuestTokenAside();
+        localUserStore.renewGuestTokenAside();
+        expect(localUserStore.peekGuestTokenAside()).toBeNull();
+    });
+
     it("can be dropped (logout, a new guest)", () => {
         localUserStore.setAuthToken(GUEST);
         localUserStore.keepGuestTokenAside();

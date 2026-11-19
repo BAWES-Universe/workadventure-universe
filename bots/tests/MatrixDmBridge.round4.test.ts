@@ -231,8 +231,53 @@ describe('a message that arrives while the store that knows the chat is down', (
         bridge.stop();
     });
 
-    it('does not answer an older kept message while a newer one in the same chat is being answered, nor after it was', async () => {
+    it('keeps a bot\'s leave whose room could not be looked up, and clears the room once the store answers', async () => {
         vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        // After a restart: the room is in the store, not yet in the bridge's memory, and the store is not answering for longer than the lookup waits
+        stores.rooms.set(ROOM, BOT);
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        (bridge as any).roomLookupWaitMs = 0;
+        await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: BOT_USER, event_id: '$leave1', state_key: BOT_USER, content: { membership: 'leave' } });
+        // Not cleared yet: it could not be told whose room it is
+        expect(stores.deps.rooms.forgetDmRoom).not.toHaveBeenCalled();
+        expect((bridge as any).pendingBotRemovals.get(ROOM)).toBe(BOT);
+        // Still down at the first try: kept
+        await vi.advanceTimersByTimeAsync(2100);
+        expect(stores.deps.rooms.forgetDmRoom).not.toHaveBeenCalled();
+        expect((bridge as any).pendingBotRemovals.size).toBe(1);
+        // The store is back: the room is cleared, and nothing is waiting any more
+        down = false;
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(stores.deps.rooms.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+        expect(stores.rooms.has(ROOM)).toBe(false);
+        expect((bridge as any).pendingBotRemovals.size).toBe(0);
+        bridge.stop();
+    });
+
+    it('does not keep a bot\'s leave from a room the store says is not its own, and clears nothing for it', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: BOT_USER, event_id: '$leave2', state_key: BOT_USER, content: { membership: 'leave' } });
+        expect((bridge as any).pendingBotRemovals.size).toBe(0);
+        expect(stores.deps.rooms.forgetDmRoom).not.toHaveBeenCalled();
+        bridge.stop();
+    });
+
+    it('does not answer an older kept message while a newer one in the same chat is being answered, nor after it was', async () => {
+        vi.useFakeTimers({ now: 1_700_000_000_000 });
+        // The messages' own times are the fake clock's, so they are young: a kept message is dropped for age only after a day
+        const sent = Date.now();
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const client = makeClient();
         const stores = makeStores();
@@ -246,21 +291,154 @@ describe('a message that arrives while the store that knows the chat is down', (
         stores.deps.reply = vi.fn(() => new Promise((resolve) => (finish = resolve)));
         const bridge = new MatrixDmBridge(config, client as never, stores.deps);
 
-        await bridge.onEvent({ ...message('first'), origin_server_ts: 1000 });
+        await bridge.onEvent({ ...message('first'), origin_server_ts: sent });
         down = false;
         // The newer message finds the store back and is being answered (its reply is still on its way)
-        const second = bridge.onEvent({ ...message('second'), origin_server_ts: 2000 });
+        const second = bridge.onEvent({ ...message('second'), origin_server_ts: sent + 1000 });
         await vi.advanceTimersByTimeAsync(0);
         expect(stores.deps.reply).toHaveBeenCalledTimes(1);
         // The kept older one comes due meanwhile: it does not start a second answer
         await vi.advanceTimersByTimeAsync(2500);
         expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        // ... and it is not dropped either: it is still kept until the newer answer lands
+        expect((bridge as any).unplaced.get(ROOM)?.event.content.body).toBe('first');
         // The newer answer lands; the older one is let go of at its next try and is never answered
         finish({ text: 'Answer to the second', media: [] });
         await second;
         await vi.advanceTimersByTimeAsync(5000);
         expect(stores.deps.reply).toHaveBeenCalledTimes(1);
         expect(client.sendText.mock.calls.map((call: any[]) => call[2])).toEqual(['Answer to the second']);
+        bridge.stop();
+    });
+
+    it('does not answer a recovered message after a newer one was answered while it waited on Orbit', async () => {
+        vi.useFakeTimers({ now: 1_700_000_000_000 });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        // The first answer to be started waits on Orbit for the Brick's settings
+        let release: () => void = () => undefined;
+        let asked = 0;
+        stores.deps.getBotConfig = vi.fn(async () => {
+            if (++asked === 1) await new Promise<void>((resolve) => (release = resolve));
+            return { botId: BOT, name: 'Nora', enabled: true, aiProviderRef: 'p' } as never;
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        const sent = Date.now();
+        await bridge.onEvent({ ...message('first'), origin_server_ts: sent });
+        down = false;
+        // The kept first message is tried again and waits on Orbit; a newer one then arrives and is answered
+        await vi.advanceTimersByTimeAsync(2100);
+        expect(asked).toBe(1);
+        await bridge.onEvent({ ...message('second'), origin_server_ts: sent + 1000 });
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        release();
+        await vi.advanceTimersByTimeAsync(5000);
+        // The older one is not answered after the newer one
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        expect(stores.deps.reply.mock.calls[0][2]).toBe('second');
+        bridge.stop();
+    });
+
+    it('does not close or count against the cards of a newer message when a recovered older one is dropped as stale', async () => {
+        vi.useFakeTimers({ now: 1_700_000_000_000 });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        stores.deps.approvals = { newRequest: vi.fn(), onPersonMessage: vi.fn(async () => undefined) };
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        let release: () => void = () => undefined;
+        let asked = 0;
+        stores.deps.getBotConfig = vi.fn(async () => {
+            if (++asked === 1) await new Promise<void>((resolve) => (release = resolve));
+            return { botId: BOT, name: 'Nora', enabled: true, aiProviderRef: 'p' } as never;
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        const sent = Date.now();
+        await bridge.onEvent({ ...message('first'), origin_server_ts: sent });
+        down = false;
+        await vi.advanceTimersByTimeAsync(2100);
+        await bridge.onEvent({ ...message('second'), origin_server_ts: sent + 1000 });
+        expect(stores.deps.approvals.onPersonMessage).toHaveBeenCalledTimes(1);
+        expect(stores.deps.approvals.newRequest).toHaveBeenCalledTimes(1);
+        release();
+        await vi.advanceTimersByTimeAsync(5000);
+        // The stale one never reached the cards: the newer message's card is not cancelled by it
+        expect(stores.deps.approvals.onPersonMessage).toHaveBeenCalledTimes(1);
+        expect(stores.deps.approvals.newRequest).toHaveBeenCalledTimes(1);
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        bridge.stop();
+    });
+
+    it('keeps a bot\'s leave when the shared store could not be cleared, and tries the whole clearing again', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        (bridge as any).directRooms.set('bot|user', ROOM);
+        let failing = true;
+        stores.deps.rooms.forgetDmRoom = vi.fn(async (room: string) => {
+            if (failing) throw new Error('Redis is reconnecting');
+            stores.rooms.delete(room);
+        });
+        (bridge as any).keepBotRemoval(ROOM, BOT);
+        await vi.advanceTimersByTimeAsync(2100);
+        // Still owed: the store did not let the room go
+        expect(stores.deps.rooms.forgetDmRoom).toHaveBeenCalledTimes(1);
+        expect((bridge as any).pendingBotRemovals.get(ROOM)).toBe(BOT);
+        expect(stores.rooms.has(ROOM)).toBe(true);
+        failing = false;
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(stores.rooms.has(ROOM)).toBe(false);
+        expect((bridge as any).pendingBotRemovals.size).toBe(0);
+        // The person's own room entry went on the first try and is not asked again
+        expect(stores.deps.rooms.forgetDmRoomOf).toHaveBeenCalledTimes(1);
+        expect((bridge as any).directRooms.size).toBe(0);
+        bridge.stop();
+    });
+
+    it('does not remove a room the bot joined again after its leave was queued, nor while the store is being asked', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        (bridge as any).keepBotRemoval(ROOM, BOT);
+        // Joined again before the first try
+        await (bridge as any).rememberRoom(ROOM, BOT);
+        expect((bridge as any).pendingBotRemovals.size).toBe(0);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(stores.deps.rooms.forgetDmRoom).not.toHaveBeenCalled();
+        expect((bridge as any).roomBots.get(ROOM)).toBe(BOT);
+
+        // Joined again while a try is waiting for the store's answer
+        (bridge as any).roomBots.delete(ROOM);
+        let answer: (bot: string) => void = () => undefined;
+        stores.deps.rooms.getDmRoomBot = vi.fn(() => new Promise<string>((resolve) => (answer = resolve)));
+        (bridge as any).keepBotRemoval(ROOM, BOT);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(stores.deps.rooms.getDmRoomBot).toHaveBeenCalled();
+        await (bridge as any).rememberRoom(ROOM, BOT);
+        answer(BOT);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(stores.deps.rooms.forgetDmRoom).not.toHaveBeenCalled();
+        expect((bridge as any).roomBots.get(ROOM)).toBe(BOT);
         bridge.stop();
     });
 
@@ -287,7 +465,8 @@ describe('a message that arrives while the store that knows the chat is down', (
     });
 
     it('does not answer an older message after the person wrote again and was answered', async () => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ now: 1_700_000_000_000 });
+        const sent = Date.now();
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const client = makeClient();
         const stores = makeStores();
@@ -299,10 +478,10 @@ describe('a message that arrives while the store that knows the chat is down', (
         });
         const bridge = new MatrixDmBridge(config, client as never, stores.deps);
 
-        await bridge.onEvent({ ...message('first'), origin_server_ts: 1000 });
+        await bridge.onEvent({ ...message('first'), origin_server_ts: sent });
         down = false;
         // The next message finds the store back and is answered straight away
-        await bridge.onEvent({ ...message('second'), origin_server_ts: 2000 });
+        await bridge.onEvent({ ...message('second'), origin_server_ts: sent + 1000 });
         expect(stores.deps.reply).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(3000);
         expect(stores.deps.reply).toHaveBeenCalledTimes(1);

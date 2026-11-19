@@ -45,12 +45,11 @@ describe("placing one of the person's own Bricks in a room (#2005)", () => {
         off = onBrickPlaced(heard);
         expect(confirmPlacement()).toBeUndefined();
         expect(heard).toHaveBeenCalledTimes(1);
-        const [placed, spot] = heard.mock.calls[0] as [
-            BotData,
-            { behaviorType: string; behaviorConfig: BotData["behaviorConfig"] }
-        ];
+        const [placed, spot] = heard.mock.calls[0] as [BotData, { behaviorConfig: BotData["behaviorConfig"] }];
         expect(placed.id).toBe("brick-1");
-        expect(spot.behaviorType).toBe("idle");
+        // Only the spot: no behavior is made up and sent with it
+        expect(spot).not.toHaveProperty("behaviorType");
+        expect(Object.keys(spot.behaviorConfig)).toEqual(["assignedSpace"]);
         expect(spot.behaviorConfig.assignedSpace.center).toEqual({ x: 320, y: 480 });
         expect(spot.behaviorConfig.assignedSpace.radius).toBe(0);
         expect(get(botPreviewsStore).size).toBe(0);

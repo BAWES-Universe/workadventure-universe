@@ -10,6 +10,7 @@ import { ASK_KEY, type AskField } from '../ApprovalCard';
 import type { SavedAction } from '../OrbitActions';
 import type { GateDecision } from '../ToolGate';
 import type { ToolServerEntry } from '../MCPConnector';
+import { BotRegistry } from '../../server/BotRegistry';
 
 const ROOM = '!dm:matrix.test';
 const ITEM = '0b8f067a-df0f-43f8-af12-8f03065ce1d0';
@@ -395,6 +396,53 @@ describe('a goal’s card that could not be shown, remembered for every bot serv
         theirs = true;
         expect((await first.propose(input())).kind).toBe('waiting');
         expect(sent).toHaveLength(1);
+    });
+
+    it('keeps its own note when the shared store is not connected, as the production adapter says (it never counts as written)', async () => {
+        orbit.cancelFails = true;
+        // The registry's own behaviour with no Redis: mark and read refuse, they do not quietly answer
+        const registry = new BotRegistry('test') as any;
+        registry.redis = undefined;
+        const store = { mark: (id: string) => registry.markTaskCardUnshown(id), marked: (id: string) => registry.taskCardUnshown(id), clear: (id: string) => registry.clearTaskCardUnshown(id) };
+        let theirs = false;
+        const approvals = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        expect((await approvals.propose(input())).kind).toBe('failed');
+        // Asked again with the chat theirs: the step has no card, so the card is shown, not joined as "already asked"
+        theirs = true;
+        expect((await approvals.propose(input())).kind).toBe('waiting');
+        expect(sent).toHaveLength(1);
+    });
+
+    it('does not take a card that was shown for a missing one when the store was down while its marker was cleared', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            orbit.cancelFails = true;
+            const { marked, store } = sharedStore();
+            // The first server cannot show the card: the marker is written. Another server shows it, but cannot clear the marker (the store drops out)
+            let theirs = false;
+            const first = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+            expect((await first.propose(input())).kind).toBe('failed');
+            expect(marked.has('act_1')).toBe(true);
+            theirs = true;
+            let clearing = false;
+            const failing = { ...store, clear: async (id: string) => (clearing ? store.clear(id) : Promise.reject(new Error('down'))) };
+            const other = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: failing });
+            expect((await other.propose(input())).kind).toBe('waiting');
+            expect(sent).toHaveLength(1);
+            expect(marked.has('act_1')).toBe(true);
+            // The step is asked again by a server that does not hold the card, while the marker is still in the store: it knows nothing of the stale marker,
+            // so what protects the card is that the server that showed it clears the marker as soon as the store is back
+            clearing = true;
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(marked.has('act_1')).toBe(false);
+            // Now the same step asked by another server joins the card instead of showing a second one
+            const third = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+            const again = await third.propose(input());
+            expect((again as unknown as { result: { message: string } }).result.message).toMatch(/already asked/);
+            expect(sent).toHaveLength(1);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('holds a shown card at once, so a tap made while the shared note is being cleared is not undone', async () => {

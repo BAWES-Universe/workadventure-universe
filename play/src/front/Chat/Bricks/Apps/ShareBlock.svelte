@@ -26,6 +26,9 @@
     $: text = $LL.chat.brick.apps;
     $: words = $LL.chat.brick.apps.share;
     let share: Share | undefined;
+    // What the open sheet was made from: the row may be read again (an answer that never came) while the sheet stays, with its draft and its failure line
+    let sheetShare: Share | undefined;
+    $: if (share) sheetShare = share;
     let loadFailed = false;
     let busy = false;
     let sheet: "start" | "change" | undefined;
@@ -191,16 +194,19 @@
     {/if}
 </div>
 
-{#if share && sheet}
-    <ShareSheet
-        app={appName}
-        brick={brickName}
-        {share}
-        starting={sheet === "start"}
-        {refusal}
-        onSubmit={submit}
-        onClose={() => (sheet = undefined)}
-    />
+{#if sheet}
+    {@const shown = share ?? sheetShare}
+    {#if shown}
+        <ShareSheet
+            app={appName}
+            brick={brickName}
+            share={shown}
+            starting={sheet === "start"}
+            {refusal}
+            onSubmit={submit}
+            onClose={() => (sheet = undefined)}
+        />
+    {/if}
 {/if}
 
 <style>

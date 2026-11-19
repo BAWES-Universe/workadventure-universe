@@ -37,12 +37,22 @@ describe("opening the Usage page from a chat", () => {
         expect(leaveChat).toHaveBeenCalledTimes(1);
         expect(switchToChat).toHaveBeenCalledTimes(1);
         expect(get(bricksPageOpenStore)).toBe(true);
-        expect(get(usagePageRequest)).toEqual({ receiptId: "act_1" });
+        expect(get(usagePageRequest)).toEqual({ receiptId: "act_1", request: expect.any(Number) });
     });
 
     it("asks for the page alone when no task is named", () => {
         openUsagePage();
-        expect(get(usagePageRequest)).toEqual({ receiptId: undefined });
+        expect(get(usagePageRequest)).toEqual({ receiptId: undefined, request: expect.any(Number) });
+    });
+
+    it("gives every request its own number, so the same receipt asked for twice is two requests", () => {
+        openUsagePage({ receiptId: "act_1" });
+        const first = get(usagePageRequest)?.request;
+        takeUsagePageRequest();
+        openUsagePage({ receiptId: "act_1" });
+        const second = get(usagePageRequest)?.request;
+        expect(typeof first).toBe("number");
+        expect(second).not.toBe(first);
     });
 
     it("is answered once: the Bricks page takes the request", () => {

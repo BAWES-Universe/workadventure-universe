@@ -50,33 +50,68 @@ export async function signInInPopup(
     options: SignInOptions = {}
 ): Promise<ReconnectResult> {
     const { signal } = options;
+    // Already cancelled: no window is opened, whether or not the browser would have blocked it
+    if (signal?.aborted) return "stopped";
     const popup = window.open("", newPopupName(), "width=600,height=700");
     if (!popup) return "blocked";
-    let authorizeUrl: string;
-    try {
-        const id = await (typeof appId === "function" ? appId() : appId);
+    // Cancellation is listened to from the first moment: while the app's connection, its "already connected" question or the sign-in
+    // request is out, closing the sheet closes the window and ends this at once, without waiting for any of them
+    let stopListening: () => void = () => undefined;
+    const cancelled = new Promise<"cancelled">((resolve) => {
+        if (signal?.aborted) {
+            resolve("cancelled");
+            return;
+        }
+        const onCancel = () => resolve("cancelled");
+        signal?.addEventListener("abort", onCancel, { once: true });
+        stopListening = () => signal?.removeEventListener("abort", onCancel);
+    });
+    // What is needed before the window can go to the app's sign-in page: its address, or the end of this when none is needed. A late
+    // completion (after the sheet was closed) goes no further: it starts nothing once the signal says so
+    const setup = async (): Promise<ReconnectResult | { url: string }> => {
+        // Already cancelled: the app's connection is not even started (a factory that makes it would start it after the sheet was closed)
         if (signal?.aborted) {
             closeQuietly(popup);
             return "stopped";
         }
-        if (options.alreadyConnected && (await options.alreadyConnected(id).catch(() => false))) {
+        try {
+            const id = await (typeof appId === "function" ? appId() : appId);
+            if (signal?.aborted) {
+                closeQuietly(popup);
+                return "stopped";
+            }
+            if (options.alreadyConnected) {
+                const connected = await options.alreadyConnected(id).catch(() => false);
+                if (signal?.aborted) {
+                    closeQuietly(popup);
+                    return "stopped";
+                }
+                if (connected) {
+                    closeQuietly(popup);
+                    return "done";
+                }
+            }
+            return {
+                url: await botApiService.startAppSignIn(
+                    id,
+                    window.location.href.split("?")[0].split("#")[0],
+                    `${window.location.origin}/api/oauth/mcp-callback`
+                ),
+            };
+        } catch (error) {
+            console.warn("Could not start the sign-in", error);
             closeQuietly(popup);
-            return "done";
+            return "blocked";
         }
-        if (signal?.aborted) {
-            closeQuietly(popup);
-            return "stopped";
-        }
-        authorizeUrl = await botApiService.startAppSignIn(
-            id,
-            window.location.href.split("?")[0].split("#")[0],
-            `${window.location.origin}/api/oauth/mcp-callback`
-        );
-    } catch (error) {
-        console.warn("Could not start the sign-in", error);
+    };
+    const prepared = await Promise.race([setup(), cancelled]);
+    stopListening();
+    if (prepared === "cancelled") {
         closeQuietly(popup);
-        return "blocked";
+        return "stopped";
     }
+    if (typeof prepared === "string") return prepared;
+    const authorizeUrl = prepared.url;
     if (signal?.aborted) {
         closeQuietly(popup);
         return "stopped";

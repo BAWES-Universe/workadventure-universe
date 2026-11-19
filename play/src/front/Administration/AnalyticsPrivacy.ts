@@ -126,6 +126,56 @@ function redact(properties: Record<string, unknown> | undefined, depth = 0): voi
     }
 }
 
+/** An attribute that holds a list of addresses with a size each ("a.png 1x, b.png 2x"). */
+const REPLAY_SRCSET_KEYS = /^(?:attr__)?(?:data-)?(?:image)?srcset$/i;
+/**
+ * An address inside a style or a stylesheet's text: url(...), with or without quotes. A backslash escapes the next character in CSS,
+ * so an escaped bracket or quote ("a\)b.png?token=x") belongs to the address and does not end it.
+ */
+const CSS_URL = /url\(\s*(?:"((?:\\[\s\S]|[^"\\])*)"|'((?:\\[\s\S]|[^'\\])*)'|((?:\\[\s\S]|[^)\\])*?))\s*\)/gi;
+
+/** One address of a replay, without its query and hash (absolute or relative), and without an email in its path. A data: address holds no address and stays. */
+function cleanReplayAddress(address: string): string {
+    const bare = address.trim();
+    if (bare === "" || /^data:/i.test(bare)) return address;
+    if (WEB_ADDRESS.test(bare)) return withoutQueryOrHash(bare);
+    return emailFreePath(bare.replace(/[?#].*$/s, ""));
+}
+
+/**
+ * A srcset, each address cleaned and each size kept. Split as the HTML rule does: an address runs to the next whitespace, so a comma inside it
+ * ("?t=1,secret") belongs to it, and only a comma that ends an address (or ends a size, outside brackets) separates two.
+ */
+function cleanSrcset(value: string): string {
+    const kept: string[] = [];
+    const length = value.length;
+    let at = 0;
+    while (at < length) {
+        while (at < length && (value[at] === "," || /\s/.test(value[at]))) at++;
+        if (at >= length) break;
+        const start = at;
+        while (at < length && !/\s/.test(value[at])) at++;
+        let address = value.slice(start, at);
+        let size = "";
+        if (address.endsWith(",")) {
+            address = address.replace(/,+$/, "");
+        } else {
+            const sizeStart = at;
+            let depth = 0;
+            while (at < length) {
+                const letter = value[at];
+                if (letter === "(") depth++;
+                else if (letter === ")" && depth > 0) depth--;
+                else if (letter === "," && depth === 0) break;
+                at++;
+            }
+            size = value.slice(sizeStart, at).trim();
+        }
+        kept.push(size ? `${cleanReplayAddress(address)} ${size}` : cleanReplayAddress(address));
+    }
+    return kept.join(", ");
+}
+
 /** A value of a replay recording, cleaned: an address without its query and hash, no email, no secret-named attribute's value. */
 function cleanReplayValue(key: string, value: string): string {
     if (REPLAY_SECRET_KEYS.test(key) && !/^\*+$/.test(value)) return "[removed]";
@@ -133,6 +183,19 @@ function cleanReplayValue(key: string, value: string): string {
     if (WEB_ADDRESS.test(cleaned)) cleaned = withoutQueryOrHash(cleaned);
     // A relative address (/invite/sara%40example.test?token=x): its query and hash are cut, and an email in its path goes, encoded or not
     else if (REPLAY_ADDRESS_KEYS.test(key)) cleaned = emailFreePath(cleaned.replace(/[?#].*$/s, ""));
+    // A list of addresses (srcset): each one is cleaned, its size stays
+    else if (REPLAY_SRCSET_KEYS.test(key)) cleaned = cleanSrcset(cleaned);
+    // A style or a stylesheet's text (also rrweb's inlined one) names its images in url(...): their query and hash are cut as well
+    if (/url\(/i.test(cleaned))
+        cleaned = cleaned.replace(
+            CSS_URL,
+            (_all, double: string | undefined, single: string | undefined, bare: string | undefined) =>
+                double !== undefined
+                    ? `url("${cleanReplayAddress(double)}")`
+                    : single !== undefined
+                    ? `url('${cleanReplayAddress(single)}')`
+                    : `url(${cleanReplayAddress(bare ?? "")})`
+        );
     return cleaned.replace(EMAIL, "[email]");
 }
 

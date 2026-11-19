@@ -18,6 +18,15 @@ import { forgetSpeakInvitation, recordSpeakInvitation } from "./MegaphoneRights"
 import type { EventProcessor } from "./EventProcessor";
 import type { SpaceUserExtended, Space, PartialSpaceUser } from "./Space";
 
+/** The person an event says it is for alone, when it says so (whoever said it). */
+function targetOf(event: NonNullable<PublicEvent["spaceEvent"]>["event"]): string | undefined {
+    return event?.$case === "spaceStreamMessage"
+        ? event.spaceStreamMessage.onlyFor || undefined
+        : event?.$case === "spaceMessage"
+        ? event.spaceMessage.onlyFor || undefined
+        : undefined;
+}
+
 /**
  * The one person a bot's reply is for (#1993): set by a bot when it writes to someone who is alone with it, on the reply
  * itself and on what it sends with it (a picture, a file, a card). Only a bot's word counts. From anyone else the event
@@ -27,12 +36,7 @@ export function onlyReaderOf(
     event: NonNullable<PublicEvent["spaceEvent"]>["event"],
     sender: Pick<SpaceUser, "tags" | "uuid"> | undefined
 ): string | undefined {
-    const onlyFor =
-        event?.$case === "spaceStreamMessage"
-            ? event.spaceStreamMessage.onlyFor
-            : event?.$case === "spaceMessage"
-            ? event.spaceMessage.onlyFor
-            : undefined;
+    const onlyFor = targetOf(event);
     if (!onlyFor) return undefined;
     const fromBot = !!sender && (sender.tags.includes("bot") || (sender.uuid ?? "").startsWith("bot-"));
     return fromBot ? onlyFor : undefined;
@@ -348,6 +352,15 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
         }
 
         const sender = this._space.users.get(message.senderUserId);
+
+        // An event that says it is for one person alone, from someone who has left the space: it cannot be told whether the sender was
+        // a bot (whose word that is), so it is never sent on to everyone. It is dropped.
+        if (!sender && targetOf(spaceEvent.event)) {
+            console.warn(
+                `Dropped an event for one person alone: its sender ${message.senderUserId} is no longer in space ${this._space.name}.`
+            );
+            return;
+        }
 
         const subMessage: SubMessage = {
             message: {
