@@ -356,8 +356,27 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         return owed ? { offerRestore: true } : {};
     };
 
+    /**
+     * A restore that was turned away while this payment ran is answered when the payment ends paid: that page was told "busy", and
+     * would stay on its pay button for a purchase that is made. Told under its own request and session, once.
+     */
+    const tellDeferredPaid = (test: boolean) => {
+        const waiting = deferredRestore;
+        deferredRestore = null;
+        if (waiting && waiting.from === opening() && stillSpeaking(waiting.request, waiting.session)) {
+            tellEnd("paid", waiting.request, waiting.from, test, waiting.session);
+        }
+    };
+
     // Every status goes out under the id of the request its checkout was started for, never under whichever request is newest
-    const end = (update: Partial<PayLine>, status: string, request: string, from: number, test = false) => {
+    const end = (
+        update: Partial<PayLine>,
+        status: string,
+        request: string,
+        from: number,
+        test = false,
+        asker?: string
+    ) => {
         busy = false;
         activeRequest = "";
         show({
@@ -365,7 +384,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             ...update,
             receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
         });
-        tellEnd(status, request, from, test);
+        tellEnd(status, request, from, test, asker ?? sessions.get(request));
+        if (update.paid) tellDeferredPaid(test);
     };
 
     const frameReady = () => {
@@ -388,7 +408,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
      * Asks about an order every few seconds until it ends. Two things the asking alone cannot do are done here: the deadline has its own
      * clock, so a question that never gets an answer cannot keep "checking" past it, and a checkout tab the buyer closed gets its link back.
      */
-    const watch = (orderId: string, checkout: Checkout | null, request: string, from: number) => {
+    const watch = (orderId: string, checkout: Checkout | null, request: string, from: number, asker?: string) => {
         let over = false;
         let linkBack = false;
         const finish = (update: Partial<PayLine>, status: string, test = false) => {
@@ -398,7 +418,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             if (timer) clearTimeout(timer);
             if (deadline) clearTimeout(deadline);
             if (tabWatch) clearInterval(tabWatch);
-            end(update, status, request, from, test);
+            end(update, status, request, from, test, asker);
         };
         // Twenty minutes without an answer: said plainly, never a silent end. The order may still be counted later, which Check payment finds.
         deadline = setTimeout(() => finish({ problem: "cant_confirm", canCheck: true }, "cant_confirm"), POLL_FOR_MS);
@@ -443,12 +463,12 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     };
 
     /** A checkout is on its way: the line says so, and its order is asked about until it ends. */
-    const adopt = (orderId: string, checkout: Checkout | null, request: string, from: number) => {
+    const adopt = (orderId: string, checkout: Checkout | null, request: string, from: number, asker?: string) => {
         busy = true;
         activeRequest = request;
         activeFrom = from;
         show({ checking: true, resume: checkout && !checkout.popup ? { url: checkout.url, app: checkout.app } : null });
-        watch(orderId, checkout, request, from);
+        watch(orderId, checkout, request, from, asker);
     };
 
     /** The link of an order that is still open, when the answer holds one the window may open (plain https only). */
@@ -486,7 +506,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         held.clear();
         // The wish for this tap: made here, never by the page. A start sent again after a lost answer carries the same one, so it finds the order it made
         const intentId = random(24);
-        target = { intentId, request, from, session: sessions.get(request) };
+        // The document that asked, taken now: the end of this checkout is told to it, whoever uses the same request id later
+        const asker = sessions.get(request);
+        target = { intentId, request, from, session: asker };
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
         let popup: Window | null = null;
         try {
@@ -531,7 +553,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                         // Dropped for good: its answer is never read, so no link to an order it may have made reaches anyone. The same wish
                         // can still be asked about with Check payment
                         abort.abort();
-                        if (!destroyed) end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
+                        if (!destroyed)
+                            end({ problem: "unavailable", canCheck: true }, "unavailable", request, from, false, asker);
                         return;
                     }
                     answer = second;
@@ -555,10 +578,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (!answer.orderId || !url) {
                     popup?.close();
                     // An answer with no checkout to show may still stand for an order that is paid: it can be checked
-                    return end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
+                    return end({ problem: "unavailable", canCheck: true }, "unavailable", request, from, false, asker);
                 }
                 if (popup) popup.location.href = url;
-                adopt(answer.orderId, { url, app: answer.app ?? "", popup }, request, from);
+                adopt(answer.orderId, { url, app: answer.app ?? "", popup }, request, from, asker);
                 if (opening() === from && stillSpeaking(request)) tellRequest("started", request);
             } catch (error) {
                 popup?.close();
@@ -571,7 +594,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     { problem: limit ? "limit" : "unavailable", ...(lost ? { canCheck: true } : {}) },
                     limit ? "limit" : "unavailable",
                     request,
-                    from
+                    from,
+                    false,
+                    asker
                 );
             } finally {
                 mine.clear();
@@ -614,7 +639,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         busy = true;
         activeRequest = request;
         activeFrom = from;
-        lastRestore = { request, from, session: sessions.get(request) };
+        const asker = sessions.get(request);
+        lastRestore = { request, from, session: asker };
         deferredRestore = null;
         held.clear();
         void (async () => {
@@ -624,7 +650,16 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (unfinishedOwnStart(answer)) {
                     const followed = await followOwnStart(answer);
                     if (destroyed) return;
-                    if (!followed) return end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
+                    if (!followed) {
+                        return end(
+                            { problem: "unavailable", canCheck: true },
+                            "unavailable",
+                            request,
+                            from,
+                            false,
+                            asker
+                        );
+                    }
                     answer = followed;
                 }
                 const test = answer.testPayment === true;
@@ -634,20 +669,23 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                         "paid",
                         request,
                         from,
-                        test
+                        test,
+                        asker
                     );
                 }
                 // Nothing found by itself (a new phone, a cleared browser): the page is told so, and the buyer is offered Restore purchase, quietly
-                if (answer.status === "none") return end({ offerRestore: true }, "none", request, from);
+                if (answer.status === "none") return end({ offerRestore: true }, "none", request, from, false, asker);
                 if (answer.status === "checking" && answer.orderId) {
                     // An order of theirs is still open: it is watched like a new checkout, and the page hears how it ends under this request.
                     // Its own link is offered, so a reload or a lost pop-up goes on with the SAME order and does not need a second one
-                    target = { intentId: null, request, from, session: sessions.get(request) };
-                    return adopt(answer.orderId, resumeOf(answer), request, from);
+                    target = { intentId: null, request, from, session: asker };
+                    return adopt(answer.orderId, resumeOf(answer), request, from, asker);
                 }
-                end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
+                end({ problem: "unavailable", canCheck: true }, "unavailable", request, from, false, asker);
             } catch {
-                if (!destroyed) end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
+                if (!destroyed) {
+                    end({ problem: "unavailable", canCheck: true }, "unavailable", request, from, false, asker);
+                }
             }
         })();
     };
@@ -729,7 +767,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             ? lastRestore
                 ? { intentId: null, ...lastRestore }
                 : none
-            : target ?? none;
+            : // After a failed first look the page has no checkout of its own: the purchase found is told under the request that asked for it back
+              target ?? (lastRestore ? { intentId: null, ...lastRestore } : none);
         busy = true;
         activeRequest = asked.request;
         activeFrom = asked.from;
@@ -744,6 +783,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
                 });
                 if (asked.request) tellEnd(told, asked.request, asked.from, test, asked.session);
+                if (update.paid) tellDeferredPaid(test);
             };
             try {
                 let answer = await askWithin(
@@ -769,7 +809,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     if (!asked.intentId) {
                         target = { intentId: null, request: asked.request, from: asked.from, session: asked.session };
                     }
-                    return adopt(answer.orderId, resumeOf(answer), asked.request, asked.from);
+                    return adopt(answer.orderId, resumeOf(answer), asked.request, asked.from, asked.session);
                 }
                 if (answer.status === "not_paid" || answer.status === "cant_confirm") {
                     return settle({ problem: answer.status, canCheck: true }, answer.status);
