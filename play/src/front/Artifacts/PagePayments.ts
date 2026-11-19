@@ -367,13 +367,15 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
      * A restore that was turned away while this payment ran is answered when the payment ends paid: that page was told "busy", and
      * would stay on its pay button for a purchase that is made. Told under its own request and session, once.
      */
-    const tellDeferredPaid = (test: boolean, ...told: string[]) => {
+    const tellDeferredPaid = (test: boolean, ...told: Array<{ request: string; session?: string }>) => {
         const waiting = deferredRestore;
         deferredRestore = null;
         if (waiting && waiting.from === opening() && stillSpeaking(waiting.request, waiting.session)) {
-            // What was just told under its request is not told twice
-            if (!told.includes(waiting.request)) tellEnd("paid", waiting.request, waiting.from, test, waiting.session);
-            if (waiting.latest && waiting.latest !== waiting.request && !told.includes(waiting.latest)) {
+            // What was just told under its request, to its document, is not told twice (the same id from another document is another request)
+            const toldAlready = (request: string) =>
+                told.some((one) => one.request === request && one.session === waiting.session);
+            if (!toldAlready(waiting.request)) tellEnd("paid", waiting.request, waiting.from, test, waiting.session);
+            if (waiting.latest && waiting.latest !== waiting.request && !toldAlready(waiting.latest)) {
                 tellEnd("paid", waiting.latest, waiting.from, test, waiting.session);
             }
         }
@@ -411,7 +413,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         });
         tellEnd(status, request, from, test, asker ?? sessions.get(request));
         if (update.paid) {
-            tellDeferredPaid(test, request);
+            tellDeferredPaid(test, { request, session: asker ?? sessions.get(request) });
             tellLatestPaid(test, request);
         }
     };
@@ -852,7 +854,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     tellEnd(told, deferred.latest, asked.from, test, asked.session);
                 }
                 if (update.paid) {
-                    tellDeferredPaid(test, asked.request, deferred?.latest ?? "");
+                    tellDeferredPaid(
+                        test,
+                        { request: asked.request, session: asked.session },
+                        ...(deferred?.latest ? [{ request: deferred.latest, session: asked.session }] : [])
+                    );
                     tellLatestPaid(test, asked.request, deferred?.latest ?? "");
                 }
             };
