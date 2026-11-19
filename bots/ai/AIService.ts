@@ -4127,6 +4127,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             admin,
             botId,
             userId,
+            // Who the chat knows the speaker to be, sent with the id
+            ...(typeof memory?.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
             // The direct chat this was asked in: the result goes back to it, never to another chat
             ...(memory?.dmRoomId ? { origin: { kind: 'dm' as const, ref: memory.dmRoomId } } : {}),
             apps: where.apps,
