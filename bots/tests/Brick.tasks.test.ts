@@ -95,6 +95,13 @@ describe('time, on the person’s own clock', () => {
         expect(localToInstant('2026-12-01 09:30', 'America/New_York')).toBe('2026-12-01T14:30:00.000Z');
     });
 
+    it('never drops seconds that are not zero: they are not a time here, and ":00" is the minute', () => {
+        expect(localToInstant('2026-11-15 16:00:99', 'Asia/Kuwait')).toBeNull();
+        expect(localToInstant('2026-11-15 16:00:30', 'Asia/Kuwait')).toBeNull();
+        expect(localToInstant('2026-11-15 16:00:00', 'Asia/Kuwait')).toBe('2026-11-15T13:00:00.000Z');
+        expect(localToInstant('2026-11-15 16:00', 'Asia/Kuwait')).toBe('2026-11-15T13:00:00.000Z');
+    });
+
     it('reads a time the clock skips as the same moment on the new clock, and a time it repeats as the first one', () => {
         // New York, 8 Mar 2026: 2:00 AM jumps to 3:00 AM
         expect(localToInstant('2026-03-08 01:30', 'America/New_York')).toBe('2026-03-08T06:30:00.000Z');

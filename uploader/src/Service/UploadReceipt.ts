@@ -3,7 +3,8 @@ import { createHash, createHmac, hkdfSync, timingSafeEqual } from "crypto";
 /**
  * A signed receipt for one chat upload (voice notes for every bot, plan v3 section 5): it says who uploaded which file, with
  * the file's own hash, so a bot server can trust a file a guest names without trusting the guest. The bot server checks the
- * receipt, fetches the file through the uploader's own path for that id, and refuses it when the hash no longer matches.
+ * receipt, fetches the file through the uploader's own path for that id (its lasting `/chat-file/:bkt/:id` link for a file kept in a
+ * bucket, `/upload-file/:id` for the uploader's own storage: `bkt` says which), and refuses it when the hash no longer matches.
  *
  * The key is derived from SECRET_KEY for receipts only (HKDF, "receipt" label, a key id for rotation): it is never the plain
  * secret that signs game tokens. The bot server derives the same key (bots/server/UploadReceipts.ts).

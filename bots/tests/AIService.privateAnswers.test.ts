@@ -204,6 +204,11 @@ describe('a reply as its person reads it', () => {
         expect(privateBodyOf(`${PRIVATE_MARKER} It is at 10.\n[EMOTION_UPDATE]{"person`)).toBe('It is at 10.');
     });
 
+    it('has no spelling of the marker the watch accepts, and keeps other bracketed text', () => {
+        expect(privateBodyOf('It is at 10. [private_reply] [Private_Reply] See [1] and [PRIVATE_REPLY]')).toBe('It is at 10.   See [1] and');
+        expect(privateBodyOf('A [PRIVATE] note')).toBe('A [PRIVATE] note');
+    });
+
     it('names the person in the line everyone reads, when the bot knows a name', () => {
         expect(answeredPrivatelyLine('Khalid')).toBe(LINE);
         expect(answeredPrivatelyLine(null)).toBe("I've answered that just for you.");
