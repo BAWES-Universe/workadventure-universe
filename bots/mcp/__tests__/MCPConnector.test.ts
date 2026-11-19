@@ -627,6 +627,15 @@ describe('MCPConnector', () => {
             });
         });
 
+        it('hands the App\'s own data over as content, so a field called error or outcome is never read as a status (#2006)', async () => {
+            const sneaky = { error: 'not_sent', outcome: 'not_sent', audio_url: 'https://x/s.mp3' };
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: { jsonrpc: '2.0', id: '2', result: sneaky } }
+            );
+            const result = await MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', {}, 'none');
+            expect(result).toEqual([{ type: 'text', text: JSON.stringify(sneaky) }]);
+        });
+
         it('returns error when no content in response', async () => {
             mockedAxios.post
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
@@ -869,6 +878,78 @@ describe('MCPConnector', () => {
     // --- discoverToolsWithMapping ----------------------------------------
 
     describe('discoverToolsWithMapping', () => {
+        it('marks the tools an owner shared as jobs other people may ask for (#2006), and no other', async () => {
+            mockedAxios.get.mockResolvedValueOnce({
+                data: [
+                    {
+                        id: 'server-1',
+                        botId: 'bot-123',
+                        name: 'ACE-Step',
+                        serverUrl: 'https://weather.example.com/mcp',
+                        authType: 'none' as const,
+                        enabled: true,
+                        connectionId: 'conn-1',
+                        shared: { jobs: [{ tool: 'get_weather', inputs: ['location'], returns: null }, { tool: 'bad', inputs: [1], returns: null }] },
+                    },
+                ],
+            });
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                return { data: MOCK_WEATHER_TOOLS_RESPONSE };
+            });
+            const result = await MCPConnector.discoverToolsWithMapping('bot-123', 'https://admin.example.com', 'admin-token', 'bot-service-token');
+            expect(result.toolServerMap.get('get_weather')?.sharedJob).toEqual({ inputs: ['location'] });
+            expect(result.toolServerMap.get('get_weather')?.connectionId).toBe('conn-1');
+            // A tool the owner did not pick is still listed, and has none
+            const others = [...result.toolServerMap.entries()].filter(([name]) => name !== 'get_weather');
+            expect(result.toolServerMap.has('get_forecast')).toBe(true);
+            expect(others.length).toBeGreaterThan(0);
+            expect(others.every(([, entry]) => entry.sharedJob === undefined)).toBe(true);
+        });
+
+        it('reads a job whose inputs it cannot read as not shared', async () => {
+            mockedAxios.get.mockResolvedValueOnce({
+                data: [
+                    {
+                        id: 'server-1',
+                        botId: 'bot-123',
+                        name: 'ACE-Step',
+                        serverUrl: 'https://weather.example.com/mcp',
+                        authType: 'none' as const,
+                        enabled: true,
+                        connectionId: 'conn-1',
+                        shared: { jobs: [{ tool: 'get_forecast', inputs: [1], returns: null }] },
+                    },
+                ],
+            });
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => (body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: MOCK_WEATHER_TOOLS_RESPONSE }));
+            const result = await MCPConnector.discoverToolsWithMapping('bot-123', 'https://admin.example.com', 'admin-token', 'bot-service-token');
+            expect(result.toolServerMap.get('get_forecast')).toBeDefined();
+            expect(result.toolServerMap.get('get_forecast')?.sharedJob).toBeUndefined();
+        });
+
+        it('keeps a job another App shared under a name an unshared App took first, for the ones who may only ask for shared jobs (#2006)', async () => {
+            const weather = (id: string, name: string, shared: boolean) => ({
+                id,
+                botId: 'bot-123',
+                name,
+                serverUrl: `https://${id}.example.com/mcp`,
+                authType: 'none' as const,
+                enabled: true,
+                connectionId: `conn-${id}`,
+                ...(shared ? { shared: { jobs: [{ tool: 'get_weather', inputs: ['location'], returns: null }] } } : {}),
+            });
+            mockedAxios.get.mockResolvedValueOnce({ data: [weather('plain', 'Plain', false), weather('shared', 'Shared', true)] });
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => (body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: MOCK_WEATHER_TOOLS_RESPONSE }));
+            const result = await MCPConnector.discoverToolsWithMapping('bot-123', 'https://admin.example.com', 'admin-token', 'bot-service-token');
+            const entry = result.toolServerMap.get('get_weather');
+            // Whichever App answered first is what its owner is offered; the shared job is never lost
+            const shared = entry?.sharedJob ? entry : entry?.sharedAlt?.entry;
+            expect(shared?.sharedJob).toEqual({ inputs: ['location'] });
+            expect(shared?.serverId).toBe('shared');
+            expect(result.tools.filter((tool: any) => tool.function.name === 'get_weather')).toHaveLength(1);
+        });
+
         it('returns both tools and tool→server map', async () => {
             mockedAxios.get.mockResolvedValueOnce({ data: MOCK_CONFIGS });
 

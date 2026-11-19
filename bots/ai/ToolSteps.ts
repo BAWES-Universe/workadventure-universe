@@ -126,7 +126,7 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
     [SET_GOAL_TOOL]: (args) => ({ doing: 'Setting a goal', done: 'Set a goal', detail: shown(args.text), group: 'set_goal', kind: 'write' }),
     [CHANGE_TASK_TOOL]: (args) => {
         const [doing, done] =
-            args.action === 'snooze' ? ['Snoozing a reminder', 'Snoozed a reminder'] : args.action === 'cancel' ? ['Stopping it', 'Stopped it'] : args.action === 'pause' ? ['Pausing it', 'Paused it'] : args.action === 'resume' ? ['Resuming it', 'Resumed it'] : args.action === 'close' ? ['Closing it', 'Closed it'] : args.action === 'keep_going' ? ['Keeping it going', 'Kept it going'] : ['Changing it', 'Changed it'];
+            args.action === 'snooze' ? ['Snoozing a reminder', 'Snoozed a reminder'] : args.action === 'run_now' ? ['Running it now', 'Ran it now'] : args.action === 'cancel' ? ['Stopping it', 'Stopped it'] : args.action === 'pause' ? ['Pausing it', 'Paused it'] : args.action === 'resume' ? ['Resuming it', 'Resumed it'] : args.action === 'close' ? ['Closing it', 'Closed it'] : args.action === 'keep_going' ? ['Keeping it going', 'Kept it going'] : ['Changing it', 'Changed it'];
         return { doing, done, group: `change_task:${String(args.action ?? '')}`, kind: 'write' };
     },
 };

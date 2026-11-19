@@ -603,6 +603,117 @@ describe('seeing and changing what is kept', () => {
         expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'delete' });
     });
 
+    it('an extra run leaves what was just set as it was: a repeated "set it" is still the one item, while a change makes it a new ask', async () => {
+        const { admin, context } = setUp();
+        const asked = { text: 'Pick up the car', when: '2026-11-15 16:00' };
+        const first = await runTaskTool(SET_REMINDER_TOOL, asked, context);
+        const id = String(first.id);
+        await runTaskTool(CHANGE_TASK_TOOL, { id, action: 'run_now' }, context);
+        const again = await runTaskTool(SET_REMINDER_TOOL, asked, context);
+        expect(again).toMatchObject({ set: true });
+        expect(String(again.note)).toContain('Already set a moment ago');
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(1);
+        // A change to it is a different thing: a repeat of the first ask is made again
+        await runTaskTool(CHANGE_TASK_TOOL, { id, action: 'cancel' }, context);
+        await runTaskTool(SET_REMINDER_TOOL, asked, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(2);
+    });
+
+    it('a retried run_now after an answer that never came carries the same key, so Orbit starts one run; a later, deliberate one is a new ask', async () => {
+        const { admin, context } = setUp();
+        const keys = () => admin.changeBrickItem.mock.calls.map((call) => (call as unknown as [string, string, { key?: string }])[2].key);
+        // The first ask times out: nothing came back, though Orbit may have started the run
+        admin.changeBrickItem.mockRejectedValueOnce(new Error('timeout of 10000ms exceeded'));
+        const failed = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(String(failed.error)).toContain('could not be done');
+        // The retry is the same ask: the same key
+        expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context)).toMatchObject({ started: true });
+        const [first, retry] = keys();
+        expect(first).toEqual(expect.any(String));
+        expect(retry).toBe(first);
+        // Orbit has answered it: asking again on purpose is a new ask with a new key
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(keys()[2]).toEqual(expect.any(String));
+        expect(keys()[2]).not.toBe(first);
+        // A refusal is an answer too: the ask after it is new
+        admin.changeBrickItem.mockResolvedValueOnce({ ok: false, status: 409, code: 'busy', error: 'no' } as never);
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(keys()[4]).not.toBe(keys()[3]);
+        // Only a run carries a key
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'snooze' }, context);
+        expect(keys()[5]).toBeUndefined();
+    });
+
+    it('a retry that finds the run its lost first try already made says what became of it, and is not told as started now', async () => {
+        const { admin, context } = setUp();
+        const found = (state: string) =>
+            ({ ok: true, item: item({ nextDueAt: '2026-11-15T14:00:00.000Z' }), run: { runId: 'r1', state, replay: true } }) as never;
+        admin.changeBrickItem.mockRejectedValueOnce(new Error('timeout of 10000ms exceeded'));
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        // The first try had run and finished: the retry is told so, not "started"
+        admin.changeBrickItem.mockResolvedValueOnce(found('done'));
+        const again = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(again).toMatchObject({ started: false, already: 'done' });
+        expect(String(again.note)).toContain('nothing new was started');
+        // One that is still running or waiting is "running now", as it is said for any run
+        admin.changeBrickItem.mockRejectedValueOnce(new Error('timeout'));
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        admin.changeBrickItem.mockResolvedValueOnce(found('claimed'));
+        expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context)).toMatchObject({ started: true });
+        // And the ask after an answer is new: it carries a new key
+        const keys = admin.changeBrickItem.mock.calls.map((call) => (call as unknown as [string, string, { key?: string }])[2].key);
+        expect(keys[2]).not.toBe(keys[0]);
+        // A dropped one never ran
+        admin.changeBrickItem.mockRejectedValueOnce(new Error('timeout'));
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        admin.changeBrickItem.mockResolvedValueOnce(found('dropped'));
+        const dropped = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(dropped).toMatchObject({ started: false, already: 'dropped' });
+        expect(String(dropped.note)).toContain('did not run');
+    });
+
+    it('runs one now when they ask: an extra run, nothing else about it is said to move, and the reasons it would not run are said plainly', async () => {
+        const { admin, context } = setUp();
+        const answer = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context);
+        expect(admin.changeBrickItem).toHaveBeenLastCalledWith(BRICK, 'item-1', { userId: SARA, action: 'run', key: expect.any(String) });
+        expect(answer).toMatchObject({ started: true, id: 'item-1' });
+        expect(String(answer.note)).toContain('Its own schedule is as it was');
+        for (const [code, words] of [
+            ['busy', 'running right now'],
+            ['no_room', 'usage for goals and tasks is used up'],
+            ['runs_a_day', 'most runs for today'],
+            ['needs_setup', 'not turned on yet'],
+            ['needs_goal', 'goal that is paused'],
+        ] as const) {
+            admin.changeBrickItem.mockResolvedValueOnce({ ok: false, status: 409, code, error: 'no' } as never);
+            expect(String((await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'run_now' }, context)).error)).toContain(words);
+        }
+        // A snoozed run is said as that run only: the schedule carries on at its own time after it
+        admin.changeBrickItem.mockResolvedValueOnce({
+            ok: true,
+            item: { ...item(), cadence: { type: 'every', minutes: 60 }, nextDueAt: '2026-11-15T13:10:00.000Z', snoozedUntil: '2026-11-15T13:10:00.000Z', nextRegularAt: '2026-11-15T14:00:00.000Z' },
+        } as never);
+        expect(await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'snooze' }, context)).toMatchObject({ snoozed: true, then_regular: expect.any(String) });
+    });
+
+    it('says "then the regular one" only for a repeating item whose regular time is after the snoozed run, as the line on the screen does', async () => {
+        const snoozed = { nextDueAt: '2026-11-15T13:10:00.000Z', snoozedUntil: '2026-11-15T13:10:00.000Z' };
+        const repeating = { cadence: { type: 'every', minutes: 60 } } as const;
+        const { context } = setUp({
+            items: [
+                item({ id: 'ok', ...repeating, ...snoozed, nextRegularAt: '2026-11-15T14:00:00.000Z' }),
+                item({ id: 'once', cadence: { type: 'once', at: '2026-11-15T13:10:00.000Z' }, ...snoozed, nextRegularAt: '2026-11-15T14:00:00.000Z' }),
+                item({ id: 'not-after', ...repeating, ...snoozed, nextRegularAt: '2026-11-15T13:10:00.000Z' }),
+                item({ id: 'before', ...repeating, ...snoozed, nextRegularAt: '2026-11-15T13:05:00.000Z' }),
+            ],
+        });
+        const listed = (await runTaskTool(MY_TASKS_TOOL, {}, context)) as { items: Array<Record<string, unknown>> };
+        const byId = (id: string) => listed.items.find((one) => one.id === id)!;
+        expect(byId('ok')).toMatchObject({ snoozed: true, then_regular: expect.any(String) });
+        for (const id of ['once', 'not-after', 'before']) expect(byId(id).then_regular).toBeUndefined();
+    });
+
     it('answers the question a goal asked: close it is done, keep going is keep, and my_tasks shows which goal asked', async () => {
         const goal = item({ kind: 'goal', words: 'Get my visa', state: 'on', nextDueAt: '2026-11-15T13:00:00.000Z', asking: 'unsure' });
         const { admin, context } = setUp({ items: [goal, item({ id: 'item-2', kind: 'goal', asking: 'date_passed' }), item({ id: 'item-3', kind: 'goal' })] });
@@ -792,6 +903,7 @@ describe('what the chat shows for them', () => {
         expect(describeStep({ id: '1', name: SET_REMINDER_TOOL, arguments: { text: 'Pick up the car' } })).toMatchObject({ done: 'Set a reminder', detail: 'Pick up the car' });
         expect(describeStep({ id: '2', name: CHANGE_TASK_TOOL, arguments: { action: 'snooze' } })).toMatchObject({ done: 'Snoozed a reminder' });
         expect(describeStep({ id: '3', name: CHANGE_TASK_TOOL, arguments: { action: 'cancel' } })).toMatchObject({ done: 'Stopped it' });
+        expect(describeStep({ id: '3b', name: CHANGE_TASK_TOOL, arguments: { action: 'run_now' } })).toMatchObject({ done: 'Ran it now' });
         expect(describeStep({ id: '4', name: SET_BRIEFING_TOOL, arguments: { text: 'my day' } })).toMatchObject({ done: 'Set a briefing', detail: 'my day' });
         expect(describeStep({ id: '5', name: SET_WATCH_TOOL, arguments: { text: 'the flight' } })).toMatchObject({ done: 'Set a watch', detail: 'the flight' });
         expect(describeStep({ id: '6', name: SET_GOAL_TOOL, arguments: { text: 'my visa' } })).toMatchObject({ done: 'Set a goal', detail: 'my visa' });

@@ -23,9 +23,9 @@ import { DmReplyService, instructionsFor, type DmRoomLink } from './DmReplyServi
 import { ModelTaskRunner } from './BrickTaskModel';
 import { TaskApps } from './BrickTaskApps';
 import { readWebPageForTool } from '../ai/AIService';
-import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
+import { botMatrixId, matrixIntentionallyOff, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
-import { askOrbitAboutAppUse } from '../mcp/AppUse';
+import { askOrbitAboutAppUse, sayOwnerNote, settleWithOrbit } from '../mcp/AppUse';
 import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
 import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
@@ -36,6 +36,7 @@ import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
 import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
+import { ChatPurgeSweeper } from '../services/ChatPurges';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
@@ -118,6 +119,16 @@ aiService.useAppUse(
         return ADMIN_API_URL && serviceToken ? { adminApiUrl: ADMIN_API_URL, serviceToken } : null;
     })
 );
+// What a try at a shared job came to is told to Orbit (#2006); the owner is told once, in their own chat with the Brick, that the day's uses ran out
+aiService.useAppSettle(
+    settleWithOrbit(() => {
+        const serviceToken = process.env.BOT_SERVICE_TOKEN;
+        return ADMIN_API_URL && serviceToken ? { adminApiUrl: ADMIN_API_URL, serviceToken } : null;
+    }),
+    async (botId, note) => {
+        if (matrixBridge) await sayOwnerNote((matrixUserId, text, transactionId) => matrixBridge.speakInDirectChat(botId, matrixUserId, text, transactionId), botId, note);
+    }
+);
 const cardSurface: CardSurface = {
     send: (botId, roomId, content) => (dmCards ? dmCards.send(botId, roomId, content) : Promise.reject(new Error('Direct messages are off'))),
     say: (botId, roomId, text) => (dmCards ? dmCards.say(botId, roomId, text) : Promise.reject(new Error('Direct messages are off'))),
@@ -168,6 +179,8 @@ const COMPUTER_RUNNER_EVERY_MS = 10 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
 let computerSweepInterval: NodeJS.Timeout | undefined;
 let computerRunner: ComputerRunner | undefined;
+/** Clears the chat rooms of Bricks Orbit purged for good (register R29). */
+let chatPurges: ChatPurgeSweeper | undefined;
 /** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
 let stopBrickListening: (() => void) | undefined;
 /** How often Orbit is asked for the goals and tasks that fell due (#2002). Nothing depends on exactly when: Orbit is the scheduler. */
@@ -198,8 +211,15 @@ async function setupMatrix(): Promise<void> {
     // The card a bot shows in the person's direct message (#1657) goes through the Matrix account of the bot
     const botUser = (botId: string) => botMatrixId(matrixConfig.domain, botId) ?? '';
     dmCards = {
-        send: (botId, roomId, content) => matrixClient.sendMessage(botUser(botId), roomId, content),
-        say: async (botId, roomId, text) => void (await matrixClient.sendText(botUser(botId), roomId, text)),
+        // Through the bridge: nothing is sent as a Brick whose purge has begun, and the purge waits for a card already being sent
+        send: (botId, roomId, content) => {
+            const sendIt = () => matrixClient.sendMessage(botUser(botId), roomId, content);
+            return matrixBridge ? matrixBridge.sendAsBrick(botId, sendIt) : sendIt();
+        },
+        say: async (botId, roomId, text) => {
+            const sendIt = () => matrixClient.sendText(botUser(botId), roomId, text);
+            void (await (matrixBridge ? matrixBridge.sendAsBrick(botId, sendIt) : sendIt()));
+        },
     };
     matrixBridge = new MatrixDmBridge(matrixConfig, matrixClient, {
         approvals,
@@ -343,9 +363,12 @@ async function shutdown(signal: string) {
         // Direct messages already taken in get their answer first; new ones go back to Synapse for the next bot server.
         // Waiting messages a drain took but hasn't started on go back in line (before the shared store closes), and the
         // ones being answered get the same time. Kept under the container's stop grace, so nothing is killed mid-way.
+        // The Brick's chats being cleared wait in the same breath, never after it: no new Brick is started, and the one under way is asked for
+        // again by the next bot server if it does not finish. All three share the one grace, which stays under the container's stop time.
         const [settled, drained] = await Promise.all([
             matrixRouter ? matrixRouter.settle(DM_SHUTDOWN_GRACE_MS) : true,
             matrixBridge ? matrixBridge.stop(DM_SHUTDOWN_GRACE_MS) : true,
+            chatPurges?.stop(DM_SHUTDOWN_GRACE_MS),
         ]);
         if (!settled || !drained) {
             console.warn('[BotServer] Some direct messages were still being answered at shutdown');
@@ -376,6 +399,15 @@ async function start() {
 
         // Initialize bot manager
         await botManager.initialize();
+        // Only now, with the shared store connected: a purge writes the rooms it leaves down there, and has no store to write to before this.
+        // A Brick purged for good keeps nothing in chat: its rooms are cleared from Orbit's list. With no chat server on purpose (none of its settings set)
+        // there is none to clear; with settings half set, or a chat server this process could not verify at start, the purge waits (a verified one needs a restart to be reached).
+        chatPurges = new ChatPurgeSweeper({
+            adminApiUrl: ADMIN_API_URL,
+            botServiceToken: process.env.BOT_SERVICE_TOKEN,
+            purge: async (botId) => (matrixBridge ? matrixBridge.purgeChats(botId) : matrixIntentionallyOff()),
+        });
+        chatPurges.start();
         // A Brick deleted through another bot server stops here at once too (#1996). Without it, within the minute.
         const replies = dmReplies;
         if (replies) {

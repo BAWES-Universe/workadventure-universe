@@ -167,9 +167,18 @@ export function outputCapOf(body: Record<string, unknown>, config: AIProviderCon
     return Math.min(Math.floor(base), RELAY_GUARDS.maxOutputTokens);
 }
 
+/**
+ * The input of a call read in tokens, high on purpose: counted in bytes (UTF-8), not characters, so text that takes more than one byte a
+ * character (Arabic, Chinese, emoji) is not read as a third of what it costs. A characters count undercounted it, and the room held for
+ * such a call was smaller than the call (audit F9).
+ */
+export function inputTokensOf(body: Record<string, unknown>): number {
+    return Math.ceil((Buffer.byteLength(JSON.stringify(body.messages ?? [])) + Buffer.byteLength(JSON.stringify(body.tools ?? []))) / RELAY_GUARDS.charsPerToken);
+}
+
 /** Room for one call: its input read high, its longest allowed reply, at the price list's rates. A price nobody knows holds a fixed generous room. */
 export function estimateCallMicros(body: Record<string, unknown>, config: AIProviderConfig, outputCap: number, at: Date): number {
-    const inputTokens = Math.ceil((JSON.stringify(body.messages ?? []).length + JSON.stringify(body.tools ?? []).length) / RELAY_GUARDS.charsPerToken);
+    const inputTokens = inputTokensOf(body);
     const cost = priceCall({ config, usage: { inputTokens, cachedTokens: 0, cacheWriteTokens: 0, outputTokens: outputCap, reasoningTokens: 0 }, at });
     return Math.max(1, cost.micros ?? RELAY_GUARDS.unpricedHoldMicros);
 }
@@ -329,7 +338,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         let metadata = ended.usage;
         let estimated = false;
         if (!metadata?.error && (!metadata || (metadata.promptTokens ?? 0) + (metadata.completionTokens ?? 0) <= 0)) {
-            const promptTokens = Math.ceil((JSON.stringify(body.messages).length + JSON.stringify(body.tools ?? []).length) / RELAY_GUARDS.charsPerToken);
+            const promptTokens = inputTokensOf(body);
             const completionTokens = Math.ceil(ended.outputChars / RELAY_GUARDS.charsPerToken);
             metadata = completionTokens > 0 ? { promptTokens, completionTokens } : undefined;
             estimated = metadata !== undefined;

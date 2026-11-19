@@ -9,7 +9,9 @@
         groupGoalItems,
         myGoalsList,
         sayDone,
+        saySnoozed,
         sayStatus,
+        sayTapProblem,
         sayWhen,
         type GoalItem,
         type GoalTap,
@@ -21,7 +23,7 @@
     /**
      * Goals and tasks across all of the person's Bricks (game #2002, mock t-7-all), opened from its row on the Bricks
      * page or from "Goals and tasks" in a Brick's words. The same three parts as on a Brick's page, each row with its
-     * Brick's face and name. Pause, Resume and Snooze work here; a tap on a row opens it on its Brick's page, where
+     * Brick's face and name. Run now, Pause, Resume and Snooze work here; a tap on a row opens it on its Brick's page, where
      * Change, Mark done and Reopen are. Nothing is added here: a person tells any Brick in its chat.
      */
     export let onBack: () => void;
@@ -38,6 +40,9 @@
     let allDone = false;
     // The rows a tap is in flight for, so a second tap on the same row does nothing more
     let busy = new Set<string>();
+    // The rows Run now just started: the row itself does not change, so its button says so for a moment
+    let started = new Set<string>();
+    const STARTED_FOR_MS = 4000;
 
     $: parts = groupGoalItems($items);
     $: shownDone = allDone ? parts.done : parts.done.slice(0, FIRST_DONE);
@@ -53,8 +58,14 @@
         myGoalsList
             .tap(item.id, action)
             .then((result) => {
-                if (result === "refused") warningMessageStore.addWarningMessage($LL.chat.brick.goals.tapFailed());
-                else if (result === "stale") warningMessageStore.addWarningMessage($LL.chat.brick.goals.tapStale());
+                const problem = sayTapProblem(result, $LL);
+                if (problem !== null) warningMessageStore.addWarningMessage(problem);
+                if (result === "started") {
+                    started = new Set([...started, item.id]);
+                    setTimeout(() => {
+                        started = new Set([...started].filter((id) => id !== item.id));
+                    }, STARTED_FOR_MS);
+                }
             })
             .catch((error) => console.error(error))
             .finally(() => {
@@ -77,7 +88,11 @@
                 ? [sayDone(item, ll, lang)]
                 : item.group === "progress"
                 ? [sayStatus(item, ll)]
-                : [item.state === "paused" ? ll.chat.brick.goals.paused() : "", sayWhen(item, Date.now(), ll, lang)];
+                : [
+                      item.state === "paused" ? ll.chat.brick.goals.paused() : "",
+                      sayWhen(item, Date.now(), ll, lang),
+                      saySnoozed(item, Date.now(), ll, lang),
+                  ];
         return [nameOf(item), ...said].filter((bit) => bit !== "").join(" · ");
     };
     // A check paused with its goal: only the goal's own Resume (on its Brick's page) brings it back
@@ -131,6 +146,14 @@
                                 {:else}
                                     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
                                     <span class="act" on:click|stopPropagation>
+                                        <PageButton
+                                            disabled={busy.has(item.id) || started.has(item.id)}
+                                            testId="goalsPageRun"
+                                            on:click={() => tap(item, "run")}
+                                            >{started.has(item.id)
+                                                ? $LL.chat.brick.goals.runStarted()
+                                                : $LL.chat.brick.goals.runNow()}</PageButton
+                                        >
                                         {#if item.state === "paused"}
                                             <PageButton
                                                 disabled={busy.has(item.id)}
@@ -224,9 +247,12 @@
         height: 32px;
     }
     .act {
-        display: grid;
-        place-items: center;
+        display: flex;
         flex: none;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+        max-width: 55%;
     }
     .note {
         margin-top: 12px;
