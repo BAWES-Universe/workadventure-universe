@@ -53,6 +53,20 @@ describe("withoutQueryOrHash", () => {
         );
     });
 
+    it("blanks an email however many times its @ is encoded, including the last round that is read", () => {
+        for (let times = 1; times <= 8; times++) {
+            let at = "@";
+            for (let i = 0; i < times; i++) at = encodeURIComponent(at);
+            expect(withoutQueryOrHash(`https://a.test/invite/sara${at}example.test/room`), `${times}x`).toBe(
+                "https://a.test/invite/[email]/room"
+            );
+        }
+        // Deeper than it is read: a piece still holding an escape after the rounds is not trusted either
+        expect(withoutQueryOrHash("https://a.test/invite/sara%252525252525252540example.test")).toBe(
+            "https://a.test/invite/[email]"
+        );
+    });
+
     it("returns what is not an address as it was", () => {
         expect(withoutQueryOrHash("not an address")).toBe("not an address");
     });

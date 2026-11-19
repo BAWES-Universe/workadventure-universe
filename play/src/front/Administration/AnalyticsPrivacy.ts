@@ -67,8 +67,8 @@ function segmentHoldsEmail(segment: string): boolean {
         if (decoded === seen) return false;
         seen = decoded;
     }
-    // Still encoded after four rounds: not read any further, and not trusted
-    return /%[0-9a-f]{2}/i.test(seen);
+    // What the last round gave is read too; and a piece still encoded after the rounds is not read any further, and not trusted
+    return new RegExp(EMAIL.source).test(seen) || /%[0-9a-f]{2}/i.test(seen);
 }
 
 /** A path with every piece that holds an email (also encoded) replaced by [email], and the rest as it was. */
