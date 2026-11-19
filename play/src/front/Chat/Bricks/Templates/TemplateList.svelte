@@ -8,7 +8,7 @@
     import { keepFocusInside } from "../keepFocusInside";
     import type { TemplateCard, TemplateLists } from "./Template";
     import TemplateSheet from "./TemplateSheet.svelte";
-    import { readTemplateLists } from "./Templates";
+    import { readTemplateLists, templateStarChanges } from "./Templates";
     import { IconChevronRight, IconStarFilled, IconX } from "@wa-icons";
     import "../BrickGroups.css";
     import "./Templates.css";
@@ -34,12 +34,16 @@
         { key: "met", title: t.met(), cards: lists.met },
     ].filter((section) => section.cards.length > 0);
 
-    async function load() {
-        phase = "loading";
+    // Only the newest read counts: one that ends after a later one began is not shown
+    let reads = 0;
+    // `quiet`: the lists drawn stay while they are read again (a star changed under the preview), and a read that fails changes nothing
+    async function load(quiet = false) {
+        const mine = ++reads;
+        if (!quiet) phase = "loading";
         const read = await readTemplateLists();
-        if (dismissed) return;
+        if (dismissed || mine !== reads) return;
         if (!read.ok) {
-            phase = "failed";
+            if (!quiet) phase = "failed";
             return;
         }
         lists = read.value;
@@ -48,6 +52,16 @@
 
     onMount(() => {
         load().catch((error) => console.error(error));
+        // This list stays drawn under a template's preview, so it does not open again when the preview closes: a star that was
+        // saved there (even one that ends after the preview closed) is read again here
+        let first = true;
+        return templateStarChanges.subscribe(() => {
+            if (first) {
+                first = false;
+                return;
+            }
+            load(true).catch((error) => console.error(error));
+        });
     });
 
     function about(card: TemplateCard): string {

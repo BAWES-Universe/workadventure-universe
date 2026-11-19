@@ -1,3 +1,4 @@
+import { writable, type Readable } from "svelte/store";
 import { botApiService } from "../../../external-modules/bots/services/BotApiService";
 import { isRecord } from "./isRecord";
 import {
@@ -53,10 +54,15 @@ export function readTemplateLists(): Promise<Read<TemplateLists>> {
     });
 }
 
+/** Counts the star changes Orbit took: a list of templates drawn earlier reads itself again when this moves. */
+const starChanges = writable(0);
+export const templateStarChanges: Readable<number> = { subscribe: starChanges.subscribe };
+
 /** Star keeps a template for later. False when Orbit refused or could not be reached. */
 export async function setTemplateStar(templateId: string, starred: boolean): Promise<boolean> {
     try {
         await botApiService.starTemplate(templateId, starred);
+        starChanges.update((count) => count + 1);
         return true;
     } catch (error) {
         console.warn("Could not change the star of a template", error);

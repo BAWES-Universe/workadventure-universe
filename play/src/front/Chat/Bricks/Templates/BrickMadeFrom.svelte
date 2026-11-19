@@ -74,6 +74,8 @@
             update,
             onDone: (next: MadeFromView | undefined, taken: UpdateField[] = []) => {
                 if (gone) return;
+                // What a read that is still out says is from before this: it never brings the dismissed update back
+                reads++;
                 view = next ?? view;
                 if (taken.length > 0) onTaken(taken);
             },

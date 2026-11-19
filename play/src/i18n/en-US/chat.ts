@@ -1403,6 +1403,7 @@ const chat: BaseTranslation = {
             lookTitle: "What gets shared",
             lookSub: "Exactly this goes with the template. Nothing else leaves.",
             lookChanged: "This Brick changed since you looked, so nothing was shared. This is what it says now.",
+            lookBlocked: "Something in this Brick can't be shared as it is. Nothing was shared.",
             lookFailed: "Couldn't read what would be shared. Try again.",
             brickGone: "This Brick isn't there any more.",
             shareFailed: "Couldn't share it. Try again.",
