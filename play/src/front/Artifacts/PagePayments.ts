@@ -532,22 +532,22 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
      * the checkout comes, the purchase is found, or OWN_START_WAIT_MS has passed (null: the buyer can Check payment). A question that got no
      * answer is asked again; an answer that is a refusal ends it. A receipt's order (`via: receipt`) is never asked again here.
      */
-    const followOwnStart = async (first: ArtifactPay): Promise<ArtifactPay | null> => {
-        const ends = Date.now() + OWN_START_WAIT_MS;
-        let answer = first;
-        while (unfinishedOwnStart(answer)) {
-            if (destroyed || Date.now() >= ends) return null;
-            show({ checking: true });
-            const wait = answer.pollAfterMs ?? OWN_START_POLL_DEFAULT_MS;
-            await waitFor(Math.min(Math.max(wait, OWN_START_POLL_MIN_MS), OWN_START_POLL_MAX_MS));
-            if (destroyed) return null;
-            try {
-                answer = await askWithin({ restore: true });
-            } catch (error) {
-                if (!gotNoAnswer(error)) return null;
-            }
+    const followOwnStart = async (
+        answer: ArtifactPay,
+        ends = Date.now() + OWN_START_WAIT_MS
+    ): Promise<ArtifactPay | null> => {
+        if (!unfinishedOwnStart(answer)) return answer;
+        if (destroyed || Date.now() >= ends) return null;
+        show({ checking: true });
+        const wait = answer.pollAfterMs ?? OWN_START_POLL_DEFAULT_MS;
+        await waitFor(Math.min(Math.max(wait, OWN_START_POLL_MIN_MS), OWN_START_POLL_MAX_MS));
+        if (destroyed) return null;
+        try {
+            return await followOwnStart(await askWithin({ restore: true }), ends);
+        } catch (error) {
+            // No answer: the same is asked again. Anything else (a refusal) ends it
+            return gotNoAnswer(error) ? followOwnStart(answer, ends) : null;
         }
-        return answer;
     };
 
     /** A page asking for a purchase this buyer already made (a reload, a reopened version): found by the buyer, never by anything the page chose. */
