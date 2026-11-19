@@ -88,7 +88,13 @@ describe("a page that takes payments, in the game's window", () => {
             .mockResolvedValueOnce({ status: "checking", checkoutUrl: null, testPayment: false })
             .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: true });
         const payments = make(pay, () => popup);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", amount: "1.000", job: "x" });
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "r1",
+            amount: "1.000",
+            job: "x",
+        });
         await flush();
         // The message carried no amount and none is sent
         expect(pay).toHaveBeenNthCalledWith(1, "a1", undefined, { start: true });
@@ -151,7 +157,11 @@ describe("a page that takes payments, in the game's window", () => {
             .fn()
             .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
             .mockResolvedValueOnce({ status: "not_paid", checkoutUrl: null, testPayment: false })
-            .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" });
+            .mockResolvedValueOnce({
+                orderId: "o2",
+                checkoutUrl: "https://checkout.examplepay.com/c2",
+                app: "Example",
+            });
         const payments = make(pay, () => null);
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
         await flush();

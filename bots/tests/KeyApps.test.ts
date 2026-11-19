@@ -314,7 +314,15 @@ describe('the two tools of a Brick for keys', () => {
         const badGateway = (await runKeyTool(PAYMENT_TOOL, args, context)) as { error: string };
         http.post.mockResolvedValueOnce({ status: 200, data: {} });
         const notWhole = (await runKeyTool(PAYMENT_TOOL, args, context)) as { error: string };
-        for (const result of [timedOut, badGateway, notWhole]) {
+        // A 200 whose job does not say what was set up is no confirmation either
+        const badJobs: unknown[] = [{ job: {} }, { job: { amount: '4.500' } }, { job: { currency: 'KWD' } }, { job: { amount: '', currency: 'KWD' } }, { job: { amount: '4.500', currency: 'KWDX' } }, { job: { amount: 4.5, currency: 'KWD' } }, { job: null }];
+        const emptyJobs: { error: string }[] = [];
+        for (const data of badJobs) {
+            http.post.mockResolvedValueOnce({ status: 200, data });
+            emptyJobs.push((await runKeyTool(PAYMENT_TOOL, args, context)) as { error: string });
+        }
+        for (const result of [timedOut, badGateway, notWhole, ...emptyJobs]) {
+            expect(result).not.toHaveProperty('done');
             expect(result.error).toMatch(/may already be set up/);
             expect(result.error).toMatch(/do not set it up again/);
             expect(result.error).not.toMatch(/offer to try again/);

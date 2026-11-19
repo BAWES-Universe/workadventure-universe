@@ -175,12 +175,15 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
         console.warn('[KeyTools] The page job request got no answer:', error instanceof Error ? error.message : error);
         return { error: MAY_BE_SET_UP };
     }
-    const body = (sent.data ?? {}) as { job?: { amount?: string; currency?: string; app?: string }; error?: unknown };
-    if (sent.status === 200 && body.job) {
+    const body = (sent.data ?? {}) as { job?: { amount?: unknown; currency?: unknown; app?: string }; error?: unknown };
+    // A 200 whose job does not say what was set up (no amount, no three-letter currency) is not a confirmation: the job may or may not be made
+    const jobAmount = typeof body.job?.amount === 'string' ? body.job.amount.trim() : '';
+    const jobCurrency = typeof body.job?.currency === 'string' ? body.job.currency.trim() : '';
+    if (sent.status === 200 && jobAmount && /^[A-Za-z]{3}$/.test(jobCurrency)) {
         return {
             done: true,
-            amount: `${body.job.amount} ${body.job.currency}`,
-            note: `The page can now take ${body.job.amount} ${body.job.currency} through ${app.short}. Make sure the page asks for a checkout the way the tool says, and tell the person it needs to be shared with anyone with the link for visitors to pay. A test key makes test payments only.`,
+            amount: `${jobAmount} ${jobCurrency}`,
+            note: `The page can now take ${jobAmount} ${jobCurrency} through ${app.short}. Make sure the page asks for a checkout the way the tool says, and tell the person it needs to be shared with anyone with the link for visitors to pay. A test key makes test payments only.`,
         };
     }
     if (sent.status === 404) return { error: 'That is not a page of theirs. Check the artifact id.' };
