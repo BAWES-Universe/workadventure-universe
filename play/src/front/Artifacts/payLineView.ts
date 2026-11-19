@@ -105,14 +105,15 @@ export function describePayLine(
             return {
                 title: LL.payNeedsUpdate(),
                 sub: LL.payNeedsUpdateOwnerSub({ maker: state.owner.maker }),
-                actions: line.checking ? [] : [{ ...check, style: "secondary" }],
+                // A payment on its way keeps its Continue link: a blocked or closed pop-up can still be opened again
+                actions: line.checking ? resume : [{ ...check, style: "secondary" }],
                 closable: false,
             };
         }
         return {
             title: LL.payNeedsUpdate(),
             sub: LL.payNeedsUpdateSub(),
-            actions: line.checking ? [] : [check],
+            actions: line.checking ? resume : [check],
             closable: false,
         };
     }

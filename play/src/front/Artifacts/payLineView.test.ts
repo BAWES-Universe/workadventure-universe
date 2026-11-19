@@ -144,6 +144,12 @@ describe("the line under a paying page says what the approved mock says", () => 
         ]);
         // While a check is running nothing more is offered
         expect(labels({ needsUpdate: true, canCheck: true, checking: true })).toEqual([]);
+        // A payment on its way keeps its Continue link, for the buyer and the owner: a pop-up that was blocked or closed can be opened again
+        const resume = { url: "https://checkout.examplepay.com/c1", app: "Example" };
+        expect(labels({ needsUpdate: true, checking: true, resume })).toEqual(["resume:Continue to Example:secondary"]);
+        expect(labels({ needsUpdate: true, checking: true, resume }, { owner: { maker: "Nova" } })).toEqual([
+            "resume:Continue to Example:secondary",
+        ]);
     });
 
     it("says too many tries and unavailable plainly, and nothing at all when there is nothing to say", () => {
