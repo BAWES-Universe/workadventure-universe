@@ -41,14 +41,19 @@
     $: dependsOnConnector = !!app && app.authType === "oauth" && !!app.connectedBy && !app.connectedBy.stillManages;
     $: managerNames = app ? app.managers.map((person) => person.name) : [];
 
+    // Only the newest read is applied: an older one (a retry that was slow) must not bring back what a newer read no longer shows
+    let reads = 0;
+
     async function load() {
+        const mine = ++reads;
         try {
             const parsed = parseTeamAppPage(await botApiService.getTeamApp(appId));
+            if (mine !== reads) return;
             if (parsed) page = parsed;
             loadFailed = !parsed;
         } catch (error) {
             console.warn("Could not read the universe's app", error);
-            loadFailed = true;
+            if (mine === reads) loadFailed = true;
         }
     }
 

@@ -1373,6 +1373,37 @@ describe("the Apps pages (#2001)", () => {
             expect(words(byId("teamAppPage"))).toContain("Belongs to BAWES Universe");
         });
 
+        it("never lets a slow older read bring back a manager that a newer read no longer shows", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const withSara = { app: teamApp(), canAddAsManager: [], canLetUse: [{ id: "h", name: "Hala" }] };
+            const withoutSara = {
+                app: teamApp({ managers: [{ id: "k", name: "Khalid", owner: true, you: true }] }),
+                canAddAsManager: [],
+                canLetUse: [],
+            };
+            game.getTeamApp.mockResolvedValueOnce(withSara);
+            await open();
+            // The read after a change fails: Try again is offered, and is tapped twice
+            game.getTeamApp.mockRejectedValueOnce(new Error("offline"));
+            await click("teamAppLetUse");
+            let older: (value: unknown) => void = () => undefined;
+            game.getTeamApp.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        older = resolve;
+                    })
+            );
+            await click("teamAppTryAgain");
+            game.getTeamApp.mockResolvedValueOnce(withoutSara);
+            await click("teamAppTryAgain");
+            expect(allById("teamAppManager").map(words)).toEqual(["Khalid (you) Owns BAWES Universe"]);
+            older(withSara);
+            await settle();
+            expect(allById("teamAppManager").map(words)).toEqual(["Khalid (you) Owns BAWES Universe"]);
+            expect(byId("teamAppLoadFailed")).toBeNull();
+            warn.mockRestore();
+        });
+
         it("offers no Let it use when Orbit sends nobody, and says Orbit's line when it refuses", async () => {
             await open();
             expect(byId("teamAppBotOff")).toBeNull();
@@ -1485,6 +1516,31 @@ describe("the Apps pages (#2001)", () => {
                 "GitHub Omar no longer manages it · reconnect it",
                 "Slack No bot uses it yet",
             ]);
+        });
+
+        it("never lets a slow older read bring back an app that a newer read no longer shows", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getUniverseApps.mockRejectedValueOnce(new Error("offline"));
+            page = new TeamAppsPage({
+                target,
+                props: { universe: { id: "u1", name: "BAWES Universe", apps: 2 }, onBack: () => {} },
+            });
+            await settle();
+            let older: (value: unknown) => void = () => undefined;
+            game.getUniverseApps.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        older = resolve;
+                    })
+            );
+            await click("teamAppsTryAgain");
+            game.getUniverseApps.mockResolvedValueOnce({ apps: [teamApp({ id: "a", name: "Notion" })] });
+            await click("teamAppsTryAgain");
+            expect(allById("teamAppRow")).toHaveLength(1);
+            older({ apps: [teamApp({ id: "a", name: "Notion" }), teamApp({ id: "b", name: "GitHub" })] });
+            await settle();
+            expect(allById("teamAppRow").map((row) => words(row).split(" ")[0])).toEqual(["Notion"]);
+            warn.mockRestore();
         });
 
         it("says nothing is connected yet", async () => {

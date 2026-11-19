@@ -142,7 +142,7 @@
                 : botApiService.lendApp(appId, choice)
         );
         // Only its own sheet is closed: one opened since (after a cancel) keeps what is typed in it
-         
+
         if (done && sheet === submitting) sheet = undefined;
         return done;
     }
@@ -214,7 +214,7 @@
             return code === "refused" ? "refused" : "failed";
         }
         // Only the sheet that saved it is closed: one opened since (after a cancel) keeps what is typed in it
-         
+
         if (sheet === submitting) sheet = undefined;
         await Promise.all([load(), loadMyApps(true)]);
         return "saved";
