@@ -57,7 +57,7 @@ def minutes(r, first):
 row("measured, minutes", lambda r: f'{r["w"]["seconds"] / 60:.1f}')
 row("people: on their own connections + in LiveKit rooms (bubbles)", lambda r: f'{r["lane"]["streams"]} + {r["room"]["streams"]} ({r["lane"]["bubbles"]} + {r["room"]["bubbles"]})')
 row("how the container ended", lambda r: r["how"].split(" started=")[0])
-row("memory, container peak, MB (share of the cap)", lambda r: f'{r["w"]["memory"]["peakMb"]} ({100 * r["w"]["memory"]["peakShareOfLimit"]:.0f}%)')
+row("memory, container peak, MB (share of the cap)", lambda r: f'{r["w"]["memory"]["peakMb"]} ({100 * r["w"]["memory"]["peakShareOfLimit"]:.0f}%)' + (" (sampled: the kernel kept no peak)" if r["w"]["memory"].get("peakSampled") else ""))
 row("process RSS, MB: first 5 minutes / last 5 minutes / highest", lambda r: f'{mean(minutes(r, True), 3):.0f} / {mean(minutes(r, False), 3):.0f} / {max(x[3] for x in r["t"]):.0f}')
 row("process RSS trend over the run, MB per hour", lambda r: f'{slope_per_hour(r["t"], 3):+.1f}')
 row("container memory without file cache, MB: first 5 / last 5 minutes; trend per hour", lambda r: f'{mean(minutes(r, True), 2):.0f} / {mean(minutes(r, False), 2):.0f}; {slope_per_hour(r["t"], 2):+.1f}')
@@ -68,9 +68,16 @@ row("event-loop delay p50 / p99 / max, ms", lambda r: f'{r["w"]["eventLoopDelayM
 row("event-loop delay, worst in any 5 s: median / highest, ms", lambda r: f'{sorted(x[10] for x in r["t"])[len(r["t"]) // 2]:.0f} / {max(x[10] for x in r["t"]):.0f}')
 
 
+def share(part, whole, digits=1):
+    """A share in percent; N/A when there is nothing to take it of (nothing sent, or no figure), never a division by zero."""
+    if part is None or not whole:
+        return "N/A"
+    return f"{100 * part / whole:.{digits}f}%"
+
+
 def heard(r):
     sent_ms = r["lane"]["measured"]["sent"] * 20 + r["room"]["measured"]["sent"] * 10
-    return f'{r["w"]["heard"]["ms"] / 1000:.0f} of {sent_ms / 1000:.0f} ({100 * r["w"]["heard"]["ms"] / sent_ms:.1f}%)'
+    return f'{r["w"]["heard"]["ms"] / 1000:.0f} of {sent_ms / 1000:.0f} ({share(r["w"]["heard"]["ms"], sent_ms)})'
 
 
 row("audio the worker heard, of what was sent to be heard, s", heard)
@@ -94,8 +101,9 @@ if "on" in runs:
     lane_sent = r["lane"]["measured"]["sent"] * 20
     room_sent = r["room"]["measured"]["sent"] * 10
     print(f'| audio sent to be heard, s | {lane_sent / 1000:.0f} | {room_sent / 1000:.0f} |')
-    print(f'| handed to the observer by the sessions, s (share of sent) | {o["offeredMs"]["lane"] / 1000:.0f} ({100 * o["offeredMs"]["lane"] / lane_sent:.1f}%) | {o["offeredMs"]["room"] / 1000:.0f} ({100 * o["offeredMs"]["room"] / room_sent:.1f}%) |')
-    print(f'| answered and kept, s (share of handed over) | {o["acceptedMs"]["lane"] / 1000:.0f} ({100 * o["coverage"]["lane"]:.2f}%) | {o["acceptedMs"]["room"] / 1000:.0f} ({100 * o["coverage"]["room"]:.2f}%) |')
+    print(f'| handed to the observer by the sessions, s (share of sent) | {o["offeredMs"]["lane"] / 1000:.0f} ({share(o["offeredMs"]["lane"], lane_sent)}) | {o["offeredMs"]["room"] / 1000:.0f} ({share(o["offeredMs"]["room"], room_sent)}) |')
+    # The coverage is null when nothing was handed over: no share to show
+    print(f'| answered and kept, s (share of handed over) | {o["acceptedMs"]["lane"] / 1000:.0f} ({share(o["coverage"]["lane"], 1, 2)}) | {o["acceptedMs"]["room"] / 1000:.0f} ({share(o["coverage"]["room"], 1, 2)}) |')
     for path in ("lane", "room"):
         b = o["besideTodaysGate"][path]
     print(f'| today\'s gate said "speaking" | {o["besideTodaysGate"]["lane"]["todaysGateSaidSpeaking"]} | {o["besideTodaysGate"]["room"]["todaysGateSaidSpeaking"]} |')

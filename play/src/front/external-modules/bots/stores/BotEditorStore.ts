@@ -227,7 +227,7 @@ export function cancelPlacement(): void {
  * there. A Brick is not a room bot, so it is never added to this room's bots.
  */
 let brickPlacedHandler:
-    | ((brick: BotData, spot: { behaviorType: "idle"; behaviorConfig: BotData["behaviorConfig"] }) => void)
+    | ((brick: BotData, spot: { behaviorConfig: Pick<BotData["behaviorConfig"], "assignedSpace"> }) => void)
     | undefined;
 
 export function onBrickPlaced(handler: typeof brickPlacedHandler): () => void {
@@ -246,11 +246,10 @@ export function confirmPlacement(): BotData | undefined {
     const cursor = get(placementCursorStore);
 
     if (bot?.brickHome && cursor) {
+        // Only the spot goes: how a Brick behaves there is Orbit's to keep (a first home is idle by default), never a made-up idle
         const spot = {
-            behaviorType: "idle" as const,
             behaviorConfig: {
-                ...bot.behaviorConfig,
-                assignedSpace: { ...bot.behaviorConfig.assignedSpace, center: { x: cursor.x, y: cursor.y }, radius: 0 },
+                assignedSpace: { center: { x: cursor.x, y: cursor.y }, radius: 0 },
             },
         };
         placingBotStore.set(undefined);
