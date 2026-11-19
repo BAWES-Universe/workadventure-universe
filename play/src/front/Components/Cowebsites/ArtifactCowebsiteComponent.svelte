@@ -117,6 +117,8 @@
     let renewTimer: ReturnType<typeof setTimeout> | undefined;
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
+    /** A renewal was asked for while another opening was on its way, and is still wanted if that one does not come on show. */
+    let renewWhenFree = false;
     /** Counts the openings that came on show: a checkout asked for by the page of one is never told to the page of another. */
     let opening = 0;
     /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
@@ -213,6 +215,8 @@
             if (opened) {
                 request++;
                 phase = "ready";
+                // The opening that was cancelled had dropped the renewal of the one on show
+                lookAfterRenewal();
             }
             return;
         }
@@ -227,8 +231,10 @@
     async function load(version: number | undefined) {
         const mine = ++request;
         // A renewal of the version on show that is still on its way is out of date from the moment another opening starts:
-        // if it answers "kept private" while this opening is still loading, it must not put away the opening that is coming
+        // if it answers "kept private" while this opening is still loading, it must not put away the opening that is coming.
+        // One that is only waiting for its time is cancelled too, and renewAddress does nothing until this opening ends.
         renewal++;
+        renewIn(undefined);
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
@@ -241,6 +247,7 @@
             // What this opening shows is newer than any renewal of a version that was on show before it: that one is not used,
             // also when the same version is on show again (1, then 2, then 1)
             renewal++;
+            renewWhenFree = false;
             opening++;
             text = undefined;
             textFailed = false;
@@ -266,8 +273,8 @@
                 switchFailed = true;
                 versionStore.set(opened.version.number);
                 phase = "ready";
-                // A renewal of the one showing that was on its way was dropped when this opening started: look after it again
-                if (opened.version.url !== null && opened.version.urlHasMedia) renewIn(RENEW_RETRY_MS);
+                // A renewal of the one showing that was due or on its way was dropped when this opening started: look after it again
+                lookAfterRenewal();
                 return;
             }
             phase = "failed";
@@ -318,6 +325,13 @@
         addressOver = false;
     }
 
+    /** The version on show was left without its renewal while another opening was on its way: set one up again. */
+    function lookAfterRenewal() {
+        if (opened && (renewWhenFree || (opened.version.url !== null && opened.version.urlHasMedia)))
+            renewIn(RENEW_RETRY_MS);
+        renewWhenFree = false;
+    }
+
     /** Opens the version on show again after `wait`, in place of any wait already set; with none, never. */
     function renewIn(wait: number | undefined) {
         if (renewTimer) clearTimeout(renewTimer);
@@ -346,6 +360,11 @@
     async function renewAddress() {
         renewIn(undefined);
         if (destroyed || shownNumber === undefined) return;
+        // Another version is being opened: that one brings its own address; a renewal asked for meanwhile waits for its end
+        if (phase === "opening") {
+            renewWhenFree = true;
+            return;
+        }
         const turn = ++renewal;
         const number = shownNumber;
         // Dropped when another version came on show meanwhile, it was put away, or it was asked for again

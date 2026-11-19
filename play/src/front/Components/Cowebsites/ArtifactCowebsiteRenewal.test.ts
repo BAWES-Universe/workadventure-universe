@@ -203,4 +203,53 @@ describe("an artifact window's renewals of the address on show", () => {
         expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/2");
         view.$destroy();
     });
+
+    it("cancels a renewal of version 1 that was only waiting for its time when version 2 starts to open", async () => {
+        vi.useFakeTimers();
+        let answerTwo: (value: unknown) => void = () => {};
+        let asked = 0;
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, wanted: number | undefined) => {
+            asked++;
+            if (asked === 1) return Promise.resolve(opened(1, "https://files.test/1-first"));
+            if (wanted === 2)
+                return new Promise((resolve) => {
+                    answerTwo = resolve;
+                });
+            // Any other asking is a renewal of version 1: its owner has made it private meanwhile
+            return Promise.reject(new ArtifactRequestError(404, "kept_private"));
+        });
+        const { version, target, view } = mount();
+        await settle();
+        // Version 2 starts to open and is slow; the time of the renewal of version 1 comes meanwhile
+        version.set(2);
+        await settle();
+        await vi.advanceTimersByTimeAsync(275_000);
+        expect(asked).toBe(2);
+        answerTwo(opened(2, "https://files.test/2"));
+        await settle();
+        expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/2");
+        view.$destroy();
+    });
+
+    it("looks after the renewal of version 1 again when the opening of version 2 fails and version 1 stays", async () => {
+        vi.useFakeTimers();
+        let asked = 0;
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, wanted: number | undefined) => {
+            asked++;
+            if (asked === 1) return Promise.resolve(opened(1, "https://files.test/1-first"));
+            if (wanted === 2) return Promise.reject(new Error("offline"));
+            return Promise.resolve(opened(1, "https://files.test/1-renewed"));
+        });
+        const { version, target, view } = mount();
+        await settle();
+        version.set(2);
+        await settle();
+        expect(asked).toBe(2);
+        expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/1-first");
+        // The renewal that was dropped when 2 started to open is asked for again, and the page is shown at its new address
+        await vi.advanceTimersByTimeAsync(31_000);
+        expect(asked).toBe(3);
+        expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/1-renewed");
+        view.$destroy();
+    });
 });
