@@ -539,6 +539,18 @@ jobs:
 
     runs-on: "ubuntu-latest"
 
+    # The forget queue's Redis scripts are tested against a real Redis (bots/tests/RedisForgetQueue.test.ts)
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: "Checkout"
         uses: "actions/checkout@v5"
@@ -569,6 +581,9 @@ jobs:
       - name: "Vitest"
         run: npm test
         working-directory: "bots"
+        env:
+          BOTS_TEST_REDIS_URL: redis://127.0.0.1:6379
+          BOTS_REQUIRE_REDIS: "1"
 
   continuous-integration-end-to-end-tests:
     name: "Continuous Integration checking End To End tests"

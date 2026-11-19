@@ -227,6 +227,23 @@ describe("keepPrivate", () => {
         expect(text).toContain("[removed]");
     });
 
+    it("keeps a comma inside a srcset address as part of that address: nothing after it is left unredacted", () => {
+        const node = {
+            tagName: "img",
+            attributes: {
+                srcset: "https://a.test/image?t=1,secret-token 1x, /pics/b.png?sig=x,y-secret 2x,https://c.test/c.png#frag-secret 3x",
+                "data-srcset": "/pics/d.png?k=1,secret2,/pics/e.png 1x",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("secret");
+        expect(text).not.toContain("frag");
+        expect(text).toContain("https://a.test/image 1x, /pics/b.png 2x, https://c.test/c.png 3x");
+        // No whitespace after the commas: it is all one address, so all of it is cleaned
+        expect(text).toContain('"data-srcset":"/pics/d.png 1x"');
+    });
+
     it("cuts the query and hash of the addresses in a replay's style, srcset and stylesheet text, and leaves an ordinary style alone", () => {
         const node = {
             tagName: "div",
