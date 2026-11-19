@@ -1640,13 +1640,14 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
+        ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
             {
                 userId,
+                ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
                 title: ask.title,
                 ...(ask.brief ? { brief: ask.brief } : {}),
                 ...(ask.writes === undefined ? {} : { writes: ask.writes }),

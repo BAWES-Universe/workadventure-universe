@@ -21,6 +21,19 @@ describe('the job keeps the chat it began in', () => {
     });
 });
 
+describe('the job is started for a person Orbit does not have to guess the kind of', () => {
+    it('sends whether the speaker is a guest with the id, and nothing when the chat does not know', async () => {
+        for (const isGuest of [true, false]) {
+            const admin = asking({ ok: true, job: job(), restoredFrom: null });
+            await runComputerTool({ job: 'Visa form' }, { admin, botId: BRICK, userId: 'u', isGuest });
+            expect(admin.startComputerJob.mock.calls[0][2]).toMatchObject({ isGuest });
+        }
+        const unknown = asking({ ok: true, job: job(), restoredFrom: null });
+        await runComputerTool({ job: 'Visa form' }, { admin: unknown, botId: BRICK, userId: 'u' });
+        expect(unknown.startComputerJob.mock.calls[0][2]).not.toHaveProperty('isGuest');
+    });
+});
+
 describe('the fixed order: answer, then an app, then the computer', () => {
     const apps = ['GitHub', 'Google Sheets'];
 

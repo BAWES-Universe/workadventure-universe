@@ -1848,6 +1848,28 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         again.destroy();
     });
 
+    it("tells a restore that was turned away its purchase even when another document's checkout used the same request id", async () => {
+        const pay = vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "paid", testPayment: false });
+        const payments = make(pay);
+        showing = 1;
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "sA" });
+        await flush();
+        // Document B (now the one that spoke last) restores under the SAME id and is turned away
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "r1",
+            session: "sB",
+            restore: true,
+        });
+        await flush();
+        framePost.mockClear();
+        await vi.advanceTimersByTimeAsync(3_000);
+        // A's own answer is for a document that is gone; B is told, under its own session
+        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "r1", session: "sB" }]);
+        payments.destroy();
+    });
+
     it("answers a request busy by the document the running operation was started for, not by whoever last used that request id", async () => {
         const pay = vi
             .fn()

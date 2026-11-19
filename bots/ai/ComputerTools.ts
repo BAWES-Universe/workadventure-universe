@@ -62,6 +62,8 @@ export interface ComputerToolContext {
     apps?: string[];
     botId: string;
     userId: string;
+    /** Whether the speaker signed in as a guest, as the chat knows it: sent with the id, so Orbit never has to guess what kind of id it is (an id with an "@" is looked up as an email). */
+    isGuest?: boolean;
     /** The direct chat this reply is in: the job is started from it, and its result goes back to it and nowhere else. */
     origin?: { kind: 'dm'; ref: string };
     /** The apps a review in this reply said the computer could do better: a call that names one with how many steps are left is for Orbit to weigh, not sent back to the app. */
@@ -193,7 +195,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const plan = planned ? { app: planned, ...(steps !== undefined ? { steps } : {}), ...(appCannot ? { appCannot } : {}) } : undefined;
     let started;
     try {
-        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) });
+        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) });
     } catch (error) {
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };

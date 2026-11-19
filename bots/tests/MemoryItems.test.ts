@@ -1105,6 +1105,21 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         clearTimeout(second.unreportedRetryTimer);
     });
 
+    it('drops a recorded forget from a snapshot and an active memory whose own uuid is still "temp-..", by whose they are (Sentry)', async () => {
+        const memory = await start();
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        memory.getMemory(BOT, SARA).userUuid = 'temp-1';
+        const snapshot = talkingRecord('uuid-sara', ['lo-fi', 'jazz']);
+        snapshot.userUuid = 'temp-1';
+        memory.loadedMemoriesByUuid.set(`${BOT}_uuid-sara`, snapshot);
+        memory.ledgerForget({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', since: 0 });
+        expect(memory.getMemory(BOT, SARA).personalInfo.preferences).toContain('lo-fi');
+        memory.dropRecordedForgetsFromHeld();
+        expect(snapshot.personalInfo.preferences).toEqual(['jazz']);
+        expect(memory.getMemory(BOT, SARA).personalInfo.preferences).not.toContain('lo-fi');
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
     it('lets a load that comes while the store is being read wait for that same read, and counts the half minute from when it is done', async () => {
         const { second, empty } = await secondServerWithForgetStored();
         empty.pending = new Map(store.pending);

@@ -192,8 +192,12 @@ export class PersistentMemory extends ConversationMemory {
 
     /** A late read of the store may bring forgets that apply to what is already held: they are applied to it now. */
     private dropRecordedForgetsFromHeld(): void {
-        for (const [key, memory] of this.getAllMemories()) this.dropRecordedForgets(key.slice(0, key.lastIndexOf('_')), memory);
-        for (const [key, memory] of this.loadedMemoriesByUuid) this.dropRecordedForgets(key.slice(0, key.length - memory.userUuid!.length - 1), memory);
+        for (const [key, memory] of this.getAllMemories()) this.dropRecordedForgets(key.slice(0, key.lastIndexOf('_')), memory, this.personOf(key, memory) || undefined);
+        // The snapshot's key says whose it is ("<bot>_<uuid>"), whatever the memory inside still calls itself (a memory made before the uuid was known says "temp-<playerId>")
+        for (const [key, memory] of this.loadedMemoriesByUuid) {
+            const cut = key.lastIndexOf('_');
+            this.dropRecordedForgets(key.slice(0, cut), memory, key.slice(cut + 1));
+        }
     }
 
     /** What other bot servers added since: taken in before memories are loaded (at most once in half a minute), so a forget made on another server applies here too. */
@@ -257,8 +261,8 @@ export class PersistentMemory extends ConversationMemory {
      * took before (a restored archive or an older copy can bring it back). A thing that came back after Orbit had taken the
      * forget is told to Orbit again, so Orbit keeps it gone too.
      */
-    private dropRecordedForgets(botId: string, memory: BotPlayerMemory): void {
-        if (!memory.userUuid || (this.unreportedItemForgets.size === 0 && this.forgottenLedger.size === 0)) return;
+    private dropRecordedForgets(botId: string, memory: BotPlayerMemory, userUuid: string | undefined = memory.userUuid): void {
+        if (!userUuid || (this.unreportedItemForgets.size === 0 && this.forgottenLedger.size === 0)) return;
         const keys = new Set<string>();
         const at = new Map<string, number>();
         const note = (itemKey: string, since: number) => {
@@ -267,10 +271,10 @@ export class PersistentMemory extends ConversationMemory {
             // 0 is "whenever it was said": nothing later can put that back
             at.set(itemKey, since <= 0 || seen === 0 ? 0 : Math.max(since, seen ?? 0));
         };
-        for (const entry of this.unreportedItemForgets.values()) if (entry.botId === botId && entry.userUuid === memory.userUuid) note(entry.itemKey, entry.since);
+        for (const entry of this.unreportedItemForgets.values()) if (entry.botId === botId && entry.userUuid === userUuid) note(entry.itemKey, entry.since);
         const returned: ForgottenItem[] = [];
         for (const entry of this.forgottenLedger.values()) {
-            if (entry.botId !== botId || entry.userUuid !== memory.userUuid) continue;
+            if (entry.botId !== botId || entry.userUuid !== userUuid) continue;
             note(entry.itemKey, entry.since);
             returned.push(entry);
         }
