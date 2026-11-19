@@ -223,4 +223,14 @@ describe('while Redis reconnects (the connection is open but not ready)', () => 
         expect(listener.quit).not.toHaveBeenCalled();
         expect((registry as unknown as { brickListener: unknown }).brickListener).toBeNull();
     });
+
+    it('says so when it cannot forget a direct room while a store that was in use is down, so a purge tries again, and does nothing when there never was one', async () => {
+        const down = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(down, { redis: { isOpen: false }, sharedStoreSeen: true });
+        await expect(down.forgetDmRoom('!r:x')).rejects.toThrow('The shared store is down');
+
+        const never = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(never, { redis: null, sharedStoreSeen: false });
+        await expect(never.forgetDmRoom('!r:x')).resolves.toBeUndefined();
+    });
 });

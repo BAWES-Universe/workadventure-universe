@@ -195,9 +195,15 @@ export class BotRegistry {
         return (await this.redis.hGet('bots:matrix:dm-rooms', roomId)) ?? null;
     }
 
-    /** Forget a Matrix direct message room once its bot has left it. */
+    /**
+     * Forget a Matrix direct message room once its bot has left it. Throws while a store that was in use is down: the purge of a room
+     * drops this link strictly and tries again, and a silent return would leave the room linked to the Brick for good.
+     */
     async forgetDmRoom(roomId: string): Promise<void> {
-        if (!isUp(this.redis)) return;
+        if (!isUp(this.redis)) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
         await this.redis.hDel('bots:matrix:dm-rooms', roomId);
     }
 
