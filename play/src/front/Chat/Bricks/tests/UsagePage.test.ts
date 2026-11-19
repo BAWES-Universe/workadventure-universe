@@ -618,6 +618,67 @@ describe("the Usage page (#1999)", () => {
         expect(byId("usageReceipt")?.textContent).not.toContain("Instant Gmail, 3 uses");
     });
 
+    const worked = (amountMicros?: number) => ({
+        label: "gmail",
+        outcome: "worked",
+        text: "Gmail · worked",
+        takenText: null,
+        ...(amountMicros === undefined ? {} : { amountMicros }),
+    });
+    const failedStep = { label: "gmail", outcome: "failed", text: "Gmail · didn't work", takenText: "Nothing taken" };
+    const stepRows = () =>
+        [...target.querySelectorAll('[data-testid="usageReceiptAction"]')].map((row) =>
+            row.textContent?.replace(/\s+/g, " ").trim()
+        );
+    const openPartly = async (over: Record<string, unknown>) => {
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [partly(over)] }));
+        await open();
+        target.querySelector<HTMLElement>('[data-activity="act_partly"]')?.click();
+        await settle();
+    };
+
+    it("draws the amount of each worked step (Orbit's amountMicros), under a cent as less than $0.01, and zero as $0", async () => {
+        await openPartly({ actions: [worked(20_000), worked(4_000), worked(0), failedStep] });
+        expect(stepRows()).toEqual([
+            "Gmail · worked $0.02",
+            "Gmail · worked less than $0.01",
+            "Gmail · worked $0",
+            "Gmail · didn't work Nothing taken",
+        ]);
+        // The steps are the lines: Orbit's own lines are not shown under them
+        expect(byId("usageReceipt")?.textContent).not.toContain("Instant Gmail, 3 uses");
+    });
+
+    it("shows a worked step with no amount without one, and Orbit's lines when no worked step has an amount", async () => {
+        await openPartly({ actions: [worked(), worked(), failedStep] });
+        expect(stepRows()).toEqual(["Gmail · worked", "Gmail · worked", "Gmail · didn't work Nothing taken"]);
+        expect(byId("usageReceipt")?.textContent?.replace(/\s+/g, " ")).toContain("Instant Gmail, 3 uses$0.04");
+    });
+
+    it("mixes a step with a known amount and one whose price is not known yet: amount unavailable only where Orbit says so", async () => {
+        await openPartly({
+            actions: [worked(20_000), worked(), failedStep],
+            lines: [{ label: "Instant Gmail, 2 uses", note: "Price not known yet" }],
+        });
+        expect(stepRows()).toEqual([
+            "Gmail · worked $0.02",
+            "Gmail · worked amount unavailable",
+            "Gmail · didn't work Nothing taken",
+        ]);
+        expect(byId("usageReceipt")?.textContent).not.toContain("Instant Gmail, 2 uses");
+        // With no such word from Orbit, the step with no amount carries none
+        game.getMyUsage.mockResolvedValue(
+            live({}, { activity: [partly({ actions: [worked(20_000), worked(), failedStep] })] })
+        );
+        await open();
+        expect(stepRows()).toEqual(["Gmail · worked $0.02", "Gmail · worked", "Gmail · didn't work Nothing taken"]);
+    });
+
+    it("never gives a failed step an amount, whatever it carries", async () => {
+        await openPartly({ actions: [worked(20_000), { ...failedStep, amountMicros: 50_000 }] });
+        expect(stepRows()).toEqual(["Gmail · worked $0.02", "Gmail · didn't work Nothing taken"]);
+    });
+
     it("only calls a task partly done when Orbit says so and a step worked and one did not; otherwise it reads as before", async () => {
         const noFailure = partly({
             id: "act_a",

@@ -186,13 +186,12 @@
     }
 
     /**
-     * A partly done task shows each action and how it ended; the lines of what it used follow, unless every action carries its own amount
-     * (then the actions are the lines).
+     * A partly done task shows each action and how it ended; the lines of what it used follow only when no step that worked carries its
+     * own amount (then Orbit's lines are all there is). Once a step says what it took, the steps are the lines.
      */
     const perAction = (item: ActivityItem): boolean =>
         item.outcome === "partial" &&
-        item.actions.length > 0 &&
-        item.actions.every((action) => action.outcome === "failed" || action.amountMicros !== null);
+        item.actions.some((action) => action.outcome === "worked" && action.amountMicros !== null);
 
     async function onAsk(category: CreditCategory) {
         if (asking) return;
@@ -389,6 +388,9 @@
                                             <b class="q">{action.takenText ?? text.activityNothingTaken()}</b>
                                         {:else if action.amountMicros !== null}
                                             <b>{spentLabel(action.amountMicros, $locale, text.lessThanCentInLine())}</b>
+                                        {:else if perAction(item) && item.lines.some((line) => line.note === PRICE_NOT_KNOWN)}
+                                            <!-- This step worked and its price is not known yet, as Orbit says in its lines -->
+                                            <b class="q">{text.amountUnavailable()}</b>
                                         {/if}
                                     </div>
                                 {/each}
