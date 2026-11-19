@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+    availableLabel,
     availableText,
     fullAgainWhen,
     moneyLeft,
     moneyUsedUp,
     parseUsage,
     renewsWhen,
+    spentLabel,
     spentText,
     storageSize,
 } from "../Usage";
@@ -275,6 +277,21 @@ describe("dollars", () => {
         expect(spentText(920_001, "en-US")).toBe("$0.93");
         expect(spentText(1, "en-US")).toBe("$0.01");
         expect(spentText(0, "en-US")).toBe("$0");
+    });
+    it("says a positive amount under a cent as 'less than', a true zero as $0, and anything else as it did", () => {
+        const tiny = "Less than $0.01";
+        expect(availableLabel(5_000, "en-US", tiny)).toBe(tiny);
+        expect(availableLabel(9_999, "en-US", tiny)).toBe(tiny);
+        expect(availableLabel(0, "en-US", tiny)).toBe("$0");
+        expect(availableLabel(10_000, "en-US", tiny)).toBe("$0.01");
+        expect(availableLabel(3_209_999, "en-US", tiny)).toBe("$3.20");
+        const line = "less than $0.01";
+        expect(spentLabel(1, "en-US", line)).toBe(line);
+        expect(spentLabel(9_999, "en-US", line)).toBe(line);
+        expect(spentLabel(0, "en-US", line)).toBe("$0");
+        expect(spentLabel(10_000, "en-US", line)).toBe("$0.01");
+        expect(spentLabel(10_001, "en-US", line)).toBe("$0.02");
+        expect(spentLabel(60_000, "en-US", line)).toBe("$0.06");
     });
     it("is used up below a cent, and the bar counts whole cents", () => {
         expect(moneyUsedUp({ availableMicros: 9_999 })).toBe(true);

@@ -12,7 +12,7 @@
     import {
         availableText,
         fullAgainWhen,
-        spentText,
+        spentLabel,
         storageSize,
         type ActivityItem,
         type BotSpend,
@@ -163,13 +163,13 @@
                 : item.category === "computer"
                 ? text.activityComputer()
                 : "";
-        return [when, item.spentMicros !== null ? spentText(item.spentMicros, locale) : "", what]
+        return [when, item.spentMicros !== null ? spentLabel(item.spentMicros, locale, text.lessThanCent()) : "", what]
             .filter(Boolean)
             .join(" · ");
     }
 
     function lineValue(amountMicros: number | null, note: string | null, text: Words, locale: string | undefined) {
-        if (amountMicros !== null) return spentText(amountMicros, locale);
+        if (amountMicros !== null) return spentLabel(amountMicros, locale, text.lessThanCentInLine());
         return note ?? text.activityNothingTaken();
     }
 
@@ -329,7 +329,7 @@
                             <div class="m">
                                 {bot.spentMicros > 0
                                     ? text.botSpent({
-                                          amount: spentText(bot.spentMicros, $locale),
+                                          amount: spentLabel(bot.spentMicros, $locale, text.lessThanCent()),
                                           uses: botUses(bot, text),
                                       })
                                     : text.botNone()}

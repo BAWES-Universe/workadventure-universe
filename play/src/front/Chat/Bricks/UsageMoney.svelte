@@ -3,7 +3,15 @@
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import PageNote from "../../external-modules/bots/components/page/PageNote.svelte";
     import PageRow from "../../external-modules/bots/components/page/PageRow.svelte";
-    import { availableText, moneyLeft, moneyUsedUp, renewsWhen, type CreditCategory, type Money } from "./Usage";
+    import {
+        availableLabel,
+        availableText,
+        moneyLeft,
+        moneyUsedUp,
+        renewsWhen,
+        type CreditCategory,
+        type Money,
+    } from "./Usage";
 
     /**
      * One money credit on the Usage page, for Instant Apps or computers: a bar, what is available out of what it was, and
@@ -25,7 +33,7 @@
     $: id = category === "apps" ? "Apps" : "Computer";
     $: usedUp = moneyUsedUp(money);
     $: oneOff = money.kind === "oneoff";
-    $: available = availableText(money.availableMicros, $locale);
+    $: available = availableLabel(money.availableMicros, $locale, text.lessThanCent());
     $: total = availableText(money.totalMicros, $locale);
     $: title =
         usedUp && oneOff

@@ -411,6 +411,25 @@ export function spentText(microsValue: number, locale: string | undefined): stri
     return dollarText(Math.ceil(Math.max(0, microsValue) / CENT), locale);
 }
 
+/** More than nothing and less than one cent: said as that, never as "$0" or "$0.01". */
+export const isUnderACent = (microsValue: number): boolean => microsValue > 0 && microsValue < CENT;
+
+/**
+ * What is available, as the page says it: "Less than $0.01" for a positive amount under a cent (it is not "$0": something is
+ * there), otherwise cut down to the cent as `availableText` does. `tiny` is the words for the amount under a cent.
+ */
+export function availableLabel(microsValue: number, locale: string | undefined, tiny: string): string {
+    return isUnderACent(microsValue) ? tiny : availableText(microsValue, locale);
+}
+
+/**
+ * What was taken, as the page says it: "less than $0.01" for a positive amount under a cent (it is not "$0.01": that is more than
+ * was taken), "$0" for a true zero, otherwise rounded up to the cent as `spentText` does.
+ */
+export function spentLabel(microsValue: number, locale: string | undefined, tiny: string): string {
+    return isUnderACent(microsValue) ? tiny : spentText(microsValue, locale);
+}
+
 /**
  * The bar of a money credit: what is left of what it was, 0 to 1. Both sides are whole cents cut down the same way as the
  * words ("$0.01 of $0.01" is a full bar), so the bar never disagrees with the line beside it.

@@ -308,7 +308,7 @@ describe("the Usage page (#1999)", () => {
         expect(byId("usageChatBar")).toBeNull();
     });
 
-    it("shows Instant Apps and computers in dollars, with when a monthly one renews", async () => {
+    it("shows Apps and computers in dollars, with when a monthly one renews", async () => {
         game.getMyUsage.mockResolvedValue(
             live(
                 {},
@@ -319,7 +319,7 @@ describe("the Usage page (#1999)", () => {
             )
         );
         await open();
-        expect(text()).toContain("Instant Apps");
+        expect(text()).toContain("Apps");
         expect(text()).toContain("$3.20 of $5 available");
         expect(text()).toMatch(/Renews 1 Dec at /);
         expect(text()).toContain("Computers");
@@ -367,10 +367,10 @@ describe("the Usage page (#1999)", () => {
     it("leaves work already running out of what is available, and says it", async () => {
         game.getMyUsage.mockResolvedValue(live({}, { apps: money({ inProgressMicros: 1_200_000 }) }));
         await open();
-        expect(text()).toContain("$1.20 in progress");
+        expect(text()).toContain("$1.20 held, not taken yet");
     });
 
-    it("asks for more Instant Apps credit, naming the category, and shows it asked", async () => {
+    it("asks for more Apps credit, naming the category, and shows it asked", async () => {
         game.getMyUsage.mockResolvedValue(
             live({}, { apps: money({ kind: "oneoff", availableMicros: 0, renewsAt: null, canAskForMore: true }) })
         );
@@ -427,7 +427,7 @@ describe("the Usage page (#1999)", () => {
         await open();
         expect(text()).toContain("Extra credit");
         expect(text()).toContain("$3.10 of $5 available");
-        expect(text()).toContain("From Universe, for Instant Apps and computers · until 31 Dec");
+        expect(text()).toContain("From Universe, for Apps and computers · until 31 Dec");
         expect(text()).toContain("Used first, because it ends soonest. One amount for both.");
     });
 
@@ -446,8 +446,8 @@ describe("the Usage page (#1999)", () => {
         await open({ looks: { "11": "brick-orange" } });
         expect(text()).toContain("By bot");
         expect(text()).toContain("Brick");
-        expect(text()).toContain("$1.39 this month · Instant Apps and computer");
-        expect(text()).toContain("$0.18 this month · Instant Apps");
+        expect(text()).toContain("$1.39 this month · Apps and computer");
+        expect(text()).toContain("$0.18 this month · Apps");
     });
 
     const task = (over: Record<string, unknown> = {}) => ({
@@ -486,7 +486,7 @@ describe("the Usage page (#1999)", () => {
         await open();
         expect(text()).toContain("Activity");
         expect(text()).toContain("Trip page: Web Summit Qatar");
-        expect(text()).toMatch(/Today, .+ · \$0\.06 · Instant Apps/);
+        expect(text()).toMatch(/Today, .+ · \$0\.06 · Apps/);
         expect(text()).toMatch(/Today, .+ · Paid by BAWES Universe/);
         expect(byId("usageReceipt")).toBeNull();
         target.querySelector<HTMLElement>('[data-activity="act_1"]')?.click();
@@ -502,6 +502,37 @@ describe("the Usage page (#1999)", () => {
         target.querySelector<HTMLElement>('[data-activity="act_1"]')?.click();
         await settle();
         expect(byId("usageReceipt")).toBeNull();
+    });
+
+    it("says each amount under a cent, a true zero and a balance under a cent in the words of the mock, never as $0.01 or $0", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    apps: money({ availableMicros: 5_000, totalMicros: 5_000_000 }),
+                    computer: computer({ money: undefined }),
+                    activity: [
+                        task({
+                            id: "act_tiny",
+                            title: "Find flights",
+                            spentMicros: 4_000,
+                            lines: [
+                                { label: "Search flights", amountMicros: 4_000 },
+                                { label: "Read one page", amountMicros: 0 },
+                            ],
+                        }),
+                    ],
+                }
+            )
+        );
+        await open();
+        expect(text()).toContain("Less than $0.01 of $5 available");
+        expect(text()).toMatch(/Today, .+ · Less than \$0\.01 · Apps/);
+        target.querySelector<HTMLElement>('[data-activity="act_tiny"]')?.click();
+        await settle();
+        const receipt = byId("usageReceipt")?.textContent?.replace(/\s+/g, " ") ?? "";
+        expect(receipt).toContain("Search flightsless than $0.01");
+        expect(receipt).toContain("Read one page$0");
     });
 
     it("opens the receipt a link asked for", async () => {
@@ -686,13 +717,13 @@ describe("the Usage page (#1999)", () => {
             live({}, { apps: money({ inProgressMicros: 5_000 }), computer: computer({ money: undefined }) })
         );
         await open();
-        expect(text()).toContain("Less than $0.01 in progress");
-        expect(text()).not.toContain("$0 in progress");
+        expect(text()).toContain("Less than $0.01 held, not taken yet");
+        expect(text()).not.toContain("$0 held");
         page?.$destroy();
         forgetMyUsage();
         game.getMyUsage.mockResolvedValue(live({}, { apps: money({ inProgressMicros: 250_000 }) }));
         await open();
-        expect(text()).toContain("$0.25 in progress");
+        expect(text()).toContain("$0.25 held, not taken yet");
     });
 
     it("says 'about half left' for the old half bar, not 'plenty'", async () => {
