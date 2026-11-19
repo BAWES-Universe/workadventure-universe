@@ -91,6 +91,11 @@ export abstract class Character extends Container implements OutlineableInterfac
     private texturePromise: CancelablePromise<string[] | void> | undefined;
     private destroyed = false;
 
+    /** True once destroy() has run: Phaser has then detached this character from its scene. */
+    protected isDestroyed(): boolean {
+        return this.destroyed;
+    }
+
     /**
      * A deferred promise that resolves when the texture of the character is actually displayed.
      */

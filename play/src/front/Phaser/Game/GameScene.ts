@@ -4351,6 +4351,7 @@ export class GameScene extends DirtyScene {
         if (player === undefined) {
             console.error("Cannot find user with id ", userId);
         } else {
+            this.activatablesManager.removeActivatableObject(player);
             player.destroy();
 
             if (player.companion) {

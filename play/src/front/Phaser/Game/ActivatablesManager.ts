@@ -146,4 +146,31 @@ export class ActivatablesManager {
     public isSelectingByDistanceEnabled(): boolean {
         return this.canSelectByDistance;
     }
+
+    /**
+     * Forgets an activatable object that is being removed from the scene (e.g. a remote player leaving), so that it
+     * can no longer be selected or activated (by pressing space or by pointer) once it has been destroyed.
+     */
+    public removeActivatableObject(object: ActivatableInterface): void {
+        this.activatableObjectsDistances.delete(object);
+        let selectionChanged = false;
+        if (this.selectedActivatableObjectByPointer === object) {
+            if (isOutlineable(object)) {
+                object.pointerOutOutline();
+            }
+            this.selectedActivatableObjectByPointer = undefined;
+            selectionChanged = true;
+        }
+        if (this.selectedActivatableObjectByDistance === object) {
+            if (isOutlineable(object)) {
+                object.characterFarAwayOutline();
+            }
+            object.destroyText("object");
+            this.selectedActivatableObjectByDistance = undefined;
+            selectionChanged = true;
+        }
+        if (selectionChanged) {
+            this.deduceSelectedActivatableObjectByDistance();
+        }
+    }
 }
