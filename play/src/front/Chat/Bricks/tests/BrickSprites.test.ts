@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { BRICK_LOOKS, isBrickLook, wokasToWear } from "../Brick";
@@ -9,7 +9,7 @@ import { BRICK_LOOKS, isBrickLook, wokasToWear } from "../Brick";
  * at resources/characters/bricks/<look>.png, the address Orbit's catalog gives each Brick look. The game's own walk
  * (frames 0, 1, 2, 1 at 10 fps) then reads as a hop: rest, rest, up 4 px, rest.
  */
-const SHEETS = new URL("../../../../../public/resources/characters/bricks/", import.meta.url);
+const SHEETS = join(__dirname, "../../../../../public/resources/characters/bricks");
 
 interface Sheet {
     width: number;
@@ -20,7 +20,7 @@ interface Sheet {
 
 /** A plain 8-bit RGBA PNG, which is how the sheets are made. */
 function readSheet(look: string): Sheet {
-    const file = readFileSync(fileURLToPath(new URL(`${look}.png`, SHEETS)));
+    const file = readFileSync(join(SHEETS, `${look}.png`));
     expect(file.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
     let at = 8;
     let width = 0;
