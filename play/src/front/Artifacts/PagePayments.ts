@@ -219,11 +219,20 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // The start that is waiting for its answer: its request is dropped when the window goes away, and its timers stop
     let startInFlight: { abort: AbortController; clear: () => void } | undefined;
     // What Check payment asks about: the wish of the last checkout (when there is one in this window), and who asked for it
-    let target: { intentId: string | null; request: string; from: number; buyer?: "account" | "guest" } | null = null;
+    // Each carries the session of the document that asked, taken when it asked: a later request of another document under the same id never takes it over
+    let target: {
+        intentId: string | null;
+        request: string;
+        from: number;
+        session?: string;
+        buyer?: "account" | "guest";
+    } | null = null;
     // The last restore the page itself asked for: a Restore purchase that finds the purchase is told to the page under it
-    let lastRestore: { request: string; from: number } | null = null;
+    let lastRestore: { request: string; from: number; session?: string } | null = null;
     // A page of another opening asked while a payment was on its way and was told so: Restore purchase is offered when this one ends
     let restoreOwed = false;
+    // The restore that page asked for, kept as it asked: Restore purchase answers it, while that page is still the one on show
+    let deferredRestore: { request: string; from: number; session: string } | null = null;
     let memoryCode: string | null = null;
 
     const publish = (next: PayLine) => {
@@ -259,13 +268,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     };
 
     /** One question to the server: the guest's code goes with every wish, check and restore (never with a look at an order) */
-    const ask = (request: ArtifactPayRequest, signal?: AbortSignal) => {
+    const ask = (request: ArtifactPayRequest, signal?: AbortSignal, wanted: () => boolean = () => true) => {
         const body = request.order ? request : { ...request, recoveryCode: recoveryCode() };
         const asked = signal
             ? pay(options.artifactId, options.chat(), body, signal)
             : pay(options.artifactId, options.chat(), body);
         return asked.then((answer) => {
-            if (answer?.buyer === "account" || answer?.buyer === "guest") askedAs = answer.buyer;
+            // An answer that came after its question was given up on says nothing about who is asking now
+            if (wanted() && (answer?.buyer === "account" || answer?.buyer === "guest")) askedAs = answer.buyer;
             return answer;
         });
     };
@@ -276,12 +286,16 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
      */
     const askWithin = (request: ArtifactPayRequest): Promise<ArtifactPay> => {
         let stop: ReturnType<typeof setTimeout> | undefined;
+        let givenUp = false;
         const timeout = new Promise<never>((_resolve, reject) => {
-            stop = setTimeout(() => reject(new Error("no answer")), STATUS_FOR_MS);
+            stop = setTimeout(() => {
+                givenUp = true;
+                reject(new Error("no answer"));
+            }, STATUS_FOR_MS);
         });
         // Taken up in whichever way it ends, so a late answer or a late timeout never leaves an unhandled rejection
         timeout.catch(() => undefined);
-        const asked = Promise.resolve(ask(request));
+        const asked = Promise.resolve(ask(request, undefined, () => !givenUp && !destroyed));
         asked.catch(() => undefined);
         return Promise.race([asked, timeout]).finally(() => {
             if (stop) clearTimeout(stop);
@@ -300,10 +314,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         sessions.set(request, session);
         if (sessions.size > SESSIONS_MAX) sessions.delete(sessions.keys().next().value as string);
     };
-    const stillSpeaking = (request: string) => {
-        const session = sessions.get(request);
-        return session !== undefined && session === speaker;
-    };
+    const stillSpeaking = (request: string, session = sessions.get(request)) =>
+        session !== undefined && session === speaker;
     const tellRequest = (status: string, request: string, test = false, session = sessions.get(request)) =>
         options.frame()?.postMessage(
             {
@@ -320,20 +332,20 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // was being drawn again, or its page has not loaded yet): kept for this artifact's own frame, by the request it was started for, and told to it when it is
     // there again. Told once and forgotten; a new request from the page also forgets it (the page asked again, so it has heard).
     // Never sent to any other window: the frame is always asked from the artifact's own element.
-    const held = new Map<string, { status: string; from: number; test: boolean }>();
+    const held = new Map<string, { status: string; from: number; test: boolean; session?: string }>();
     const opening = () => options.opening?.() ?? 0;
     const HELD_MAX = 8;
 
     // How a checkout ended is the page's only word of it, so it is never dropped for want of a frame
-    const tellEnd = (status: string, request: string, from: number, test = false) => {
+    const tellEnd = (status: string, request: string, from: number, test = false, asker = sessions.get(request)) => {
         // The page that asked is gone with its opening: nobody is told
         if (opening() !== from) return;
         // Another document has spoken since: the one that asked is gone, and nobody is told
-        if (!stillSpeaking(request)) return;
-        if (options.frame() && options.loaded()) return tellRequest(status, request, test);
+        if (!stillSpeaking(request, asker)) return;
+        if (options.frame() && options.loaded()) return tellRequest(status, request, test, asker);
         if (destroyed) return;
         held.delete(request);
-        held.set(request, { status, from, test });
+        held.set(request, { status, from, test, session: asker });
         if (held.size > HELD_MAX) held.delete(held.keys().next().value as string);
     };
 
@@ -361,7 +373,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         const waiting = [...held];
         held.clear();
         for (const [request, one] of waiting)
-            if (one.from === opening() && stillSpeaking(request)) tellRequest(one.status, request, one.test);
+            if (one.from === opening() && stillSpeaking(request, one.session)) {
+                tellRequest(one.status, request, one.test, one.session);
+            }
     };
 
     interface Checkout {
@@ -462,10 +476,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         busy = true;
         activeRequest = request;
         activeFrom = from;
+        deferredRestore = null;
         held.clear();
         // The wish for this tap: made here, never by the page. A start sent again after a lost answer carries the same one, so it finds the order it made
         const intentId = random(24);
-        target = { intentId, request, from };
+        target = { intentId, request, from, session: sessions.get(request) };
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
         let popup: Window | null = null;
         try {
@@ -533,7 +548,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 }
                 if (!answer.orderId || !url) {
                     popup?.close();
-                    return end({ problem: "unavailable" }, "unavailable", request, from);
+                    // An answer with no checkout to show may still stand for an order that is paid: it can be checked
+                    return end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
                 }
                 if (popup) popup.location.href = url;
                 adopt(answer.orderId, { url, app: answer.app ?? "", popup }, request, from);
@@ -589,7 +605,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         busy = true;
         activeRequest = request;
         activeFrom = from;
-        lastRestore = { request, from };
+        lastRestore = { request, from, session: sessions.get(request) };
+        deferredRestore = null;
         held.clear();
         void (async () => {
             try {
@@ -616,7 +633,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (answer.status === "checking" && answer.orderId) {
                     // An order of theirs is still open: it is watched like a new checkout, and the page hears how it ends under this request.
                     // Its own link is offered, so a reload or a lost pop-up goes on with the SAME order and does not need a second one
-                    target = { intentId: null, request, from };
+                    target = { intentId: null, request, from, session: sessions.get(request) };
                     return adopt(answer.orderId, resumeOf(answer), request, from);
                 }
                 end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
@@ -661,7 +678,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             // The same id from another document (another session) is another request too.
             if (data.request !== activeRequest || activeFrom !== opening() || session !== askedBefore) {
                 tellRequest("busy", data.request, false, session);
-                if (activeFrom !== opening() || session !== askedBefore) restoreOwed = true;
+                if (activeFrom !== opening() || session !== askedBefore) {
+                    restoreOwed = true;
+                    // Its own restore, as it asked: Restore purchase answers that page under its own request, while it is the page on show
+                    if (data.restore === true) deferredRestore = { request: data.request, from: opening(), session };
+                }
             }
             return;
         }
@@ -678,8 +699,28 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
      */
     const askAgain = (restoring: boolean) => {
         if (destroyed || busy) return;
-        const none = { intentId: null, request: "", from: -1 };
-        const asked = restoring ? (lastRestore ? { intentId: null, ...lastRestore } : none) : target ?? none;
+        const none: { intentId: string | null; request: string; from: number; session?: string } = {
+            intentId: null,
+            request: "",
+            from: -1,
+        };
+        // A restore that was turned away while a payment was on its way is answered under its own request, when its page is still the one on show
+        const deferred =
+            restoring &&
+            deferredRestore &&
+            deferredRestore.from === opening() &&
+            stillSpeaking(deferredRestore.request, deferredRestore.session)
+                ? deferredRestore
+                : null;
+        if (restoring) deferredRestore = null;
+        if (deferred) remember(deferred.request, deferred.session);
+        const asked = deferred
+            ? { intentId: null, ...deferred }
+            : restoring
+            ? lastRestore
+                ? { intentId: null, ...lastRestore }
+                : none
+            : target ?? none;
         busy = true;
         activeRequest = asked.request;
         activeFrom = asked.from;
@@ -693,7 +734,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     ...update,
                     receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
                 });
-                if (asked.request) tellEnd(told, asked.request, asked.from, test);
+                if (asked.request) tellEnd(told, asked.request, asked.from, test, asked.session);
             };
             try {
                 let answer = await askWithin(
@@ -715,6 +756,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     );
                 }
                 if (answer.status === "checking" && answer.orderId) {
+                    // An order that was found by asking for the buyer's purchases is the one to ask about from now on, not the wish of an earlier checkout
+                    if (!asked.intentId) {
+                        target = { intentId: null, request: asked.request, from: asked.from, session: asked.session };
+                    }
                     return adopt(answer.orderId, resumeOf(answer), asked.request, asked.from);
                 }
                 if (answer.status === "not_paid" || answer.status === "cant_confirm") {

@@ -53,6 +53,11 @@ export function describePayLine(
           ]
         : [];
 
+    // A payment that ended without paying, while a page of a newer opening was turned away: Restore purchase is owed, and offered along with what the end already offers
+    const restoreToo: PayAction[] = line.offerRestore
+        ? [{ kind: "restore", label: LL.payRestorePurchase(), style: "secondary" }]
+        : [];
+
     if (line.paid) {
         if (line.paid.test) return { title: LL.payPaidTest(), sub: LL.payPaidTestSub(), actions: [], closable: false };
         if (line.restored) {
@@ -87,18 +92,20 @@ export function describePayLine(
             : { title: LL.payNoneGuest(), sub: LL.payNoneGuestSub(), actions: [], closable: true };
     }
     if (line.problem === "not_paid") {
-        return { title: LL.payNotPaid(), sub: LL.payNotPaidSub(), actions: [check], closable: false };
+        return { title: LL.payNotPaid(), sub: LL.payNotPaidSub(), actions: [check, ...restoreToo], closable: false };
     }
     if (line.problem === "cant_confirm") {
-        return { title: LL.payNotHeard(), sub: LL.payNotHeardSub(), actions: [check], closable: false };
+        return { title: LL.payNotHeard(), sub: LL.payNotHeardSub(), actions: [check, ...restoreToo], closable: false };
     }
     // A start whose answer was lost: an order may or may not exist, so it is said like any other payment not heard back about
     if (line.problem === "unavailable") {
         return line.canCheck
-            ? { title: LL.payNotHeard(), sub: LL.payNotHeardSub(), actions: [check], closable: false }
-            : { title: LL.payUnavailable(), sub: null, actions: [], closable: false };
+            ? { title: LL.payNotHeard(), sub: LL.payNotHeardSub(), actions: [check, ...restoreToo], closable: false }
+            : { title: LL.payUnavailable(), sub: null, actions: restoreToo, closable: false };
     }
-    if (line.problem === "limit") return { title: LL.payLimit(), sub: LL.payLimitSub(), actions: [], closable: false };
+    if (line.problem === "limit") {
+        return { title: LL.payLimit(), sub: LL.payLimitSub(), actions: restoreToo, closable: false };
+    }
     if (line.needsUpdate) {
         if (state.owner) {
             // The owner can make the page again; checking a payment is still there, quietly

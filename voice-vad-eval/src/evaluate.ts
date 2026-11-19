@@ -35,9 +35,15 @@ function shaOfSource(source: string): string {
 for (let index = 0; index < manifest.length; index++) {
     if (index % shards !== shard) continue;
     const item = manifest[index];
-    // The recording is hashed before anything of it is read for this clip, so the hash is of what the clip was built from
+    // Every recording the clip is made from is hashed before anything of it is read (a speech clip mixed with noise reads a noise recording
+    // too), so each hash is of what the clip was built from
     const sha = shaOfSource(item.source);
+    const needs = item.inputs?.() ?? [];
+    const inputs: Record<string, string> = {};
+    for (const key of needs) inputs[key] = shaOfSource(key);
     const built = item.build();
+    // What was read is what was hashed: a build that read another recording than the manifest names would be scored on unrecorded audio
+    if ((built.inputs ?? []).join('|') !== needs.join('|')) throw new Error(`${item.id} was built from ${(built.inputs ?? []).join(', ') || 'no other recording'}, but its manifest names ${needs.join(', ') || 'none'}`);
     const gate: Record<string, GateResult> = {};
     for (const ms of [100, 200, 300]) gate[`gate ${ms} ms`] = runGate(built.pcm, ms, 320);
     // The provider-partial route: a provider that hears words in whatever it is sent
@@ -53,6 +59,7 @@ for (let index = 0; index < manifest.length; index++) {
             split: item.split,
             source: item.source,
             sourceSha: sha,
+            inputs,
             speaker: item.speaker,
             seconds: built.pcm.length / 16000,
             clipStart: item.kind === 'speech' ? LEAD : undefined,

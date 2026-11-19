@@ -123,6 +123,33 @@ describe('what a reply sends with it (#1993)', () => {
             expect((failing.sendImage.mock.calls as unknown[][]).map((call) => call[5])).toEqual([KHALID, KHALID]);
         });
 
+        it('keeps a private send and a group reply for the same URL as two entries, each for its own audience', async () => {
+            const url = 'https://cdn.example.test/a.png';
+            const memory = {
+                pendingMedia: [{ url, originalUrl: url, mediaType: 'image', mimeType: '', caption: '', createdAt: 1, retryCount: 0 }] as unknown as Array<{ url: string; audience?: number }>,
+                maxPendingMedia: 5,
+            };
+            const bot = client();
+            bot.sendImage.mockRejectedValue(new Error('send failed'));
+            await send(service(memory), bot, made(url), KHALID);
+            // The group's entry was not taken over by the private one: it still goes to everyone
+            expect(memory.pendingMedia.map((item) => item.audience)).toEqual([undefined, KHALID]);
+
+            // The same audience asking again reuses its own entry
+            await send(service(memory), bot, made(url), KHALID);
+            expect(memory.pendingMedia).toHaveLength(2);
+
+            // A private send that goes through takes only its own entry out
+            const fine = client();
+            await send(service(memory), fine, made(url), KHALID);
+            expect(memory.pendingMedia.map((item) => item.audience)).toEqual([undefined]);
+
+            // The explicit send tools queue the same way
+            const blocked = { pendingMedia: [{ url, originalUrl: url, mediaType: 'image', mimeType: '', createdAt: 1, retryCount: 0 }] as unknown as Array<{ audience?: number }>, maxPendingMedia: 5 };
+            await service(blocked)['sendMediaWithRetry'](bot as never, SPACE, url, '', 'image', () => Promise.reject(new Error('no')), 'bot1', KHALID, KHALID);
+            expect(blocked.pendingMedia.map((item) => item.audience)).toEqual([undefined, KHALID]);
+        });
+
         it('goes into the space for everyone in a reply other people read', async () => {
             const bot = client();
             const ai = service();

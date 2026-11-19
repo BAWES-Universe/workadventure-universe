@@ -254,6 +254,47 @@ describe("an artifact window's renewals of the address on show", () => {
         view.$destroy();
     });
 
+    it("renews a page with no media again when another version failed to open while its stopped address was being renewed", async () => {
+        vi.useFakeTimers();
+        const plain = (number: number, url: string) => {
+            const one = opened(number, url);
+            return { ...one, version: { ...one.version, urlHasMedia: false } };
+        };
+        let asked = 0;
+        let failTwo: () => void = () => {};
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, wanted: number | undefined) => {
+            asked++;
+            if (asked === 1) return Promise.resolve(plain(1, "https://files.test/1-first"));
+            // The renewal of the stopped address is slow
+            if (asked === 2) return new Promise(() => {});
+            if (wanted === 2)
+                return new Promise((_resolve, reject) => {
+                    failTwo = () => reject(new Error("offline"));
+                });
+            return Promise.resolve(plain(1, "https://files.test/1-renewed"));
+        });
+        const { version, target, view } = mount();
+        await settle();
+        // The address stopped and the browser drew the frame again: it is renewed, and is not drawn until it is
+        await vi.advanceTimersByTimeAsync(301_000);
+        target.querySelector('iframe[src^="https://files.test"]')?.dispatchEvent(new Event("load"));
+        await settle();
+        expect(asked).toBe(2);
+        expect(target.querySelector('iframe[src^="https://files.test"]')).toBeNull();
+        // Version 2 starts to open, dropping that renewal, and fails: the page must not stay behind the loading line
+        version.set(2);
+        await settle();
+        failTwo();
+        await settle();
+        await vi.advanceTimersByTimeAsync(1);
+        await settle();
+        expect(asked).toBe(4);
+        expect(target.querySelector('iframe[src^="https://files.test"]')?.getAttribute("src")).toBe(
+            "https://files.test/1-renewed"
+        );
+        view.$destroy();
+    });
+
     it("leaves the normal renewal wait of a first opening alone: nothing is renewed 30 s after it", async () => {
         vi.useFakeTimers();
         let asked = 0;

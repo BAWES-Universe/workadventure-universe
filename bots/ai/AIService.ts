@@ -254,6 +254,9 @@ const NEARBY_ASK_RULE =
     'Before you call a tool, write nothing first. Never repeat what is on a card (names, subjects, amounts, wording) in your reply or later to anyone else. ' +
     'When a tool says a card was shown, write nothing more.';
 /** What the model hears when an earlier file or card was not sent because someone walked up while it was looked up (#1993). */
+const ARTIFACT_NOT_PLACED = 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.';
+/** The card of a saved artifact that nobody was shown yet, by the result its write was kept under: a retry of the turn places it. */
+const unshownCards = new WeakMap<object, ArtifactCard>();
 const SOMEONE_CAME = "Someone else just joined, so it wasn't sent. Say so in one short line; they can ask again.";
 /** The one line everyone reads instead of a reply built from files or pages when someone walked up while it was made (#1993). */
 const SOMEONE_CAME_READING = "Someone else just joined, so I'm not going to say what I found in your files here. Ask me again and I'll answer for everyone who is here now.";
@@ -4665,7 +4668,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // The same make or change asked again in the same turn is that turn being regenerated: answer with what it did
         const repeatKey = writesArtifact(name) ? `${name}:${JSON.stringify(args)}` : undefined;
         const earlier = repeatKey ? memory?.artifactCalls?.get(repeatKey) : undefined;
-        if (earlier) return earlier;
+        if (earlier) {
+            // The write is done and kept; only its card may still be owed (nobody was shown it, or the bubble closed): the retry places it, it never saves again
+            const owed = unshownCards.get(earlier);
+            if (!owed) return earlier;
+            if (this.someoneCameSince(botClient, spaceName, playerId, present)) return { ...earlier, notShown: SOMEONE_CAME };
+            if (!this.deliverArtifactCard(owed, botClient, spaceName, memory, present === undefined ? playerId : undefined)) {
+                return { ...earlier, notShown: ARTIFACT_NOT_PLACED };
+            }
+            unshownCards.delete(earlier);
+            return earlier;
+        }
 
         const limits = this.limitsFor(botId);
         const run = await runArtifactTool(name, args, {
@@ -4681,13 +4694,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });
         if (!run.card) return run.result;
+        // The write is kept whether or not its card goes out: a retry of the same turn places the card, and never saves a second copy
+        if (repeatKey && memory) (memory.artifactCalls ??= new Map()).set(repeatKey, run.result);
         // Orbit allowed it for the people who were here when the reply started: someone who walked up while it was made was not asked about, so no card goes out
-        if (this.someoneCameSince(botClient, spaceName, playerId, present)) return { ...run.result, notShown: SOMEONE_CAME };
+        if (this.someoneCameSince(botClient, spaceName, playerId, present)) {
+            unshownCards.set(run.result, run.card);
+            return { ...run.result, notShown: SOMEONE_CAME };
+        }
         if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory, present === undefined ? playerId : undefined)) {
             // The bubble closed while the file was being made: the file is saved, but nobody was shown it, so a retry may place it
-            return { ...run.result, notShown: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
+            unshownCards.set(run.result, run.card);
+            return { ...run.result, notShown: ARTIFACT_NOT_PLACED };
         }
-        if (repeatKey && memory) (memory.artifactCalls ??= new Map()).set(repeatKey, run.result);
         return run.result;
     }
 
@@ -5573,7 +5591,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                 // Skip URLs already queued for delivery — prevents duplicates from
                 // read-only tools (e.g., list_imagines) returning past results
-                if (memory.pendingMedia.some(p => p.url === url || p.originalUrl === url)) continue;
+                if (memory.pendingMedia.some(p => p.audience === only && (p.url === url || p.originalUrl === url))) continue;
 
                 if (full()) return;
 
@@ -5736,8 +5754,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
+                            // A private send and a group reply for the same URL are two entries: each goes to its own audience
                             const existingIdx = memory.pendingMedia.findIndex(
-                                p => p.url === imageUrlsToSend[0] || p.originalUrl === imageUrlsToSend[0] || p.url === cdnUrl
+                                p => p.audience === only && (p.url === imageUrlsToSend[0] || p.originalUrl === imageUrlsToSend[0] || p.url === cdnUrl)
                             );
                             if (existingIdx >= 0) {
                                 memory.pendingMedia[existingIdx] = {
@@ -5798,7 +5817,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // queued by preQueueToolResults, but the CDN URL is the
                             // reliable delivery URL. originalUrl is preserved for dedup.
                             const existingIdx = memory.pendingMedia.findIndex(
-                                p => p.url === url || p.originalUrl === url || p.url === cdnUrl
+                                p => p.audience === only && (p.url === url || p.originalUrl === url || p.url === cdnUrl)
                             );
                             if (existingIdx >= 0) {
                                 memory.pendingMedia[existingIdx] = {
@@ -5872,7 +5891,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (botId && playerId !== undefined && sentUrls.size > 0) {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             if (memory?.pendingMedia) {
-                memory.pendingMedia = memory.pendingMedia.filter(p => !sentUrls.has(p.url));
+                memory.pendingMedia = memory.pendingMedia.filter(p => !(sentUrls.has(p.url) && p.audience === only));
                 if (process.env.ENABLE_BOT_DEBUG === 'true' && sentUrls.size > 0) {
                     console.log(`[PM-TRACE] autoSendMedia cleanup: removed ${sentUrls.size} sent URLs, remaining=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
                 }
@@ -6284,8 +6303,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (memory) {
                 if (!memory.pendingMedia) memory.pendingMedia = [];
                 // Replace existing entry with CDN URL — preserves originalUrl for dedup
+                // A private send and a group reply for the same URL are two entries: each goes to its own audience
                 const existingIdx = memory.pendingMedia.findIndex(
-                    p => p.url === url || p.originalUrl === url || p.url === cdnUrl
+                    p => p.audience === only && (p.url === url || p.originalUrl === url || p.url === cdnUrl)
                 );
                 if (existingIdx >= 0) {
                     memory.pendingMedia[existingIdx] = {

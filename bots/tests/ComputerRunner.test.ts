@@ -571,6 +571,31 @@ describe('a turn that is lost, or room that is gone', () => {
             expect(seen.turns[1]).toBe(RESUME_PROMPT);
         });
 
+        it('a final progress report refused as stale, with no step reported before it, also stops the old turn: its ending is not acted on', async () => {
+            let generation = 1;
+            let reads = 0;
+            // No tool step: the closing report is the first one the job answers
+            const quiet: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'text', text: 'Old words. [[done]]' }, { type: 'completed', outputText: 'Old words. [[done]]', usage: null }];
+            // Orbit cannot be asked for the three reads after the turn: a lost turn must still be told to look at the page, not just to carry on
+            const { orbit, seen } = fakeOrbit([quiet, done('New words. [[done]]')], () => (++reads >= 2 && reads <= 4 ? (undefined as never) : { status: 'running', control: 'brick', generation }));
+            const original = orbit.action;
+            let refused = false;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'progress' && !refused) {
+                    refused = true;
+                    seen.actions.push(body);
+                    generation = 2;
+                    throw stale(2);
+                }
+                return original(botId, jobId, body);
+            };
+            await runJob(orbit);
+            expect(seen.cancels).toBe(1);
+            // Only the turn that started on the job's generation now finishes it
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 2 }]);
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
+        });
+
         it('a turn the job moved on from while it went (taken and given back) is not acted on, even though the job is Brick\'s again', async () => {
             const generations = [1, 2, 2, 2, 2, 2];
             let at = 0;

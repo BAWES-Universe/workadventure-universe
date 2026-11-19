@@ -232,7 +232,7 @@ describe('artifact tools in AIService', () => {
         expect(orbit.listArtifactsInChat).not.toHaveBeenCalled();
     });
 
-    it('does not cache or claim a card when the bubble closed while the file was made', async () => {
+    it('does not claim a card when the bubble closed while the file was made, and a retry places it without saving again', async () => {
         const client = botClient();
         client.isInSpace.mockReturnValueOnce(false);
         const memory: Record<string, unknown> = {};
@@ -242,11 +242,34 @@ describe('artifact tools in AIService', () => {
         const [closed] = await call();
         expect(closed.result).toHaveProperty('notShown');
         expect(client.sendChatMessage).not.toHaveBeenCalled();
-        expect(memory.artifactCalls).toBeUndefined();
-        // Asked again with the bubble back, the card goes out
+        // The write is kept even though its card was not shown
+        expect((memory.artifactCalls as Map<string, unknown>).size).toBe(1);
+        // Asked again with the bubble back, the card goes out, and the file is not saved a second time
         const [again] = await call();
         expect(again.result).not.toHaveProperty('notShown');
         expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board', 7);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(1);
+        // Placed once: asked a third time it only answers
+        await call();
+        expect(client.sendChatMessage).toHaveBeenCalledTimes(1);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the write of an artifact whose card was held back because someone came, so a retry never saves it again', async () => {
+        const client = botClient();
+        const memory: Record<string, unknown> = {};
+        const orbit = admin();
+        const ai = service(memory);
+        const came = vi.spyOn(ai as never, 'someoneCameSince' as never);
+        came.mockReturnValueOnce(true as never);
+        const call = () => ai['executeToolCalls']([make], client as never, orbit as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7);
+        const [held] = await call();
+        expect(held.result).toHaveProperty('notShown');
+        expect(client.sendChatMessage).not.toHaveBeenCalled();
+        const [retry] = await call();
+        expect(retry.result).not.toHaveProperty('notShown');
+        expect(client.sendChatMessage).toHaveBeenCalledTimes(1);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(1);
     });
 
     it('leaves the results of a same-named MCP tool alone when artifacts are off', async () => {

@@ -10,6 +10,7 @@ import { describe, it } from 'node:test';
 import { readWav16k } from '../src/wav.ts';
 import { SileroStream, type SileroModel } from '../src/silero.ts';
 import { sourceSha, SYNTHETIC } from '../src/sources.ts';
+import { buildManifest } from '../src/fixtures.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'vad-eval-'));
@@ -359,5 +360,36 @@ describe('worker-telemetry-check.sh', () => {
             assert.doesNotMatch(readFileSync(join(out, `${name}.strace`), 'utf8'), /OLD RUN/);
             assert.doesNotMatch(readFileSync(join(out, `${name}.log`), 'utf8'), /OLD RUN/);
         }
+    });
+});
+
+describe('the recordings a clip is mixed from', () => {
+    it('are named by the manifest before the clip is built, and are the ones the build reads', () => {
+        const dir = scratch();
+        const put = (path: string, samples: number): void => {
+            mkdirSync(join(dir, path.split('/').slice(0, -1).join('/')), { recursive: true });
+            wav(join(dir, path), samples);
+        };
+        for (const word of ['stop', 'no', 'yes', 'go']) put(`mini_speech_commands/${word}/aaaa_nohash_0.wav`, 8000);
+        for (const word of ['stop', 'no', 'yes', 'cancel', 'close', 'ok']) put(`asc/dataset/${word}/12345678_1.wav`, 8000);
+        put('ms-snsd/clean_test/clean_1.wav', 16000);
+        // Two noise recordings of a non-speech class: which one a clip mixes is picked from the clip's own numbers
+        put('ms-snsd/noise_test/Typing_1.wav', 64000);
+        put('ms-snsd/noise_test/VacuumCleaner_1.wav', 64000);
+        const items = buildManifest(dir);
+        const mixed = items.filter((i) => i.kind === 'speech' && (i.condition === 'N10' || i.condition === 'N5'));
+        assert.ok(mixed.length > 0);
+        const keys = new Set<string>();
+        for (const item of mixed) {
+            const named = item.inputs?.() ?? [];
+            assert.equal(named.length, 1);
+            assert.match(named[0], /^ms-snsd\/noise_test\//);
+            assert.deepEqual(item.build().inputs, named, item.id);
+            keys.add(named[0]);
+        }
+        // Both recordings are used somewhere, so the check above is not one name that happens to match
+        assert.equal(keys.size, 2);
+        // A clip that reads no other recording names none
+        for (const item of items.filter((i) => i.kind === 'speech' && i.condition === 'S20')) assert.deepEqual(item.inputs?.() ?? [], []);
     });
 });

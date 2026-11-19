@@ -66,6 +66,23 @@ describe("the line under a paying page says what the approved mock says", () => 
         expect(labels({ problem: "not_paid", canCheck: true })).toEqual(["check:Check payment:primary"]);
     });
 
+    it("a payment that ended without paying while another page was turned away offers Restore purchase beside what it already offers", () => {
+        for (const problem of ["not_paid", "cant_confirm"] as const) {
+            expect(labels({ problem, canCheck: true, offerRestore: true })).toEqual([
+                "check:Check payment:primary",
+                "restore:Restore purchase:secondary",
+            ]);
+            // Nothing owed: only what it offered before
+            expect(labels({ problem, canCheck: true })).toEqual(["check:Check payment:primary"]);
+        }
+        expect(labels({ problem: "unavailable", canCheck: true, offerRestore: true })).toEqual([
+            "check:Check payment:primary",
+            "restore:Restore purchase:secondary",
+        ]);
+        expect(labels({ problem: "unavailable", offerRestore: true })).toEqual(["restore:Restore purchase:secondary"]);
+        expect(labels({ problem: "limit", offerRestore: true })).toEqual(["restore:Restore purchase:secondary"]);
+    });
+
     it("g5: a purchase that is back, with the day it was made", () => {
         expect(view({ paid: { test: false }, restored: { paidAt: "2026-11-19T08:00:00.000Z" } })).toMatchObject({
             title: "Your purchase from 19 Nov is back.",
