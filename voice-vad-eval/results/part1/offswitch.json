@@ -1,0 +1,56 @@
+{
+ "steps": [
+  {
+   "step": "fan, expecting pause",
+   "wentOnOverFan": true,
+   "voiceStoppedIt": true,
+   "voiceCancelMs": 89.300048828125,
+   "yieldAndObserverCounters": {
+    "observer_loaded": 1,
+    "yield_episodes": 1,
+    "yield_holds": 1,
+    "yield_candidates": 1,
+    "yield_continues": 1,
+    "yield_continue_ms": 1506,
+    "yield_confirmed_detector_while_continuing": 1,
+    "yield_stops": 1
+   }
+  },
+  {
+   "step": "switched OFF while the bot spoke",
+   "workerHealthyAfterMs": 2223,
+   "personReconnectedAfterMs": 1579,
+   "botHeardAgain": true,
+   "replyInterrupted": false
+  },
+  {
+   "step": "fan, expecting today",
+   "fanStoppedIt": true,
+   "fanCancelMs": 122.89990234375,
+   "yieldAndObserverCounters": {}
+  },
+  {
+   "step": "switched back ON while the bot spoke",
+   "workerHealthyAfterMs": 2457,
+   "personReconnectedAfterMs": 1418,
+   "botHeardAgain": true,
+   "replyInterrupted": false
+  },
+  {
+   "step": "fan, expecting pause",
+   "wentOnOverFan": true,
+   "voiceStoppedIt": true,
+   "voiceCancelMs": 106.199951171875,
+   "yieldAndObserverCounters": {
+    "observer_loaded": 1,
+    "yield_episodes": 1,
+    "yield_holds": 1,
+    "yield_candidates": 1,
+    "yield_continues": 1,
+    "yield_continue_ms": 1605,
+    "yield_confirmed_detector_while_continuing": 1,
+    "yield_stops": 1
+   }
+  }
+ ]
+}
