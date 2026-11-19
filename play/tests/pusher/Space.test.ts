@@ -204,6 +204,55 @@ describe("Space", () => {
             expect(mockNotifyMeAddUser).not.toHaveBeenCalled();
         });
     });
+
+    describe("handleUnwatch", () => {
+        const createSpace = () => {
+            const mockDeleteUserFromNotify = vi.fn();
+            const mockSpaceToBackForwarderFactory = () =>
+                ({
+                    deleteUserFromNotify: mockDeleteUserFromNotify,
+                } as unknown as SpaceToBackForwarder);
+            const mockSpaceToFrontDispatcherFactory = () => ({} as unknown as SpaceToFrontDispatcher);
+            const space = new Space(
+                "test",
+                "test",
+                new EventProcessor(),
+                FilterType.ALL_USERS,
+                vi.fn(),
+                mock<SpaceConnectionInterface>(),
+                "world",
+                [],
+                mockSpaceToBackForwarderFactory,
+                mockSpaceToFrontDispatcherFactory
+            );
+            return { space, mockDeleteUserFromNotify };
+        };
+
+        it("should stop notifying a watcher that is still in the space", () => {
+            const { space, mockDeleteUserFromNotify } = createSpace();
+            const spaceUser = { ...SpaceUser.fromPartial({ spaceUserId: "foo_1" }), lowercaseName: "foo_1" };
+            const mockSocket = mock<Socket>({
+                getUserData: vi.fn().mockReturnValue({ userId: 1 }),
+            });
+            space._localConnectedUserWithSpaceUser.set(mockSocket, spaceUser);
+            space._localWatchers.add("foo_1");
+
+            space.handleUnwatch(mockSocket);
+
+            expect(space._localWatchers.has("foo_1")).toBe(false);
+            expect(mockDeleteUserFromNotify).toHaveBeenCalledWith(spaceUser);
+        });
+
+        it("should ignore the unwatch of a socket that already left the space", () => {
+            const { space, mockDeleteUserFromNotify } = createSpace();
+            const mockSocket = mock<Socket>({
+                getUserData: vi.fn().mockReturnValue({ userId: 1 }),
+            });
+
+            expect(() => space.handleUnwatch(mockSocket)).not.toThrow();
+            expect(mockDeleteUserFromNotify).not.toHaveBeenCalled();
+        });
+    });
 });
 
 describe("SpaceConnection", () => {
