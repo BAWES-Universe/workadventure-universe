@@ -31,6 +31,14 @@ export function readMatrixConfig(env: NodeJS.ProcessEnv = process.env): MatrixAp
     return { homeserverUrl, domain, asToken, hsToken };
 }
 
+/**
+ * True only when none of the four chat-server settings is set at all: a deployment that has no chat server on purpose. A half-set one (a missing
+ * token after a rollout, say) is not "off": it has chats it cannot reach, and anything that must clear them waits instead of calling them clear.
+ */
+export function matrixIntentionallyOff(env: NodeJS.ProcessEnv = process.env): boolean {
+    return !['MATRIX_HOMESERVER_URL', 'MATRIX_DOMAIN', 'MATRIX_AS_TOKEN', 'MATRIX_HS_TOKEN'].some((name) => env[name]?.trim());
+}
+
 // Set once at startup when Synapse refuses the registration: direct messages then stay off for the whole process.
 let rejectedReason: string | null = null;
 
