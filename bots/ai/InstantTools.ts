@@ -194,7 +194,7 @@ export function ruleStopResult(words: string, stillChecking?: { link?: string | 
             error: words,
             outcome: 'uncertain',
             reason: 'rule',
-            note: `A rule they set says no, and an earlier try of this task could not be confirmed. Say both in plain words in their language: "${RULE_STOPPED}" and "${STILL_CHECKING}" (the rule's own words, if they say more: "${words}").${
+            note: `A rule they set says no, and an earlier try of this task is not confirmed (it could not be, or it is still out). Say both in plain words in their language: "${RULE_STOPPED}" and "${STILL_CHECKING}" (the rule's own words, if they say more: "${words}").${
                 stillChecking.link ? ` Then add this link on its own line, exactly as it is: ${stillChecking.link}` : ''
             } Do not run any Instant App for this again, do not look for a way round it, and never suggest more credit, a top-up or asking for more. Never say a price or an amount.`,
             ...(stillChecking.link ? { receipt: stillChecking.link } : {}),

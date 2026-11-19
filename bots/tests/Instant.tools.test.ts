@@ -992,6 +992,22 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(String(stopped.note)).toContain('"I\'m still checking the earlier request."');
     });
 
+    it('a rule that stops a run while another run of the same task is still out says it is still checking that one', async () => {
+        const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: undefined, canAskForMore: undefined };
+        const { ai, orbit } = service();
+        ai.noteBrick(BRICK, { isDefault: false });
+        let landA: (answer: InstantRunAnswer) => void = () => undefined;
+        orbit.instantRun.mockImplementationOnce(() => new Promise<InstantRunAnswer>((resolve) => (landA = resolve))).mockResolvedValueOnce(rule);
+        const a = ai.runInstantToolCall('instant_app_exa_search', { query: 'a' }, where);
+        await vi.waitFor(() => expect(orbit.instantRun).toHaveBeenCalledTimes(1));
+        // b is stopped by the rule while a is still out: a may have taken something, so b does not say it is simply over
+        const b = await ai.runInstantToolCall('instant_app_exa_search', { query: 'b' }, where);
+        expect(b).toMatchObject({ success: false, reason: 'rule', outcome: 'uncertain' });
+        expect(String(b.note)).toContain('"I\'m still checking the earlier request."');
+        landA({ status: 'done', data: 1, chargedMicros: 1 });
+        await a;
+    });
+
     it('a rule that says no stops the task: Orbit’s words, no card for more credit, and no other Instant App is tried after it', async () => {
         const rule: InstantRunAnswer = { status: 'refused', reason: 'rule', message: 'You said no more than a dollar a day.', stop: true, renewsAt: '2026-12-01T00:00:00Z', canAskForMore: true };
         const { ai, orbit, memory } = service({ instantRun: vi.fn().mockResolvedValueOnce(rule).mockResolvedValue({ status: 'done', data: 1, chargedMicros: 1 }) });
