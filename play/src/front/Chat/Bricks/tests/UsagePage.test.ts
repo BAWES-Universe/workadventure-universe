@@ -535,6 +535,143 @@ describe("the Usage page (#1999)", () => {
         expect(receipt).toContain("Read one page$0");
     });
 
+    const partly = (over: Record<string, unknown> = {}) =>
+        task({
+            id: "act_partly",
+            title: "Invoices to 3 clients",
+            spentMicros: 40_000,
+            outcome: "partial",
+            outcomeNote: "Two steps worked and one didn't. Nothing was taken for the one that didn't.",
+            actions: [
+                { label: "gmail", outcome: "worked", text: "Gmail · worked", takenText: null },
+                { label: "gmail", outcome: "worked", text: "Gmail · worked", takenText: null },
+                { label: "gmail", outcome: "failed", text: "Gmail · didn't work", takenText: "Nothing taken" },
+            ],
+            lines: [{ label: "Instant Gmail, 3 uses", amountMicros: 40_000 }],
+            ...over,
+        });
+
+    it("c3: says a partly done task as partly done, each step and how it ended, what was not taken, and why (the approved mock)", async () => {
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [partly()] }));
+        await open();
+        expect(text()).toMatch(/Today, .+ · Partly done · \$0\.04 · Apps/);
+        target.querySelector<HTMLElement>('[data-activity="act_partly"]')?.click();
+        await settle();
+        const rows = [...target.querySelectorAll('[data-testid="usageReceiptAction"]')].map((row) =>
+            row.textContent?.replace(/\s+/g, " ").trim()
+        );
+        expect(rows).toEqual(["Gmail · worked", "Gmail · worked", "Gmail · didn't work Nothing taken"]);
+        const receipt = byId("usageReceipt")?.textContent?.replace(/\s+/g, " ") ?? "";
+        // What it took, from Orbit's own lines, is still there
+        expect(receipt).toContain("Instant Gmail, 3 uses$0.04");
+        expect(byId("usageReceiptWhy")?.textContent).toBe(
+            "Two steps worked and one didn't. Nothing was taken for the one that didn't."
+        );
+        expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+        expect(receipt).toMatch(/Partly done\s*Paid by you$/);
+        // The task still counts as one that was paid for: it is not "Refunded"
+        expect(receipt).not.toContain("Refunded");
+        expect(receipt).not.toContain("This didn't go through on our side");
+    });
+
+    it("shows each step with its own amount, and no separate lines, when Orbit says what each step took", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    activity: [
+                        partly({
+                            actions: [
+                                {
+                                    label: "gmail",
+                                    outcome: "worked",
+                                    text: "Gmail · worked",
+                                    takenText: null,
+                                    amountMicros: 20_000,
+                                },
+                                {
+                                    label: "gmail",
+                                    outcome: "worked",
+                                    text: "Gmail · worked",
+                                    takenText: null,
+                                    amountMicros: 20_000,
+                                },
+                                {
+                                    label: "gmail",
+                                    outcome: "failed",
+                                    text: "Gmail · didn't work",
+                                    takenText: "Nothing taken",
+                                },
+                            ],
+                        }),
+                    ],
+                }
+            )
+        );
+        await open();
+        target.querySelector<HTMLElement>('[data-activity="act_partly"]')?.click();
+        await settle();
+        const rows = [...target.querySelectorAll('[data-testid="usageReceiptAction"]')].map((row) =>
+            row.textContent?.replace(/\s+/g, " ").trim()
+        );
+        expect(rows).toEqual(["Gmail · worked $0.02", "Gmail · worked $0.02", "Gmail · didn't work Nothing taken"]);
+        expect(byId("usageReceipt")?.textContent).not.toContain("Instant Gmail, 3 uses");
+    });
+
+    it("only calls a task partly done when Orbit says so and a step worked and one did not; otherwise it reads as before", async () => {
+        const noFailure = partly({
+            id: "act_a",
+            title: "All worked",
+            actions: [{ label: "gmail", outcome: "worked", text: "Gmail · worked", takenText: null }],
+        });
+        const noWord = partly({ id: "act_b", title: "Older Orbit", outcome: undefined, outcomeNote: undefined });
+        const refunded = partly({ id: "act_c", title: "Refunded one", state: "refunded", spentMicros: null });
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [noFailure, noWord, refunded] }));
+        await open();
+        expect(text()).not.toContain("Partly done");
+        expect(text()).toMatch(/Refunded one[^]*Refunded, nothing taken/);
+        for (const id of ["act_a", "act_b", "act_c"]) {
+            target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+            expect(byId("usageReceiptPartly")).toBeNull();
+            target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+        }
+        // A task with no actions at all (an older Orbit, a computer's) is exactly as before
+        game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
+    });
+
+    it("says amount unavailable when nobody can tell what a task took yet, never a number and never Nothing", async () => {
+        game.getMyUsage.mockResolvedValue(
+            live(
+                {},
+                {
+                    activity: [
+                        task({
+                            id: "act_unknown",
+                            title: "Set a price alert",
+                            spentMicros: null,
+                            lines: [
+                                { label: "Instant Alerts, 1 use", note: "Price not known yet" },
+                                { label: "Made a page", note: "Nothing" },
+                            ],
+                        }),
+                    ],
+                }
+            )
+        );
+        await open();
+        expect(text()).toMatch(/Today, .+ · amount unavailable · Apps/);
+        target.querySelector<HTMLElement>('[data-activity="act_unknown"]')?.click();
+        await settle();
+        const receipt = byId("usageReceipt")?.textContent?.replace(/\s+/g, " ") ?? "";
+        expect(receipt).toContain("Instant Alerts, 1 useamount unavailable");
+        expect(receipt).toContain("Made a pageNothing");
+        expect(receipt).not.toContain("Price not known yet");
+    });
+
     it("opens the receipt a link asked for", async () => {
         game.getMyUsage.mockResolvedValue(live({}, { activity: [task(), task({ id: "act_2", title: "Flights" })] }));
         await open({ receiptId: "act_2" });

@@ -12,6 +12,7 @@
     import {
         availableText,
         fullAgainWhen,
+        PRICE_NOT_KNOWN,
         spentLabel,
         storageSize,
         type ActivityItem,
@@ -153,25 +154,45 @@
         return when.kind === "yesterday" ? text.activityYesterday() : when.text;
     }
 
+    /** A task that cost something nobody can say yet: Orbit sends its total as nothing and a line that says the price is not known */
+    const priceUnknown = (item: ActivityItem): boolean =>
+        item.spentMicros === null &&
+        item.lines.some((line) => line.amountMicros === null && line.note === PRICE_NOT_KNOWN);
+
     function activityHint(item: ActivityItem, text: Words, locale: string | undefined): string {
         const when = activityWhen(item.at, text, locale);
         if (item.state === "refunded") return `${when} · ${text.activityRefunded()}`;
-        if (item.payer !== "you") return `${when} · ${paidBy(item, text)}`;
+        const partly = item.outcome === "partial" ? text.activityPartly() : "";
+        if (item.payer !== "you") return [when, partly, paidBy(item, text)].filter(Boolean).join(" · ");
         const what =
             item.category === "apps"
                 ? text.activityApps()
                 : item.category === "computer"
                 ? text.activityComputer()
                 : "";
-        return [when, item.spentMicros !== null ? spentLabel(item.spentMicros, locale, text.lessThanCent()) : "", what]
-            .filter(Boolean)
-            .join(" · ");
+        const spent =
+            item.spentMicros !== null
+                ? spentLabel(item.spentMicros, locale, text.lessThanCent())
+                : priceUnknown(item)
+                ? text.amountUnavailable()
+                : "";
+        return [when, partly, spent, what].filter(Boolean).join(" · ");
     }
 
     function lineValue(amountMicros: number | null, note: string | null, text: Words, locale: string | undefined) {
         if (amountMicros !== null) return spentLabel(amountMicros, locale, text.lessThanCentInLine());
+        if (note === PRICE_NOT_KNOWN) return text.amountUnavailable();
         return note ?? text.activityNothingTaken();
     }
+
+    /**
+     * A partly done task shows each action and how it ended; the lines of what it used follow, unless every action carries its own amount
+     * (then the actions are the lines).
+     */
+    const perAction = (item: ActivityItem): boolean =>
+        item.outcome === "partial" &&
+        item.actions.length > 0 &&
+        item.actions.every((action) => action.outcome === "failed" || action.amountMicros !== null);
 
     async function onAsk(category: CreditCategory) {
         if (asking) return;
@@ -360,17 +381,37 @@
                     </button>
                     {#if openId === item.id}
                         <div class="receipt" data-testid="usageReceipt">
-                            {#each item.lines as line, index (index)}
-                                <div class="rl">
-                                    <span>{line.label}</span><b
-                                        >{lineValue(line.amountMicros, line.note, text, $locale)}</b
-                                    >
-                                </div>
-                            {/each}
+                            {#if item.outcome === "partial"}
+                                {#each item.actions as action, index (index)}
+                                    <div class="rl" data-testid="usageReceiptAction">
+                                        <span>{action.text}</span>
+                                        {#if action.outcome === "failed"}
+                                            <b class="q">{action.takenText ?? text.activityNothingTaken()}</b>
+                                        {:else if action.amountMicros !== null}
+                                            <b>{spentLabel(action.amountMicros, $locale, text.lessThanCentInLine())}</b>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            {/if}
+                            {#if !perAction(item)}
+                                {#each item.lines as line, index (index)}
+                                    <div class="rl">
+                                        <span>{line.label}</span><b
+                                            class:q={line.amountMicros === null && line.note === PRICE_NOT_KNOWN}
+                                            >{lineValue(line.amountMicros, line.note, text, $locale)}</b
+                                        >
+                                    </div>
+                                {/each}
+                            {/if}
                             {#if item.state === "refunded"}
                                 <p class="why" data-testid="usageReceiptWhy">{text.receiptRefundedWhy()}</p>
+                            {:else if item.outcome === "partial" && item.outcomeNote}
+                                <p class="why" data-testid="usageReceiptWhy">{item.outcomeNote}</p>
                             {/if}
                             <div class="rfoot">
+                                {#if item.outcome === "partial"}
+                                    <span class="paid" data-testid="usageReceiptPartly">{text.activityPartly()}</span>
+                                {/if}
                                 <span class="paid"
                                     >{item.state === "refunded" ? text.refunded() : paidBy(item, text)}</span
                                 >
@@ -534,10 +575,15 @@
         color: #fff;
         text-align: right;
     }
+    .rl b.q {
+        font-weight: 500;
+        color: rgba(244, 242, 250, 0.75);
+    }
     .rfoot {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        justify-content: space-between;
+        gap: 8px;
         padding-top: 8px;
         min-height: 36px;
     }

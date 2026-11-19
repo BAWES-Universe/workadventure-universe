@@ -1704,6 +1704,9 @@ const chat: BaseTranslation = {
             activityComputer: "Computer",
             activityRefunded: "Refunded, nothing taken",
             activityNothingTaken: "Nothing taken",
+            // A task where some steps worked and some did not (Orbit's outcome "partial"), and an amount nobody can tell yet
+            activityPartly: "Partly done",
+            amountUnavailable: "amount unavailable",
             paidByYou: "Paid by you",
             paidByUniverse: "Paid by Universe",
             paidByName: "Paid by {name}",
