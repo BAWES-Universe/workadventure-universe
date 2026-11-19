@@ -1,40 +1,80 @@
 import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { ArtifactRequestError, payOnArtifact } from "./ArtifactApi";
-import type { ArtifactChat, ArtifactPay } from "./ArtifactApi";
+import type { ArtifactChat, ArtifactPay, ArtifactPayRequest } from "./ArtifactApi";
 
 /**
  * The bridge between a page that takes payments and Universe, inside the game's artifact window (Keys for Apps, game #2044).
- * The page runs in a locked frame and can post one kind of message: `{ universe: "use-app", app, request }`, asking for the checkout its
- * owner set up. `request` is a short id the page makes up for that tap, and every answer carries it back, so a page (a reloaded one, or
- * one that asked twice) never takes the result of another checkout as its own. Everything real is decided on the server: only the frame of this window is listened to, the amount and the service
- * are the owner's (the message carries neither), and the page hears back only a status, never an address, a key or an order.
+ * The page runs in a locked frame and can post one kind of message, in two forms:
+ *
+ *   page → window   { universe: "use-app", app, request }                 start the checkout its owner set up
+ *   page → window   { universe: "use-app", app, request, restore: true }  get back a purchase this buyer already made (asked on load)
+ *   window → page   { universe: "app-result", status, request, test? }
+ *
+ * `request` is a short id the page makes up for that tap, and every answer carries it back, so a page (a reloaded one, or one that asked
+ * twice) never takes the result of another request as its own. Statuses: started, paid, not_paid, cant_confirm, unavailable, limit, busy
+ * (another request is on its way) and none (a restore found no purchase); `test: true` rides with `paid` for a test payment, so a page can
+ * show a test preview and never unlock real goods. Everything real is decided on the server: only the frame of this window is listened to,
+ * the amount and the service are the owner's (the message carries neither), and the page hears back only a status, never an address, a key,
+ * an order or a recovery code. The purchase wish (`intentId`) is made here for each tap, never by the page, and a guest's recovery code lives
+ * only in this browser (and in the receipt link they keep). Orbit's public page speaks exactly the same (its `page-payments-host`), and
+ * the words on the line below the page are the same too (the approved mock M1).
  */
 
 /** The id a page gives its request: short and plain, so it can only be echoed back and never carry anything else. */
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export type PayProblem = "unavailable" | "limit" | "not_paid" | "cant_confirm";
+export type PayProblem = "unavailable" | "limit" | "not_paid" | "cant_confirm" | "none";
 
 /** What the window says under the page while a payment is on its way. */
 export interface PayLine {
-    /** A payment was started and has not ended */
+    /** A payment was started (or is being found again) and has not ended */
     checking: boolean;
     /** The start of the checkout is taking longer than usual: the page has been told nothing yet (it hears "started" or a failure, once) */
     slow: boolean;
     /** Why it did not go through, if it did not */
     problem: PayProblem | null;
-    /** Where to go on when the pop-up was blocked: the same checkout, in a new tab */
+    /** Where to go on when the pop-up was blocked or closed: the same checkout, in a new tab */
     resume: { url: string; app: string } | null;
     /** A payment was confirmed; `test` when it was made with a test key */
     paid: { test: boolean } | null;
+    /** The page sends requests this window cannot answer (no request id of its own): it must be made again with the current instructions */
+    needsUpdate: boolean;
+    /** Check payment can be offered: the look ran out, the start answer was lost, or the page cannot ask for itself */
+    canCheck: boolean;
+    /** For a guest: the link to keep, which holds the recovery code (in its fragment, so no server ever receives it) */
+    receipt: string | null;
+    /** Who the buyer is: signed in, or a guest of this browser */
+    buyer: "account" | "guest";
+    /** The payment was found again (a reload, a new device) and was not made just now; `paidAt` says when, when known */
+    restored: { paidAt: string | null } | null;
+    /** The page asked for its purchase back and nothing was found by itself, or another page's ask was turned away as busy: Restore purchase is offered, quietly (it can be closed) */
+    offerRestore: boolean;
 }
 
-export const NO_PAY_LINE: PayLine = { checking: false, slow: false, problem: null, resume: null, paid: null };
+export const NO_PAY_LINE: PayLine = {
+    checking: false,
+    slow: false,
+    problem: null,
+    resume: null,
+    paid: null,
+    needsUpdate: false,
+    canCheck: false,
+    receipt: null,
+    buyer: "guest",
+    restored: null,
+    offerRestore: false,
+};
 
 /** How often an order is asked about, and for how long. The server asks the service itself at most once every few seconds. */
-const POLL_MS = 3_000;
+const FIRST_POLL_MS = 3_000;
+/** The server's own `pollAfterMs` says how far apart (3 seconds at first, slowing to 15): never faster than one second or slower than thirty */
+const LEAST_POLL_MS = 1_000;
+const MOST_POLL_MS = 30_000;
 const POLL_FOR_MS = 20 * 60_000;
+/** A start whose answer was lost on the way (no answer at all) is sent again with the same wish this many times, so one order is made and never two */
+const START_TRIES = 3;
+const TRY_AGAIN_MS = 1_000;
 /** How long the start of a checkout may wait for an answer before the window says it is taking longer (to the buyer only: the page is told nothing yet). */
 const START_FOR_MS = 30_000;
 /**
@@ -84,6 +124,14 @@ export interface PagePaymentsOptions {
      * of another one, whose own requests may use the same ids. The buyer's line is kept either way.
      */
     opening?: () => number;
+    /** Whether the buyer is signed in (their account is then the buyer) or a guest (their recovery code is). Guest when not given. */
+    buyer?: () => "account" | "guest";
+    /** The address of the page anyone with the link may open, for a guest's receipt link (the code rides in its fragment: `#receipt=<code>`). None when the page is not shared that way. */
+    pageUrl?: () => string | undefined;
+    /** Where this browser keeps a guest's recovery code (localStorage); none means it lives only as long as this window. */
+    storage?: Pick<Storage, "getItem" | "setItem"> | null;
+    /** Random plain characters of a length (for wishes and recovery codes). */
+    randomId?: (length: number) => string;
 }
 
 export interface PagePayments {
@@ -94,136 +142,247 @@ export interface PagePayments {
      * code) is told to it now, once.
      */
     frameReady: () => void;
+    /** The buyer pressed Check payment: where the order of their last checkout stands (or, with none in this window, what they have bought). */
+    checkPayment: () => void;
+    /** The buyer pressed Restore purchase. */
+    restorePurchase: () => void;
+    /** The buyer closed a line that can be closed (a quiet offer, or "no purchase found"). A payment on its way is never hidden. */
+    dismiss: () => void;
+    /** The receipt link to keep, when the buyer is a guest and the page can be opened by link: the code rides in the fragment. */
+    receiptLink: () => string | undefined;
     destroy: () => void;
 }
 
+/** The code a guest's window keeps: plain characters only, long enough that nobody can guess it. Orbit stores only its hash. */
+const RECOVERY_CODE = /^[A-Za-z0-9_-]{32,128}$/;
+
+const defaultRandom = (length: number): string => {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+    const bytes = new Uint8Array(length);
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+};
+
+const defaultStorage = (): Pick<Storage, "getItem" | "setItem"> | null => {
+    try {
+        return globalThis.localStorage ?? null;
+    } catch {
+        return null;
+    }
+};
+
+const waitFor = (ms: number) =>
+    new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+    });
+
 export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const pay = options.pay ?? payOnArtifact;
+    const random = options.randomId ?? defaultRandom;
+    const storage = options.storage === undefined ? defaultStorage() : options.storage;
+    const storageKey = `universe-pay-recovery:${options.artifactId}`;
+    const buyerKind = () => options.buyer?.() ?? "guest";
     const line = writable<PayLine>(NO_PAY_LINE);
+    let current: PayLine = NO_PAY_LINE;
     let busy = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let tabWatch: ReturnType<typeof setInterval> | undefined;
     let destroyed = false;
-    // The id the page gave the checkout that is on its way (or whose start has not ended): every status about that checkout carries it
+    // The id the page gave the request that is on its way (or whose start has not ended): every status about it carries it,
+    // and the opening it came from: a request of another opening is never taken for it
     let activeRequest = "";
+    let activeFrom = 0;
     // The start that is waiting for its answer: its request is dropped when the window goes away, and its timers stop
     let startInFlight: { abort: AbortController; clear: () => void } | undefined;
+    // What Check payment asks about: the wish of the last checkout (when there is one in this window), and who asked for it
+    let target: { intentId: string | null; request: string; from: number } | null = null;
+    // The last restore the page itself asked for: a Restore purchase that finds the purchase is told to the page under it
+    let lastRestore: { request: string; from: number } | null = null;
+    // A page of another opening asked while a payment was on its way and was told so: Restore purchase is offered when this one ends
+    let restoreOwed = false;
+    let memoryCode: string | null = null;
+
+    const publish = (next: PayLine) => {
+        current = next;
+        line.set(next);
+    };
+    /** The buyer's line, with what holds whatever it says: who the buyer is, and the receipt to keep when it is a guest's */
+    const show = (update: Partial<PayLine>) => publish({ ...NO_PAY_LINE, buyer: buyerKind(), ...update });
+
+    /** The recovery code of this browser for this page: made once, kept, and never given to the page. */
+    const recoveryCode = (): string => {
+        // A code already made in this window's life is the code, whether or not the browser would keep it
+        if (memoryCode) return memoryCode;
+        try {
+            const stored = storage?.getItem(storageKey);
+            if (stored && RECOVERY_CODE.test(stored)) {
+                memoryCode = stored;
+                return stored;
+            }
+            memoryCode = random(43);
+            storage?.setItem(storageKey, memoryCode);
+        } catch {
+            memoryCode = memoryCode ?? random(43);
+        }
+        return memoryCode;
+    };
+
+    const receiptLink = (): string | undefined => {
+        if (buyerKind() !== "guest") return undefined;
+        const page = options.pageUrl?.();
+        return page ? `${page.split("#")[0]}#receipt=${recoveryCode()}` : undefined;
+    };
+
+    /** One question to the server: the guest's code goes with every wish, check and restore (never with a look at an order) */
+    const ask = (request: ArtifactPayRequest, signal?: AbortSignal) => {
+        const body = request.order ? request : { ...request, recoveryCode: recoveryCode() };
+        return signal
+            ? pay(options.artifactId, options.chat(), body, signal)
+            : pay(options.artifactId, options.chat(), body);
+    };
 
     // The frame has no origin of its own, so it can only be addressed with "*": the message holds nothing but a status and the
     // page's own request id. The page, not this window, decides what it trusts: only its parent, and only its own request.
-    const tellRequest = (status: string, request: string) =>
-        options.frame()?.postMessage({ universe: "app-result", status, request }, "*");
+    const tellRequest = (status: string, request: string, test = false) =>
+        options.frame()?.postMessage({ universe: "app-result", status, request, ...(test ? { test: true } : {}) }, "*");
 
     // How a checkout ended, when this artifact's frame was not there to hear it (the buyer was looking at the code, or the frame
     // was being drawn again, or its page has not loaded yet): kept for this artifact's own frame, by the request it was started for, and told to it when it is
     // there again. Told once and forgotten; a new request from the page also forgets it (the page asked again, so it has heard).
     // Never sent to any other window: the frame is always asked from the artifact's own element.
-    const held = new Map<string, { status: string; from: number }>();
+    const held = new Map<string, { status: string; from: number; test: boolean }>();
     const opening = () => options.opening?.() ?? 0;
     const HELD_MAX = 8;
 
     // How a checkout ended is the page's only word of it, so it is never dropped for want of a frame
-    const tellEnd = (status: string, request: string, from: number) => {
+    const tellEnd = (status: string, request: string, from: number, test = false) => {
         // The page that asked is gone with its opening: nobody is told
         if (opening() !== from) return;
-        if (options.frame() && options.loaded()) return tellRequest(status, request);
+        if (options.frame() && options.loaded()) return tellRequest(status, request, test);
         if (destroyed) return;
         held.delete(request);
-        held.set(request, { status, from });
+        held.set(request, { status, from, test });
         if (held.size > HELD_MAX) held.delete(held.keys().next().value as string);
     };
 
     // Every status goes out under the id of the request its checkout was started for, never under whichever request is newest
-    const end = (update: Partial<PayLine>, status: string, request: string, from: number) => {
+    const end = (update: Partial<PayLine>, status: string, request: string, from: number, test = false) => {
         busy = false;
-        line.set({ ...NO_PAY_LINE, ...update });
-        tellEnd(status, request, from);
+        activeRequest = "";
+        const owed = restoreOwed && !update.paid;
+        restoreOwed = false;
+        show({
+            ...(owed ? { offerRestore: true } : {}),
+            ...update,
+            receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
+        });
+        tellEnd(status, request, from, test);
     };
 
     const frameReady = () => {
         if (destroyed || !options.frame() || !options.loaded()) return;
         const waiting = [...held];
         held.clear();
-        for (const [request, one] of waiting) if (one.from === opening()) tellRequest(one.status, request);
+        for (const [request, one] of waiting) if (one.from === opening()) tellRequest(one.status, request, one.test);
     };
+
+    interface Checkout {
+        url: string;
+        app: string;
+        popup: Window | null;
+    }
 
     /**
      * Asks about an order every few seconds until it ends. Two things the asking alone cannot do are done here: the deadline has its own
      * clock, so a question that never gets an answer cannot keep "checking" past it, and a checkout tab the buyer closed gets its link back.
      */
-    const watch = (
-        orderId: string,
-        checkout: { url: string; app: string; popup: Window | null },
-        request: string,
-        from: number
-    ) => {
+    const watch = (orderId: string, checkout: Checkout | null, request: string, from: number) => {
         let over = false;
         let linkBack = false;
-        const finish = (update: Partial<PayLine>, status: string) => {
+        const finish = (update: Partial<PayLine>, status: string, test = false) => {
             // Whatever answers later never overwrites how this ended
             if (over || destroyed) return;
             over = true;
             if (timer) clearTimeout(timer);
             if (deadline) clearTimeout(deadline);
             if (tabWatch) clearInterval(tabWatch);
-            end(update, status, request, from);
+            end(update, status, request, from, test);
         };
-        // Twenty minutes without an answer: said plainly, never a silent end. The order may still be counted later.
-        deadline = setTimeout(() => finish({ problem: "cant_confirm" }, "cant_confirm"), POLL_FOR_MS);
+        // Twenty minutes without an answer: said plainly, never a silent end. The order may still be counted later, which Check payment finds.
+        deadline = setTimeout(() => finish({ problem: "cant_confirm", canCheck: true }, "cant_confirm"), POLL_FOR_MS);
         // The buyer closed the checkout tab before paying: the same checkout is offered again, so the payment is never out of reach.
         // Looked at on its own clock, so a status question that is slow to answer cannot hold the link back.
-        if (checkout.popup) {
+        if (checkout?.popup) {
+            const tab = checkout.popup;
             tabWatch = setInterval(() => {
-                if (over || destroyed || linkBack || checkout.popup?.closed !== true) return;
+                if (over || destroyed || linkBack || tab.closed !== true) return;
                 linkBack = true;
                 if (tabWatch) clearInterval(tabWatch);
-                line.update((now) =>
-                    now.checking ? { ...now, resume: { url: checkout.url, app: checkout.app } } : now
-                );
+                if (current.checking) publish({ ...current, resume: { url: checkout.url, app: checkout.app } });
             }, TAB_WATCH_MS);
         }
         const poll = async () => {
             if (over || destroyed) return;
+            let next = FIRST_POLL_MS;
             try {
-                const answer: ArtifactPay = await pay(options.artifactId, options.chat(), { order: orderId });
+                const answer: ArtifactPay = await ask({ order: orderId });
                 if (over || destroyed) return;
-                if (answer.status === "paid") return finish({ paid: { test: answer.testPayment === true } }, "paid");
-                if (answer.status === "not_paid") return finish({ problem: "not_paid" }, "not_paid");
-                if (answer.status === "cant_confirm") return finish({ problem: "cant_confirm" }, "cant_confirm");
+                // How far apart to ask is the server's word: short for a new order, longer the longer it waits
+                if (typeof answer.pollAfterMs === "number" && Number.isFinite(answer.pollAfterMs)) {
+                    next = Math.min(MOST_POLL_MS, Math.max(LEAST_POLL_MS, answer.pollAfterMs));
+                }
+                const test = answer.testPayment === true;
+                if (answer.status === "paid") return finish({ paid: { test } }, "paid", test);
+                if (answer.status === "not_paid") return finish({ problem: "not_paid", canCheck: true }, "not_paid");
+                if (answer.status === "cant_confirm") {
+                    return finish({ problem: "cant_confirm", canCheck: true }, "cant_confirm");
+                }
             } catch {
                 // Try again on the next turn
             }
-            if (!over && !destroyed) timer = setTimeout(() => void poll(), POLL_MS);
+            if (!over && !destroyed) timer = setTimeout(() => void poll(), next);
         };
-        timer = setTimeout(() => void poll(), POLL_MS);
+        timer = setTimeout(() => void poll(), FIRST_POLL_MS);
     };
 
     /** A checkout is on its way: the line says so, and its order is asked about until it ends. */
-    const adopt = (orderId: string, url: string, app: string, popup: Window | null, request: string, from: number) => {
+    const adopt = (orderId: string, checkout: Checkout | null, request: string, from: number) => {
         busy = true;
         activeRequest = request;
-        line.set({ ...NO_PAY_LINE, checking: true, resume: popup ? null : { url, app } });
-        watch(orderId, { url, app, popup }, request, from);
+        activeFrom = from;
+        show({ checking: true, resume: checkout && !checkout.popup ? { url: checkout.url, app: checkout.app } : null });
+        watch(orderId, checkout, request, from);
     };
 
-    const onMessage = (event: MessageEvent) => {
-        const frame = options.frame();
-        if (!frame || event.source !== frame) return;
-        const data = event.data as { universe?: unknown; app?: unknown; request?: unknown } | null;
-        if (!data || data.universe !== "use-app" || typeof data.app !== "string") return;
-        // A request without a valid id of its own is never answered: there would be no way to tell whose answer it is
-        if (typeof data.request !== "string" || !REQUEST_ID.test(data.request)) return;
-        if (busy) {
-            // The same tap heard twice is the same request. Another request while a checkout is on its way (or its start is still
-            // waiting for an answer, however long it takes) is told so under its own id, and the checkout that is on its way keeps
-            // its own: its result is never handed to the newer request.
-            if (data.request !== activeRequest) tellRequest("busy", data.request);
-            return;
+    /** The link of an order that is still open, when the answer holds one the window may open (plain https only). */
+    const resumeOf = (answer: ArtifactPay): Checkout | null => {
+        const url = safeCheckout(answer.checkoutUrl);
+        return url ? { url, app: answer.app ?? "", popup: null } : null;
+    };
+
+    /** A start that got no answer at all is sent again with the same wish; an answer, whatever it says, is final. */
+    const startWithTries = async (intentId: string, signal: AbortSignal, attempt = 1): Promise<ArtifactPay> => {
+        try {
+            return await ask({ start: true, intentId }, signal);
+        } catch (error) {
+            if (error instanceof ArtifactRequestError || signal.aborted || destroyed || attempt >= START_TRIES) {
+                throw error;
+            }
+            await waitFor(TRY_AGAIN_MS);
+            if (signal.aborted || destroyed) throw error;
+            return startWithTries(intentId, signal, attempt + 1);
         }
+    };
+
+    const begin = (request: string, from: number) => {
         busy = true;
-        activeRequest = data.request;
+        activeRequest = request;
+        activeFrom = from;
         held.clear();
+        // The wish for this tap: made here, never by the page. A start sent again after a lost answer carries the same one, so it finds the order it made
+        const intentId = random(24);
+        target = { intentId, request, from };
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
         let popup: Window | null = null;
         try {
@@ -232,9 +391,6 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         } catch {
             popup = null;
         }
-        const request = data.request;
-        // The opening the page is in now: what comes of this checkout is for that page alone
-        const from = opening();
         void (async () => {
             // The start is waited for as long as STALLED_START_FOR_MS. After START_FOR_MS the buyer's window says it is taking
             // longer and the blank pop-up is closed (the link is offered on the line instead); the page is told nothing until the
@@ -250,7 +406,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 },
             };
             startInFlight = mine;
-            const started = pay(options.artifactId, options.chat(), { start: true }, abort.signal);
+            const started = startWithTries(intentId, abort.signal);
             const slow = new Promise<"slow">((resolve) => {
                 slowTimer = setTimeout(() => resolve("slow"), START_FOR_MS);
             });
@@ -262,15 +418,16 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (first === "slow") {
                     popup?.close();
                     popup = null;
-                    if (!destroyed) line.set({ ...NO_PAY_LINE, checking: true, slow: true });
+                    if (!destroyed) show({ checking: true, slow: true });
                     const gaveUp = new Promise<"gave_up">((resolve) => {
                         giveUpTimer = setTimeout(() => resolve("gave_up"), STALLED_START_FOR_MS - START_FOR_MS);
                     });
                     const second = await Promise.race([started, gaveUp]);
                     if (second === "gave_up") {
-                        // Dropped for good: its answer is never read, so no link to an order it may have made reaches anyone
+                        // Dropped for good: its answer is never read, so no link to an order it may have made reaches anyone. The same wish
+                        // can still be asked about with Check payment
                         abort.abort();
-                        if (!destroyed) end({ problem: "unavailable" }, "unavailable", request, from);
+                        if (!destroyed) end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
                         return;
                     }
                     answer = second;
@@ -288,16 +445,143 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     return end({ problem: "unavailable" }, "unavailable", request, from);
                 }
                 if (popup) popup.location.href = url;
-                adopt(answer.orderId, url, answer.app ?? "", popup, request, from);
+                adopt(answer.orderId, { url, app: answer.app ?? "", popup }, request, from);
                 if (opening() === from) tellRequest("started", request);
             } catch (error) {
                 popup?.close();
                 if (destroyed) return;
                 const limit = error instanceof ArtifactRequestError && (error.code === "limit" || error.status === 429);
-                end({ problem: limit ? "limit" : "unavailable" }, limit ? "limit" : "unavailable", request, from);
+                // No answer ever came (not even after the same wish was sent again): an order may or may not have been made, and the wish can be asked about
+                const lost = !(error instanceof ArtifactRequestError);
+                end(
+                    { problem: limit ? "limit" : "unavailable", ...(lost ? { canCheck: true } : {}) },
+                    limit ? "limit" : "unavailable",
+                    request,
+                    from
+                );
             } finally {
                 mine.clear();
                 if (startInFlight === mine) startInFlight = undefined;
+            }
+        })();
+    };
+
+    /** A page asking for a purchase this buyer already made (a reload, a reopened version): found by the buyer, never by anything the page chose. */
+    const restore = (request: string, from: number) => {
+        busy = true;
+        activeRequest = request;
+        activeFrom = from;
+        lastRestore = { request, from };
+        held.clear();
+        void (async () => {
+            try {
+                const answer = await ask({ restore: true });
+                if (destroyed) return;
+                const test = answer.testPayment === true;
+                if (answer.status === "paid") {
+                    return end(
+                        { paid: { test }, restored: { paidAt: answer.paidAt ?? null } },
+                        "paid",
+                        request,
+                        from,
+                        test
+                    );
+                }
+                // Nothing found by itself (a new phone, a cleared browser): the page is told so, and the buyer is offered Restore purchase, quietly
+                if (answer.status === "none") return end({ offerRestore: true }, "none", request, from);
+                if (answer.status === "checking" && answer.orderId) {
+                    // An order of theirs is still open: it is watched like a new checkout, and the page hears how it ends under this request.
+                    // Its own link is offered, so a reload or a lost pop-up goes on with the SAME order and does not need a second one
+                    target = { intentId: null, request, from };
+                    return adopt(answer.orderId, resumeOf(answer), request, from);
+                }
+                end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
+            } catch {
+                if (!destroyed) end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
+            }
+        })();
+    };
+
+    const onMessage = (event: MessageEvent) => {
+        const frame = options.frame();
+        if (destroyed || !frame || event.source !== frame) return;
+        const data = event.data as { universe?: unknown; app?: unknown; request?: unknown; restore?: unknown } | null;
+        if (!data || data.universe !== "use-app" || typeof data.app !== "string") return;
+        // A request without a valid id of its own is never answered: there would be no way to tell whose answer it is, and a bare status
+        // would be taken for whichever request the page is waiting on. The buyer is told so on the window's own line, and can still check a payment.
+        if (typeof data.request !== "string" || !REQUEST_ID.test(data.request)) {
+            if (!busy) show({ needsUpdate: true, canCheck: true });
+            else publish({ ...current, needsUpdate: true, canCheck: true });
+            return;
+        }
+        if (busy) {
+            // The same tap heard twice, in the same opening, is the same request. Anything else while a payment is on its way (or its start
+            // is still waiting for an answer, however long it takes) is told so under its own id, and the one on its way keeps its own:
+            // its result is never handed to the newer request. A page of another opening that is turned away can still use Restore purchase.
+            if (data.request !== activeRequest || activeFrom !== opening()) {
+                tellRequest("busy", data.request);
+                if (activeFrom !== opening()) restoreOwed = true;
+            }
+            return;
+        }
+        // The opening the page is in now: what comes of this request is for that page alone
+        const from = opening();
+        if (data.restore === true) return restore(data.request, from);
+        begin(data.request, from);
+    };
+
+    /**
+     * Asks again. Check payment asks about the wish of the last checkout when there is one; otherwise (a reload, or a page that cannot ask)
+     * about whatever this buyer has bought, which is also all Restore purchase asks. A purchase found that way is "back", not made just now.
+     */
+    const askAgain = (restoring: boolean) => {
+        if (destroyed || busy) return;
+        const none = { intentId: null, request: "", from: -1 };
+        const asked = restoring ? (lastRestore ? { intentId: null, ...lastRestore } : none) : target ?? none;
+        busy = true;
+        activeRequest = asked.request;
+        activeFrom = asked.from;
+        show({ checking: true });
+        void (async () => {
+            const settle = (update: Partial<PayLine>, told: string, test = false) => {
+                busy = false;
+                activeRequest = "";
+                show({
+                    ...update,
+                    receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
+                });
+                if (asked.request) tellEnd(told, asked.request, asked.from, test);
+            };
+            try {
+                const answer = await ask(
+                    asked.intentId ? { check: true, intentId: asked.intentId } : { restore: true }
+                );
+                if (destroyed) return;
+                const test = answer.testPayment === true;
+                if (answer.status === "paid") {
+                    return settle(
+                        { paid: { test }, restored: asked.intentId ? null : { paidAt: answer.paidAt ?? null } },
+                        "paid",
+                        test
+                    );
+                }
+                if (answer.status === "checking" && answer.orderId) {
+                    return adopt(answer.orderId, resumeOf(answer), asked.request, asked.from);
+                }
+                if (answer.status === "not_paid" || answer.status === "cant_confirm") {
+                    return settle({ problem: answer.status, canCheck: true }, answer.status);
+                }
+                if (answer.status === "none") return settle({ problem: "none", canCheck: !restoring }, "none");
+                settle({ problem: "unavailable", canCheck: true }, "unavailable");
+            } catch (error) {
+                if (destroyed) return;
+                // No order of this buyer's for that wish
+                if (error instanceof ArtifactRequestError && error.status === 404) {
+                    return settle({ problem: "none", canCheck: !restoring }, "none");
+                }
+                busy = false;
+                activeRequest = "";
+                show({ problem: "unavailable", canCheck: true });
             }
         })();
     };
@@ -306,6 +590,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         line: { subscribe: line.subscribe },
         onMessage,
         frameReady,
+        checkPayment: () => askAgain(false),
+        restorePurchase: () => askAgain(true),
+        dismiss() {
+            // Only a line that says nothing is going on can be closed: a payment on its way is never hidden
+            if (destroyed || busy) return;
+            show({});
+        },
+        receiptLink,
         destroy() {
             destroyed = true;
             held.clear();

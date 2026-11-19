@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
-    import LL from "../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../i18n/i18n-svelte";
     import type { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
     import {
         ArtifactRequestError,
@@ -15,7 +15,8 @@
         type OpenedArtifact,
     } from "../../Artifacts/ArtifactApi";
     import { artifactBadge } from "../../Artifacts/artifactBadge";
-    import { pagePayments, type PayProblem } from "../../Artifacts/PagePayments";
+    import { pagePayments } from "../../Artifacts/PagePayments";
+    import { describePayLine, type PayAction } from "../../Artifacts/payLineView";
     import { nearbyPeopleNames } from "../../Artifacts/nearbyPeople";
     import type { ArtifactKind } from "../../Artifacts/artifactCard";
     import { whenLabel } from "../../Artifacts/whenLabel";
@@ -24,6 +25,7 @@
     import { versionMenuRoom, VERSION_MENU_MIN_ROOM } from "../../Artifacts/versionMenuRoom";
     import { chatOwnSheetHeightStore } from "../../Chat/ChatSheetStore";
     import { windowSize } from "../../Stores/CoWebsiteStore";
+    import { localUserStore } from "../../Connection/LocalUserStore";
     import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
@@ -145,30 +147,50 @@
         loaded: () => frameLoaded,
         opening: () => opening,
         openWindow: () => window.open("about:blank", "_blank"),
+        // A signed-in buyer's account is the buyer; a guest's own recovery code is (kept in this browser, for this page)
+        buyer: () => (localUserStore.isLogged() ? "account" : "guest"),
+        // A guest's receipt link opens Orbit's public page, which only exists for a page anyone with the link may open
+        pageUrl: () => (openScope === "link" ? link : undefined),
     });
     const payLine = payments.line;
+    // The line under the page: what it says and what can be pressed (the approved mock M1)
+    let receiptCopied = false;
+    let receiptTimer: ReturnType<typeof setTimeout> | undefined;
+    $: if (!$payLine.paid) receiptCopied = false;
+    $: payView = describePayLine(
+        $payLine,
+        { copied: receiptCopied, locale: $locale, owner: opened?.you.owner ? { maker: makerName } : undefined },
+        $LL.chat.artifacts
+    );
+    function payAction(action: PayAction) {
+        if (action.kind === "check") payments.checkPayment();
+        else if (action.kind === "restore") payments.restorePurchase();
+        else if (action.kind === "copy") copyReceipt();
+    }
+    function copyReceipt() {
+        const receipt = payments.receiptLink();
+        if (!receipt) return;
+        const copying = navigator.clipboard?.writeText(receipt) ?? Promise.reject(new Error("No clipboard"));
+        copying.then(
+            () => {
+                if (destroyed) return;
+                receiptCopied = true;
+                if (receiptTimer) clearTimeout(receiptTimer);
+                receiptTimer = setTimeout(() => (receiptCopied = false), 8_000);
+            },
+            () => undefined
+        );
+    }
     onMount(() => {
         window.addEventListener("message", payments.onMessage);
         return () => window.removeEventListener("message", payments.onMessage);
     });
 
-    function payProblemText(problem: PayProblem): string {
-        switch (problem) {
-            case "limit":
-                return $LL.chat.artifacts.payLimit();
-            case "not_paid":
-                return $LL.chat.artifacts.payNotPaid();
-            case "cant_confirm":
-                return $LL.chat.artifacts.payCantConfirm();
-            default:
-                return $LL.chat.artifacts.payUnavailable();
-        }
-    }
-
     onDestroy(() => {
         payments.destroy();
         destroyed = true;
         if (copiedTimer) clearTimeout(copiedTimer);
+        if (receiptTimer) clearTimeout(receiptTimer);
         renewIn(undefined);
     });
 
@@ -779,32 +801,43 @@
                     bind:this={frameElement}
                     on:load={onFrameLoad}
                 />
-                {#if $payLine.checking || $payLine.problem || $payLine.paid}
-                    <div class="pay-line" role="status" data-testid="artifactPayLine">
-                        {#if $payLine.paid}
-                            <p>
-                                {$payLine.paid.test ? $LL.chat.artifacts.payPaidTest() : $LL.chat.artifacts.payPaid()}
-                            </p>
-                        {:else if $payLine.problem}
-                            <p>{payProblemText($payLine.problem)}</p>
-                        {:else}
-                            <p>
-                                {$payLine.slow
-                                    ? $LL.chat.artifacts.payTakingLonger()
-                                    : $LL.chat.artifacts.payChecking()}
-                            </p>
-                            {#if $payLine.resume}
-                                <a
-                                    class="pay-go"
-                                    href={$payLine.resume.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    data-testid="artifactPayContinue"
-                                    >{$payLine.resume.app
-                                        ? $LL.chat.artifacts.payContinue({ app: $payLine.resume.app })
-                                        : $LL.chat.artifacts.payContinueDefault()}</a
-                                >
-                            {/if}
+                {#if payView}
+                    <div class="pay-line" class:closable={payView.closable} role="status" data-testid="artifactPayLine">
+                        {#if payView.closable}
+                            <button
+                                type="button"
+                                class="pay-x"
+                                aria-label={$LL.chat.artifacts.payClose()}
+                                data-testid="artifactPayClose"
+                                on:click={() => payments.dismiss()}>×</button
+                            >
+                        {/if}
+                        <p class="pay-a">{payView.title}</p>
+                        {#if payView.sub}<p class="pay-s">{payView.sub}</p>{/if}
+                        {#if payView.actions.length > 0}
+                            <div class="pay-acts">
+                                {#each payView.actions as action (action.kind)}
+                                    {#if action.kind === "resume"}
+                                        <a
+                                            class="pay-btn"
+                                            class:cta={action.style === "primary"}
+                                            href={action.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            data-testid="artifactPayContinue">{action.label}</a
+                                        >
+                                    {:else}
+                                        <button
+                                            type="button"
+                                            class="pay-btn"
+                                            class:cta={action.style === "primary"}
+                                            disabled={action.kind === "copy" && action.disabled === true}
+                                            data-testid="artifactPay-{action.kind}"
+                                            on:click={() => payAction(action)}>{action.label}</button
+                                        >
+                                    {/if}
+                                {/each}
+                            </div>
                         {/if}
                     </div>
                 {/if}
@@ -1011,16 +1044,63 @@
         text-align: center;
         transform: translateX(-50%);
     }
+    .pay-line.closable {
+        padding-right: 44px;
+    }
     .pay-line p {
         margin: 0;
     }
-    .pay-go {
-        padding: 8px 16px;
-        border-radius: 999px;
-        background: #f3f1fa;
+    .pay-a {
         font-weight: 600;
-        color: #0a0814;
+    }
+    .pay-s {
+        font-size: 13px;
+        line-height: 1.4;
+        color: #b3acc7;
+    }
+    .pay-acts {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 4px;
+    }
+    .pay-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        font: inherit;
+        font-weight: 700;
+        color: #fff;
         text-decoration: none;
+        cursor: pointer;
+    }
+    .pay-btn.cta {
+        border-color: transparent;
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+    }
+    .pay-btn:disabled {
+        cursor: default;
+        opacity: 0.7;
+    }
+    .pay-x {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border: 0;
+        background: transparent;
+        font-size: 20px;
+        color: rgba(255, 255, 255, 0.6);
+        cursor: pointer;
     }
     iframe {
         display: block;

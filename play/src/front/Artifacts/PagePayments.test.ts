@@ -13,6 +13,22 @@ vi.mock("./ArtifactApi", () => {
     return { ArtifactRequestError, payOnArtifact: vi.fn() };
 });
 
+/** A browser's storage for one test, and ids that can be told apart: the first is "000…1" (a wish is 24 characters, a recovery code 43) */
+const memoryStorage = () => {
+    const kept = new Map<string, string>();
+    return {
+        getItem: (key: string) => kept.get(key) ?? null,
+        setItem: (key: string, value: string) => void kept.set(key, value),
+        kept,
+    };
+};
+const counting = () => {
+    let n = 0;
+    return (length: number) => String(++n).padStart(length, "0");
+};
+const WISH_1 = "0".repeat(23) + "1";
+const CODE = (n: number) => "0".repeat(42) + String(n);
+
 const framePost = vi.fn();
 const frameWindow = { postMessage: framePost } as unknown as Window;
 const otherWindow = { postMessage: vi.fn() } as unknown as Window;
@@ -53,6 +69,8 @@ describe("a page that takes payments, in the game's window", () => {
             loaded: () => true,
             openWindow,
             pay: pay as never,
+            storage: memoryStorage(),
+            randomId: counting(),
         });
 
     it("opens only plain https checkouts", () => {
@@ -99,7 +117,13 @@ describe("a page that takes payments, in the game's window", () => {
         });
         await flush();
         // The message carried no amount and none is sent
-        expect(pay).toHaveBeenNthCalledWith(1, "a1", undefined, { start: true }, expect.any(AbortSignal));
+        expect(pay).toHaveBeenNthCalledWith(
+            1,
+            "a1",
+            undefined,
+            { start: true, intentId: expect.stringMatching(/^0+1$/), recoveryCode: expect.stringMatching(/^0+\d$/) },
+            expect.any(AbortSignal)
+        );
         expect(popup.location.href).toBe("https://checkout.examplepay.com/c1");
         expect(popup.opener).toBeNull();
         expect(get(payments.line)).toMatchObject({ checking: true, resume: null });
@@ -294,7 +318,7 @@ describe("a page that takes payments, in the game's window", () => {
         await vi.advanceTimersByTimeAsync(3_000);
         expect(pay).toHaveBeenCalledWith("a1", undefined, { order: "o1" });
         await vi.advanceTimersByTimeAsync(3_000);
-        expect(get(payments.line).paid).toEqual({ test: false });
+        expect(get(payments.line).paid).toMatchObject({ test: false });
         // Everything about that order went out under the first request's id, and the second one only heard "busy"
         expect(toldAll()).toEqual([
             { universe: "app-result", status: "busy", request: "second" },
@@ -608,6 +632,8 @@ describe("how a checkout ended while the artifact's frame was away (Code view)",
             opening: () => showing,
             openWindow: () => null,
             pay: pay as never,
+            storage: memoryStorage(),
+            randomId: counting(),
         });
 
     beforeEach(() => {
@@ -805,5 +831,517 @@ describe("how a checkout ended while the artifact's frame was away (Code view)",
         answer(checkout as unknown as ArtifactPay);
         await flush();
         expect(told()).toEqual([]);
+    });
+});
+
+describe("buying, checking and getting a purchase back, in the game's window (the approved mock M1)", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.clearAllMocks();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const checkout = { orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" };
+    const SOFT = new ArtifactRequestError(409, "unavailable");
+    let showing = 1;
+    beforeEach(() => {
+        showing = 1;
+    });
+    const make = (
+        pay: (...args: unknown[]) => Promise<ArtifactPay>,
+        over: Partial<Parameters<typeof pagePayments>[0]> = {}
+    ) =>
+        pagePayments({
+            artifactId: "a1",
+            chat: () => undefined,
+            frame: () => frameWindow,
+            loaded: () => true,
+            opening: () => showing,
+            openWindow: () => null,
+            pay: pay as never,
+            storage: memoryStorage(),
+            randomId: counting(),
+            ...over,
+        });
+    const heard = () => toldAll().map((m) => ({ ...m }));
+
+    it("makes its own wish for each tap, keeps a guest's recovery code in this browser for this page, and gives the page neither", async () => {
+        const storage = memoryStorage();
+        const ids = counting();
+        const pay = vi.fn().mockResolvedValue({ ...checkout, status: "checking" });
+        const first = make(pay, { storage, randomId: ids });
+        ask(first, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "r1",
+            intentId: "page-made",
+            recoveryCode: "page-made",
+        });
+        await flush();
+        const sent = pay.mock.calls[0][2] as { start: boolean; intentId: string; recoveryCode: string };
+        // The wish and the code are the window's: whatever the page put in its message is not used
+        expect(sent).toEqual({ start: true, intentId: WISH_1, recoveryCode: CODE(2) });
+        expect(storage.kept.get("universe-pay-recovery:a1")).toBe(CODE(2));
+        first.destroy();
+        // The same browser, the same page, the next time: the same code, a new wish
+        const second = make(pay, { storage, randomId: ids });
+        ask(second, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        await flush();
+        expect(pay.mock.calls[1][2]).toMatchObject({ start: true, recoveryCode: CODE(2) });
+        expect((pay.mock.calls[1][2] as { intentId: string }).intentId).not.toBe(WISH_1);
+        // Another page has a code of its own
+        const other = pagePayments({
+            artifactId: "a2",
+            chat: () => undefined,
+            frame: () => frameWindow,
+            loaded: () => true,
+            pay: pay as never,
+            storage,
+            randomId: ids,
+        });
+        ask(other, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        await flush();
+        expect(storage.kept.get("universe-pay-recovery:a2")).toBeDefined();
+        // A look at an order never carries the code
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(pay).toHaveBeenCalledWith("a1", undefined, { order: "o1" });
+        // The page hears statuses and its own id only
+        expect(JSON.stringify((frameWindow.postMessage as ReturnType<typeof vi.fn>).mock.calls)).not.toMatch(
+            /intent|recovery|0000000|checkout/
+        );
+        first.destroy();
+        second.destroy();
+        other.destroy();
+    });
+
+    it("sends a start whose answer was lost again with the SAME wish, makes one order, and never repeats an answer that said no", async () => {
+        const pay = vi
+            .fn()
+            .mockRejectedValueOnce(new Error("network"))
+            .mockRejectedValueOnce(new Error("network"))
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValue({ status: "paid", testPayment: false });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        await vi.advanceTimersByTimeAsync(2_000);
+        const starts = pay.mock.calls.filter((call) => (call[2] as { start?: boolean }).start);
+        expect(starts).toHaveLength(3);
+        expect(new Set(starts.map((call) => (call[2] as { intentId: string }).intentId))).toEqual(new Set([WISH_1]));
+        expect(get(payments.line)).toMatchObject({ checking: true });
+        expect(told()).toEqual(["started"]);
+        payments.destroy();
+
+        // An answer that said no is an answer: asked once, said once
+        for (const [error, status] of [
+            [SOFT, "unavailable"],
+            [new ArtifactRequestError(429, "limit"), "limit"],
+            [new ArtifactRequestError(400, "buyer_required"), "unavailable"],
+        ] as const) {
+            vi.clearAllMocks();
+            const refused = vi.fn().mockRejectedValue(error);
+            const one = make(refused);
+            ask(one);
+            // eslint-disable-next-line no-await-in-loop
+            await flush();
+            // eslint-disable-next-line no-await-in-loop
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(refused).toHaveBeenCalledTimes(1);
+            expect(told()).toEqual([status]);
+            expect(get(one.line)).toMatchObject({ problem: status, canCheck: false });
+            one.destroy();
+        }
+    });
+
+    it("says it could not hear back after three lost answers, keeps the wish, and Check payment asks about that same wish", async () => {
+        const pay = vi
+            .fn()
+            .mockRejectedValueOnce(new Error("network"))
+            .mockRejectedValueOnce(new Error("network"))
+            .mockRejectedValueOnce(new Error("network"))
+            .mockResolvedValueOnce({ status: "paid", testPayment: false, orderId: "o1", pollAfterMs: 3000 });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(told()).toEqual(["unavailable"]);
+        expect(get(payments.line)).toMatchObject({ problem: "unavailable", canCheck: true });
+        payments.checkPayment();
+        expect(get(payments.line)).toMatchObject({ checking: true });
+        await flush();
+        expect(pay).toHaveBeenLastCalledWith("a1", undefined, { check: true, intentId: WISH_1, recoveryCode: CODE(2) });
+        expect(get(payments.line)).toMatchObject({ checking: false, paid: { test: false }, problem: null });
+        // The page that asked hears it too, under its own request
+        expect(heard()).toEqual([
+            { universe: "app-result", status: "unavailable", request: "r1" },
+            { universe: "app-result", status: "paid", request: "r1" },
+        ]);
+        payments.destroy();
+    });
+
+    it("offers Check payment after twenty minutes, and for a payment not seen yet; it asks about the order, and says if there is none", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValue({ status: "checking", pollAfterMs: 30_000 })
+            .mockResolvedValueOnce(checkout);
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        await vi.advanceTimersByTimeAsync(20 * 60_000);
+        expect(get(payments.line)).toMatchObject({ checking: false, problem: "cant_confirm", canCheck: true });
+        expect(told()).toEqual(["started", "cant_confirm"]);
+
+        // Check payment: still not paid
+        pay.mockResolvedValueOnce({ status: "not_paid", orderId: "o1", pollAfterMs: 3000 });
+        payments.checkPayment();
+        await flush();
+        expect(pay).toHaveBeenLastCalledWith("a1", undefined, { check: true, intentId: WISH_1, recoveryCode: CODE(2) });
+        expect(get(payments.line)).toMatchObject({ problem: "not_paid", canCheck: true });
+
+        // ...and again: the wish has no order of this buyer's (the server says 404)
+        pay.mockRejectedValueOnce(new ArtifactRequestError(404, "not_found"));
+        payments.checkPayment();
+        await flush();
+        expect(get(payments.line)).toMatchObject({ problem: "none", canCheck: true, checking: false });
+
+        // ...and again: it is still open, so it is watched again until it ends, and the page hears paid
+        pay.mockResolvedValueOnce({
+            status: "checking",
+            orderId: "o1",
+            checkoutUrl: "https://checkout.examplepay.com/c1",
+            pollAfterMs: 3000,
+        });
+        pay.mockResolvedValue({ status: "paid", testPayment: false, pollAfterMs: 3000 });
+        payments.checkPayment();
+        await flush();
+        expect(get(payments.line)).toMatchObject({
+            checking: true,
+            resume: { url: "https://checkout.examplepay.com/c1" },
+        });
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line)).toMatchObject({ paid: { test: false } });
+        expect(told().at(-1)).toBe("paid");
+        // While a question is on its way a second press asks nothing
+        payments.destroy();
+    });
+
+    it("asks nothing twice at once: Check payment pressed while a payment is on its way does nothing", async () => {
+        const pay = vi.fn().mockResolvedValue(checkout);
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        const before = pay.mock.calls.length;
+        payments.checkPayment();
+        payments.restorePurchase();
+        await flush();
+        expect(pay).toHaveBeenCalledTimes(before);
+        payments.destroy();
+    });
+
+    it("gets a purchase back when the page asks on load, tells the page paid under that request, and says when it was bought", async () => {
+        const pay = vi.fn().mockResolvedValue({
+            status: "paid",
+            testPayment: false,
+            orderId: "o9",
+            pollAfterMs: 3000,
+            paidAt: "2026-11-19T08:00:00.000Z",
+        });
+        const payments = make(pay, { buyer: () => "account" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        await flush();
+        // It is a look, not a checkout: no wish, no payment window, and the guest's code goes with it
+        expect(pay).toHaveBeenCalledTimes(1);
+        expect(pay).toHaveBeenCalledWith("a1", undefined, { restore: true, recoveryCode: expect.any(String) });
+        expect(get(payments.line)).toMatchObject({
+            checking: false,
+            paid: { test: false },
+            restored: { paidAt: "2026-11-19T08:00:00.000Z" },
+            receipt: null,
+        });
+        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "load1" }]);
+        // It ended, so the page can ask again
+        pay.mockResolvedValueOnce({ status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load2", restore: true });
+        await flush();
+        expect(heard().at(-1)).toEqual({ universe: "app-result", status: "none", request: "load2" });
+        expect(get(payments.line)).toMatchObject({ offerRestore: true, paid: null });
+        payments.destroy();
+    });
+
+    it("tells a test payment to the page as a test, from a restore and from a checkout, and a live one without the flag", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValue({ status: "paid", testPayment: true, orderId: "o9", pollAfterMs: 3000, paidAt: null });
+        const restoring = make(pay);
+        ask(restoring, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        await flush();
+        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "load1", test: true }]);
+        expect(get(restoring.line)).toMatchObject({ paid: { test: true } });
+        restoring.destroy();
+
+        vi.clearAllMocks();
+        const buying = make(
+            vi
+                .fn()
+                .mockResolvedValueOnce(checkout)
+                .mockResolvedValueOnce({ status: "paid", testPayment: true })
+                .mockResolvedValue({ status: "paid", testPayment: false })
+        );
+        ask(buying);
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(heard()).toEqual([
+            { universe: "app-result", status: "started", request: "r1" },
+            { universe: "app-result", status: "paid", request: "r1", test: true },
+        ]);
+        expect(get(buying.line)).toMatchObject({ paid: { test: true }, receipt: null });
+        buying.destroy();
+
+        vi.clearAllMocks();
+        const live = make(
+            vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "paid", testPayment: false })
+        );
+        ask(live);
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(heard().at(-1)).toEqual({ universe: "app-result", status: "paid", request: "r1" });
+        live.destroy();
+    });
+
+    it("watches an open order of the buyer's found by a restore, with its own link, and the page hears it end under its restore request", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({
+                status: "checking",
+                orderId: "o5",
+                checkoutUrl: "https://checkout.examplepay.com/c5",
+                pollAfterMs: 3000,
+            })
+            .mockResolvedValue({ status: "paid", testPayment: false });
+        const payments = make(pay);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        await flush();
+        expect(get(payments.line)).toMatchObject({
+            checking: true,
+            resume: { url: "https://checkout.examplepay.com/c5" },
+        });
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(pay).toHaveBeenLastCalledWith("a1", undefined, { order: "o5" });
+        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "load1" }]);
+        payments.destroy();
+    });
+
+    it("says it could not look when a restore gets no answer, and the buyer can check", async () => {
+        const payments = make(vi.fn().mockRejectedValue(new Error("network")));
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        await flush();
+        expect(heard()).toEqual([{ universe: "app-result", status: "unavailable", request: "load1" }]);
+        expect(get(payments.line)).toMatchObject({ problem: "unavailable", canCheck: true });
+        payments.destroy();
+    });
+
+    it("asks again as the server says, never faster than a second or slower than thirty", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "checking", pollAfterMs: 10_000 })
+            .mockResolvedValueOnce({ status: "checking", pollAfterMs: 5 })
+            .mockResolvedValueOnce({ status: "checking", pollAfterMs: 9_999_999 })
+            .mockResolvedValueOnce({ status: "checking" })
+            .mockResolvedValue({ status: "paid", testPayment: false });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        const orders = () => pay.mock.calls.filter((call) => (call[2] as { order?: string }).order).length;
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(orders()).toBe(1);
+        await vi.advanceTimersByTimeAsync(9_000);
+        expect(orders()).toBe(1);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(orders()).toBe(2);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(orders()).toBe(3);
+        await vi.advanceTimersByTimeAsync(29_000);
+        expect(orders()).toBe(3);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(orders()).toBe(4);
+        // No hint: the first pace
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(orders()).toBe(5);
+        expect(get(payments.line).paid).toMatchObject({ test: false });
+        payments.destroy();
+    });
+
+    it("is busy for one request of one opening: another opening's page is told busy even with the same id, and can use Restore purchase after", async () => {
+        const pay = vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "paid", testPayment: false });
+        const payments = make(pay);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        await flush();
+        // The same tap heard twice, in the same opening: nothing is said
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        await flush();
+        expect(told()).toEqual(["started"]);
+        // The version was opened again (a new page) and its own first ask has the same id: it is another request, and it is told so
+        showing = 2;
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        await flush();
+        expect(told()).toEqual(["started", "busy", "busy"]);
+        expect(
+            heard()
+                .filter((m) => m.status === "busy")
+                .map((m) => m.request)
+        ).toEqual(["r1", "load"]);
+        expect(pay).toHaveBeenCalledTimes(1);
+        // The first page's payment ended in an opening that is gone: nobody is told, and the buyer is offered Restore purchase
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(told()).toEqual(["started", "busy", "busy"]);
+        expect(get(payments.line)).toMatchObject({ paid: { test: false } });
+        payments.destroy();
+
+        // Without a payment on its way nothing is owed
+        const quiet = make(vi.fn().mockResolvedValue({ status: "none" }));
+        ask(quiet, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        await flush();
+        expect(get(quiet.line)).toMatchObject({ offerRestore: true });
+        quiet.destroy();
+
+        // A payment that ends badly in a gone opening still leaves Restore purchase on offer
+        vi.clearAllMocks();
+        showing = 1;
+        const later = make(vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "not_paid" }));
+        ask(later, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        await flush();
+        showing = 2;
+        ask(later, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(later.line)).toMatchObject({ problem: "not_paid", canCheck: true, offerRestore: true });
+        later.destroy();
+    });
+
+    it("says on its own line that the page needs an update when a request has no id of its own, answers the page nothing, and Check payment still works", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValue({ status: "paid", testPayment: false, orderId: "o2", pollAfterMs: 3000, paidAt: null });
+        const payments = make(pay);
+        for (const data of [
+            { universe: "use-app", app: "examplepay" },
+            { universe: "use-app", app: "examplepay", request: "bad id" },
+            { universe: "use-app", app: "examplepay", request: 7 },
+        ]) {
+            ask(payments, frameWindow, data);
+            // eslint-disable-next-line no-await-in-loop
+            await flush();
+        }
+        expect(pay).not.toHaveBeenCalled();
+        expect(toldAll()).toEqual([]);
+        expect(get(payments.line)).toMatchObject({ needsUpdate: true, canCheck: true, checking: false });
+        payments.checkPayment();
+        await flush();
+        // This window made no checkout, so the check asks what this buyer has bought
+        expect(pay).toHaveBeenCalledWith("a1", undefined, { restore: true, recoveryCode: expect.any(String) });
+        expect(get(payments.line)).toMatchObject({ paid: { test: false } });
+        payments.destroy();
+    });
+
+    it("gives a guest the receipt link to keep, with the code in the fragment, only for a live purchase made just now on a page shared by link", async () => {
+        const storage = memoryStorage();
+        const paying = () =>
+            vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "paid", testPayment: false });
+        const guest = make(paying(), { storage, buyer: () => "guest", pageUrl: () => "https://orbit.test/a/a1" });
+        ask(guest);
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        const code = storage.kept.get("universe-pay-recovery:a1");
+        expect(code).toBe(CODE(2));
+        expect(get(guest.line)).toMatchObject({
+            paid: { test: false },
+            buyer: "guest",
+            receipt: `https://orbit.test/a/a1#receipt=${code}`,
+        });
+        expect(guest.receiptLink()).toBe(`https://orbit.test/a/a1#receipt=${code}`);
+        guest.destroy();
+
+        // Signed in: the account is the buyer, no link
+        const account = make(paying(), { buyer: () => "account", pageUrl: () => "https://orbit.test/a/a1" });
+        ask(account);
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(account.line)).toMatchObject({ paid: { test: false }, buyer: "account", receipt: null });
+        expect(account.receiptLink()).toBeUndefined();
+        account.destroy();
+
+        // A page that is not shared by link has no link to give
+        const closed = make(paying(), { pageUrl: () => undefined });
+        ask(closed);
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(closed.line)).toMatchObject({ paid: { test: false }, receipt: null });
+        closed.destroy();
+
+        // A test payment and a purchase that is back are never given a receipt
+        const test = make(
+            vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "paid", testPayment: true }),
+            { pageUrl: () => "https://orbit.test/a/a1" }
+        );
+        ask(test);
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(test.line)).toMatchObject({ paid: { test: true }, receipt: null });
+        test.destroy();
+        const back = make(vi.fn().mockResolvedValue({ status: "paid", testPayment: false, paidAt: null }), {
+            pageUrl: () => "https://orbit.test/a/a1",
+        });
+        ask(back, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        await flush();
+        expect(get(back.line)).toMatchObject({ paid: { test: false }, receipt: null });
+        back.destroy();
+    });
+
+    it("closes a quiet offer, and never hides a payment on its way", async () => {
+        const quiet = make(vi.fn().mockResolvedValue({ status: "none" }));
+        ask(quiet, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        await flush();
+        expect(get(quiet.line).offerRestore).toBe(true);
+        quiet.dismiss();
+        expect(get(quiet.line)).toMatchObject({ offerRestore: false, problem: null, paid: null });
+        quiet.destroy();
+
+        const going = make(vi.fn().mockResolvedValue(checkout));
+        ask(going);
+        await flush();
+        going.dismiss();
+        expect(get(going.line).checking).toBe(true);
+        going.destroy();
+    });
+
+    it("Restore purchase asks what this buyer bought, and says when there is nothing (a guest and an account are told differently)", async () => {
+        const pay = vi.fn().mockResolvedValue({ status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 });
+        const payments = make(pay);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        await flush();
+        payments.restorePurchase();
+        await flush();
+        expect(pay).toHaveBeenLastCalledWith("a1", undefined, { restore: true, recoveryCode: expect.any(String) });
+        // The page that asked for it hears the answer under its own request
+        expect(
+            heard()
+                .filter((m) => m.request === "load")
+                .map((m) => m.status)
+        ).toEqual(["none", "none"]);
+        // Nothing found: said, and no second Check payment is offered (there is no checkout to check)
+        expect(get(payments.line)).toMatchObject({ problem: "none", canCheck: false });
+        pay.mockResolvedValueOnce({ status: "paid", testPayment: false, paidAt: "2026-11-19T08:00:00.000Z" });
+        payments.restorePurchase();
+        await flush();
+        expect(get(payments.line)).toMatchObject({
+            paid: { test: false },
+            restored: { paidAt: "2026-11-19T08:00:00.000Z" },
+        });
+        payments.destroy();
     });
 });

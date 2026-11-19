@@ -5,7 +5,7 @@ import type { ResponseWithUserIdentifier } from "../middlewares/Authenticated";
 import { authenticated } from "../middlewares/Authenticated";
 import { PerUserRateLimiter } from "../services/LinkPreviewService";
 import { ArtifactsError, artifactsService, CHANGE_SCOPES, OPEN_SCOPES } from "../services/ArtifactsService";
-import type { ArtifactViewer } from "../services/ArtifactsService";
+import type { ArtifactPayRequest, ArtifactViewer } from "../services/ArtifactsService";
 import { socketManager } from "../services/SocketManager";
 import { isBubbleSpaceName } from "../services/SpaceJoinPolicy";
 import { BaseHttpController } from "./BaseHttpController";
@@ -33,8 +33,39 @@ const InChatBody = z.object({ chat: Chat, offset: z.number().int().min(0).max(1_
 const OwnedBody = z.object({ offset: z.number().int().min(0).max(1_000_000).optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
 const PayBody = z
-    .object({ chat: Chat.optional(), start: z.boolean().optional(), order: z.string().min(1).max(100).optional() })
+    .object({
+        chat: Chat.optional(),
+        start: z.boolean().optional(),
+        order: z.string().min(1).max(100).optional(),
+        /** The window's own id for one purchase wish (never the page's): the same one again finds the order it made. */
+        intentId: z
+            .string()
+            .regex(/^[A-Za-z0-9_-]{8,64}$/)
+            .optional(),
+        /** Check payment: where the order made for `intentId` stands. */
+        check: z.boolean().optional(),
+        /** Restore purchase: this buyer's verified paid order for the page's offer. */
+        restore: z.boolean().optional(),
+        /** What a guest's window keeps for them (Orbit stores only its hash), and the code of a receipt link they opened. Orbit checks their form. */
+        recoveryCode: z.string().max(200).optional(),
+        receiptCode: z.string().max(200).optional(),
+    })
     .strict();
+/**
+ * One thing at a time: a checkout, a look at an order, a check of a wish, or a restore. A check is about one wish, and a wish
+ * only goes with a start or a check. Null for anything else.
+ */
+export function parsePayBody(
+    raw: unknown
+): { chat: z.infer<typeof Chat> | undefined; request: ArtifactPayRequest } | null {
+    const body = PayBody.safeParse(raw);
+    if (!body.success) return null;
+    const { chat, ...request } = body.data;
+    if ([request.start, request.order, request.check, request.restore].filter(Boolean).length > 1) return null;
+    if (request.check && !request.intentId) return null;
+    if (request.intentId && !request.start && !request.check) return null;
+    return { chat, request };
+}
 const ShareBody = z
     .object({
         chat: Chat.optional(),
@@ -272,8 +303,10 @@ export class ArtifactController extends BaseHttpController {
          *   post:
          *     description: The payment side of a page that takes payments (game #2044). With neither `start` nor `order`,
          *       answers { enabled }. `start: true` starts a checkout for the amount its owner set (the body holds no amount)
-         *       and answers { orderId, checkoutUrl, app }. `order` answers where that order stands { status, checkoutUrl,
-         *       testPayment }. Whoever may open the artifact may pay on it.
+         *       and answers { orderId, checkoutUrl, app }; with the window's own `intentId` a start sent again finds the order
+         *       it made. `order` answers where that order stands { status, checkoutUrl, testPayment, pollAfterMs }. `check`
+         *       (with `intentId`) answers the same for the order that wish made, and `restore` answers { status: paid | checking
+         *       | none } for this buyer's purchase. A guest's window sends its `recoveryCode`. Whoever may open the artifact may pay on it.
          *     responses:
          *       200:
          *         description: What was asked
@@ -286,10 +319,9 @@ export class ArtifactController extends BaseHttpController {
          */
         this.app.post("/artifacts/:id/pay", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
             await this.answer(req, res, "pay on", async (viewer, id) => {
-                const body = PayBody.safeParse(req.body ?? {});
-                if (!body.success || (body.data.start && body.data.order))
-                    throw new ArtifactsError("invalid_request", 400);
-                const { chat, ...request } = body.data;
+                const parsed = parsePayBody(req.body ?? {});
+                if (!parsed) throw new ArtifactsError("invalid_request", 400);
+                const { chat, request } = parsed;
                 return artifactsService.pay(id, request, viewer(chat));
             });
         });

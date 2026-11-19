@@ -98,13 +98,30 @@ export type SharedArtifact = z.infer<typeof Shared>;
  */
 const PayAnswer = z.object({
     enabled: z.boolean().optional(),
-    orderId: z.string().optional(),
+    orderId: z.string().nullable().optional(),
     checkoutUrl: z.string().nullable().optional(),
     app: z.string().optional(),
-    status: z.enum(["checking", "paid", "not_paid", "cant_confirm"]).optional(),
+    status: z.enum(["checking", "paid", "not_paid", "cant_confirm", "none"]).optional(),
     testPayment: z.boolean().optional(),
+    /** How long the window may wait before asking about an order again, in milliseconds */
+    pollAfterMs: z.number().int().min(0).max(3_600_000).optional(),
+    /** When a restored purchase was paid, for "Your purchase from 19 Nov is back." */
+    paidAt: z.string().nullable().optional(),
+    /** A start sent again found the order it had made */
+    reused: z.boolean().optional(),
 });
 export type ArtifactPayAnswer = z.infer<typeof PayAnswer>;
+
+/** What the window may ask of the payment side of a page: one of start, order, check or restore (see `pay`). */
+export interface ArtifactPayRequest {
+    start?: boolean;
+    order?: string;
+    intentId?: string;
+    check?: boolean;
+    restore?: boolean;
+    recoveryCode?: string;
+    receiptCode?: string;
+}
 
 export const OPEN_SCOPES = ["me", "chat", "link"] as const;
 /** Who can ask for changes: only its owner, or everyone who can open it, in its chat. */
@@ -204,10 +221,12 @@ export class ArtifactsService {
     }
 
     /**
-     * The payment side of a page (game #2044). With neither `start` nor `order`: whether the page takes payments. `start`
-     * makes a checkout for the owner's amount (the viewer sends no amount); `order` asks where an order stands.
+     * The payment side of a page (game #2044). With nothing asked: whether the page takes payments. `start` makes a checkout
+     * for the owner's amount (the viewer sends no amount; the window's own `intentId` makes a start sent again find the
+     * order it made); `order` asks where an order stands; `check` (with `intentId`) asks about the order that wish made;
+     * `restore` asks for this buyer's purchase. A guest's window sends its `recoveryCode`.
      */
-    pay(id: string, request: { start?: boolean; order?: string }, viewer: ArtifactViewer): Promise<ArtifactPayAnswer> {
+    pay(id: string, request: ArtifactPayRequest, viewer: ArtifactViewer): Promise<ArtifactPayAnswer> {
         return this.call(`/api/artifacts/${encodeURIComponent(id)}/pay`, { viewer, ...request }, PayAnswer);
     }
 
