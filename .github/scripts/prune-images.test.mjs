@@ -331,7 +331,11 @@ export function defineTests({ lib }) {
   });
 
   describe('makeDeleter', () => {
-    const answer = (status) => ({ status, ok: status >= 200 && status < 300 });
+    // A status, or [status, headers, body] for an answer whose headers or body matter.
+    const answer = (spec) => {
+      const [status, headers = {}, body = ''] = Array.isArray(spec) ? spec : [spec];
+      return { status, ok: status >= 200 && status < 300, headers: new Headers(headers), text: async () => body };
+    };
     const deleterFor = (statuses) => {
       const calls = [];
       const github = async (path, init = {}) => {
@@ -349,11 +353,27 @@ export function defineTests({ lib }) {
       const gone = deleterFor([404, 404]);
       await gone.remove({ id: 5 });
       const still = deleterFor([404, 200]);
-      await assert.rejects(still.remove({ id: 5 }), /still exists/);
+      await assert.rejects(still.remove({ id: 5 }), (error) => /still exists/.test(error.message) && error.needsAdmin === true);
     });
-    it('names the Admin role on a 403', async () => {
+    it('does not blame the Admin role when the check after a 404 fails', async () => {
+      for (const status of [500, 429]) {
+        const { remove } = deleterFor([404, status]);
+        await assert.rejects(remove({ id: 5 }), (error) => new RegExp(`answered ${status}`).test(error.message) && !error.needsAdmin);
+      }
+    });
+    it('names the Admin role on a 403 and marks it for the issue', async () => {
       const { remove } = deleterFor([403]);
-      await assert.rejects(remove({ id: 5 }), /Admin role/);
+      await assert.rejects(remove({ id: 5 }), (error) => /Admin role/.test(error.message) && error.needsAdmin === true);
+    });
+    it('does not blame the Admin role for a rate-limit 403', async () => {
+      for (const limited of [[403, { 'retry-after': '60' }], [403, { 'x-ratelimit-remaining': '0' }], [403, {}, '{"message":"You have exceeded a secondary rate limit."}']]) {
+        const { remove } = deleterFor([limited]);
+        await assert.rejects(remove({ id: 5 }), (error) => /rate-limited/.test(error.message) && !error.needsAdmin);
+      }
+    });
+    it('does not blame the Admin role for other failures', async () => {
+      const { remove } = deleterFor([500]);
+      await assert.rejects(remove({ id: 5 }), (error) => /answered 500/.test(error.message) && !error.needsAdmin);
     });
   });
 }
