@@ -15,6 +15,12 @@
 /** How many replies stay bound: more than a bot ever writes at once, with room for the marks that follow a reply. */
 const MAX_BOUND = 300;
 /**
+ * A finished reply keeps its reader this long after its last piece: the marks that follow it (speaking, stopped, kept quiet) come when
+ * its audio has played, and a mark for a reply that is not known is dropped, which would leave the speaking indicator on. Past the
+ * cap, only replies finished longer ago than this are let go of, unless the map would pass MAX_BOUND_ALL.
+ */
+const FINISHED_GRACE_MS = 10 * 60_000;
+/**
  * Replies that are still being written are never let go of for room. Only so many of them are kept: past that, a new reply is held
  * back (never decided without its reader), unless the oldest unfinished one is so old it can only have been dropped by whoever wrote it.
  */
@@ -34,7 +40,7 @@ export class ReplyReaders {
     /** By space and player: whether the reply being written for them started with them alone with the bot. */
     private readonly turns = new Map<string, boolean>();
     /** By reply: its space, and its one reader's space user id, or null when it is for everyone there. */
-    private readonly bound = new Map<string, { spaceName: string; reader: string | null; done?: true; at: number }>();
+    private readonly bound = new Map<string, { spaceName: string; reader: string | null; done?: true; doneAt?: number; at: number }>();
     /** By reply: its space, for a reply decided to be for one person alone whose reader cannot be named yet (it stays private until it can be). */
     private readonly unresolved = new Map<string, string>();
     /** By space and player: whether the reply last sent to them there went to them alone. */
@@ -94,20 +100,29 @@ export class ReplyReaders {
     }
 
     /**
-     * Past the cap, the oldest reply that is complete is let go of. A reply still being written keeps its reader: a late piece of
-     * it would otherwise be decided afresh and could go to someone who has walked up since. So when only unfinished replies are left
-     * and they fill MAX_BOUND_ALL, none is let go of to make room, unless it is so old it was abandoned; `forNew` then says there is
-     * no room for one more (false), and the new reply is held back.
+     * Past the cap, the replies that finished more than the grace time ago are let go of. A finished reply newer than that keeps its
+     * reader for the marks that follow it, so the cap is soft for them: it holds until MAX_BOUND_ALL, past which the oldest finished
+     * reply goes whatever its age. A reply still being written keeps its reader: a late piece of it would otherwise be decided afresh
+     * and could go to someone who has walked up since. So when only unfinished replies are left and they fill MAX_BOUND_ALL, none is
+     * let go of to make room, unless it is so old it was abandoned; `forNew` then says there is no room for one more (false), and the
+     * new reply is held back.
      */
     private makeRoom(forNew = false): boolean {
         const limit = forNew ? MAX_BOUND - 1 : MAX_BOUND;
-        while (this.bound.size > limit) {
+        const all = forNew ? MAX_BOUND_ALL - 1 : MAX_BOUND_ALL;
+        if (this.bound.size > limit) {
+            const now = Date.now();
+            for (const [responseId, reply] of [...this.bound]) {
+                if (this.bound.size <= limit) break;
+                if (reply.done && now - (reply.doneAt ?? 0) >= FINISHED_GRACE_MS) this.bound.delete(responseId);
+            }
+        }
+        while (this.bound.size > all) {
             const finished = [...this.bound].find(([, reply]) => reply.done);
             if (finished) {
                 this.bound.delete(finished[0]);
                 continue;
             }
-            if (this.bound.size < (forNew ? MAX_BOUND_ALL : MAX_BOUND_ALL + 1)) return true;
             const [oldestId, oldest] = this.bound.entries().next().value as [string, { at: number }];
             if (Date.now() - oldest.at < ABANDONED_AFTER_MS) return !forNew;
             this.bound.delete(oldestId);
@@ -127,11 +142,12 @@ export class ReplyReaders {
         return known.reader ?? undefined;
     }
 
-    /** The reply's last piece went out: its reader is kept for the marks that follow it, and can be let go of once the cap needs room. */
+    /** The reply's last piece went out: its reader is kept for the marks that follow it, and can be let go of once the cap needs room and the grace time has passed. */
     complete(responseId: string): void {
         const reply = this.bound.get(responseId);
         if (!reply) return;
         reply.done = true;
+        reply.doneAt = Date.now();
         this.makeRoom();
     }
 

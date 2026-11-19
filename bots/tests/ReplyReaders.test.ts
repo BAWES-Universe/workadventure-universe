@@ -65,15 +65,38 @@ describe('ReplyReaders', () => {
         expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
     });
 
-    it('lets go of the oldest finished reply once the cap needs room, and never of one still being written', () => {
+    it('keeps a finished reply for the marks that follow it while 300 others start, and lets it go once the grace time has passed', () => {
+        vi.useFakeTimers();
+        try {
+            const readers = new ReplyReaders();
+            readers.starts(SPACE, 7, true);
+            readers.readerOf(SPACE, REPLY, now(false));
+            readers.readerOf(SPACE, 'bot-bot-test-player-7-second', now(true));
+            readers.complete('bot-bot-test-player-7-second');
+            for (let i = 0; i < 300; i++) readers.readerOf(SPACE, `bot-bot-test-player-9-n${i}`, now(false));
+            // Past the cap, but the finished reply is recent: its marks (speaking, stopped, kept quiet) still reach its reader
+            expect(readers.knownReaderOf('bot-bot-test-player-7-second')).toBe('room-1_7');
+            expect(readers.forOneReaderIn(SPACE)).toContain('bot-bot-test-player-7-second');
+            // Ten minutes after its last piece the next reply that needs room lets it go; the unfinished one stays
+            vi.advanceTimersByTime(10 * 60_000 + 1);
+            readers.readerOf(SPACE, 'bot-bot-test-player-9-later', now(false));
+            expect(readers.knownReaderOf('bot-bot-test-player-7-second')).toBeNull();
+            expect(readers.knownReaderOf(REPLY)).toBe('room-1_7');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('lets go of the oldest finished reply, whatever its age, only when the 3,000 limit is reached, and never of one still being written', () => {
         const readers = new ReplyReaders();
         readers.starts(SPACE, 7, true);
         readers.readerOf(SPACE, REPLY, now(false));
         readers.readerOf(SPACE, 'bot-bot-test-player-7-second', now(true));
         readers.complete('bot-bot-test-player-7-second');
-        for (let i = 0; i < 300; i++) readers.readerOf(SPACE, `bot-bot-test-player-9-n${i}`, now(false));
-        // The finished one made room, the unfinished one is still bound
-        expect(readers.forOneReaderIn(SPACE)).toEqual([REPLY]);
+        for (let i = 0; i < 2999; i++) readers.readerOf(SPACE, `bot-bot-test-player-9-n${i}`, now(false));
+        // Over the limit by the new one: the finished (recent) reply made room, the unfinished one is still bound
+        expect(readers.knownReaderOf('bot-bot-test-player-7-second')).toBeNull();
+        expect(readers.knownReaderOf(REPLY)).toBe('room-1_7');
     });
 
     it('holds a new reply back, and lets go of none, when 3,000 replies are still being written', () => {
