@@ -423,9 +423,23 @@ describe('the two tools of a Brick for keys', () => {
         // ...and only for its own request: the game echoes the id back, so an earlier checkout's result is ignored
         expect(description).toContain('request: waiting');
         expect(description).toContain('e.data.request !== waiting');
-        expect(description).toMatch(/result of an earlier checkout/);
+        expect(description).toMatch(/result of an earlier request/);
         expect(description).toContain('"busy"');
         expect(description).toMatch(/Show "paid" only for status "paid" heard that way/);
+    });
+
+    it('teach a page to ask once on load whether this visitor already bought, to keep the pay button on "none", and to show a test payment as a preview only', () => {
+        const description = String(keyToolDefinitions().find((tool) => tool.function.name === PAYMENT_TOOL)?.function.description);
+        expect(description).toContain('request: waiting, restore: true');
+        expect(description).toContain('"none"');
+        expect(description).toMatch(/A restore is not a checkout: it never opens a payment window/);
+        expect(description).toContain('e.data.test === true');
+        expect(description).toMatch(/Test payment" preview/);
+        expect(description).toMatch(/never unlock or hand over anything real/);
+        // The Universe window owns Check payment, Restore purchase and the receipt link: the page never shows them
+        expect(description).toMatch(/the Universe window shows those itself/);
+        // A page made with the older instructions has to be made again
+        expect(description).toMatch(/older instructions[^.]*make the page again/);
     });
 
     it('say what Orbit said no to in words', async () => {
