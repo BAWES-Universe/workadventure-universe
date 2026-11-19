@@ -714,6 +714,8 @@ class FakeForgetStore implements ForgetQueueStore {
     ledger = new Map<string, Record<string, unknown>>();
     /** Reads and writes fail while the store cannot be reached. */
     unreachable = false;
+    /** The next write is applied and then fails (a timeout that came after the store had done it). */
+    failAfterApplying = false;
     /** False while there is no shared store at all (never reached). */
     present = true;
     inUse() {
@@ -748,6 +750,12 @@ class FakeForgetStore implements ForgetQueueStore {
             if (stored && rank(stored.since) <= rank(entry.since)) this.pending.set(key, { ...entry });
         }
         apply(this.ledger, changes.ledger.put, changes.ledger.del);
+        if (this.failAfterApplying) {
+            // The store did it; the answer never came, and the store then stays away
+            this.failAfterApplying = false;
+            this.unreachable = true;
+            throw new Error('Shared store did not answer in time');
+        }
     }
     contents() {
         return { pending: [...this.pending.values()], ledger: [...this.ledger.values()] };
@@ -851,6 +859,26 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
         expect(memory.unreportedItemForgets.size).toBe(0);
         expect(saved()).toEqual([]);
         expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not tell Orbit what was forgotten'));
+        warn.mockRestore();
+    });
+
+    it('removes what a write put when the store applied it and then did not answer, once Orbit has taken the forget', async () => {
+        const memory = await start();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        store.failAfterApplying = true;
+        await forgetWhileDown(memory);
+        // The store has it (the put was applied), and this process does not know that; the store is away from now on
+        expect(store.contents().pending).toHaveLength(1);
+        up();
+        await memory.reportUnreportedForgets();
+        // Orbit took the forget: it is let go here, but the store cannot be told yet
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(store.contents().pending).toHaveLength(1);
+        // The store is back: what the first write may have put is removed
+        store.unreachable = false;
+        await memory.persistUnreported();
+        clearTimeout(memory.unreportedRetryTimer);
+        expect(store.contents().pending).toEqual([]);
         warn.mockRestore();
     });
 

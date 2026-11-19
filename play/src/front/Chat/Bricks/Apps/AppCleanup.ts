@@ -109,7 +109,8 @@ export function findAndRemove(body: NewApp): Promise<void> {
                 if (statusOf(error) === 409) return "over";
                 throw error;
             }
-            if (!made.id) return "over";
+            // An answer with no id we can read says nothing about what was made: asked again with the same key (it gives the same App back), never counted as done
+            if (!made.id) return "again";
         }
         try {
             await botApiService.disconnectMyApp(made.id);

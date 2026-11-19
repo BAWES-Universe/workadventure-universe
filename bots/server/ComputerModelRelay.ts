@@ -466,6 +466,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     if (refusesStreamOptions(upstream.status, text)) {
                         refusedStreamOptions.add(url);
                         delete sent.stream_options;
+                        // The first answer is let go of (its copy was read above): a body nobody reads would be held until the call ends. Not waited for.
+                        void upstream.body?.cancel().catch(() => undefined);
                         upstream = await send(sent);
                     }
                 }

@@ -236,7 +236,11 @@ export class BotRegistry {
      * room: a newer chat that another device or bot server noted since is never forgotten with the old one.
      */
     async forgetDmRoomOf(botId: string, matrixUserId: string, roomId?: string): Promise<void> {
-        if (!isUp(this.redis)) return;
+        if (!isUp(this.redis)) {
+            // Throws while a store that was in use is down, as forgetDmRoom does: a purge drops this link strictly and tries again
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
         const key = `${botId}|${matrixUserId}`;
         if (roomId === undefined) {
             await this.redis.hDel('bots:matrix:dm-room-of', key);
@@ -369,21 +373,25 @@ export class BotRegistry {
         const listener = this.redis.duplicate();
         listener.on('error', (err) => console.error('[BotRegistry] Redis error (Brick changes):', err));
         this.brickListener = listener;
+        const onMessage = (message: string) => {
+            try {
+                const said = JSON.parse(message) as { botId?: unknown; ownerId?: unknown; from?: unknown };
+                if (said.from === this.serverId || typeof said.botId !== 'string' || typeof said.ownerId !== 'string') return;
+                heard(said.botId, said.ownerId);
+            } catch (err) {
+                console.warn('[BotRegistry] Ignored a Brick change that could not be read:', err);
+            }
+        };
         try {
-            // node-redis keeps trying to connect for as long as Redis is away, so an unbounded wait would hold up whoever starts this
-            if (!(await inTime(listener.connect(), this.brickListenerConnectMs))) throw new Error('Redis did not answer for the Brick changes in time');
-            await listener.subscribe(BRICK_CHANGED_CHANNEL, (message) => {
-                try {
-                    const said = JSON.parse(message) as { botId?: unknown; ownerId?: unknown; from?: unknown };
-                    if (said.from === this.serverId || typeof said.botId !== 'string' || typeof said.ownerId !== 'string') return;
-                    heard(said.botId, said.ownerId);
-                } catch (err) {
-                    console.warn('[BotRegistry] Ignored a Brick change that could not be read:', err);
-                }
-            });
+            // node-redis keeps trying to connect for as long as Redis is away, so an unbounded wait would hold up whoever starts this:
+            // connecting and subscribing are held to one deadline (a SUBSCRIBE that is never answered would leave the listener set for good)
+            if (!(await inTime(listener.connect().then(() => listener.subscribe(BRICK_CHANGED_CHANNEL, onMessage)), this.brickListenerConnectMs))) {
+                throw new Error('Redis did not answer for the Brick changes in time');
+            }
         } catch (err) {
             this.brickListener = null;
-            if (listener.isOpen) await closeConnection(listener, SHUTDOWN_WAIT_MS);
+            // It has nothing to say goodbye to (it never subscribed): it is cut off, not asked to quit, which a silent connection would not answer
+            await listener.disconnect().catch(() => undefined);
             throw err;
         }
     }
@@ -402,7 +410,8 @@ export class BotRegistry {
     }
 
     async clearTaskCardUnshown(actionId: string): Promise<void> {
-        if (!isUp(this.redis)) return;
+        // Not cleared is not cleared: the caller knows the old marker may still be there
+        if (!isUp(this.redis)) throw new Error('shared store not connected');
         await this.redis.del(`bots:task-card-unshown:${actionId}`);
     }
 

@@ -227,6 +227,33 @@ describe("keepPrivate", () => {
         expect(text).toContain("[removed]");
     });
 
+    it("cuts the query and hash of the addresses in a replay's style, srcset and stylesheet text, and leaves an ordinary style alone", () => {
+        const node = {
+            tagName: "div",
+            attributes: {
+                style: 'background-image: url("https://a.test/image?token=abc123"); color: red',
+                srcset: "https://a.test/image?token=abc123 1x, /local/image2.png?token=abc123#x 2x",
+                "data-srcset": "https://a.test/image3?token=abc123 480w",
+                class: "plain",
+            },
+            childNodes: [
+                { tagName: "style", attributes: { _cssText: ".a { background: url(/pics/bg.png?token=abc123#frag) } .b { background: url('data:image/png;base64,AAAA') }" } },
+                { tagName: "span", attributes: { style: "color: red" } },
+            ],
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=abc123");
+        expect(text).not.toContain("#frag");
+        expect(text).toContain('url(\\"https://a.test/image\\")');
+        expect(text).toContain("https://a.test/image 1x, /local/image2.png 2x");
+        expect(text).toContain("https://a.test/image3 480w");
+        expect(text).toContain("url(/pics/bg.png)");
+        // A data address is no address to hide, and an ordinary style is as it was
+        expect(text).toContain("data:image/png;base64,AAAA");
+        expect(text).toContain('"style":"color: red"');
+    });
+
     it("does not send a replay recording too large to be checked whole", () => {
         const huge = { type: 2, data: { values: new Array<string>(500_001).fill("*") } };
         const event = keepPrivate({

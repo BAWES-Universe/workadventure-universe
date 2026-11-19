@@ -1758,7 +1758,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * line for the next check, and only after the last try is the person told to send it again. Messages in one `batch`
      * share a single "couldn't answer" note.
      */
-    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }): Promise<void> {
+    /** `recovered`: a message kept while the store was down, tried again. A newer message may have been answered, or have started to be, while this one waited on Orbit. */
+    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }, recovered = false): Promise<void> {
         const content = event.content ?? {};
         let botId: string | null;
         try {
@@ -1940,6 +1941,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
             name: user.name,
             isGuest: user.isGuest,
         };
+        // A recovered message is checked again just before it is answered: the steps above take a while, and a newer message in this chat may have been answered
+        // meanwhile (it is dropped, never answered after it), or may be being answered now (it is kept, and waits to see whether that answer lands)
+        if (recovered) {
+            const at = event.origin_server_ts ?? 0;
+            if (at <= (this.answeredLive.get(event.room_id) ?? -1)) return;
+            if (at <= (this.answeringLive.get(event.room_id) ?? -1)) {
+                this.keepUnplaced(event);
+                return;
+            }
+        }
         // Show "typing" only when the reply takes a moment, like a person would; quick replies need no extra calls.
         let typing = false;
         let typingRefresh: NodeJS.Timeout | undefined;
@@ -2275,7 +2286,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 this.keepUnplaced(event);
                 continue;
             }
-            await this.handleMessage(event, false).catch((error) =>
+            await this.handleMessage(event, false, undefined, true).catch((error) =>
                 console.warn(`[MatrixDmBridge] Could not answer a message kept while the store was down in ${roomId}:`, error?.message ?? error)
             );
         }

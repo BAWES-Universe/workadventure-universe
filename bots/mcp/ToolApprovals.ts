@@ -218,6 +218,9 @@ export class ToolApprovals {
     private readonly unshown = new Set<string>();
     /** Of those, the ones whose note could not be written to the shared store: only this process knows, so only its note counts. */
     private readonly unshownHereOnly = new Set<string>();
+    /** Steps whose card was shown but whose "no card" marker could not be cleared in the shared store: the marker there is out of date, and is cleared again. */
+    private readonly staleMarks = new Set<string>();
+    private staleTimer: ReturnType<typeof setTimeout> | undefined;
     /** A person's card in a bubble that closed because they said something else: a new card for the same tool is a change (#1658). */
     private readonly changing = new Map<string, number>();
     /** The replies only a person saw in a bubble, kept a while so they come back with the person after a reload (#1658). */
@@ -356,6 +359,16 @@ export class ToolApprovals {
      */
     private async noCardShown(actionId: string): Promise<boolean> {
         const store = this.deps.unshownCards;
+        // The card was shown here, and the marker that said otherwise could not be cleared: it is out of date, whatever the store still holds
+        if (this.staleMarks.has(actionId)) {
+            if (store) {
+                await store.clear(actionId).then(
+                    () => this.staleMarks.delete(actionId),
+                    () => undefined
+                );
+            }
+            return false;
+        }
         if (this.unshown.has(actionId)) {
             if (!store || this.unshownHereOnly.has(actionId)) return true;
             try {
@@ -370,6 +383,7 @@ export class ToolApprovals {
     }
 
     private async cardNotShown(actionId: string): Promise<void> {
+        this.staleMarks.delete(actionId);
         this.unshown.add(actionId);
         await this.deps.unshownCards?.mark(actionId).then(
             () => this.unshownHereOnly.delete(actionId),
@@ -380,7 +394,35 @@ export class ToolApprovals {
     private async cardShown(actionId: string): Promise<void> {
         this.unshown.delete(actionId);
         this.unshownHereOnly.delete(actionId);
-        await this.deps.unshownCards?.clear(actionId).catch(() => undefined);
+        // A clear that fails (the store is down) is kept, and tried again, or another bot server would find the old marker and take the shown card for a missing one
+        await this.deps.unshownCards?.clear(actionId).then(
+            () => this.staleMarks.delete(actionId),
+            () => {
+                this.staleMarks.add(actionId);
+                // A safety limit: a step that is never asked again leaves its entry here, so the oldest go
+                if (this.staleMarks.size > 500) this.staleMarks.delete(this.staleMarks.keys().next().value as string);
+                this.retryStaleMarks();
+            }
+        );
+    }
+
+    /** Clears the markers that could not be cleared, every half minute, until the store takes them: no bot server should find a marker for a card that is shown. */
+    private retryStaleMarks(): void {
+        if (this.staleTimer || this.staleMarks.size === 0 || !this.deps.unshownCards) return;
+        this.staleTimer = setTimeout(() => {
+            this.staleTimer = undefined;
+            const store = this.deps.unshownCards;
+            if (!store) return;
+            void Promise.all(
+                [...this.staleMarks].map((id) =>
+                    store.clear(id).then(
+                        () => void this.staleMarks.delete(id),
+                        () => undefined
+                    )
+                )
+            ).then(() => this.retryStaleMarks());
+        }, 30_000);
+        this.staleTimer.unref?.();
     }
 
     private findWaiting(

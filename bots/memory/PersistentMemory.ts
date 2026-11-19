@@ -60,6 +60,8 @@ export class PersistentMemory extends ConversationMemory {
     private forgetQueue: ForgetQueueStore | null = null;
     /** What the shared store is known to hold, by entry name (as the JSON written), so each write sends only what changed. */
     private queueSynced = { pending: new Map<string, { json: string; since: number }>(), ledger: new Map<string, { json: string; since: number }>() };
+    /** Entries a write put that was not answered (it timed out, or failed after the store applied it): they may be in the store, so a removal is sent for them too. */
+    private queueMaybe = { pending: new Map<string, { since: number }>(), ledger: new Map<string, { since: number }>() };
     /** Writes to the store one after another, so a later write never lands before an earlier one. */
     private queueWriting: Promise<unknown> = Promise.resolve();
     /** Settles once the store has been read for the first time (whether or not it could be). */
@@ -116,6 +118,7 @@ export class PersistentMemory extends ConversationMemory {
     setForgetQueue(store: ForgetQueueStore): void {
         this.forgetQueue = store;
         this.queueSynced = { pending: new Map(), ledger: new Map() };
+        this.queueMaybe = { pending: new Map(), ledger: new Map() };
         this.queueRestored = false;
         this.queueRefresh = null;
         this.forgetQueueReady = this.restoreForgetQueue(true);
@@ -308,7 +311,8 @@ export class PersistentMemory extends ConversationMemory {
             now: ReadonlyMap<string, T>,
             synced: ReadonlyMap<string, { json: string; since: number }>,
             into: { put: T[]; del: ForgetQueueRemoval[]; refuse?: T[] },
-            record: Map<string, { json: string; since: number }>
+            record: Map<string, { json: string; since: number }>,
+            maybe: Map<string, { since: number }>
         ) => {
             for (const [key, entry] of now) {
                 const json = JSON.stringify(entry);
@@ -320,15 +324,22 @@ export class PersistentMemory extends ConversationMemory {
                     record.set(key, { json, since: entry.since });
                 }
             }
-            for (const [key, was] of synced) if (!now.has(key)) into.del.push({ key, since: was.since });
+            // 0 is "whenever it was said", the latest of all
+            const later = (a: number, b: number) => ((a === 0 ? Infinity : a) >= (b === 0 ? Infinity : b) ? a : b);
+            // A put that was never answered may have been applied: what is no longer held is removed too, as the later of the two asks (the removal is a harmless nothing if it never was)
+            for (const [key, was] of synced) if (!now.has(key)) into.del.push({ key, since: maybe.has(key) ? later(was.since, maybe.get(key)!.since) : was.since });
+            for (const [key, was] of maybe) if (!now.has(key) && !synced.has(key)) into.del.push({ key, since: was.since });
         };
-        diff<PendingItemForget>(this.unreportedItemForgets, this.queueSynced.pending, changes.pending, sent.pending);
-        diff<ForgottenItem>(this.forgottenLedger, this.queueSynced.ledger, changes.ledger, sent.ledger);
+        diff<PendingItemForget>(this.unreportedItemForgets, this.queueSynced.pending, changes.pending, sent.pending, this.queueMaybe.pending);
+        diff<ForgottenItem>(this.forgottenLedger, this.queueSynced.ledger, changes.ledger, sent.ledger, this.queueMaybe.ledger);
         if (changes.pending.put.length + changes.pending.del.length + (changes.pending.refuse?.length ?? 0) + changes.ledger.put.length + changes.ledger.del.length === 0) return true;
         try {
             await store.write(changes);
         } catch (error) {
             console.warn(`[PersistentMemory] Could not write the waiting forgets to the shared store: ${error instanceof Error ? error.message : String(error)}`);
+            // The write may have reached the store before it failed or timed out: what it put is not taken as written (it is put again), but is remembered as possibly there
+            for (const [key, one] of sent.pending) this.queueMaybe.pending.set(key, { since: one.since });
+            for (const [key, one] of sent.ledger) this.queueMaybe.ledger.set(key, { since: one.since });
             // Tried again on the timer, even when nothing is owed to Orbit (a ledger entry alone must not be lost to a restart)
             this.queueDirty = true;
             this.armUnreportedRetry();
@@ -339,6 +350,11 @@ export class PersistentMemory extends ConversationMemory {
         for (const [key, one] of sent.ledger) this.queueSynced.ledger.set(key, one);
         for (const one of changes.pending.del) this.queueSynced.pending.delete(one.key);
         for (const one of changes.ledger.del) this.queueSynced.ledger.delete(one.key);
+        // What was answered is known now: written (kept in the synced list) or removed
+        for (const key of sent.pending.keys()) this.queueMaybe.pending.delete(key);
+        for (const key of sent.ledger.keys()) this.queueMaybe.ledger.delete(key);
+        for (const one of changes.pending.del) this.queueMaybe.pending.delete(one.key);
+        for (const one of changes.ledger.del) this.queueMaybe.ledger.delete(one.key);
         return true;
     }
 

@@ -224,6 +224,31 @@ describe('while Redis reconnects (the connection is open but not ready)', () => 
         expect((registry as unknown as { brickListener: unknown }).brickListener).toBeNull();
     });
 
+    it('gives up hearing Brick changes when the subscribe is never answered, cuts the connection off, and a second try starts a new listener', async () => {
+        const make = () => ({ isOpen: true, isReady: true, on: vi.fn(), connect: vi.fn(async () => undefined), subscribe: vi.fn(() => new Promise<void>(() => undefined)), quit: vi.fn(), disconnect: vi.fn(async () => undefined) });
+        const first = make();
+        const second = make();
+        const listeners = [first, second];
+        const registry = registryWith({ isOpen: true, isReady: true, duplicate: () => listeners.shift() });
+        Object.assign(registry, { brickListenerConnectMs: 20 });
+        await expect(registry.onBrickChanged(() => undefined)).rejects.toThrow('in time');
+        expect(first.disconnect).toHaveBeenCalled();
+        expect(first.quit).not.toHaveBeenCalled();
+        expect((registry as unknown as { brickListener: unknown }).brickListener).toBeNull();
+        // The next try is not refused for a listener that is still set
+        await expect(registry.onBrickChanged(() => undefined)).rejects.toThrow('in time');
+        expect(second.connect).toHaveBeenCalled();
+    });
+
+    it('says so when it cannot forget the chat of a bot and a person while a store that was in use is down', async () => {
+        const down = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(down, { redis: { isOpen: false }, sharedStoreSeen: true });
+        await expect(down.forgetDmRoomOf('bot-1', '@a:x', '!r:x')).rejects.toThrow('The shared store is down');
+        const never = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(never, { redis: null, sharedStoreSeen: false });
+        await expect(never.forgetDmRoomOf('bot-1', '@a:x', '!r:x')).resolves.toBeUndefined();
+    });
+
     it('says so when it cannot forget a direct room while a store that was in use is down, so a purge tries again, and does nothing when there never was one', async () => {
         const down = Object.create(BotRegistry.prototype) as BotRegistry;
         Object.assign(down, { redis: { isOpen: false }, sharedStoreSeen: true });

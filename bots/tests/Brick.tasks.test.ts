@@ -120,6 +120,9 @@ describe('time, on the person’s own clock', () => {
         expect(localToInstant('2026-11-15 16:00', 'Nowhere/Land')).toBeNull();
         expect(timeOfDayOf('2026-11-15 09:05')).toBe('09:05');
         expect(timeOfDayOf('9am')).toBeNull();
+        // Seconds are not a time of day a reminder can keep: other than :00 they would be dropped, so they are not read at all
+        expect(timeOfDayOf('2026-11-15 09:05:00')).toBe('09:05');
+        expect(timeOfDayOf('2026-11-15 09:05:45')).toBeNull();
     });
 
     it('says a moment in words on their clock, and today as today', () => {

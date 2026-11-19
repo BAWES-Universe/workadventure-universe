@@ -492,6 +492,42 @@ describe('streaming', () => {
     });
 });
 
+describe('a first answer that refuses stream_options', () => {
+    it('is let go of before the call is made again without them, and the call settles as before', async () => {
+        const cancel = vi.fn(async () => undefined);
+        let calls = 0;
+        const fetchFor = () =>
+            (async (input: RequestInfo | URL, init?: RequestInit) => {
+                if (++calls === 1) {
+                    const answer = JSON.stringify({ error: { message: 'Stream options can only be defined when stream=True' } });
+                    return { ok: false, status: 400, clone: () => new Response(answer, { status: 400 }), body: { cancel } } as unknown as Response;
+                }
+                return fetch(input, init);
+            }) as typeof fetch;
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 2 } })}\n\n`);
+            res.end('data: [DONE]\n\n');
+        };
+        // A host the earlier test did not use, so what it learned about stream_options does not apply
+        route = { config: config({ endpoint: upstreamBase.replace('127.0.0.1', 'localhost') }), source: 'universe-ai', keyOwnerId: null };
+        const app = express();
+        app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], fetchFor }));
+        const own = await listen(app);
+        try {
+            const answer = await fetch(`${urlOf(own)}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ messages, stream: true }) });
+            expect(await answer.text()).toContain('"ok"');
+            await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+            expect(cancel).toHaveBeenCalledTimes(1);
+            expect(calls).toBe(2);
+            expect(settled()[0]).toMatchObject({ sent: true, tokens: { input: 5, output: 2 } });
+        } finally {
+            await new Promise<void>((resolve) => { own.closeAllConnections?.(); own.close(() => resolve()); });
+        }
+    });
+});
+
 describe('the Orbit calls', () => {
     const admin = (status: number, data: Record<string, unknown>) => ({ computerRelayCall: vi.fn().mockResolvedValue({ status, data }) });
 

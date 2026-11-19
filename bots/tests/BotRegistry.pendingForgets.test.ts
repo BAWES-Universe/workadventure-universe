@@ -72,8 +72,8 @@ describe('BotRegistry: a goal step\'s card that was not shown', () => {
         const registry = registryWith(undefined);
         await expect(registry.markTaskCardUnshown('act_1')).rejects.toThrow('not connected');
         await expect(registry.taskCardUnshown('act_1')).rejects.toThrow('not connected');
-        // Clearing is still quiet: its callers only ever try
-        await expect(registry.clearTaskCardUnshown('act_1')).resolves.toBeUndefined();
+        // Clearing says so too: the caller must know the old marker may still be there
+        await expect(registry.clearTaskCardUnshown('act_1')).rejects.toThrow('not connected');
     });
 
     it('marks, reads and clears it when the store is up', async () => {

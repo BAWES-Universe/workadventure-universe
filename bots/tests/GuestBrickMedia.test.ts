@@ -512,6 +512,39 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         expect(steps.read.mock.calls.filter((call) => call[0] === 'r-b')).toHaveLength(2);
     });
 
+    it('gives a file to a carry whose budget fits when other carries with less budget keep starting the copy first', async () => {
+        const guest = `g-${Math.random()}`;
+        const big = new Uint8Array(59 * 1024 * 1024);
+        const small = new Uint8Array(2 * 1024 * 1024);
+        const pending: Array<() => void> = [];
+        const steps = copySteps({
+            read: vi.fn(async (receipt: string) => {
+                if (receipt === 'r-big') return { ok: true, bytes: big, url: 'g', type: 'image/png', name: 'big.png', sha256: 's' };
+                // The file is read when the test lets it: the store yields between steps
+                await new Promise<void>((resolve) => pending.push(resolve));
+                return { ok: true, bytes: small, url: 'g', type: 'image/png', name: 'f.png', sha256: 's' };
+            }),
+            store: vi.fn(async (bytes: Uint8Array) => `https://cdn.test/${bytes.byteLength}`),
+        });
+        const lineOf = (...receipts: string[]) => readCarriedLines([{ from: 'guest' as const, text: 'files', at: 1, media: receipts.map((r) => ({ kind: 'file' as const, name: `${r}.png`, type: 'image/png', receipt: r })) }]);
+        const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+        // A has 1 MiB left after a 59 MiB file and asks for the 2 MiB file twice; B has all 60 MiB and asks once, while A's copy is being made
+        const a = copyCarriedMedia(guest, lineOf('r-big', 'r-f', 'r-f'), steps);
+        await flush();
+        const b = copyCarriedMedia(guest, lineOf('r-f'), steps);
+        await flush();
+        // Each copy that is waiting is let through, one after the other, until nothing is waiting
+        for (let round = 0; round < 6; round++) {
+            pending.splice(0).forEach((resolve) => resolve());
+            await flush();
+        }
+        const [carriedA, carriedB] = await Promise.all([a, b]);
+        expect(carriedB[0].media?.[0]).toMatchObject({ url: `https://cdn.test/${small.byteLength}` });
+        expect(carriedB[0].media?.[0]).not.toHaveProperty('gone');
+        // A's own two lines of the 2 MiB file are gone: its budget cannot hold it
+        expect(carriedA[0].media?.slice(1).every((one) => one.gone === true)).toBe(true);
+    });
+
     it('keeps the name of each line a device brings in parts', () => {
         expect(readCarriedLines([{ ...LINE, id: '17.3' }, { from: 'brick', text: 'ok', at: 2, id: 'bad id!' }]).map((line) => line.id)).toEqual(['17.3', undefined]);
     });

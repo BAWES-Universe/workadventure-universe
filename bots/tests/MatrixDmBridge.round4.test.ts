@@ -311,6 +311,42 @@ describe('a message that arrives while the store that knows the chat is down', (
         bridge.stop();
     });
 
+    it('does not answer a recovered message after a newer one was answered while it waited on Orbit', async () => {
+        vi.useFakeTimers({ now: 1_700_000_000_000 });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        // The first answer to be started waits on Orbit for the Brick's settings
+        let release: () => void = () => undefined;
+        let asked = 0;
+        stores.deps.getBotConfig = vi.fn(async () => {
+            if (++asked === 1) await new Promise<void>((resolve) => (release = resolve));
+            return { botId: BOT, name: 'Nora', enabled: true, aiProviderRef: 'p' } as never;
+        });
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        const sent = Date.now();
+        await bridge.onEvent({ ...message('first'), origin_server_ts: sent });
+        down = false;
+        // The kept first message is tried again and waits on Orbit; a newer one then arrives and is answered
+        await vi.advanceTimersByTimeAsync(2100);
+        expect(asked).toBe(1);
+        await bridge.onEvent({ ...message('second'), origin_server_ts: sent + 1000 });
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        release();
+        await vi.advanceTimersByTimeAsync(5000);
+        // The older one is not answered after the newer one
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        expect(stores.deps.reply.mock.calls[0][2]).toBe('second');
+        bridge.stop();
+    });
+
     it('lets go of a kept message once it is a day old, however many times it was kept again', async () => {
         vi.useFakeTimers({ now: 1_700_000_000_000 });
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
