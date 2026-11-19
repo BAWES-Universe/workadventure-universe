@@ -429,6 +429,7 @@ describe('MatrixDmBridge: an answer from nearby chat, kept once in direct messag
     it('never throws, whatever the stores or the homeserver do', async () => {
         deps.rooms.getDmRoomOf.mockRejectedValue(new Error('redis down'));
         deps.rooms.getDmRoomBot.mockRejectedValue(new Error('redis down'));
+        (bridge as any).roomLookupWaitMs = 0;
         deps.checkAccess.mockRejectedValue(new Error('orbit down'));
         await expect(bridge.keepNearbyAnswer(BOT, ALICE, ANSWER)).resolves.toBeUndefined();
         await expect(bridge.openedFromNearby(BOT, ALICE, ROOM)).resolves.toBeUndefined();

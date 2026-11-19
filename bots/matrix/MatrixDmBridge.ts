@@ -230,6 +230,13 @@ const RESTING_LINE_REPEAT_MS = 6 * 60 * 60 * 1000;
 const NOTE_TIMES_MAX = 5000;
 /** A message left with a resting bot is answered when it is back within this long; older ones are dropped. */
 const WAITING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long a lookup of the room's bot that cannot be answered strictly (a tap, a person or the bot leaving) waits for a store that is
+ * reconnecting, asking again every ROOM_LOOKUP_POLL_MS, before it counts the room as unknown. Before the shared store started to say that it
+ * is down, such a lookup queued behind the reconnect and was answered when Redis came back.
+ */
+const ROOM_LOOKUP_WAIT_MS = 5_000;
+const ROOM_LOOKUP_POLL_MS = 250;
 /** How often bots with waiting messages (only those) are checked for being back. */
 const WAITING_CHECK_MS = 5 * 60 * 1000;
 const WAITING_BODY_MAX = 4000;
@@ -339,6 +346,9 @@ function ownEventToRedact(event: MatrixEvent, userId: string): boolean {
 
 export class MatrixDmBridge implements MatrixEventHandler {
     private roomBots = new Map<string, string>();
+    /** Settable for tests: how long a non-strict room lookup waits for the store to come back. */
+    private roomLookupWaitMs = ROOM_LOOKUP_WAIT_MS;
+    private roomLookupPollMs = ROOM_LOOKUP_POLL_MS;
     private botNames = new Map<string, string>();
     private accessCache = new Map<string, { result: DmAccessResult; at: number }>();
     /** When each kind of note last went to a chat, keyed `room|state`; and the resting bot's own line, keyed by room. */
@@ -1361,12 +1371,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const known = this.roomBots.get(roomId);
         if (known) return known;
         let stored: string | null;
-        try {
-            stored = (await this.deps.rooms?.getDmRoomBot(roomId)) ?? null;
-        } catch (error: any) {
-            if (strict) throw error;
-            console.warn(`[MatrixDmBridge] Could not look up the bot for ${roomId}:`, error?.message ?? error);
-            return null;
+        // Strict callers decide for themselves what to do with a store that is down; the others ask again for a while, then count the room as unknown
+        const giveUpAt = Date.now() + this.roomLookupWaitMs;
+        for (;;) {
+            try {
+                stored = (await this.deps.rooms?.getDmRoomBot(roomId)) ?? null;
+                break;
+            } catch (error: any) {
+                if (strict) throw error;
+                if (Date.now() + this.roomLookupPollMs > giveUpAt || this.stopping) {
+                    console.warn(`[MatrixDmBridge] Could not look up the bot for ${roomId}:`, error?.message ?? error);
+                    return null;
+                }
+                await new Promise((resolve) => setTimeout(resolve, this.roomLookupPollMs));
+            }
         }
         if (stored) this.roomBots.set(roomId, stored);
         return stored;
