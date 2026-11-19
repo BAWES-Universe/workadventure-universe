@@ -1,6 +1,7 @@
 import type { BotData, BotUser } from "../../external-modules/bots/types";
 import { botIdFromChatId } from "../Bots/BotChatStatus";
 import { NAME_MAX } from "../../external-modules/bots/roomBricksModel";
+import type { WokaData, WokaTexture } from "../../Components/Woka/WokaTypes";
 
 /**
  * A person's own Brick (game #1995): a bot that lives in its owner's chats instead of a room on the map. Everyone who is
@@ -193,6 +194,16 @@ export const DEFAULT_BRICK_LOOK: BrickLook = "brick-orange";
 
 export function isBrickLook(look: string | null | undefined): look is BrickLook {
     return typeof look === "string" && (BRICK_LOOKS as readonly string[]).includes(look);
+}
+
+/**
+ * The WOKAs a Brick can wear, for the WOKAs tab of New Brick and of a Brick's look picker. The twelve Brick colours are in
+ * the same list (the map draws them), and the Bricks tab already shows them, so they are not WOKAs.
+ */
+export function wokasToWear(catalog: WokaData | null | undefined): WokaTexture[] {
+    return (catalog?.woka?.collections ?? [])
+        .flatMap((collection) => collection.textures)
+        .filter((texture) => !isBrickLook(texture.id));
 }
 
 /**
