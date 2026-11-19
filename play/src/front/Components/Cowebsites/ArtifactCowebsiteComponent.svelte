@@ -117,8 +117,6 @@
      */
     let addressEndsAt: number | undefined;
     let renewTimer: ReturnType<typeof setTimeout> | undefined;
-    /** When the renewal set up by watchAddress is due: kept while an opening drops the timer, so a dropped renewal is not late. */
-    let renewDueAt: number | undefined;
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
     /** A renewal was asked for while another opening was on its way, and is still wanted if that one does not come on show. */
@@ -351,7 +349,6 @@
 
     function forgetAddress() {
         renewIn(undefined);
-        renewDueAt = undefined;
         addressEndsAt = undefined;
         addressOver = false;
     }
@@ -362,11 +359,19 @@
         if (!renewalDropped) return;
         renewalDropped = false;
         if (opened && (renewWhenFree || (opened.version.url !== null && opened.version.urlHasMedia))) {
-            // One that had a time is renewed at that time (at once when it has passed), never later: its address stops then.
-            // Only a renewal that was asked for without a time waits the quick retry.
-            renewIn(renewDueAt === undefined ? RENEW_RETRY_MS : Math.max(0, renewDueAt - Date.now()));
+            renewIn(renewWait(opened.version));
         }
         renewWhenFree = false;
+    }
+
+    /**
+     * How long until the version on show is to be renewed: from when its address stops (known, whatever happened to its timer meanwhile),
+     * the same lead watchAddress uses; at once when that time has come. Only a renewal with no address end to go by waits the quick retry.
+     */
+    function renewWait(version: ArtifactVersionInfo): number {
+        const life = version.urlLifeMs;
+        if (addressEndsAt === undefined || life === undefined || !version.urlHasMedia) return RENEW_RETRY_MS;
+        return Math.max(0, addressEndsAt - Math.min(RENEW_LEAD_MS, life / 10) - Date.now());
     }
 
     /** Opens the version on show again after `wait`, in place of any wait already set; with none, never. */
@@ -386,10 +391,7 @@
         addressEndsAt = Date.now() + life;
         if (!version.urlHasMedia) return;
         const wait = Math.max(RENEW_MIN_WAIT_MS, life - Math.min(RENEW_LEAD_MS, life / 10));
-        if (wait <= MAX_TIMER_MS) {
-            renewDueAt = Date.now() + wait;
-            renewIn(wait);
-        }
+        if (wait <= MAX_TIMER_MS) renewIn(wait);
     }
 
     function addressStopped(): boolean {
@@ -405,8 +407,6 @@
             renewWhenFree = true;
             return;
         }
-        // Its time has come: whatever is set up next brings its own time
-        renewDueAt = undefined;
         const turn = ++renewal;
         const number = shownNumber;
         // Dropped when another version came on show meanwhile, it was put away, or it was asked for again

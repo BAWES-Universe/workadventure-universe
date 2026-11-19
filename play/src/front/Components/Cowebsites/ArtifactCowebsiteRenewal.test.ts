@@ -328,6 +328,44 @@ describe("an artifact window's renewals of the address on show", () => {
         view.$destroy();
     });
 
+    it("renews at once when version 2 starts to open while the renewal of version 1 is in flight and fails after that time", async () => {
+        vi.useFakeTimers();
+        let answerRenewal: (value: unknown) => void = () => {};
+        let failTwo: () => void = () => {};
+        let asked = 0;
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, wanted: number | undefined) => {
+            asked++;
+            if (asked === 1) return Promise.resolve(opened(1, "https://files.test/1-first"));
+            if (asked === 2)
+                // The renewal that starts at 270 s: it is slow
+                return new Promise((resolve) => {
+                    answerRenewal = resolve;
+                });
+            if (wanted === 2)
+                return new Promise((_resolve, reject) => {
+                    failTwo = () => reject(new Error("offline"));
+                });
+            return Promise.resolve(opened(1, `https://files.test/1-renewed-${asked}`));
+        });
+        const { version, target, view } = mount();
+        await settle();
+        await vi.advanceTimersByTimeAsync(271_000);
+        expect(asked).toBe(2);
+        // Version 2 starts to open at 275 s: the renewal in flight is dropped; it fails at 280 s, before the address stops at 300 s
+        await vi.advanceTimersByTimeAsync(4_000);
+        version.set(2);
+        await settle();
+        await vi.advanceTimersByTimeAsync(5_000);
+        failTwo();
+        await settle();
+        // Renewed at once (a retry 30 s later would be 310 s), and the dropped renewal's late answer is never applied
+        expect(asked).toBe(4);
+        answerRenewal(opened(1, "https://files.test/1-stale"));
+        await settle();
+        expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/1-renewed-4");
+        view.$destroy();
+    });
+
     it("renews version 1 at its original time, not 30 s after a failed opening of version 2 that ends sooner", async () => {
         vi.useFakeTimers();
         const run = failingTwo();
