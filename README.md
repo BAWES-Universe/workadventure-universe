@@ -31,43 +31,17 @@ Walk up to someone and you are in a video call. Build your rooms right on the ma
 
 ## What you can do
 
-**Meet and talk**
-- Walk up to someone and a video call starts. Walk away and it ends. ([Proximity chat](https://bawes.net/features/proximity-chat))
-- [Meeting rooms](https://bawes.net/features/meeting-rooms), [screen sharing](https://bawes.net/features/screen-sharing) and [follow](https://bawes.net/features/follow).
-- [Broadcast](https://bawes.net/features/broadcasting) to a whole room or world: a message, a voice note, or go live.
-- [Chat and DMs](https://bawes.net/features/text-chat) with [reactions](https://bawes.net/features/emoji-reactions), replies and files.
+- **Meet and talk.** Walk up to someone and a video call starts. Meeting rooms, screen sharing, broadcast, chat and DMs.
+- **Bricks.** AI bots that live on the map, remember, talk and listen, and use Apps and goals to get things done.
+- **Build your space.** Edit your room right on the map, start from a template or bring your own Tiled map.
+- **Run it with Orbit.** Manage universes, worlds, rooms, members, Bricks, Apps and usage.
+- **Host it yourself.** Docker Compose or Helm, any OIDC provider, and an admin API.
 
-**AI bots**
-- Bots that live on the map. They walk, [greet people](https://bawes.net/features/bot-greetings), [remember](https://bawes.net/features/bot-memory) and [answer as they type](https://bawes.net/features/bot-streaming).
-- They can [use tools](https://bawes.net/features/bot-tools), [read files](https://bawes.net/features/bot-file-parsing) and [send pictures](https://bawes.net/features/bot-media-sending).
-- Connect them to [MCP servers](https://bawes.net/mcp-integration). Make them in the [bot editor](https://bawes.net/features/bot-editor).
+The full list, with links, is in [docs/universe/features.md](docs/universe/features.md). Or see [every feature on bawes.net](https://bawes.net/features-overview).
 
-**Build your space**
-- [Edit your room on the map](https://bawes.net/features/map-editor): objects, [areas](https://bawes.net/features/area-zones), bots, with undo and redo.
-- Start from a [map template](https://bawes.net/features/map-templates) or bring your own [Tiled map](https://bawes.net/features/maps).
-- [Woka avatars](https://bawes.net/features/woka-avatars) and the [scripting API](https://bawes.net/features/scripting).
+## Releases
 
-**Run it with Orbit**
-- [Orbit](https://bawes.net/features/orbit-operator) is where you manage universes, worlds, rooms, members and bots. It lives in [workadventure-universe-admin](https://github.com/BAWES-Universe/workadventure-universe-admin).
-
-**Host it yourself**
-- [Docker Compose or Helm](https://bawes.net/features/self-hosting), sign in with any [OIDC provider](https://bawes.net/features/oidc-auth), and an [admin API](https://bawes.net/features/admin-api).
-
-**[See every feature on bawes.net →](https://bawes.net/features-overview)**
-
-## What's new in v0.3
-
-- **A new look.** The game and Orbit now share one dark Universe style.
-- **Edit your room on the map.** Objects, areas and bots, on a computer or a phone. ([Map editor](https://bawes.net/features/map-editor))
-- **Look around the map.** See the whole room and its places, then walk there.
-- **Broadcast.** Send a message or a voice note to a room or a world, or go live. ([Broadcasting](https://bawes.net/features/broadcasting))
-- **Raise your hand** in a call.
-- **Chat.** Reactions and replies nearby, and drop files into chat or onto the map.
-- **Bots** keep to their own area and come over to people.
-- **Orbit.** See who is live, answer invitations, your passport, and recent visitors to the places you manage.
-- **Safer.** Only the right people can kick, edit maps or change bots, and emails stay private.
-
-Full list: [v0.3.0 release notes](https://github.com/BAWES-Universe/workadventure-universe/releases).
+What changed in each release is in [CHANGELOG.md](CHANGELOG.md). The latest release is on the [releases page](https://github.com/BAWES-Universe/workadventure-universe/releases) (the badge at the top shows it).
 
 ## How Universe fits together
 
@@ -117,22 +91,7 @@ You can view the Traefik dashboard at http://traefik.workadventure.localhost
 
 (Test user is "User1" and password is "pwd")
 
-If you want to disable the OIDC mock server (for anonymous access), you can run:
-
-```console
-$ docker-compose -f docker-compose.yaml -f docker-compose-no-oidc.yaml up
-```
-
-Note: on some OSes, you will need to add this line to your `/etc/hosts` file:
-
-**/etc/hosts**
-```
-127.0.0.1 oidc.workadventure.localhost redis.workadventure.localhost play.workadventure.localhost traefik.workadventure.localhost matrix.workadventure.localhost extra.workadventure.localhost icon.workadventure.localhost map-storage.workadventure.localhost uploader.workadventure.localhost maps.workadventure.localhost api.workadventure.localhost front.workadventure.localhost
-```
-
-### Troubleshooting
-
-See our [troubleshooting guide](docs/others/troubleshooting.md).
+More options (anonymous access without the OIDC mock, the hosts file, troubleshooting) are in [docs/universe/development.md](docs/universe/development.md).
 
 ## Building maps
 
