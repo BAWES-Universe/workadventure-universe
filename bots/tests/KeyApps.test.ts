@@ -321,10 +321,15 @@ describe('the two tools of a Brick for keys', () => {
         }
     });
 
-    it('teach a page to hear a payment result only from its own parent window, and only while its checkout waits', () => {
+    it('teach a page to hear a payment result only from its own parent window, only while its checkout waits, and only with its own request id', () => {
         const description = String(keyToolDefinitions().find((tool) => tool.function.name === PAYMENT_TOOL)?.function.description);
         expect(description).toContain('e.source !== window.parent');
         expect(description).toContain('!waiting');
+        // ...and only for its own request: the game echoes the id back, so an earlier checkout's result is ignored
+        expect(description).toContain('request: waiting');
+        expect(description).toContain('e.data.request !== waiting');
+        expect(description).toMatch(/result of an earlier checkout/);
+        expect(description).toContain('"busy"');
         expect(description).toMatch(/Show "paid" only for status "paid" heard that way/);
     });
 

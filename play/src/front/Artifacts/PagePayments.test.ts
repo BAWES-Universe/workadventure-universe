@@ -19,13 +19,17 @@ const otherWindow = { postMessage: vi.fn() } as unknown as Window;
 function ask(
     payments: ReturnType<typeof pagePayments>,
     source: Window = frameWindow,
-    data: unknown = { universe: "use-app", app: "examplepay" }
+    data: unknown = { universe: "use-app", app: "examplepay", request: "r1" }
 ) {
     payments.onMessage({ source, data } as unknown as MessageEvent);
 }
 const flush = async () => {
     await vi.advanceTimersByTimeAsync(0);
 };
+const toldAll = () =>
+    (frameWindow.postMessage as ReturnType<typeof vi.fn>).mock.calls.map(
+        (call) => call[0] as { universe: string; status: string; request?: string }
+    );
 const told = () =>
     (frameWindow.postMessage as ReturnType<typeof vi.fn>).mock.calls.map(
         (call) => (call[0] as { status: string }).status
@@ -65,8 +69,15 @@ describe("a page that takes payments, in the game's window", () => {
         ask(payments, frameWindow, { universe: "other", app: "examplepay" });
         ask(payments, frameWindow, { universe: "use-app" });
         ask(payments, frameWindow, null);
+        // No id of its own, or one that is not plain: no answer could be told apart, so none is given
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: 7 });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "a b" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "x".repeat(65) });
         await flush();
         expect(pay).not.toHaveBeenCalled();
+        expect(frameWindow.postMessage).not.toHaveBeenCalled();
     });
 
     it("starts the owner's checkout, sends the buyer there, and tells the page only a status", async () => {
@@ -77,7 +88,7 @@ describe("a page that takes payments, in the game's window", () => {
             .mockResolvedValueOnce({ status: "checking", checkoutUrl: null, testPayment: false })
             .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: true });
         const payments = make(pay, () => popup);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", amount: "1.000", job: "x" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", amount: "1.000", job: "x" });
         await flush();
         // The message carried no amount and none is sent
         expect(pay).toHaveBeenNthCalledWith(1, "a1", undefined, { start: true });
@@ -90,6 +101,8 @@ describe("a page that takes payments, in the game's window", () => {
         expect(pay).toHaveBeenNthCalledWith(3, "a1", undefined, { order: "o1" });
         expect(get(payments.line)).toMatchObject({ checking: false, paid: { test: true } });
         expect(told()).toEqual(["started", "paid"]);
+        // Every status carries the page's own request id back
+        expect(toldAll().map((m) => m.request)).toEqual(["r1", "r1"]);
         // Nothing but a status went to the page
         expect(JSON.stringify((frameWindow.postMessage as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(
             "checkout"
@@ -106,6 +119,50 @@ describe("a page that takes payments, in the game's window", () => {
         ask(payments);
         await flush();
         expect(get(payments.line).resume).toEqual({ url: "https://checkout.examplepay.com/c1", app: "Example" });
+        payments.destroy();
+    });
+
+    it("never gives the result of an earlier checkout to a newer request, after a reload or a second tap", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay, () => null);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        // The page was reloaded (or asked again): it has a new id while the first checkout is still open
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        // The same tap heard twice is not a new request
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        expect(pay).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(3_000);
+        // "paid" is for the first checkout only: the newer request was told "busy" and never hears "paid"
+        expect(toldAll()).toEqual([
+            { universe: "app-result", status: "started", request: "first" },
+            { universe: "app-result", status: "busy", request: "second" },
+            { universe: "app-result", status: "paid", request: "first" },
+        ]);
+        expect(toldAll().filter((m) => m.request === "second" && m.status === "paid")).toEqual([]);
+    });
+
+    it("answers the newer request under its own id once the earlier checkout has ended", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValueOnce({ status: "not_paid", checkoutUrl: null, testPayment: false })
+            .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" });
+        const payments = make(pay, () => null);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        await flush();
+        await vi.advanceTimersByTimeAsync(3_000);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        await flush();
+        expect(toldAll().map((m) => `${m.request}:${m.status}`)).toEqual([
+            "first:started",
+            "first:not_paid",
+            "second:started",
+        ]);
         payments.destroy();
     });
 

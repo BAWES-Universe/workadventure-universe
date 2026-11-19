@@ -5,10 +5,14 @@ import type { ArtifactChat, ArtifactPay } from "./ArtifactApi";
 
 /**
  * The bridge between a page that takes payments and Universe, inside the game's artifact window (Keys for Apps, game #2044).
- * The page runs in a locked frame and can post one kind of message: `{ universe: "use-app", app }`, asking for the checkout its
- * owner set up. Everything real is decided on the server: only the frame of this window is listened to, the amount and the service
+ * The page runs in a locked frame and can post one kind of message: `{ universe: "use-app", app, request }`, asking for the checkout its
+ * owner set up. `request` is a short id the page makes up for that tap, and every answer carries it back, so a page (a reloaded one, or
+ * one that asked twice) never takes the result of another checkout as its own. Everything real is decided on the server: only the frame of this window is listened to, the amount and the service
  * are the owner's (the message carries neither), and the page hears back only a status, never an address, a key or an order.
  */
+
+/** The id a page gives its request: short and plain, so it can only be echoed back and never carry anything else. */
+const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type PayProblem = "unavailable" | "limit" | "not_paid" | "cant_confirm";
 
@@ -67,9 +71,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let tabWatch: ReturnType<typeof setInterval> | undefined;
     let destroyed = false;
+    // The id the page gave the checkout that is on its way: every status about that checkout carries it
+    let activeRequest = "";
 
-    // The frame has no origin of its own, so it can only be addressed with "*": the message holds nothing but a status
-    const tell = (status: string) => options.frame()?.postMessage({ universe: "app-result", status }, "*");
+    // The frame has no origin of its own, so it can only be addressed with "*": the message holds nothing but a status and the
+    // page's own request id. The page, not this window, decides what it trusts: only its parent, and only its own request.
+    const tellRequest = (status: string, request: string) =>
+        options.frame()?.postMessage({ universe: "app-result", status, request }, "*");
+    const tell = (status: string) => tellRequest(status, activeRequest);
 
     const end = (update: Partial<PayLine>, status: string) => {
         busy = false;
@@ -126,9 +135,18 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const onMessage = (event: MessageEvent) => {
         const frame = options.frame();
         if (!frame || event.source !== frame) return;
-        const data = event.data as { universe?: unknown; app?: unknown } | null;
-        if (!data || data.universe !== "use-app" || typeof data.app !== "string" || busy) return;
+        const data = event.data as { universe?: unknown; app?: unknown; request?: unknown } | null;
+        if (!data || data.universe !== "use-app" || typeof data.app !== "string") return;
+        // A request without a valid id of its own is never answered: there would be no way to tell whose answer it is
+        if (typeof data.request !== "string" || !REQUEST_ID.test(data.request)) return;
+        if (busy) {
+            // The same tap heard twice is the same request. Another request while a checkout is on its way is told so under its own
+            // id, and the checkout that is on its way keeps its own: its result is never handed to the newer request.
+            if (data.request !== activeRequest) tellRequest("busy", data.request);
+            return;
+        }
         busy = true;
+        activeRequest = data.request;
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
         let popup: Window | null = null;
         try {
