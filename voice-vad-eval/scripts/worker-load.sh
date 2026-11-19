@@ -13,6 +13,10 @@ case $SECONDS_PER_RUN in ''|*[!0-9]*) echo "seconds per run must be a whole numb
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 IMAGE=node:22-bookworm-slim
 CPUS=${CPUS:-1}
+# The revision of these measuring tools, written into every result: the commit, and "+changes" when files differ from it
+HARNESS_REVISION=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)
+[ -z "$(git -C "$REPO" status --porcelain -- voice-vad-eval voice-worker 2>/dev/null)" ] || HARNESS_REVISION="$HARNESS_REVISION+changes"
+export HARNESS_REVISION
 RUNS=${RUNS:-"lane:0 lane:1 lane:5 lane:20 room:5 room:20"}
 mkdir -p "$OUT"
 # Absolute paths: they go to docker -v, where a relative one would name a volume rather than a folder
@@ -42,7 +46,7 @@ run() { # name observer(0|1) people path
   docker rm -f worker-load >/dev/null 2>&1 || true
   docker run -d --name worker-load --network host --memory=512m --memory-swap=512m --cpus="$CPUS" \
     -v "$REPO":/repo:ro -v "$DATA":/data:ro -v "$OUT":/out -w /repo/voice-vad-eval \
-    -e VOICE_WORKER_PORT=8830 -e ORT_DISABLE_TELEMETRY=1 -e LOAD_SUMMARY="/out/$name.worker.json" -e LOAD_TRACE="/out/$name.memory.tsv" \
+    -e HARNESS_REVISION -e VOICE_WORKER_PORT=8830 -e ORT_DISABLE_TELEMETRY=1 -e LOAD_SUMMARY="/out/$name.worker.json" -e LOAD_TRACE="/out/$name.memory.tsv" \
     $( [ "$observer" = 1 ] && echo "-e VOICE_SPEECH_OBSERVER=1 -e VOICE_SPEECH_OBSERVER_MODEL=/data/silero_vad_v6.2.3.onnx -e VOICE_SPEECH_OBSERVER_RUNTIME=/repo/voice-vad-eval/node_modules/onnxruntime-node" ) \
     $IMAGE node --import tsx src/worker-under-load.ts >/dev/null
   healthy=0

@@ -81,12 +81,17 @@ const sampler = setInterval(() => {
     }
 }, 500);
 
+// When this process's measured stretch began and ended (its own clock, as UTC): the load generators record theirs the same
+// way, so a difference between the stretches of the two can be read off the results
+let measuredFromAt: string | undefined;
 process.on('SIGUSR2', () => {
+    measuredFromAt = new Date().toISOString();
     loop.reset();
     samples.length = 0;
     mark = { at: performance.now(), box: container(), counters: worker.counters.snapshot() };
 });
 process.on('SIGUSR1', () => {
+    const measuredToAt = new Date().toISOString();
     const seconds = (performance.now() - mark.at) / 1000;
     const box = container();
     const peakMb = box.peakMb ?? Math.max(sampledPeakMb, box.currentMb);
@@ -106,6 +111,10 @@ process.on('SIGUSR1', () => {
         JSON.stringify(
             {
                 observer: options.speechObserver ? 'on' : 'off',
+                // The revision of the harness that wrote this file (HARNESS_REVISION, set by the scripts), and the stretch it measured
+                harnessRevision: process.env.HARNESS_REVISION ?? null,
+                measuredFrom: measuredFromAt ?? null,
+                measuredTo: measuredToAt,
                 node: process.version,
                 arch: process.arch,
                 cpuModel: os.cpus()[0]?.model,
@@ -179,7 +188,7 @@ process.on('SIGUSR1', () => {
 });
 process.on('SIGTERM', async () => {
     clearInterval(sampler);
-    // How long closing takes with whatever is still connected, and what the observer still held just before
+    // How long closing takes with the sessions and own connections still open, and what the observer still held just before (the state of each person in a room is not recorded)
     const before = worker.stats() as { sessions?: number; lanes?: number; speechObserver?: unknown };
     const started = performance.now();
     await worker.close();

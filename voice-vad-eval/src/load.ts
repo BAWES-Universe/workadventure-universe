@@ -96,21 +96,23 @@ const tally = { joins: 0, joinFailures: 0, leaves: 0, sent: 0, sentMuted: 0, wit
 const all: Stream[] = [];
 // The measured stretch: SIGUSR2 starts it and SIGUSR1 ends it, at the same moments as for the worker (scripts/worker-load.sh),
 // so what the worker heard in it can be set against what was sent in it
+let measuredFromAt: string | undefined;
 let measuredFrom: { at: number; sent: number; sentMuted: number; withheld: number } | undefined;
-let measured: { seconds: number; sent: number; sentMuted: number; withheld: number; audioSecondsSent: number } | undefined;
+let measured: { from: string; to: string; seconds: number; sent: number; sentMuted: number; withheld: number; audioSecondsSent: number } | undefined;
 process.on('SIGUSR2', () => {
+    measuredFromAt = new Date().toISOString();
     measuredFrom = { at: performance.now(), sent: tally.sent, sentMuted: tally.sentMuted, withheld: tally.withheld };
 });
 process.on('SIGUSR1', () => {
     if (!measuredFrom) return;
     const sent = tally.sent - measuredFrom.sent;
-    measured = { seconds: Math.round((performance.now() - measuredFrom.at) / 1000), sent, sentMuted: tally.sentMuted - measuredFrom.sentMuted, withheld: tally.withheld - measuredFrom.withheld, audioSecondsSent: Math.round((sent * (path === 'room' ? 10 : 20)) / 1000) };
+    measured = { from: measuredFromAt ?? '', to: new Date().toISOString(), seconds: Math.round((performance.now() - measuredFrom.at) / 1000), sent, sentMuted: tally.sentMuted - measuredFrom.sentMuted, withheld: tally.withheld - measuredFrom.withheld, audioSecondsSent: Math.round((sent * (path === 'room' ? 10 : 20)) / 1000) };
     write();
 });
 
 // Written when the measured stretch ends (the worker may be closed under this generator's feet afterwards) and again at the end
 function write(): void {
-    writeFileSync(out, JSON.stringify({ path, streams, bubbles: bubbles.length, peoplePerBubble: perBubble, muteEverySeconds: muteEveryMs / 1000, muteForMs, seconds, ...tally, measured, stillConnected: all.filter((s) => s.joined).length }, null, 2));
+    writeFileSync(out, JSON.stringify({ harnessRevision: process.env.HARNESS_REVISION ?? null, path, streams, bubbles: bubbles.length, peoplePerBubble: perBubble, muteEverySeconds: muteEveryMs / 1000, muteForMs, seconds, ...tally, measured, stillConnected: all.filter((s) => s.joined).length }, null, 2));
 }
 const roster = (identity: string, extra: object = {}) => ({ spaceUserId: identity, uuid: `uuid-${identity}`, tags: [], name: identity, ...extra }) as never;
 /** Everyone the bubble's roster names now: its people who are in, and the bot. */

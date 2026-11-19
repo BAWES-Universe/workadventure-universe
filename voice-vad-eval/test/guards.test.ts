@@ -153,3 +153,23 @@ describe('worker-load.sh', () => {
         assert.doesNotMatch(readFileSync(bad.calls, 'utf8'), /kill -s USR2/);
     });
 });
+
+describe('the table of the load runs', () => {
+    const workerFile = (extra: object) => ({ observer: 'off', seconds: 160, memory: { peakMb: 100, peakProcessRssMbSampled: 150, oomKills: 0 }, cpu: { coresUsed: 0.4, throttledSeconds: 0 }, eventLoopDelayMs: { p50: 5, p99: 6, max: 7 }, heard: { frames: 1000 }, ...extra });
+    const table = (worker: object, loadMeasured: object) => {
+        const dir = scratch();
+        writeFileSync(join(dir, 'room-off-5.worker.json'), JSON.stringify(worker));
+        writeFileSync(join(dir, 'room-off-5.load.json'), JSON.stringify({ joins: 5, leaves: 0, errors: [], measured: { sent: 990, ...loadMeasured } }));
+        return spawnSync('python3', ['-I', join(root, 'scripts', 'worker-load-table.py'), dir], { encoding: 'utf8' });
+    };
+
+    it('says that heard and sent are not comparable when the stretches are not on record, or are not the same', () => {
+        const older = table(workerFile({}), {});
+        assert.equal(older.status, 0, older.stderr);
+        assert.match(older.stdout, /Heard and sent are not directly comparable in:\n- room-off-5: .*not recorded/);
+        const apart = table(workerFile({ measuredFrom: '2026-11-19T10:00:00Z', measuredTo: '2026-11-19T10:02:40Z' }), { from: '2026-11-19T10:00:00Z', to: '2026-11-19T10:02:45Z' });
+        assert.match(apart.stdout, /room-off-5: .*differ by more than a second/);
+        const same = table(workerFile({ measuredFrom: '2026-11-19T10:00:00Z', measuredTo: '2026-11-19T10:02:40Z' }), { from: '2026-11-19T10:00:00.4Z', to: '2026-11-19T10:02:40.6Z' });
+        assert.doesNotMatch(same.stdout, /not directly comparable/);
+    });
+});

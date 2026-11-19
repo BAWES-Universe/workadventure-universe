@@ -3,8 +3,9 @@
 # on. One worker hears both paths at once: bubbles of several people on their own connections (proximity WebRTC) and
 # LiveKit rooms of several people. People talk over each other, leave and come back, lose audio, and one at a time
 # stops being heard for a moment (2 s on their own connection, 0.4 s in a room) while the rest of their bubble carries
-# on; each bot speaks every ten seconds. At the end the worker is told to close with everyone still connected, and how
-# long that took is kept.
+# on; each bot speaks every ten seconds. At the end the worker is told to close while the load generators are still running,
+# and how long that took is kept, with the sessions and the own connections the worker had open at that moment (the state of each
+# person in a room is not recorded).
 #   scripts/worker-soak.sh <data dir> <out dir> [measured seconds, default 1800]
 # By default the "on" run is followed by the "off" run on one port. To run them side by side, as the kept results were,
 # start it twice into the same out dir:  RUNS=on PORT=8830 ...  and  RUNS=off PORT=8831 ...
@@ -17,6 +18,10 @@ case $MEASURED in ''|*[!0-9]*) echo "measured seconds must be a whole number, go
 [ "$MEASURED" -gt 0 ] || { echo "measured seconds must be more than 0" >&2; exit 2; }
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 IMAGE=${IMAGE:-voice-worker:observer-packaged}
+# The revision of these measuring tools, written into every result: the commit, and "+changes" when files differ from it
+HARNESS_REVISION=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)
+[ -z "$(git -C "$REPO" status --porcelain -- voice-vad-eval voice-worker 2>/dev/null)" ] || HARNESS_REVISION="$HARNESS_REVISION+changes"
+export HARNESS_REVISION
 CPUS=${CPUS:-1}; MEMORY=${MEMORY:-512m}
 LANE_PEOPLE=${LANE_PEOPLE:-9}; ROOM_PEOPLE=${ROOM_PEOPLE:-6}; PER=${PEOPLE_PER_BUBBLE:-3}; MUTE=${MUTE_EVERY_S:-20}
 # In a LiveKit room the mute lasts 0.4 s, not 2 s: today's worker does not hear a room person again when their microphone is
@@ -58,7 +63,7 @@ run() { # name, the switch (or nothing)
   docker rm -f $NAME >/dev/null 2>&1 || true
   docker run -d --name $NAME --network host --memory="$MEMORY" --memory-swap="$MEMORY" --cpus="$CPUS" \
     -v "$REPO/voice-vad-eval/src/worker-under-load.ts":/soak/worker-under-load.mts:ro -v "$OUT":/out \
-    -e WORKER_ROOT=/app -e VOICE_WORKER_PORT=$PORT -e VOICE_WORKER_HOST=127.0.0.1 \
+    -e WORKER_ROOT=/app -e HARNESS_REVISION -e VOICE_WORKER_PORT=$PORT -e VOICE_WORKER_HOST=127.0.0.1 \
     -e LOAD_SUMMARY="/out/$name.worker.json" -e LOAD_TRACE="/out/$name.trace.tsv" -e LOAD_SHUTDOWN="/out/$name.shutdown.json" \
     "$@" "$IMAGE" node --import tsx /soak/worker-under-load.mts >/dev/null
   healthy=0
@@ -87,7 +92,7 @@ run() { # name, the switch (or nothing)
   kill -USR1 $L1 $L2 2>/dev/null || true; docker kill -s USR1 $NAME >/dev/null 2>&1 || true
   date -u +"measured to %FT%TZ" >> "$OUT/$name.times.txt"
   sleep 2
-  # Closing with everyone still connected and still talking
+  # Closing while the generators still run: the worker's record says how many sessions and own connections it had open, not who was in a room
   docker kill -s TERM $NAME >/dev/null 2>&1 || true
   timeout 60 docker wait $NAME > "$OUT/$name.exit.txt" 2>&1 || echo "did not exit within 60 s" > "$OUT/$name.exit.txt"
   date -u +"closed by %FT%TZ" >> "$OUT/$name.times.txt"

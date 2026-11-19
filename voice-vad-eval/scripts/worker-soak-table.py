@@ -86,7 +86,7 @@ row("times one person stopped being heard for a moment", lambda r: r["lane"]["mu
 row("replies the bots spoke", lambda r: r["lane"]["said"] + r["room"]["said"])
 row("turns today's gate opened; times it stopped the bot's voice", lambda r: f'{r["w"]["heard"]["speechTurns"]}; {r["w"]["heard"]["bargeIns"]}')
 row("generator errors; bridge links lost", lambda r: f'{len(r["lane"]["errors"]) + len(r["room"]["errors"])}; {r["lane"]["linkDowns"] + r["room"]["linkDowns"]}')
-row("closing with everyone still connected, ms (sessions, connections at that moment)", lambda r: f'{r["shut"]["closeMs"]} ({r["shut"]["sessionsAtClose"]}, {r["shut"]["lanesAtClose"]})' if r["shut"] else "no record")
+row("closing while the load generators were still running, ms (sessions open, own connections open at that moment; the people in rooms are not counted in the record)", lambda r: f'{r["shut"]["closeMs"]} ({r["shut"]["sessionsAtClose"]}, {r["shut"]["lanesAtClose"]})' if r["shut"] else "no record")
 print("| | observer off | observer on |")
 print("| --- | --- | --- |")
 for r in rows:

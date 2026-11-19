@@ -184,7 +184,7 @@ One worker hears both paths at once, 15 people in 5 sessions:
   off and then back to talk. 2 s later on their own connection; 0.4 s later in a room, because of the side finding in
   section 8 (with 2 s the rooms would have been half unheard for a reason that has nothing to do with the observer).
 - All 15 are heard hands-free (the group rule that waits for "keep listening" is off), so this is the heavier case.
-- At the end the worker is told to close with everyone still connected and talking.
+- At the end the worker is told to close while the load generators are still running. The record keeps how long closing took and how many sessions and own connections were open at that moment, not the state of each person in a room.
 
 Each run measured the same 30 minutes, after everyone was in: the "on" worker and the "off" worker ran **side by side**,
 each in its own container with its own caps and its own two load generators, sharing one livekit-server. The machine has
@@ -212,7 +212,7 @@ the machine to itself.
 | replies the bots spoke | 902 | 902 |
 | turns today's gate opened; times it stopped the bot's voice | 1146; 417 | 1151; 418 |
 | generator errors; bridge links lost | 0; 0 | 0; 0 |
-| closing with everyone still connected, ms (sessions, connections at that moment) | 27 (5, 11) | 33 (5, 11) |
+| closing while the load generators were still running, ms (sessions open, own connections open at that moment) | 27 (5, 11) | 33 (5, 11) |
 
 | the observer's own work, switched on | proximity WebRTC | LiveKit room |
 | --- | --- | --- |

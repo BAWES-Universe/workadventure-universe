@@ -42,6 +42,27 @@ for path, streams, observer, w, l in rows:
     else:
         cells += ["", "", "", "", "", "", "", ""]
     print("| " + " | ".join(str(x) for x in cells) + " |")
+# "Heard" and "sent" are counted over a stretch each process marks for itself; they are set against each other only when the
+# two stretches are on record and begin and end within a second of each other
+def seconds_apart(a, b):
+    from datetime import datetime
+    return abs((datetime.fromisoformat(a.replace("Z", "+00:00")) - datetime.fromisoformat(b.replace("Z", "+00:00"))).total_seconds())
+not_comparable = []
+for path, streams, observer, w, l in rows:
+    if not streams:
+        continue
+    name = f'{"room-" if path == "LiveKit room" else ""}{observer}-{streams}'
+    wm, lm = (w.get("measuredFrom"), w.get("measuredTo")), (l.get("measured") or {})
+    lm = (lm.get("from"), lm.get("to"))
+    if not all(wm) or not all(lm):
+        not_comparable.append(f"{name}: the stretch each process measured is not recorded (an older harness), so heard and sent are not known to cover the same time")
+    elif max(seconds_apart(wm[0], lm[0]), seconds_apart(wm[1], lm[1])) > 1:
+        not_comparable.append(f"{name}: the worker's stretch ({wm[0]} to {wm[1]}) and the generator's ({lm[0]} to {lm[1]}) differ by more than a second")
+if not_comparable:
+    print()
+    print("Heard and sent are not directly comparable in:")
+    for line in not_comparable:
+        print("- " + line)
 print()
 print("In the runs above: OOM kills:", sum(r[3]["memory"]["oomKills"] for r in rows), "; load generator errors:", sum(len(r[4].get("errors", [])) for r in rows), "; joins that failed:", sum(r[4].get("joinFailures", 0) for r in rows), "; bridge links lost:", sum(r[4].get("linkDowns", 0) for r in rows))
 for name, how, curve in died:
