@@ -1845,6 +1845,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         );
         await listening;
         // The person's replies are used up: nothing was heard, and the reply path shows the usual limit card for the note
+        // Not the same as reason 'allowance' (the person's listening minutes, or the hearing provider's own limit, were used up): that one means the note could not be heard, so it shows as a failed transcript below, on purpose.
         if ('reason' in heard && heard.reason === 'reply-limit') return '';
         if (heard.ok) {
             const words = tidyTranscript(heard.text, hearing.limits.maxChars);
