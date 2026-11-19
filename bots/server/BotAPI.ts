@@ -21,6 +21,8 @@ import { buildCarryCopy, buildGuestBrickMedia, CarryNotNowError, copyCarriedMedi
 import type { CarriedPart, GuestChatNote } from '../matrix/MatrixDmBridge';
 
 /** The id the game makes for a guest at their first visit (a uuid): a member's token names an email or an account instead. */
+/** The name a caller gives its own call (a UUID, as the game makes it): short, and only characters a space name can hold once encoded */
+const isCallId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-zA-Z_-]{8,64}$/.test(value);
 const GUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface BotAPIRequest extends Request {
@@ -664,9 +666,13 @@ export class BotAPI {
         this.app.post('/api/bots/:botId/call', identifySummoner, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
-                const { playerUuid } = req.body ?? {};
+                const { playerUuid, callId } = req.body ?? {};
                 if (!playerUuid || typeof playerUuid !== 'string') {
                     res.status(400).json({ error: 'Missing required field: playerUuid' });
+                    return;
+                }
+                if (callId !== undefined && !isCallId(callId)) {
+                    res.status(400).json({ error: 'callId is not one a call can carry' });
                     return;
                 }
                 if (req.sessionUuid !== playerUuid && req.gameIdentifier !== playerUuid) {
@@ -694,7 +700,7 @@ export class BotAPI {
                     return;
                 }
 
-                const call = await this.botManager.startCall(botId, playerUuid);
+                const call = await this.botManager.startCall(botId, playerUuid, callId);
                 res.json({ botId, started: true, spaceName: call.spaceName });
             } catch (error: any) {
                 if (error instanceof BotCannotCallError) {
@@ -714,16 +720,20 @@ export class BotAPI {
         this.app.post('/api/bots/:botId/call/end', identifySummoner, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
-                const { playerUuid } = req.body ?? {};
+                const { playerUuid, callId } = req.body ?? {};
                 if (!playerUuid || typeof playerUuid !== 'string') {
                     res.status(400).json({ error: 'Missing required field: playerUuid' });
+                    return;
+                }
+                if (callId !== undefined && !isCallId(callId)) {
+                    res.status(400).json({ error: 'callId is not one a call can carry' });
                     return;
                 }
                 if (req.sessionUuid !== playerUuid && req.gameIdentifier !== playerUuid) {
                     res.status(403).json({ error: 'You can only end your own call', code: 'not_you' });
                     return;
                 }
-                res.json({ botId, ended: await this.botManager.endCall(botId, playerUuid) });
+                res.json({ botId, ended: await this.botManager.endCall(botId, playerUuid, callId) });
             } catch (error: any) {
                 console.error('[BotAPI] Error ending a call:', error);
                 res.status(500).json({ error: 'The call could not be ended', code: 'failed' });

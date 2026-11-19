@@ -192,6 +192,38 @@ describe('a ready-made App', () => {
         expect(messages.some((m) => m.url.includes('stored.link'))).toBe(false);
     });
 
+    it('is never sent to its stored link when there is no route through Orbit: a call a person approved on a card (no check of who asks), or an App with no Orbit address', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue({ content: [{ type: 'text', text: 'sent' }] } as never);
+        const ai = service(async () => ({ allowed: true }));
+        const entry = (extra: Record<string, unknown>) => ({ serverId: 's3', serverUrl: 'https://stored.link/mcp', authType: 'none', fingerprint: 'fp', readyMade: true, ...extra }) as never;
+        // On a card: no connection id, and no check of the call (runApprovedTool gives none unless it is passed)
+        const approved = await ai.runApprovedTool('bot-x', entry({ orbitUrl: 'https://orbit.example' }), 'send_email', {}, 'u-sara');
+        expect(approved).toMatchObject({ outcome: 'not_sent' });
+        // A ready-made App with no address for Orbit
+        const noAddress = await ai['executeToolCalls']([{ id: 'call-1', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, new Map([['send_email', entry({ connectionId: 'conn-2' })]]) as never, undefined, 'room', 'bot-x', 7);
+        expect(noAddress[0].result).toMatchObject({ outcome: 'not_sent' });
+        expect(execute).not.toHaveBeenCalled();
+        // With its check and its route it is run, through Orbit
+        const ok = await ai.runApprovedTool('bot-x', entry({ connectionId: 'conn-2', orbitUrl: 'https://orbit.example' }), 'send_email', {}, 'u-sara', undefined, { heading: 'deletesOrSends', callId: 'c1' });
+        expect(ok).toEqual({ content: [{ type: 'text', text: 'sent' }] });
+        expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not sent once Patience ran out while its session was being opened', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        const methods: string[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (_url: string, body: any) => {
+            methods.push(body.message.method);
+            // Opening the session takes longer than the whole Patience
+            if (body.message.method === 'initialize') await new Promise((resolve) => setTimeout(resolve, 40));
+            return { data: { status: 200, contentType: 'application/json', sessionId: 'sess-late', body: '{}' } };
+        });
+        const link = { orbitUrl: 'https://orbit.example', botId: 'bot-late', serverId: 's-late', requesterKey: 'u-sara', callId: 'c-late' };
+        const outcome = await MCPConnector.executeToolCall('s-late', 'https://stored.link/mcp?key=secret', 'send_email', {}, 'none', undefined, undefined, 'u-sara', undefined, 10, link);
+        expect(outcome).toMatchObject({ outcome: 'not_sent' });
+        expect(methods).not.toContain('tools/call');
+    });
+
     it('lists its tools through Orbit for the Brick\'s owner, without a call id', async () => {
         vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
         const sent: any[] = [];
@@ -240,6 +272,38 @@ describe('a ready-made App', () => {
             if (method === 'tools/list') return { data: { status: 200, contentType: 'application/json', sessionId: null, body: JSON.stringify({ jsonrpc: '2.0', id: 'check', result: { tools: [] } }) } };
             return { data: { status: 200, contentType: 'application/json', sessionId: null, body: JSON.stringify(json({ content: [{ type: 'text', text: 'sent' }] })) } };
         };
+
+        it('is not dropped by a late failure of an older request that used another session under the same key', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            MCPConnector.clearCache();
+            const sessions = { live: new Set<string>(), made: [] as string[] };
+            const sent: any[] = [];
+            const base = link(sessions, sent);
+            let failA!: (error: Error) => void;
+            vi.spyOn(axios, 'post').mockImplementation((async (url: string, body: any, config: any) => {
+                if (body.message.method === 'tools/call' && body.callId === 'A') {
+                    sent.push(body);
+                    return new Promise((_resolve, reject) => void (failA = reject));
+                }
+                return base(url, body);
+            }) as never);
+            const ai = service(async () => ({ allowed: true }));
+            expect((await callWith(ai, 'first')).result).toEqual([{ type: 'text', text: 'sent' }]);
+            // A request on the first session is still on its way when another installs a second one under the same key
+            const late = callWith(ai, 'A');
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            MCPConnector.clearCache();
+            expect((await callWith(ai, 'B')).result).toEqual([{ type: 'text', text: 'sent' }]);
+            expect(sessions.made).toEqual(['sess-1', 'sess-2']);
+            failA(Object.assign(new Error('socket hang up'), { isAxiosError: true }));
+            await late;
+            // The second session was healthy: the next call goes out on it without opening another
+            sent.length = 0;
+            await callWith(ai, 'D');
+            expect(sent.map((b) => b.message.method)).toEqual(['tools/call']);
+            expect(sent[0]).toMatchObject({ sessionId: 'sess-2' });
+            expect(sessions.made).toEqual(['sess-1', 'sess-2']);
+        });
 
         it('is checked before the call and replaced when the link dropped it, so the call goes out once', async () => {
             vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');

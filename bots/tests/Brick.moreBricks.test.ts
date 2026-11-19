@@ -459,6 +459,26 @@ describe('A reply that made a Brick, or suggests one', () => {
         expect(admin.getBotConfiguration).toHaveBeenCalledTimes(2);
     });
 
+    it('does not keep the settings of a read that was out when the Brick changed: the next ask reads again', async () => {
+        let answer: (config: unknown) => void = () => undefined;
+        const admin = {
+            isConfigured: () => true,
+            getBotConfiguration: vi.fn(() => new Promise((resolve) => (answer = resolve))),
+        };
+        const replies = Object.create(DmReplyService.prototype) as DmReplyService;
+        Object.assign(replies, { botManager: { getBot: () => null, getAdminApiService: () => admin }, configCache: new Map(), missingCache: new Map() });
+        const reading = replies.getBotConfig(BRICK);
+        // The owner changes the Brick while Orbit is still answering with what it had before
+        expect(replies.forgetBrickOf(BRICK, 'user-alice')).toBe(false);
+        answer({ botId: BRICK, name: 'Old name', brick: { ownerId: 'user-alice', isDefault: false } });
+        expect(await reading).toMatchObject({ name: 'Old name' });
+        admin.getBotConfiguration.mockImplementationOnce(async () => ({ botId: BRICK, name: 'New name', brick: { ownerId: 'user-alice', isDefault: false } }));
+        expect(await replies.getBotConfig(BRICK)).toMatchObject({ name: 'New name' });
+        // And a read with nothing forgotten meanwhile is kept as before
+        await replies.getBotConfig(BRICK);
+        expect(admin.getBotConfiguration).toHaveBeenCalledTimes(2);
+    });
+
     it('reads a Brick again only when its own owner says it changed', async () => {
         const admin = { isConfigured: () => true, getBotConfiguration: vi.fn(async () => ({ botId: BRICK, brick: { ownerId: 'user-alice', isDefault: false } })) };
         const replies = Object.create(DmReplyService.prototype) as DmReplyService;

@@ -16,6 +16,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import express, { type Request, type Response, type Router } from 'express';
 import type { AIProviderConfig } from '../ai/types';
 import { decryptApiKey } from '../ai/encryption';
@@ -98,6 +99,10 @@ export const RELAY_GUARDS = {
     unpricedHoldMicros: 50_000,
     /** Characters per token, set low on purpose: the room held is an upper reading of the input. */
     charsPerToken: 3,
+    /** The most of a provider's answer that is read into memory: a refusal's words, a whole reply, one line of a stream. */
+    maxErrorBytes: 64 * 1024,
+    maxReplyBytes: 16 * 1024 * 1024,
+    maxStreamLineChars: 1024 * 1024,
 } as const;
 
 const SETTLE_DELAYS_MS = [1000, 3000];
@@ -115,6 +120,48 @@ const toolCallChars = (calls: unknown): number => {
     }
     return total;
 };
+
+/**
+ * A provider's answer read up to `max` bytes. Past that the body is cancelled and the words so far are returned, cut: an answer is never held whole
+ * in memory because a provider (or something in front of it) sent more than any answer needs. `tooLong` says so.
+ */
+export async function readBoundedWithFlag(response: globalThis.Response, max: number): Promise<{ text: string; tooLong: boolean }> {
+    const body = response.body;
+    if (!body) return { text: '', tooLong: false };
+    const reader = body.getReader();
+    const decoder = new StringDecoder('utf8');
+    let text = '';
+    let bytes = 0;
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            bytes += value.byteLength;
+            if (bytes > max) {
+                // Not waited for: the body of a clone is one of two branches of a tee, and cancelling one branch finishes only when the other is
+                // cancelled or read to its end too, which a caller that reads the original after this returns would never reach
+                void reader.cancel().catch(() => undefined);
+                return { text: text + decoder.end(), tooLong: true };
+            }
+            text += decoder.write(Buffer.from(value));
+        }
+    } finally {
+        reader.releaseLock?.();
+    }
+    return { text: text + decoder.end(), tooLong: false };
+}
+
+const readBounded = async (response: globalThis.Response, max: number): Promise<string> => (await readBoundedWithFlag(response, max)).text;
+
+/** The JSON of an answer no longer than `max` bytes; null when it is longer or is not JSON. */
+export async function readBoundedJson(response: globalThis.Response, max: number): Promise<unknown> {
+    try {
+        const { text, tooLong } = await readBoundedWithFlag(response, max);
+        return tooLong ? null : JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
 
 const drained = (res: Response, signal: AbortSignal) =>
     new Promise<void>((resolve) => {
@@ -340,8 +387,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         if (!metadata?.error && (!metadata || (metadata.promptTokens ?? 0) + (metadata.completionTokens ?? 0) <= 0)) {
             const promptTokens = inputTokensOf(body);
             const completionTokens = Math.ceil(ended.outputChars / RELAY_GUARDS.charsPerToken);
-            metadata = completionTokens > 0 ? { promptTokens, completionTokens } : undefined;
-            estimated = metadata !== undefined;
+            // A cost the provider reported stands whatever else is missing: only the token counts are filled in
+            const reported = typeof metadata?.costUsd === 'number' && Number.isFinite(metadata.costUsd) && metadata.costUsd >= 0 ? { costUsd: metadata.costUsd } : {};
+            metadata = completionTokens > 0 ? { promptTokens, completionTokens, ...reported } : 'costUsd' in reported ? reported : undefined;
+            estimated = metadata !== undefined && !('costUsd' in reported);
         }
         const priced = priceMetadata(config, metadata, now);
         const facts = factsOf(priced.cost, estimated);
@@ -407,7 +456,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             try {
                 upstream = await send(sent);
                 if (!upstream.ok && sent.stream_options) {
-                    const text = await upstream.clone().text().catch(() => '');
+                    const text = await readBounded(upstream.clone(), RELAY_GUARDS.maxErrorBytes).catch(() => '');
                     if (refusesStreamOptions(upstream.status, text)) {
                         refusedStreamOptions.add(url);
                         delete sent.stream_options;
@@ -428,7 +477,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
 
             if (!upstream.ok) {
                 // What the provider said, in words fit for a log: never its key, never the conversation
-                const text = await upstream.text().catch(() => '');
+                const text = await readBounded(upstream, RELAY_GUARDS.maxErrorBytes).catch(() => '');
                 const message = providerErrorText(wordsOf(text)).split(key ?? '\u0000').join('[redacted]');
                 console.warn('[ComputerRelay] The provider refused a call:', upstream.status);
                 problem(res, statusToHermes(upstream.status), message, 'upstream_error', 'server_error');
@@ -437,7 +486,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             }
 
             if (!streaming) {
-                const data = (await upstream.json().catch(() => null)) as { usage?: unknown; choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> } | null;
+                const data = (await readBoundedJson(upstream, RELAY_GUARDS.maxReplyBytes)) as { usage?: unknown; choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> } | null;
                 if (!data) {
                     problem(res, 502, 'The AI answered with something unreadable.', 'upstream_error', 'server_error');
                     return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
@@ -466,6 +515,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             res.flushHeaders();
 
             let pending = '';
+            // A line that grew past the bound is dropped whole, to its end: it is passed on as it came but never read
+            let skipping = false;
+            const decoder = new StringDecoder('utf8');
             let usage: CallMetadata | undefined;
             let outputChars = 0;
             const read = (line: string) => {
@@ -487,15 +539,22 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             try {
                 for await (const chunk of Readable.fromWeb(upstream.body as never) as AsyncIterable<Buffer>) {
                     if (res.destroyed || res.writableEnded || controller.signal.aborted) break;
-                    pending += chunk.toString('utf8');
+                    pending += decoder.write(chunk);
                     let at: number;
                     while ((at = pending.indexOf('\n')) >= 0) {
-                        read(pending.slice(0, at).replace(/\r$/, ''));
+                        if (skipping) skipping = false;
+                        // A line that was completed in this very chunk is held to the bound too: it is passed on, never read
+                        else if (at <= RELAY_GUARDS.maxStreamLineChars) read(pending.slice(0, at).replace(/\r$/, ''));
                         pending = pending.slice(at + 1);
+                    }
+                    if (pending.length > RELAY_GUARDS.maxStreamLineChars) {
+                        pending = '';
+                        skipping = true;
                     }
                     if (!res.write(chunk)) await drained(res, controller.signal);
                 }
-                read(pending);
+                pending += decoder.end();
+                if (!skipping) read(pending);
                 if (!res.writableEnded) res.end();
             } catch (error) {
                 // The provider's stream broke, or Hermes went away: what came through is counted, and the other side is told

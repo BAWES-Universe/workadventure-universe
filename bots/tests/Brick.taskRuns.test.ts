@@ -14,6 +14,7 @@ import {
     MODEL_KINDS,
     RUNNABLE_KINDS,
     dueRunOf,
+    failedNoticeOf,
     failedText,
     heldNoticeOf,
     heldText,
@@ -21,6 +22,7 @@ import {
     type BrickSpeaker,
     type BrickTaskModel,
     type DueRun,
+    type FailedNotice,
     type HeldNotice,
     type RunReport,
     type TaskOutcome,
@@ -151,10 +153,10 @@ describe('what Orbit hands out for a model', () => {
 
 // --- the runner, with a fake model ----------------------------------------------------------------------------------------------------------
 
-function setUp(due: DueRun[], model: BrickTaskModel['run'], over: { say?: BrickSpeaker['say']; check?: () => Promise<{ ok: boolean; reason?: string }>; held?: HeldNotice[]; tell?: boolean; askPerson?: 'unsure' | 'date_passed' | null; keepAsked?: boolean } = {}) {
+function setUp(due: DueRun[], model: BrickTaskModel['run'], over: { say?: BrickSpeaker['say']; check?: () => Promise<{ ok: boolean; reason?: string }>; held?: HeldNotice[]; failed?: FailedNotice[]; tell?: boolean; askPerson?: 'unsure' | 'date_passed' | null; keepAsked?: boolean } = {}) {
     const reports: Array<{ runId: string; report: RunReport }> = [];
     const api: BrickRunnerApi = {
-        claimDue: vi.fn(async (_kinds: readonly string[]) => ({ runs: due, held: over.held ?? [] })),
+        claimDue: vi.fn(async (_kinds: readonly string[]) => ({ runs: due, held: over.held ?? [], failed: over.failed ?? [] })),
         checkRun: vi.fn((over.check ?? (async () => ({ ok: true }))) as BrickRunnerApi['checkRun']),
         keepDelivered: vi.fn(async () => true),
         keepTold: vi.fn(async () => true),
@@ -639,6 +641,21 @@ describe('each model call of a run is on the books, one row each, under the runâ
         expect(tracked.map((args) => args[2].tokensUsed)).toEqual([100, 150]);
     });
 
+    it('keeps a `{}` that arrives in the middle of a call\'s streamed arguments, and skips only the placeholder it opens with', async () => {
+        const { ai } = service([
+            [
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '{}' }] },
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: '', arguments: '{"result":"tell_them","extra":' }] },
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: '', arguments: '{}' }] },
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: '', arguments: '}' }] },
+                done(100),
+            ],
+        ]);
+        const runTool = vi.fn(async (_name: string, _args?: Record<string, unknown>) => '{"ok":true}');
+        await ai.runBrickTask({ ...base, permit: async () => true, runTool });
+        expect(runTool.mock.calls[0][1]).toEqual({ result: 'tell_them', extra: {} });
+    });
+
     it('does not go on when the finish was refused: the model is told and calls it again', async () => {
         const { ai } = service([
             [{ content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '{"result":"nothing_new"}' }] }, done(100)],
@@ -716,3 +733,53 @@ describe('each model call of a run is on the books, one row each, under the runâ
 
 beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => undefined));
 afterEach(() => vi.restoreAllMocks());
+
+describe('a run Orbit gave up on with no report is told once', () => {
+    const failedNotice = (over: Partial<FailedNotice> = {}): FailedNotice => ({
+        runId: 'run-77',
+        itemId: 'item-9',
+        brickId: 'brick-1',
+        userId: 'user-1',
+        matrixUserId: '@sara:matrix.test',
+        kind: 'reminder',
+        words: 'Call the bank',
+        timeZone: 'Asia/Kuwait',
+        error: 'the chat was not there',
+        ...over,
+    });
+
+    it('keeps only a notice that has what saying it needs', () => {
+        expect(failedNoticeOf(failedNotice())).toEqual(failedNotice());
+        expect(failedNoticeOf({ ...failedNotice(), runId: '' })).toBeNull();
+        expect(failedNoticeOf({ ...failedNotice(), kind: 'quest' })).toBeNull();
+        expect(failedNoticeOf({ ...failedNotice(), matrixUserId: undefined, error: undefined })).toMatchObject({ matrixUserId: null, error: 'it did not work' });
+    });
+
+    it('says it in the failure words under the run\'s own told id, and tells Orbit only after it went out', async () => {
+        const { runner, say, api } = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice()] });
+        await runner.tick();
+        expect(say).toHaveBeenCalledWith('brick-1', '@sara:matrix.test', failedText({ words: 'Call the bank', kind: 'reminder' }, 'the chat was not there'), 'brick-told:run-77');
+        expect(api.keepTold).toHaveBeenCalledWith('run-77');
+    });
+
+    it('does not promise another try for a reminder Orbit gave up on, but does for something that comes round again', () => {
+        const reminder = failedText({ words: 'Call the bank', kind: 'reminder' }, 'the chat was not there');
+        expect(reminder).toContain('Call the bank');
+        expect(reminder).not.toMatch(/try again at the next time/);
+        expect(reminder).toMatch(/won't try it again on my own/);
+        expect(failedText({ words: 'Send the report', kind: 'schedule' }, 'x')).toMatch(/try again at the next time/);
+    });
+
+    it('is handed out again when it could not be said just now, and kept as told when it can never be said', async () => {
+        const blip = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice()], say: async () => ({ ok: false, reason: 'unsure' }) });
+        await blip.runner.tick();
+        expect(blip.api.keepTold).not.toHaveBeenCalled();
+        const noChat = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice({ matrixUserId: null })] });
+        await noChat.runner.tick();
+        expect(noChat.say).not.toHaveBeenCalled();
+        expect(noChat.api.keepTold).toHaveBeenCalledWith('run-77');
+        const refused = setUp([], result({ kind: 'unsure' }), { failed: [failedNotice()], say: async () => ({ ok: false, reason: 'not_allowed' }) });
+        await refused.runner.tick();
+        expect(refused.api.keepTold).toHaveBeenCalledWith('run-77');
+    });
+});

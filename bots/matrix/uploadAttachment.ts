@@ -3,6 +3,14 @@
  * Returns null when no uploader is configured.
  */
 export async function uploadAttachment(data: Buffer, mimeType: string, filename: string): Promise<string | null> {
+    return (await uploadAttachmentWithLink(data, mimeType, filename))?.location ?? null;
+}
+
+/**
+ * The same, with the uploader's own lasting link when the file's link is a signed one that runs out. That link is written with the address
+ * the uploader is reached at from outside, which the bot server may not use itself (a name inside its network).
+ */
+export async function uploadAttachmentWithLink(data: Buffer, mimeType: string, filename: string): Promise<{ location: string; lasting?: string } | null> {
     const uploaderUrl = process.env.UPLOADER_URL;
     const botServiceToken = process.env.BOT_SERVICE_TOKEN;
     if (!uploaderUrl || !botServiceToken) return null;
@@ -23,7 +31,9 @@ export async function uploadAttachment(data: Buffer, mimeType: string, filename:
         }
         const result = await response.json();
         const uploaded = Array.isArray(result) ? result[0] : result;
-        return uploaded?.location || uploaded?.url || null;
+        const location = uploaded?.location || uploaded?.url;
+        if (!location) return null;
+        return { location, ...(typeof uploaded?.lastingLocation === 'string' && uploaded.lastingLocation ? { lasting: uploaded.lastingLocation } : {}) };
     } finally {
         clearTimeout(timeout);
     }

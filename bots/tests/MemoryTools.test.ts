@@ -31,7 +31,10 @@ describe('the memory tools', () => {
     });
 
     it('say so when nothing is remembered', async () => {
-        const empty = new ConversationMemory().getOrCreateMemory('bot', 2);
+        const nobody = new ConversationMemory();
+        nobody.useHeard(() => heardInDm());
+        nobody.addMessage('bot', 2, 'hello', 'person', 'dm');
+        const empty = nobody.getMemory('bot', 2)!;
         const answer = (await runMemoryTool(WHAT_I_REMEMBER_TOOL, {}, { memory: empty, forget: vi.fn() })) as { things: unknown[]; note: string };
         expect(answer.things).toEqual([]);
         expect(answer.note).toContain('nothing');
@@ -208,6 +211,14 @@ describe('forgetting that keeps kind, label, owner, "not" and what is said to ke
         expect(ids(itemsAbout(items, 'forget coffee, not tea'))).toEqual(['pref::coffee']);
         expect(ids(itemsAbout(items, 'forget coffee except tea'))).toEqual(['pref::coffee']);
         expect(ids(itemsAbout(items, 'forget coffee and tea')).sort()).toEqual(['pref::coffee', 'pref::tea']);
+        // A thing named both to forget and not to forget is not forgotten: the "not" is not part of what is named
+        expect(itemsAbout(items, 'forget coffee but not coffee')).toEqual([]);
+        expect(itemsAbout(items, "forget coffee but don't forget coffee")).toEqual([]);
+        expect(ids(itemsAbout(items, 'forget coffee and tea but not coffee'))).toEqual(['pref::tea']);
+        // "do not forget" and "please do not forget" keep the thing just as "don't forget" does
+        expect(ids(itemsAbout(items, 'forget coffee and tea but do not forget coffee'))).toEqual(['pref::tea']);
+        expect(ids(itemsAbout(items, 'forget coffee and tea, and please do not forget coffee'))).toEqual(['pref::tea']);
+        expect(ids(itemsAbout(items, 'forget coffee and tea but never forget coffee'))).toEqual(['pref::tea']);
         const named = [thing('name', 'Mark'), thing('birthday', '12 June')];
         expect(ids(itemsAbout(named, 'forget my name and remember my birthday'))).toEqual(['name::Mark']);
         expect(ids(itemsAbout(named, 'forget my name, remember my birthday'))).toEqual(['name::Mark']);
@@ -319,13 +330,13 @@ describe('forget_memory as the model calls it (GPT B2, B3, B4)', () => {
     });
 
     it('does not report success when nothing went, or only some went (B4)', async () => {
-        const none = await run({ about: 'my name' }, vi.fn(async () => 0));
+        const none = await run({ about: 'my name' }, vi.fn(async (_keys: ReadonlySet<string>) => 0));
         expect(none.answer.forgotten).toEqual([]);
         expect(none.answer.note).toContain('already gone');
         expect(none.answer.note).not.toContain('It is forgotten');
         const name = memoryItemKey('name', null, 'Sara');
         const birthday = memoryItemKey('birthday', null, 'June 5');
-        const some = await run({ ids: [name, birthday] }, vi.fn(async () => 1));
+        const some = await run({ ids: [name, birthday] }, vi.fn(async (_keys: ReadonlySet<string>) => 1));
         expect(some.answer.forgotten).toBeUndefined();
         expect(some.answer).toMatchObject({ count: 1, asked: 2 });
         expect(some.answer.note).toContain('do not say all of it');
@@ -476,8 +487,18 @@ describe('CodeRabbit on #2020: a thing with "and" in it, and a keep that says it
         expect(done.saving).toBeUndefined();
     });
 
+    it('says a waiting forget is kept until it is cleared, even after a restart, unless the file could not be written', async () => {
+        const memory = sara();
+        const note = async (durable: boolean | undefined) =>
+            String(((await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'that I like coffee' }, { memory, forget: vi.fn(async () => ({ went: 1, waiting: 1, ...(durable === undefined ? {} : { durable }) })) })) as { note: string }).note);
+        expect(await note(true)).toContain('do not need to ask again');
+        expect(await note(true)).not.toContain('may need to ask again');
+        expect(await note(false)).toContain('may need to ask again later');
+        expect(await note(undefined)).toContain('do not need to ask again');
+    });
+
     it('shows a forget that removed nothing as a step that did not run', () => {
-        expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false, done: 'Forgot nothing yet' });
+        expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false, noChange: true, done: 'Forgot nothing yet' });
         expect(resultOf('a', { forgotten: ['They like coffee'], count: 1 })).toEqual({ id: 'a', ok: true });
         expect(resultOf('a', { things: [] })).toEqual({ id: 'a', ok: true });
     });

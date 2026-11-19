@@ -14,6 +14,18 @@
 
 /** How many replies stay bound: more than a bot ever writes at once, with room for the marks that follow a reply. */
 const MAX_BOUND = 300;
+/**
+ * A finished reply keeps its reader this long after its last piece: the marks that follow it (speaking, stopped, kept quiet) come when
+ * its audio has played, and a mark for a reply that is not known is dropped, which would leave the speaking indicator on. Past the
+ * cap, only replies finished longer ago than this are let go of, unless the map would pass MAX_BOUND_ALL.
+ */
+const FINISHED_GRACE_MS = 10 * 60_000;
+/**
+ * Replies that are still being written are never let go of for room. Only so many of them are kept: past that, a new reply is held
+ * back (never decided without its reader), unless the oldest unfinished one is so old it can only have been dropped by whoever wrote it.
+ */
+const MAX_BOUND_ALL = 3000;
+const ABANDONED_AFTER_MS = 24 * 60 * 60_000;
 const MAX_TURNS = 500;
 
 /** The person a reply is for, from the id the behaviours give it ("bot-<bot>-player-<id>-<uuid>"). */
@@ -28,7 +40,9 @@ export class ReplyReaders {
     /** By space and player: whether the reply being written for them started with them alone with the bot. */
     private readonly turns = new Map<string, boolean>();
     /** By reply: its space, and its one reader's space user id, or null when it is for everyone there. */
-    private readonly bound = new Map<string, { spaceName: string; reader: string | null }>();
+    private readonly bound = new Map<string, { spaceName: string; reader: string | null; done?: true; doneAt?: number; at: number }>();
+    /** By reply: its space, for a reply decided to be for one person alone whose reader cannot be named yet (it stays private until it can be). */
+    private readonly unresolved = new Map<string, string>();
     /** By space and player: whether the reply last sent to them there went to them alone. */
     private readonly latest = new Map<string, boolean>();
 
@@ -50,8 +64,11 @@ export class ReplyReaders {
      *
      * `now` is asked only that first time: whether the person is alone with the bot right now (used when no turn said,
      * as for a line the bot says outside a turn), and their space user id.
+     *
+     * Null when the reply is for one person who cannot be named yet: it is NOT for everyone, so nothing of it is sent, and
+     * nothing is kept, so the next piece asks again.
      */
-    readerOf(spaceName: string, responseId: string, now: { alone(playerId: number): boolean; spaceUserIdOf(playerId: number): string | undefined }): string | undefined {
+    readerOf(spaceName: string, responseId: string, now: { alone(playerId: number): boolean; spaceUserIdOf(playerId: number): string | undefined }): string | undefined | null {
         const playerId = playerOfReply(responseId);
         const known = this.bound.get(responseId);
         if (known) {
@@ -60,13 +77,78 @@ export class ReplyReaders {
         }
         let reader: string | null = null;
         if (playerId !== undefined) {
-            const alone = this.turns.get(ReplyReaders.turnKey(spaceName, playerId)) ?? now.alone(playerId);
-            if (alone) reader = now.spaceUserIdOf(playerId) ?? null;
+            // A reply already decided to be private stays so, whatever a newer turn for the same person says meanwhile
+            const alone = this.unresolved.has(responseId) || (this.turns.get(ReplyReaders.turnKey(spaceName, playerId)) ?? now.alone(playerId));
+            if (alone) {
+                const named = now.spaceUserIdOf(playerId);
+                // Alone with the bot, but their id in the space is not known yet: unresolved is not public, and the decision is kept for the next piece
+                if (!named) {
+                    this.unresolved.set(responseId, spaceName);
+                    if (this.unresolved.size > MAX_BOUND) this.unresolved.delete(this.unresolved.keys().next().value as string);
+                    return null;
+                }
+                reader = named;
+            }
         }
-        this.bound.set(responseId, { spaceName, reader });
-        if (this.bound.size > MAX_BOUND) this.bound.delete(this.bound.keys().next().value as string);
+        // No room for another reply that is still being written: held back, not decided without keeping its reader (nothing is kept, so the
+        // next piece asks again). Reached only by thousands of replies that all never ended.
+        if (!this.makeRoom(true)) return null;
+        this.unresolved.delete(responseId);
+        this.bound.set(responseId, { spaceName, reader, at: Date.now() });
         this.noteLatest(spaceName, playerId, reader !== null);
         return reader ?? undefined;
+    }
+
+    /**
+     * Past the cap, the replies that finished more than the grace time ago are let go of. A finished reply newer than that keeps its
+     * reader for the marks that follow it, so the cap is soft for them: it holds until MAX_BOUND_ALL, past which the oldest finished
+     * reply goes whatever its age. A reply still being written keeps its reader: a late piece of it would otherwise be decided afresh
+     * and could go to someone who has walked up since. So when only unfinished replies are left and they fill MAX_BOUND_ALL, none is
+     * let go of to make room, unless it is so old it was abandoned; `forNew` then says there is no room for one more (false), and the
+     * new reply is held back.
+     */
+    private makeRoom(forNew = false): boolean {
+        const limit = forNew ? MAX_BOUND - 1 : MAX_BOUND;
+        const all = forNew ? MAX_BOUND_ALL - 1 : MAX_BOUND_ALL;
+        if (this.bound.size > limit) {
+            const now = Date.now();
+            for (const [responseId, reply] of [...this.bound]) {
+                if (this.bound.size <= limit) break;
+                if (reply.done && now - (reply.doneAt ?? 0) >= FINISHED_GRACE_MS) this.bound.delete(responseId);
+            }
+        }
+        while (this.bound.size > all) {
+            const finished = [...this.bound].find(([, reply]) => reply.done);
+            if (finished) {
+                this.bound.delete(finished[0]);
+                continue;
+            }
+            const [oldestId, oldest] = this.bound.entries().next().value as [string, { at: number }];
+            if (Date.now() - oldest.at < ABANDONED_AFTER_MS) return !forNew;
+            this.bound.delete(oldestId);
+        }
+        return true;
+    }
+
+    /**
+     * The reader of a reply that is already bound, for a line ABOUT that reply (a speaking or stopped mark, a note that it was kept quiet):
+     * the reader's space user id, undefined when it is for everyone, null when the reply is not known. Such a line never decides who
+     * a reply is for: a reply let go of, or one that never started here, gets nothing, so a late mark cannot go to someone the reply
+     * was never for.
+     */
+    knownReaderOf(responseId: string): string | undefined | null {
+        const known = this.bound.get(responseId);
+        if (!known) return null;
+        return known.reader ?? undefined;
+    }
+
+    /** The reply's last piece went out: its reader is kept for the marks that follow it, and can be let go of once the cap needs room and the grace time has passed. */
+    complete(responseId: string): void {
+        const reply = this.bound.get(responseId);
+        if (!reply) return;
+        reply.done = true;
+        reply.doneAt = Date.now();
+        this.makeRoom();
     }
 
     private noteLatest(spaceName: string, playerId: number | undefined, alone: boolean): void {
@@ -110,11 +192,15 @@ export class ReplyReaders {
         for (const [responseId, reply] of [...this.bound]) {
             if (reply.spaceName === spaceName) this.bound.delete(responseId);
         }
+        for (const [responseId, space] of [...this.unresolved]) {
+            if (space === spaceName) this.unresolved.delete(responseId);
+        }
     }
 
     reset(): void {
         this.turns.clear();
         this.bound.clear();
+        this.unresolved.clear();
         this.latest.clear();
     }
 }

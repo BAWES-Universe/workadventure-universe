@@ -163,6 +163,12 @@ const approvals = new ToolApprovals({
         },
     },
     roomStillTheirs: (botId, roomId, matrixUserId) => matrixBridge?.roomStillTheirs(botId, roomId, matrixUserId) ?? false,
+    directRoomIs: async (botId, roomId, matrixUserId) => (await matrixBridge?.isDirectRoomOf(botId, roomId, matrixUserId)) ?? false,
+    unshownCards: {
+        mark: (actionId) => botRegistry.markTaskCardUnshown(actionId),
+        marked: (actionId) => botRegistry.taskCardUnshown(actionId),
+        clear: (actionId) => botRegistry.clearTaskCardUnshown(actionId),
+    },
     followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),
 });
 aiService.useApprovals(approvals);
@@ -229,6 +235,7 @@ async function setupMatrix(): Promise<void> {
         approvals,
         getBotConfig: (botId, fresh) => dmReplyService.getBotConfig(botId, fresh),
         checkAccess: (botId, chatId) => adminApiService.checkDmAccess(botId, chatId),
+        appConnected: async (botId, userUuid, app) => (await adminApiService.appsOfferableFor(botId, userUuid)).some((one) => one.key.toLowerCase() === app.toLowerCase() && one.connected),
         reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
         rooms: botRegistry,
         uploadAttachment,

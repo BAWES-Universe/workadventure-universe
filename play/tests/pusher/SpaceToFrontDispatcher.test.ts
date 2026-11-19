@@ -768,6 +768,32 @@ describe("SpaceToFrontDispatcher", () => {
                 expect(sara.emitInBatch).not.toHaveBeenCalled();
             });
 
+            it("reaches nobody when the bot that sent it has left the space meanwhile", () => {
+                const khalid = user("room_7");
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(khalid, sara), new EventProcessor());
+                vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+                // The bot "room_12" is not in the space any more: what it said for one person is not sent on to everyone
+                dispatcher.handleMessage(reply("room_12", "room_7"));
+
+                expect(khalid.emitInBatch).not.toHaveBeenCalled();
+                expect(sara.emitInBatch).not.toHaveBeenCalled();
+                // The same for a picture, a file or a card sent with the reply
+                dispatcher.handleMessage(sent("room_12", "room_7"));
+                expect(khalid.emitInBatch).not.toHaveBeenCalled();
+                expect(sara.emitInBatch).not.toHaveBeenCalled();
+            });
+
+            it("still goes to everyone, as before, when a sender who has left named nobody", () => {
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(sara), new EventProcessor());
+
+                dispatcher.handleMessage(reply("room_12"));
+
+                expect(sara.emitInBatch).toHaveBeenCalledTimes(1);
+            });
+
             it("goes to everyone when the bot named nobody, as before", () => {
                 const bot = user("room_12", { uuid: "bot-nora", tags: ["bot"] });
                 const khalid = user("room_7");

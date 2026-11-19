@@ -733,4 +733,15 @@ describe('FileParser.validateUrl when DNS does not answer', () => {
       expect((missing as Error).message).toMatch(/private\/internal/);
       expect(await classify(missing)).toEqual({ ok: false, reason: 'gone' });
    });
+
+   it('says two refused lookups (EREFUSED) are not answered just now, never a private address', async () => {
+      const { readReceiptFile } = await import('../server/UploadReceipts');
+      const claims = { fid: 'f1', sha256: '0'.repeat(64), size: 3 } as Parameters<typeof readReceiptFile>[0];
+      const fail = (code: string) => Object.assign(new Error(`query ${code} uploader.test`), { code });
+      mockResolve4.mockRejectedValueOnce(fail('EREFUSED'));
+      mockResolve6.mockRejectedValueOnce(fail('EREFUSED'));
+      const refused = await FileParser.validateUrl('https://uploader.test/upload-file/f1').catch((error: unknown) => error);
+      expect((refused as Error).message).toMatch(/not answered/);
+      expect(await readReceiptFile(claims, 'https://uploader.test', 100, async () => Promise.reject(refused))).toEqual({ ok: false, reason: 'not-now' });
+   });
 });

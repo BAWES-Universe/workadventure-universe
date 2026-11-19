@@ -206,6 +206,7 @@ function makeBridge(config: Record<string, unknown> = { botId: BRICK, name: 'Bri
         getBotConfig: vi.fn(async () => config),
         checkAccess: vi.fn(async (): Promise<any> => ({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } })),
         reply: vi.fn(async (): Promise<any> => ({ text: 'Hello Alice!', media: [] })),
+        appConnected: vi.fn(async () => true),
         rooms: {
             rememberDmRoom: vi.fn(async (r: string, b: string) => void rooms.set(r, b)),
             getDmRoomBot: vi.fn(async (r: string) => rooms.get(r) ?? null),
