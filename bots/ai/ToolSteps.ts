@@ -344,7 +344,10 @@ export function summaryOf(steps: Array<{ group?: string; done: string; state: St
     const groups = new Map<string, { done: string; count: number }>();
     for (const step of steps) {
         if (step.state !== 'done') continue;
-        const key = step.group ?? step.done;
+        // Steps of one group that ended with different words (a memory removal that forgot, and one that found nothing to forget)
+        // are counted apart: one label over a count of both would say something that only some of them did
+        const base = step.group ?? step.done;
+        const key = OWN_GROUPS[base] ? base : `${base}|${step.done}`;
         const group = groups.get(key);
         if (group) group.count++;
         else groups.set(key, { done: step.done, count: 1 });

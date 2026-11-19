@@ -24,6 +24,21 @@ describe('a forget that removed nothing, as the line shows it (CodeRabbit)', () 
     });
 });
 
+describe('the summary of forgets that ended in different words (Sentry)', () => {
+    it('counts a forget that removed something apart from one that found nothing, instead of one label over both', () => {
+        const steps = new ReplySteps(0);
+        steps.start([
+            describeStep({ id: 'a', name: 'forget_memory', arguments: { about: 'coffee' } }),
+            describeStep({ id: 'b', name: 'forget_memory', arguments: { about: 'tea' } }),
+        ]);
+        steps.finish([resultOf('a', { forgotten: ['x'], count: 1 }), resultOf('b', { forgotten: [], unclear: true })]);
+        steps.end(1000);
+        const line = steps.field().line;
+        expect(line).toBe('Forgot · Forgot nothing yet');
+        expect(line).not.toMatch(/2 times/);
+    });
+});
+
 describe('ToolSteps', () => {
     it('tidies a tool name into words when its server gave no title', () => {
         expect(tidyName('generate_music')).toBe('Generate music');
