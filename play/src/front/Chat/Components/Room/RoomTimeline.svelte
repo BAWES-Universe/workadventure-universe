@@ -130,7 +130,12 @@
         offerCardKey,
         startersCardKey,
     } from "../../Bricks/ClosedBrickCards";
-    import { loadMyBricks, myBricksByChatId, myBricksStore, withMyBricks } from "../../Bricks/MyBricksStore";
+    import {
+        loadMyBricksAfterPending,
+        myBricksByChatId,
+        myBricksStore,
+        withMyBricks,
+    } from "../../Bricks/MyBricksStore";
     import { openDirectChatRoom } from "../../Utils";
     import BrickComputerBar from "../../Bricks/Computer/BrickComputerBar.svelte";
     import Message from "./Message.svelte";
@@ -665,7 +670,16 @@
     function readBricksOnceFor(messageId: string | undefined) {
         if (!messageId || bricksReadFor === messageId) return;
         bricksReadFor = messageId;
-        loadMyBricks().catch((error) => console.error(error));
+        // A read already out may have started before the Brick was made: this one starts after it, and the message counts as
+        // read only when that read listed the Bricks (when it could not, the next change asks again)
+        loadMyBricksAfterPending()
+            .then((listed) => {
+                if (!listed && bricksReadFor === messageId) bricksReadFor = undefined;
+            })
+            .catch((error) => {
+                console.error(error);
+                if (bricksReadFor === messageId) bricksReadFor = undefined;
+            });
     }
     async function tapBrickCard(card: BotAsk, tap: BotAskTap): Promise<boolean> {
         if (tap.action === "close") {

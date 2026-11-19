@@ -35,6 +35,15 @@ function isBotChat(room: ChatRoom): boolean {
 }
 
 /**
+ * Whether a chat is found by a search: by its name, and, for "Bot" or "Brick", by being a direct chat with a bot whatever it is
+ * named. The one list and a folder opened in it use the same rule.
+ */
+export function roomMatchesSearch(room: ChatRoom, name: string, search: string): boolean {
+    if (name.toLocaleLowerCase().includes(search.toLocaleLowerCase())) return true;
+    return searchesForBots(search) && room.type === "direct" && isBotChat(room);
+}
+
+/**
  * The direct chats with any of these chat addresses (#1996): the chat of a Brick its owner deleted is out of Chats
  * while the Brick waits under Deleted, and back with Undo. Nothing is removed: the chat is only not listed.
  */
@@ -42,6 +51,8 @@ export function directRoomsWith(rooms: readonly ChatRoom[], chatIds: ReadonlySet
     if (chatIds.size === 0) return [];
     return rooms
         .filter((room) => {
+            // Only the direct chat with the Brick: a group it was a member of keeps the conversations of the others
+            if (room.type !== "direct") return false;
             const members = (room as Partial<{ members: Readable<{ id: string }[]> }>).members;
             return members !== undefined && get(members).some((member) => chatIds.has(member.id));
         })
@@ -65,7 +76,9 @@ export function directRoomsWithStore(
         let watches: Unsubscriber[] = [];
         let started = false;
         let building = false;
-        let last = "";
+        // Unset until the first result: Svelte keeps the last published value across a restart, so an empty result is published
+        // after a restart too, and does not leave a hidden chat that was undeleted meanwhile
+        let last: string | undefined;
         const allRooms = (): ChatRoom[] => {
             const all = [...rooms];
             const seen = new Set<string>();

@@ -14,7 +14,7 @@
     import { formatRowTime, formatUnreadCount } from "./OneList/OneListOrder";
     import type { ActivitySummary } from "./OneList/OneListOrder";
     import { minuteClock } from "./OneList/MinuteClock";
-    import { directRoomsWithStore } from "./OneList/OneListStore";
+    import { directRoomsWithStore, roomMatchesSearch } from "./OneList/OneListStore";
     import { IconChevronUp, IconFolder } from "@wa-icons";
 
     export let rootFolder: boolean;
@@ -35,7 +35,7 @@
         (room) => !$deletedBrickRoomIds.includes(room.id)
     );
     $: filteredRoom = visibleRooms
-        .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
+        .filter((room) => roomMatchesSearch(room, get(room.name), $chatSearchBarValue))
         .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
 
     $folders?.forEach((folder) => {

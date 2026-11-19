@@ -77,6 +77,11 @@ export interface PagePaymentsOptions {
 export interface PagePayments {
     line: Readable<PayLine>;
     onMessage: (event: MessageEvent) => void;
+    /**
+     * The artifact's frame is there and has loaded: what a checkout ended with while it was away (the buyer was reading the
+     * code) is told to it now, once.
+     */
+    frameReady: () => void;
     destroy: () => void;
 }
 
@@ -98,11 +103,34 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const tellRequest = (status: string, request: string) =>
         options.frame()?.postMessage({ universe: "app-result", status, request }, "*");
 
+    // How a checkout ended, when this artifact's frame was not there to hear it (the buyer was looking at the code, or the frame
+    // was being drawn again): kept for this artifact's own frame, by the request it was started for, and told to it when it is
+    // there again. Told once and forgotten; a new request from the page also forgets it (the page asked again, so it has heard).
+    // Never sent to any other window: the frame is always asked from the artifact's own element.
+    const held = new Map<string, string>();
+    const HELD_MAX = 8;
+
+    // How a checkout ended is the page's only word of it, so it is never dropped for want of a frame
+    const tellEnd = (status: string, request: string) => {
+        if (options.frame()) return tellRequest(status, request);
+        if (destroyed) return;
+        held.delete(request);
+        held.set(request, status);
+        if (held.size > HELD_MAX) held.delete(held.keys().next().value as string);
+    };
+
     // Every status goes out under the id of the request its checkout was started for, never under whichever request is newest
     const end = (update: Partial<PayLine>, status: string, request: string) => {
         busy = false;
         line.set({ ...NO_PAY_LINE, ...update });
-        tellRequest(status, request);
+        tellEnd(status, request);
+    };
+
+    const frameReady = () => {
+        if (destroyed || !options.frame()) return;
+        const waiting = [...held];
+        held.clear();
+        for (const [request, status] of waiting) tellRequest(status, request);
     };
 
     /**
@@ -175,6 +203,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         }
         busy = true;
         activeRequest = data.request;
+        held.clear();
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
         let popup: Window | null = null;
         try {
@@ -254,8 +283,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     return {
         line: { subscribe: line.subscribe },
         onMessage,
+        frameReady,
         destroy() {
             destroyed = true;
+            held.clear();
             // A start that is still waiting for its answer is dropped too: its answer is never read
             startInFlight?.abort.abort();
             startInFlight?.clear();

@@ -1,7 +1,14 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../services/BotApiService";
-import { parseBrickHome, parsePlaced, parseRoomBricks, type OwnBrickChoice, type RoomBricks } from "../roomBricksModel";
+import {
+    parseBrickHome,
+    parsePlaced,
+    parseRoomBricks,
+    placementOf,
+    type OwnBrickChoice,
+    type RoomBricks,
+} from "../roomBricksModel";
 
 /**
  * The Bricks of the room being edited (game #2005): the ones that live here and the person's own that can be added.
@@ -40,16 +47,20 @@ export type PlaceAnswer = { ok: true; keyNotLent: boolean } | { ok: false };
 /** "Add here": the Brick gets a home in this room at the spot the person picked. */
 export async function placeBrickHere(
     brick: Pick<OwnBrickChoice, "id">,
-    spot: { behaviorType?: string; behaviorConfig?: unknown }
+    spot: { behaviorConfig?: unknown }
 ): Promise<PlaceAnswer> {
     const roomUrl = botApiService.getRoomId();
     if (!roomUrl) return { ok: false };
+    // A Brick that already stands in this room is moved, and keeps how it behaves here
+    const standingHere = get(bricks)?.here.find((row) => row.id === brick.id);
     try {
         // A Brick has one home: placing it here moves it out of the room it lived in, which is told too
         const before = await Promise.resolve()
             .then(() => botApiService.getBrickHome(brick.id))
             .then(parseBrickHome, () => undefined);
-        const placed = parsePlaced(await botApiService.placeBrickHome(brick.id, roomUrl, spot));
+        const placed = parsePlaced(
+            await botApiService.placeBrickHome(brick.id, roomUrl, placementOf(standingHere, spot))
+        );
         if (!placed) return { ok: false };
         await loadRoomBricks();
         // The bot server puts it on this room's map: asked the way a room bot's spawn is

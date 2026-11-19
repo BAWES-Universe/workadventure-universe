@@ -76,14 +76,41 @@ describe("the Bricks of the room being edited (#2005)", () => {
     it("gives a Brick a home at the picked spot, reads the room again and has the bot server put it on the map", async () => {
         api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
         api.getRoomBricks.mockResolvedValue(answer());
-        const spot = {
-            behaviorType: "idle",
-            behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } },
-        };
+        const spot = { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } };
         await expect(placeBrickHere({ id: "m1" }, spot)).resolves.toEqual({ ok: true, keyNotLent: false });
+        // The spot alone: a first home is idle by Orbit's default, and an idle is never made up and sent
         expect(api.placeBrickHome).toHaveBeenCalledWith("m1", ROOM, spot);
+        expect(api.placeBrickHome.mock.calls[0][2]).not.toHaveProperty("behaviorType");
         expect(api.getRoomBricks).toHaveBeenCalled();
         expect(api.notifyRoomEnter).toHaveBeenCalledWith(ROOM);
+    });
+
+    it("moves a Brick that already stands here with how it behaves kept: only its spot changes", async () => {
+        api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
+        const patrol = {
+            behaviorType: "patrol",
+            behaviorConfig: {
+                assignedSpace: { center: { x: 10, y: 20 }, radius: 80 },
+                patrolRoute: [{ x: 1, y: 2 }],
+                wanderSpeed: 3,
+            },
+        };
+        api.getRoomBricks.mockResolvedValue(
+            answer({ here: [{ ...answer().here[0], id: "m1", mine: true, ...patrol }] })
+        );
+        await loadRoomBricks();
+        await placeBrickHere(
+            { id: "m1" },
+            { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } }
+        );
+        expect(api.placeBrickHome).toHaveBeenCalledWith("m1", ROOM, {
+            behaviorType: "patrol",
+            behaviorConfig: {
+                assignedSpace: { center: { x: 64, y: 96 }, radius: 80 },
+                patrolRoute: [{ x: 1, y: 2 }],
+                wanderSpeed: 3,
+            },
+        });
     });
 
     it("says when others cannot talk to it yet because its key is not lent", async () => {

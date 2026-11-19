@@ -28,6 +28,7 @@
         relationshipsStore,
     } from "../../Stores/FriendsStore";
     import { countPeopleAndBots, countPeopleElsewhere } from "../../UserProvider/WorldUserProvider";
+    import { matchesPeopleSearch } from "./PeopleSearch";
     import UserList from "./UserList.svelte";
     import PeopleAndBots from "./PeopleAndBots.svelte";
     import type { SelfIdentity } from "./PersonActions";
@@ -89,9 +90,7 @@
     });
 
     function matches(user: ChatUser): boolean {
-        if (!isSearching) return true;
-        if (findsBots && user.isBot === true) return true;
-        return user.username ? user.username.toLocaleLowerCase().includes(query) : false;
+        return matchesPeopleSearch(user, query, findsBots);
     }
 
     function statusOf(user: ChatUser): AvailabilityStatus | undefined {

@@ -129,6 +129,18 @@ export function loadMyBricks(): Promise<void> {
 }
 
 /**
+ * A read that starts after the one in progress ends: a Brick was made while that one was out, so what it brings may not have the
+ * Brick. True when this read listed the Bricks; false when it could not (the caller may ask again).
+ */
+export async function loadMyBricksAfterPending(): Promise<boolean> {
+    if (!get(userIsConnected)) return true;
+    const pending = loading;
+    if (pending) await pending;
+    await loadMyBricks();
+    return !get(listFailed);
+}
+
+/**
  * Turns one of the person's Bricks on or off. The switch moves at once and goes back when Orbit refuses.
  * A Brick that is off stays in Chats and keeps its chat; it says it is resting instead of answering.
  */

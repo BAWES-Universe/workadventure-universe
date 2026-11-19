@@ -61,6 +61,7 @@ import {
     deleteMyBrick,
     forgetMyBricks,
     loadMyBricks,
+    loadMyBricksAfterPending,
     makeMyBrick,
     myBricksByChatId,
     myBricksListFailed,
@@ -116,6 +117,32 @@ describe("a person's own Bricks", () => {
         expect(api.listMyBricks).toHaveBeenCalledTimes(1);
         await loadMyBricks();
         expect(api.ensureMyBrick).toHaveBeenCalledTimes(2);
+    });
+
+    it("are read again after the read in progress when a Brick was made meanwhile, and the answer says whether that read listed them", async () => {
+        // The first read goes out before the Brick exists; it answers with the old list
+        let answerFirst: (value: unknown) => void = () => {};
+        api.listMyBricks.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answerFirst = resolve;
+                })
+        );
+        const first = loadMyBricks();
+        await vi.waitFor(() => expect(api.listMyBricks).toHaveBeenCalledTimes(1));
+        let listed: boolean | undefined;
+        const later = loadMyBricksAfterPending().then((ok) => (listed = ok));
+        answerFirst({ bricks: [card()] });
+        await first;
+        await later;
+        expect(api.listMyBricks).toHaveBeenCalledTimes(2);
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK, MADE]);
+        expect(listed).toBe(true);
+    });
+
+    it("say when the read after the pending one could not list the Bricks", async () => {
+        api.listMyBricks.mockRejectedValue(new Error("offline"));
+        expect(await loadMyBricksAfterPending()).toBe(false);
     });
 
     it("are never asked for on behalf of a guest", async () => {

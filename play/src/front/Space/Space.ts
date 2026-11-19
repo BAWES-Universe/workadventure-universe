@@ -737,9 +737,11 @@ export class Space implements SpaceInterface {
                 this.allScreenShareStreamStore.delete(userToUpdate.spaceUserId);
             }
         }
-        /*if (this._setUsers) {
+        // The list is told only about tags: they are read from the list (a Brick says who it is visiting from them), and a change
+        // in place is not an add or a remove. Other changes have their own stores, so every update does not wake every reader.
+        if (updateMask.includes("tags") && this._setUsers) {
             this._setUsers(this._users);
-        }*/
+        }
     }
 
     private extendSpaceUser(user: SpaceUser): SpaceUserExtended {

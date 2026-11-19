@@ -221,6 +221,9 @@
             if (destroyed || mine !== request) return;
             opened = answer;
             shownNumber = answer.version.number;
+            // What this opening shows is newer than any renewal of a version that was on show before it: that one is not used,
+            // also when the same version is on show again (1, then 2, then 1)
+            renewal++;
             text = undefined;
             textFailed = false;
             summaryStore.set({
@@ -354,6 +357,13 @@
     // so nothing is drawn until it is opened again at a new one.
     function redrawIfStopped() {
         if (addressStopped()) drawFromNewAddress();
+    }
+
+    // The frame has loaded: what a checkout ended with while the buyer was in Code view (it has no frame then) is told to it now.
+    // From an address that has stopped it shows nothing, so it waits for the frame of the new one.
+    function onFrameLoad() {
+        if (!addressStopped()) payments.frameReady();
+        redrawIfStopped();
     }
 
     // The list drops down from the button. On a phone the window sits behind the chat, so the list ends above the chat,
@@ -717,7 +727,7 @@
                     allow=""
                     data-testid="artifactFrame"
                     bind:this={frameElement}
-                    on:load={redrawIfStopped}
+                    on:load={onFrameLoad}
                 />
                 {#if $payLine.checking || $payLine.problem || $payLine.paid}
                     <div class="pay-line" role="status" data-testid="artifactPayLine">

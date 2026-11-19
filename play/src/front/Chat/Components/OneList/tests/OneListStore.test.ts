@@ -10,6 +10,7 @@ import {
     createOneListStore,
     directRoomsWith,
     directRoomsWithStore,
+    roomMatchesSearch,
     freezeWhileHeld,
 } from "../OneListStore";
 
@@ -505,7 +506,7 @@ describe("the row of a person's own Brick before its chat exists (#1995)", () =>
 
 describe("the chat of a Brick its owner deleted (#1996)", () => {
     const withMembers = (id: string, ...members: string[]) =>
-        ({ id, members: writable(members.map((member) => ({ id: member }))) } as unknown as ChatRoom);
+        ({ id, type: "direct", members: writable(members.map((member) => ({ id: member }))) } as unknown as ChatRoom);
     const studio = "@bot_2d9e3f40-3333-4444-8555-b66677778888:chat.test";
     const rooms = [
         withMembers("!studio", "@me:chat.test", studio),
@@ -537,9 +538,39 @@ describe("the chat of a Brick its owner deleted (#1996)", () => {
         stop();
     });
 
+    it("leaves a group the Brick is a member of alone: only the direct chat with it is out", () => {
+        const group = { id: "!group", type: "multiple", members: writable([{ id: "@me:chat.test" }, { id: studio }]) };
+        const inFolder = fakeFolder("team", [group as unknown as ChatRoom]);
+        const deleted = writable<ReadonlySet<string>>(new Set([studio]));
+        expect(directRoomsWith([group as unknown as ChatRoom], new Set([studio]))).toEqual([]);
+        let hidden: string[] = ["unset"];
+        const stop = directRoomsWithStore(
+            writable([group as unknown as ChatRoom]),
+            deleted,
+            writable([inFolder])
+        ).subscribe((ids) => (hidden = ids));
+        expect(hidden).toEqual([]);
+        stop();
+    });
+
+    it("publishes an empty answer after a restart, so a chat that came back with Undo while nobody listened is not left hidden", () => {
+        const deleted = writable<ReadonlySet<string>>(new Set([studio]));
+        const store = directRoomsWithStore(writable(rooms), deleted);
+        let hidden: string[] = [];
+        const first = store.subscribe((ids) => (hidden = ids));
+        expect(hidden).toEqual(["!studio"]);
+        first();
+        // Undo while no one is looking
+        deleted.set(new Set());
+        const seen: string[][] = [];
+        const second = store.subscribe((ids) => seen.push(ids));
+        expect(seen.at(-1)).toEqual([]);
+        second();
+    });
+
     it("is out of Chats as soon as its members arrive, after the chat itself", () => {
         const members = writable([{ id: "@me:chat.test" }]);
-        const late = { id: "!late", members } as unknown as ChatRoom;
+        const late = { id: "!late", type: "direct", members } as unknown as ChatRoom;
         const deleted = writable<ReadonlySet<string>>(new Set([studio]));
         let hidden: string[] = [];
         const stop = directRoomsWithStore(writable([late]), deleted).subscribe((ids) => (hidden = ids));
@@ -549,5 +580,25 @@ describe("the chat of a Brick its owner deleted (#1996)", () => {
         deleted.set(new Set());
         expect(hidden).toEqual([]);
         stop();
+    });
+});
+
+describe("roomMatchesSearch", () => {
+    const bot = "@bot_2d9e3f40-3333-4444-8555-b66677778888:chat.test";
+    const dm = (...members: string[]) =>
+        ({ id: "!dm", type: "direct", members: writable(members.map((id) => ({ id }))) } as unknown as ChatRoom);
+
+    it("finds a chat with a bot for Bot or Brick whatever it is named, and by name for other searches", () => {
+        const melody = dm("@me:chat.test", bot);
+        expect(roomMatchesSearch(melody, "Melody", "bot")).toBe(true);
+        expect(roomMatchesSearch(melody, "Melody", "Brick")).toBe(true);
+        expect(roomMatchesSearch(melody, "Melody", "mel")).toBe(true);
+        expect(roomMatchesSearch(melody, "Melody", "sara")).toBe(false);
+    });
+
+    it("does not find a person's chat or a group for Bot", () => {
+        expect(roomMatchesSearch(dm("@me:chat.test", "@sara:chat.test"), "Sara", "bot")).toBe(false);
+        const group = { id: "!g", type: "multiple", members: writable([{ id: bot }]) } as unknown as ChatRoom;
+        expect(roomMatchesSearch(group, "Team", "bot")).toBe(false);
     });
 });

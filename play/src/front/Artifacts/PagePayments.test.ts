@@ -581,3 +581,110 @@ describe("a page that takes payments, in the game's window", () => {
         expect(pay).toHaveBeenCalledTimes(1);
     });
 });
+
+describe("how a checkout ended while the artifact's frame was away (Code view)", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.clearAllMocks();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const checkout = { orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" };
+    // The window of the artifact's frame as it is now: none while the buyer reads the code
+    let current: Window | undefined;
+    const make = (pay: (...args: unknown[]) => Promise<ArtifactPay>) =>
+        pagePayments({
+            artifactId: "a1",
+            chat: () => undefined,
+            frame: () => current,
+            openWindow: () => null,
+            pay: pay as never,
+        });
+
+    it("keeps how it ended and tells the frame that comes back, under the request it was started for, once", async () => {
+        current = frameWindow;
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        expect(told()).toEqual(["started"]);
+
+        // The buyer goes to the code: no frame while the order is asked about
+        current = undefined;
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(get(payments.line).paid).not.toBeNull();
+        expect(told()).toEqual(["started"]);
+
+        // And back: the frame loads and hears it, with the request id the page gave
+        current = frameWindow;
+        payments.frameReady();
+        expect(toldAll().map((message) => [message.status, message.request])).toEqual([
+            ["started", "r1"],
+            ["paid", "r1"],
+        ]);
+        // Told once: another load of the frame does not say it again
+        payments.frameReady();
+        expect(told()).toEqual(["started", "paid"]);
+    });
+
+    it("keeps a payment that did not go through, and a start that failed, the same way", async () => {
+        current = frameWindow;
+        const failing = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "not_paid", checkoutUrl: null, testPayment: false });
+        const first = make(failing);
+        ask(first);
+        await flush();
+        current = undefined;
+        await vi.advanceTimersByTimeAsync(3_000);
+        current = frameWindow;
+        first.frameReady();
+        expect(told()).toEqual(["started", "not_paid"]);
+
+        // A start that fails while the frame is away
+        framePost.mockClear();
+        let refuse: (error: Error) => void = () => {};
+        const starting = vi.fn().mockImplementationOnce(
+            () =>
+                new Promise((_, reject) => {
+                    refuse = reject;
+                })
+        );
+        const second = make(starting);
+        ask(second);
+        await flush();
+        current = undefined;
+        refuse(new ArtifactRequestError(409, "unavailable"));
+        await flush();
+        expect(told()).toEqual([]);
+        current = frameWindow;
+        second.frameReady();
+        expect(told()).toEqual(["unavailable"]);
+    });
+
+    it("tells nothing to a frame that is not there, and nothing after the window is gone", async () => {
+        current = frameWindow;
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        current = undefined;
+        await vi.advanceTimersByTimeAsync(3_000);
+        // The frame is still away: nothing is sent anywhere
+        payments.frameReady();
+        expect(told()).toEqual(["started"]);
+        payments.destroy();
+        current = frameWindow;
+        payments.frameReady();
+        expect(told()).toEqual(["started"]);
+    });
+});

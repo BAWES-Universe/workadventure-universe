@@ -41,6 +41,7 @@ import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import type { BotData } from "../types";
 import { readBotUsage } from "../usageModel";
+import { botPreviewsStore } from "../stores/BotEditorStore";
 import BotDetailView from "./BotDetailView.svelte";
 
 const bot: BotData = {
@@ -176,6 +177,59 @@ describe("the bot page (#1540)", () => {
         // Closed again, so the next page opens with every group closed
         head?.click();
         await tick();
+        view.$destroy();
+    });
+});
+
+describe("renaming a bot while its name is being saved", () => {
+    beforeAll(() => {
+        loadLocale("en-US");
+        setLocale("en-US");
+    });
+    beforeEach(() => {
+        reads = 0;
+        mocks.api.getBotUsage.mockImplementation(() => Promise.resolve(readBotUsage(usage)));
+        mocks.api.getBotAiOptions.mockImplementation(() => Promise.resolve(aiOptions()));
+        mocks.api.updateBot.mockClear();
+        botPreviewsStore.set(new Map([[bot.id, bot]]));
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+        document.body.innerHTML = "";
+    });
+
+    function type(target: HTMLElement, name: string) {
+        const input = target.querySelector<HTMLInputElement>("[data-testid='bot-name']");
+        if (!input) throw new Error("no name box");
+        input.value = name;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    it("saves the name the page shows when a save ends, so B and back to A while B was on its way does not leave B in Orbit", async () => {
+        const { target, view } = openPage();
+        await settle();
+        vi.useFakeTimers();
+
+        let answerFirst: () => void = () => {};
+        mocks.api.updateBot.mockImplementationOnce(
+            (id: string, data: object) =>
+                new Promise((resolve) => {
+                    answerFirst = () => resolve({ id, ...data });
+                })
+        );
+        type(target, "Tinyfish B");
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(mocks.api.updateBot).toHaveBeenCalledTimes(1);
+        expect(mocks.api.updateBot).toHaveBeenLastCalledWith("b1", { name: "Tinyfish B" });
+
+        // Back to the name Orbit had, before the answer to B
+        type(target, "Tinyfish Researcher");
+        await vi.advanceTimersByTimeAsync(1000);
+        answerFirst();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(mocks.api.updateBot).toHaveBeenCalledTimes(2);
+        expect(mocks.api.updateBot).toHaveBeenLastCalledWith("b1", { name: "Tinyfish Researcher" });
         view.$destroy();
     });
 });
