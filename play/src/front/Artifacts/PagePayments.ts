@@ -818,7 +818,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
               target ?? (lastRestore ? { intentId: null, ...lastRestore } : none);
         // The turned-away restore this ask goes on with: Restore purchase takes it as it is, and Check payment after that restore's lookup failed
         // goes on with its request too (nothing of its own is left to check), so the page waiting on that restore hears the end of it either way
-        const held =
+        const turnedAway =
             deferred ??
             (deferredRestore &&
             deferredRestore.from === opening() &&
@@ -827,6 +827,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             deferredRestore.session === asked.session
                 ? deferredRestore
                 : null);
+        // What the page asked since this look began (told busy, and waiting on it now) is newer than anything kept from before it
+        const lateBefore = lateAsker;
         busy = true;
         activeRequest = asked.request;
         activeFrom = asked.from;
@@ -862,16 +864,16 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
                 });
                 if (asked.request) tellEnd(told, asked.request, asked.from, test, asked.session);
-                if (held?.latest && held.latest !== asked.request) {
-                    tellEnd(told, held.latest, asked.from, test, asked.session);
+                if (turnedAway?.latest && turnedAway.latest !== asked.request) {
+                    tellEnd(told, turnedAway.latest, asked.from, test, asked.session);
                 }
                 if (update.paid) {
                     tellDeferredPaid(
                         test,
                         { request: asked.request, session: asked.session },
-                        ...(held?.latest ? [{ request: held.latest, session: asked.session }] : [])
+                        ...(turnedAway?.latest ? [{ request: turnedAway.latest, session: asked.session }] : [])
                     );
-                    tellLatestPaid(test, asked.request, held?.latest ?? "");
+                    tellLatestPaid(test, asked.request, turnedAway?.latest ?? "");
                 }
             };
             try {
@@ -899,8 +901,9 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                         target = { intentId: null, request: asked.request, from: asked.from, session: asked.session };
                     }
                     // The page turned away twice (its restore, then its pay tap) waits on its latest request: the end of this order is told under it too
-                    if (held?.latest && held.latest !== asked.request) {
-                        lateAsker = { request: held.latest, from: asked.from, session: held.session };
+                    // unless the page has asked something newer while this was being looked up: that one is the one it waits on
+                    if (turnedAway?.latest && turnedAway.latest !== asked.request && lateAsker === lateBefore) {
+                        lateAsker = { request: turnedAway.latest, from: asked.from, session: turnedAway.session };
                     }
                     // Its restore is being watched now, under its own request: nothing is left to hand over at the end
                     lettingGo();

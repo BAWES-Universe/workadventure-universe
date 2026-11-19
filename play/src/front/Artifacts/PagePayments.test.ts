@@ -1918,6 +1918,33 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             ]);
             open.destroy();
         });
+
+        it("keeps a newer request the page sent while Check payment was looking up the order, and tells the purchase under it", async () => {
+            let answerLookup: (value: unknown) => void = () => undefined;
+            const lookup = new Promise((resolve) => {
+                answerLookup = resolve;
+            });
+            const pay = vi
+                .fn()
+                .mockResolvedValueOnce(checkout)
+                .mockResolvedValueOnce({ status: "not_paid" })
+                .mockRejectedValueOnce(offline())
+                .mockReturnValueOnce(lookup)
+                .mockResolvedValue(paidBack);
+            const payments = await turnedAway(pay);
+            payments.checkPayment();
+            await flush();
+            // The page taps again while the look is out (told busy), and then the look finds an open order
+            ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r3", session: "s2" });
+            await flush();
+            answerLookup({ status: "checking", orderId: "o9", pollAfterMs: 3000 });
+            await flush();
+            await vi.advanceTimersByTimeAsync(10_000);
+            await flush();
+            const paid = heard().filter((m) => m.status === "paid");
+            expect(paid).toContainEqual({ universe: "app-result", status: "paid", request: "r3", session: "s2" });
+            payments.destroy();
+        });
     });
 
     it("tells a restore that was turned away its purchase even when another document's checkout used the same request id", async () => {
