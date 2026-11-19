@@ -384,6 +384,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // The provider said what it used: priced from that. If it said nothing, the input is read as estimated and the output from what came through
         let metadata = ended.usage;
         let estimated = false;
+        let estimatedCounts = false;
         if (!metadata?.error && (!metadata || (metadata.promptTokens ?? 0) + (metadata.completionTokens ?? 0) <= 0)) {
             const promptTokens = inputTokensOf(body);
             const completionTokens = Math.ceil(ended.outputChars / RELAY_GUARDS.charsPerToken);
@@ -391,8 +392,13 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             const reported = typeof metadata?.costUsd === 'number' && Number.isFinite(metadata.costUsd) && metadata.costUsd >= 0 ? { costUsd: metadata.costUsd } : {};
             metadata = completionTokens > 0 ? { promptTokens, completionTokens, ...reported } : 'costUsd' in reported ? reported : undefined;
             estimated = metadata !== undefined && !('costUsd' in reported);
+            estimatedCounts = metadata !== undefined && 'completionTokens' in metadata;
         }
-        const priced = priceMetadata(config, metadata, now);
+        // Counts we only estimated never re-price a cost the provider reported (a rate per token would win over it on made-up counts):
+        // that cost is priced on its own, and the estimated counts only fill the token tallies
+        const reportedCost = estimatedCounts && metadata && 'costUsd' in metadata && metadata.costUsd !== undefined ? { costUsd: metadata.costUsd } : null;
+        const withCounts = priceMetadata(config, metadata, now);
+        const priced = reportedCost ? { cost: priceMetadata(config, reportedCost, now).cost, usage: withCounts.usage } : withCounts;
         const facts = factsOf(priced.cost, estimated);
         await settleOnce({
             jobId,

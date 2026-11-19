@@ -117,6 +117,50 @@ describe('ReplyReaders', () => {
         expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
     });
 
+    it('keeps a private reply private when it is held back for room, so a newer group turn does not make its next piece public', () => {
+        const readers = new ReplyReaders();
+        readers.starts(SPACE, 7, true);
+        expect(readers.readerOf(SPACE, REPLY, now(false))).toBe('room-1_7');
+        for (let i = 1; i < 3000; i++) readers.readerOf(SPACE, `bot-bot-test-player-9-n${i}`, now(false));
+        // A private reply for Khalid is held back (no room); then a newer turn for him starts in a group
+        readers.starts(SPACE, 8, true);
+        const held = 'bot-bot-test-player-8-held';
+        expect(readers.readerOf(SPACE, held, now(false))).toBeNull();
+        readers.starts(SPACE, 8, false);
+        // One reply ends and makes room: the held reply binds privately, not publicly
+        readers.complete('bot-bot-test-player-9-n1');
+        expect(readers.readerOf(SPACE, held, now(false))).toBe('room-1_8');
+    });
+
+    it('does not let go of 301 private replies whose reader is not known yet, so the first one stays private after a newer group turn', () => {
+        const readers = new ReplyReaders();
+        const unnamed = { alone: vi.fn(() => true), spaceUserIdOf: (playerId: number) => (playerId === 7 ? undefined : `room-1_${playerId}`) };
+        readers.starts(SPACE, 7, true);
+        const first = 'bot-bot-test-player-7-first';
+        expect(readers.readerOf(SPACE, first, unnamed)).toBeNull();
+        for (let i = 0; i < 301; i++) expect(readers.readerOf(SPACE, `bot-bot-test-player-7-more${i}`, unnamed)).toBeNull();
+        // A newer turn for the same person is in a group, and their id is known now
+        readers.starts(SPACE, 7, false);
+        expect(readers.readerOf(SPACE, first, now(false))).toBe('room-1_7');
+    });
+
+    it('lets go of a private reply with no reader only when it was abandoned a day ago', () => {
+        vi.useFakeTimers();
+        try {
+            const readers = new ReplyReaders();
+            const unnamed = { alone: vi.fn(() => true), spaceUserIdOf: () => undefined };
+            readers.starts(SPACE, 7, true);
+            expect(readers.readerOf(SPACE, REPLY, unnamed)).toBeNull();
+            vi.advanceTimersByTime(25 * 60 * 60_000);
+            // Another one is noted: the abandoned first one goes, and a group turn now decides it afresh
+            expect(readers.readerOf(SPACE, 'bot-bot-test-player-7-next', unnamed)).toBeNull();
+            readers.starts(SPACE, 7, false);
+            expect(readers.readerOf(SPACE, REPLY, now(false))).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('lets go of an unfinished reply at the 3,000 limit only when it was abandoned a day ago', () => {
         vi.useFakeTimers();
         try {

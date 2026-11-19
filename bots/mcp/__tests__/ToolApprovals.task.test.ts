@@ -10,6 +10,7 @@ import { ASK_KEY, type AskField } from '../ApprovalCard';
 import type { SavedAction } from '../OrbitActions';
 import type { GateDecision } from '../ToolGate';
 import type { ToolServerEntry } from '../MCPConnector';
+import { BotRegistry } from '../../server/BotRegistry';
 
 const ROOM = '!dm:matrix.test';
 const ITEM = '0b8f067a-df0f-43f8-af12-8f03065ce1d0';
@@ -394,6 +395,21 @@ describe('a goal’s card that could not be shown, remembered for every bot serv
         writable = true;
         theirs = true;
         expect((await first.propose(input())).kind).toBe('waiting');
+        expect(sent).toHaveLength(1);
+    });
+
+    it('keeps its own note when the shared store is not connected, as the production adapter says (it never counts as written)', async () => {
+        orbit.cancelFails = true;
+        // The registry's own behaviour with no Redis: mark and read refuse, they do not quietly answer
+        const registry = new BotRegistry('test') as any;
+        registry.redis = undefined;
+        const store = { mark: (id: string) => registry.markTaskCardUnshown(id), marked: (id: string) => registry.taskCardUnshown(id), clear: (id: string) => registry.clearTaskCardUnshown(id) };
+        let theirs = false;
+        const approvals = make(orbit, sent, undefined, RUN, () => theirs, { unshownCards: store });
+        expect((await approvals.propose(input())).kind).toBe('failed');
+        // Asked again with the chat theirs: the step has no card, so the card is shown, not joined as "already asked"
+        theirs = true;
+        expect((await approvals.propose(input())).kind).toBe('waiting');
         expect(sent).toHaveLength(1);
     });
 

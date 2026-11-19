@@ -197,6 +197,23 @@ describe('the call', () => {
         expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
     });
 
+    it('keeps the cost the provider reported when a rate per token is set and it sent no counts, in a whole reply', async () => {
+        route = { config: config({ endpoint: upstreamBase, settings: { costPerToken: 0.001 } }), source: 'universe-ai', keyOwnerId: null };
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'x'.repeat(300) } }], usage: { cost: 0.0123 } });
+        await askAndSettle({ messages });
+        // Not the 100 estimated tokens at the rate (a different, made-up amount): the provider's own figure
+        expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
+        // The estimated counts still fill the token tallies
+        expect(settled()[0].tokens?.output).toBe(100);
+    });
+
+    it('still prices real counts at the rate per token, which wins over a reported cost', async () => {
+        route = { config: config({ endpoint: upstreamBase, settings: { costPerToken: 0.001 } }), source: 'universe-ai', keyOwnerId: null };
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 10, completion_tokens: 20, cost: 0.0123 } });
+        await askAndSettle({ messages });
+        expect(settled()[0]).toMatchObject({ costMicros: 30_000, basis: 'measured' });
+    });
+
     it('writes max_completion_tokens for OpenAI’s own host, which wants the newer name', async () => {
         // Same shape the provider code uses; the guard is on the host name
         const { isOpenAIHost } = await import('../ai/providers/OpenAIProvider');
@@ -384,6 +401,13 @@ describe('streaming', () => {
 
     it('keeps a cost the provider reported when it sent no token counts, in a stream', async () => {
         upstreamHandler = (_req, res) => sse(res, [data({ choices: [{ delta: { content: 'hello' } }] }), data({ choices: [], usage: { cost: 0.0123 } }), 'data: [DONE]\n\n']);
+        await askAndSettle({ messages, stream: true });
+        expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
+    });
+
+    it('keeps the cost the provider reported when a rate per token is set and it sent no counts, in a stream', async () => {
+        route = { config: config({ endpoint: upstreamBase, settings: { costPerToken: 0.001 } }), source: 'universe-ai', keyOwnerId: null };
+        upstreamHandler = (_req, res) => sse(res, [data({ choices: [{ delta: { content: 'x'.repeat(300) } }] }), data({ choices: [], usage: { cost: 0.0123 } }), 'data: [DONE]\n\n']);
         await askAndSettle({ messages, stream: true });
         expect(settled()[0]).toMatchObject({ sent: true, costMicros: 12_300, basis: 'measured' });
     });

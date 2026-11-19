@@ -390,12 +390,14 @@ export class BotRegistry {
 
     /** A goal's saved step with no card (the card could not be shown and the step could not be closed): kept a while, for every bot server. */
     async markTaskCardUnshown(actionId: string): Promise<void> {
-        if (!isUp(this.redis)) return;
+        // Not written is not marked: the caller keeps its own note until a store that answers can take it
+        if (!isUp(this.redis)) throw new Error('shared store not connected');
         await this.redis.set(`bots:task-card-unshown:${actionId}`, '1', { EX: 3 * 24 * 60 * 60 });
     }
 
     async taskCardUnshown(actionId: string): Promise<boolean> {
-        if (!isUp(this.redis)) return false;
+        // A store that cannot answer is not an answer of "no card was missed"
+        if (!isUp(this.redis)) throw new Error('shared store not connected');
         return (await this.redis.exists(`bots:task-card-unshown:${actionId}`)) > 0;
     }
 
