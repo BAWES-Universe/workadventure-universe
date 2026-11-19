@@ -364,6 +364,41 @@ export function sourceOf(voice: BotVoice, profile: VoiceProfile, part: VoicePart
     return { kind: "gone", providerId };
 }
 
+/**
+ * The companies whose connector in the voice worker passes "How it speaks" on to the company, for a speaking model and for a
+ * talking model (voice-worker/src: the connectors that read `expression`). Every other company sounds the same whichever is
+ * picked, so the row isn't offered for it: a setting that changes nothing is never shown. Add a company here in the same change
+ * that makes its connector use the style.
+ */
+const STYLE_REACHES: Record<"speech" | "talk", ReadonlySet<string>> = {
+    speech: new Set(["cartesia", "elevenlabs"]),
+    // Azure OpenAI runs on the OpenAI connector, so it passes the style on the same way
+    talk: new Set(["aws", "azure", "google", "openai", "ultravox", "xai", "zoom"]),
+};
+
+/**
+ * Whether "How it speaks" changes how this profile's speaking sounds. True when the company can't be told (a server provider
+ * Universe AI no longer starts bots on, a key that went away), so nothing is hidden on a guess.
+ */
+export function styleReaches(voice: BotVoice, profile: VoiceProfile): boolean {
+    const source = sourceOf(voice, profile, "speech");
+    if (source.kind === "key") {
+        const model = source.key.models.find(
+            (candidate) => candidate.id === profile.speech?.model && modelDoes(candidate, "speech")
+        );
+        // A model the key no longer lists can't say whether it speaks or talks live, so nothing is hidden on a guess
+        if (!model) return true;
+        return STYLE_REACHES[model.kind === "talk" ? "talk" : "speech"].has(source.key.adapter);
+    }
+    if (source.kind === "universe-ai") {
+        const uai = voice.universeAi.speech;
+        const providerId = profile.speech?.providerId;
+        // Universe AI speaks with speaking models only
+        if (uai && (!providerId || uai.providerId === providerId)) return STYLE_REACHES.speech.has(uai.adapter);
+    }
+    return true;
+}
+
 /** Why the voice of a bot that is on does not speak now, or null when it does. The payer is never changed for it. */
 export type VoicePause =
     | { kind: "key-down"; part: VoicePart; key: VoiceKey; reason: string | null; since: string | null }
