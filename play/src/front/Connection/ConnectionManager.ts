@@ -894,6 +894,9 @@ class ConnectionManager {
         const response = MeResponse.parse(data);
 
         if (response.status === "error") {
+            // Orbit asked for the same sign-in again, with the guest id that went along: it is kept aside for 30 more minutes from now, so
+            // a hand-over that takes longer than the first 30 still has it on the last try
+            if (response.type === "retry" && sendGuestToken) localUserStore.renewGuestTokenAside();
             // A refusal the pusher sent after renewing the token carries it: keep it, the old one may no longer work.
             const renewedToken = (data as { authToken?: unknown } | null)?.authToken;
             if (typeof renewedToken === "string") {
