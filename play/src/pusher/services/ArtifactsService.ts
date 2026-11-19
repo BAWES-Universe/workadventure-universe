@@ -113,8 +113,13 @@ const PayAnswer = z.object({
     /** What Orbit used for the person who asked (a real account, or the recovery code): the asking person's kind, not the order's */
     // A word this does not know is dropped (see `pay`), never a reason to lose the rest of the answer (a paid status)
     buyer: z.string().optional(),
+    /** A restore found the buyer's own order (`own`) or the one of a receipt link they opened (`receipt`); a word this does not know is dropped (see `pay`) */
+    via: z.string().optional(),
 });
-export type ArtifactPayAnswer = Omit<z.infer<typeof PayAnswer>, "buyer"> & { buyer?: "account" | "guest" };
+export type ArtifactPayAnswer = Omit<z.infer<typeof PayAnswer>, "buyer" | "via"> & {
+    buyer?: "account" | "guest";
+    via?: "own" | "receipt";
+};
 
 /** What the window may ask of the payment side of a page: one of start, order, check or restore (see `pay`). */
 export interface ArtifactPayRequest {
@@ -235,12 +240,16 @@ export class ArtifactsService {
      * `restore` asks for this buyer's purchase. A guest's window sends its `recoveryCode`.
      */
     async pay(id: string, request: ArtifactPayRequest, viewer: ArtifactViewer): Promise<ArtifactPayAnswer> {
-        const { buyer, ...answer } = await this.call(
+        const { buyer, via, ...answer } = await this.call(
             `/api/artifacts/${encodeURIComponent(id)}/pay`,
             { viewer, ...request },
             PayAnswer
         );
-        return buyer === "account" || buyer === "guest" ? { ...answer, buyer } : answer;
+        return {
+            ...answer,
+            ...(buyer === "account" || buyer === "guest" ? { buyer } : {}),
+            ...(via === "own" || via === "receipt" ? { via } : {}),
+        };
     }
 
     /** The code of one version, for the Code view. */

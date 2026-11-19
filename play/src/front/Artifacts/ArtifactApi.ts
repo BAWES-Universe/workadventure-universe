@@ -189,6 +189,11 @@ export interface ArtifactPay {
      * whose Orbit account is a guest account is a guest). It is the asking person's kind, not the order's: never given to the page.
      */
     buyer?: "account" | "guest";
+    /**
+     * Of a restore: the buyer's own order (`own`), or the one of a receipt link they opened (`receipt`, never asked again). An `own` order that is
+     * `checking` with no `checkoutUrl` is a start that has not finished yet (an early reload): Restore is asked again after `pollAfterMs`.
+     */
+    via?: "own" | "receipt";
 }
 
 /** What the window asks of the payment side of a page: one of start, order, check or restore. */

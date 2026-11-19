@@ -77,6 +77,21 @@ describe("ArtifactsService", () => {
         await expect(service.pay(ID, { start: true }, viewer)).rejects.toEqual(new ArtifactsError("limit", 429));
     });
 
+    it("keeps whether a restore found the buyer's own order or a receipt's (via), and drops a word it does not know", async () => {
+        const http = { put: vi.fn(), post: vi.fn() };
+        const service = new ArtifactsService("http://orbit", "token", http);
+        http.post.mockResolvedValueOnce({ data: { status: "checking", via: "own", pollAfterMs: 2000 } });
+        expect(await service.pay(ID, { restore: true }, viewer)).toEqual({
+            status: "checking",
+            via: "own",
+            pollAfterMs: 2000,
+        });
+        http.post.mockResolvedValueOnce({ data: { status: "checking", via: "receipt", orderId: "o1" } });
+        expect(await service.pay(ID, { restore: true }, viewer)).toMatchObject({ via: "receipt", orderId: "o1" });
+        http.post.mockResolvedValueOnce({ data: { status: "checking", via: "somebody" } });
+        expect(await service.pay(ID, { restore: true }, viewer)).toEqual({ status: "checking" });
+    });
+
     it("keeps Orbit's 'unsure' on a start's 409 refusal (an order may have been made), and nothing else about a plain refusal", async () => {
         const http = { put: vi.fn(), post: vi.fn() };
         const service = new ArtifactsService("http://orbit", "token", http);

@@ -95,6 +95,14 @@ const STATUS_FOR_MS = 30_000;
  * never asked about, and costs one slot in the hourly limits. The next start makes its own order, with its own link.
  */
 const STALLED_START_FOR_MS = 120_000;
+/**
+ * An early reload finds the buyer's own start unfinished (Orbit: `checking`, `own`, no checkout yet): Restore is asked again after the
+ * answer's `pollAfterMs` (kept between these two), for this long in all, and then Check payment is offered
+ */
+const OWN_START_WAIT_MS = 20 * 60_000;
+const OWN_START_POLL_MIN_MS = 1_000;
+const OWN_START_POLL_MAX_MS = 60_000;
+const OWN_START_POLL_DEFAULT_MS = 3_000;
 /** How often a closed checkout tab is looked for: on its own clock, not the status questions' */
 const TAB_WATCH_MS = 1_000;
 
@@ -516,6 +524,32 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         })();
     };
 
+    const unfinishedOwnStart = (answer: ArtifactPay) =>
+        answer.status === "checking" && answer.via === "own" && !safeCheckout(answer.checkoutUrl);
+
+    /**
+     * Restore found the buyer's own start unfinished: Restore is asked again (not the order's status: there is no checkout to watch yet) until
+     * the checkout comes, the purchase is found, or OWN_START_WAIT_MS has passed (null: the buyer can Check payment). A question that got no
+     * answer is asked again; an answer that is a refusal ends it. A receipt's order (`via: receipt`) is never asked again here.
+     */
+    const followOwnStart = async (first: ArtifactPay): Promise<ArtifactPay | null> => {
+        const ends = Date.now() + OWN_START_WAIT_MS;
+        let answer = first;
+        while (unfinishedOwnStart(answer)) {
+            if (destroyed || Date.now() >= ends) return null;
+            show({ checking: true });
+            const wait = answer.pollAfterMs ?? OWN_START_POLL_DEFAULT_MS;
+            await waitFor(Math.min(Math.max(wait, OWN_START_POLL_MIN_MS), OWN_START_POLL_MAX_MS));
+            if (destroyed) return null;
+            try {
+                answer = await askWithin({ restore: true });
+            } catch (error) {
+                if (!gotNoAnswer(error)) return null;
+            }
+        }
+        return answer;
+    };
+
     /** A page asking for a purchase this buyer already made (a reload, a reopened version): found by the buyer, never by anything the page chose. */
     const restore = (request: string, from: number) => {
         busy = true;
@@ -525,8 +559,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         held.clear();
         void (async () => {
             try {
-                const answer = await askWithin({ restore: true });
+                let answer = await askWithin({ restore: true });
                 if (destroyed) return;
+                if (unfinishedOwnStart(answer)) {
+                    const followed = await followOwnStart(answer);
+                    if (destroyed) return;
+                    if (!followed) return end({ problem: "unavailable", canCheck: true }, "unavailable", request, from);
+                    answer = followed;
+                }
                 const test = answer.testPayment === true;
                 if (answer.status === "paid") {
                     return end(
@@ -603,10 +643,16 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (asked.request) tellEnd(told, asked.request, asked.from, test);
             };
             try {
-                const answer = await askWithin(
+                let answer = await askWithin(
                     asked.intentId ? { check: true, intentId: asked.intentId } : { restore: true }
                 );
                 if (destroyed) return;
+                if (!asked.intentId && unfinishedOwnStart(answer)) {
+                    const followed = await followOwnStart(answer);
+                    if (destroyed) return;
+                    if (!followed) return settle({ problem: "unavailable", canCheck: true }, "unavailable");
+                    answer = followed;
+                }
                 const test = answer.testPayment === true;
                 if (answer.status === "paid") {
                     return settle(
