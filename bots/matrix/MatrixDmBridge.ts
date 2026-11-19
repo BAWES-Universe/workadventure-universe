@@ -1672,6 +1672,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (Date.now() - at >= WAITING_MAX_AGE_MS) continue;
             // The person wrote again since and got an answer: only the newest message is answered, as when nothing failed.
             if ((event.origin_server_ts ?? 0) <= (this.answeredLive.get(roomId) ?? -1)) continue;
+            if ((event.origin_server_ts ?? 0) <= (this.answeringLive.get(roomId) ?? -1)) {
+                // A newer message there is being answered right now: wait to see whether that answer lands, never answer after it
+                this.keepUnplaced(event);
+                continue;
+            }
             await this.handleMessage(event, false).catch((error) =>
                 console.warn(`[MatrixDmBridge] Could not answer a message kept while the store was down in ${roomId}:`, error?.message ?? error)
             );

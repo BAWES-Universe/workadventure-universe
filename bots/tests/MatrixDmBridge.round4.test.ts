@@ -231,6 +231,39 @@ describe('a message that arrives while the store that knows the chat is down', (
         bridge.stop();
     });
 
+    it('does not answer an older kept message while a newer one in the same chat is being answered, nor after it was', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = makeClient();
+        const stores = makeStores();
+        stores.rooms.set(ROOM, BOT);
+        let down = true;
+        stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+            if (down) throw new Error('Redis is reconnecting');
+            return stores.rooms.get(room) ?? null;
+        });
+        let finish: (reply: any) => void = () => undefined;
+        stores.deps.reply = vi.fn(() => new Promise((resolve) => (finish = resolve)));
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+
+        await bridge.onEvent({ ...message('first'), origin_server_ts: 1000 });
+        down = false;
+        // The newer message finds the store back and is being answered (its reply is still on its way)
+        const second = bridge.onEvent({ ...message('second'), origin_server_ts: 2000 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        // The kept older one comes due meanwhile: it does not start a second answer
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        // The newer answer lands; the older one is let go of at its next try and is never answered
+        finish({ text: 'Answer to the second', media: [] });
+        await second;
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+        expect(client.sendText.mock.calls.map((call: any[]) => call[2])).toEqual(['Answer to the second']);
+        bridge.stop();
+    });
+
     it('does not answer an older message after the person wrote again and was answered', async () => {
         vi.useFakeTimers();
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
