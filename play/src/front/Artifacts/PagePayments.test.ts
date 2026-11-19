@@ -36,7 +36,7 @@ const otherWindow = { postMessage: vi.fn() } as unknown as Window;
 function ask(
     payments: ReturnType<typeof pagePayments>,
     source: Window = frameWindow,
-    data: unknown = { universe: "use-app", app: "examplepay", request: "r1" }
+    data: unknown = { universe: "use-app", app: "examplepay", request: "r1", session: "s1" }
 ) {
     payments.onMessage({ source, data } as unknown as MessageEvent);
 }
@@ -91,10 +91,10 @@ describe("a page that takes payments, in the game's window", () => {
         ask(payments, frameWindow, null);
         // No id of its own, or one that is not plain: no answer could be told apart, so none is given
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay" });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "" });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: 7 });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "a b" });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "x".repeat(65) });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "", session: "s1" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: 7, session: "s1" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "a b", session: "s1" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "x", session: "s1".repeat(65) });
         await flush();
         expect(pay).not.toHaveBeenCalled();
         expect(framePost).not.toHaveBeenCalled();
@@ -112,6 +112,7 @@ describe("a page that takes payments, in the game's window", () => {
             universe: "use-app",
             app: "examplepay",
             request: "r1",
+            session: "s1",
             amount: "1.000",
             job: "x",
         });
@@ -160,22 +161,67 @@ describe("a page that takes payments, in the game's window", () => {
             .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
             .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: false });
         const payments = make(pay, () => null);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         // The page was reloaded (or asked again): it has a new id while the first checkout is still open
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second", session: "s1" });
         // The same tap heard twice is not a new request
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         expect(pay).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(3_000);
         // "paid" is for the first checkout only: the newer request was told "busy" and never hears "paid"
         expect(toldAll()).toEqual([
-            { universe: "app-result", status: "started", request: "first" },
-            { universe: "app-result", status: "busy", request: "second" },
-            { universe: "app-result", status: "paid", request: "first" },
+            { universe: "app-result", status: "started", request: "first", session: "s1" },
+            { universe: "app-result", status: "busy", request: "second", session: "s1" },
+            { universe: "app-result", status: "paid", request: "first", session: "s1" },
         ]);
         expect(toldAll().filter((m) => m.request === "second" && m.status === "paid")).toEqual([]);
+    });
+
+    it("never answers or starts for a request without the session its document gave itself, and says on its line that the page needs an update", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValue({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" });
+        const payments = make(pay, () => null);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        await flush();
+        expect(pay).not.toHaveBeenCalled();
+        expect(framePost).not.toHaveBeenCalled();
+        expect(get(payments.line)).toMatchObject({ needsUpdate: true, canCheck: true });
+        // Not a plain id either
+        for (const session of ["", 7, "a b", "s".repeat(65), null]) {
+            ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r2", session });
+        }
+        await flush();
+        expect(pay).not.toHaveBeenCalled();
+        expect(framePost).not.toHaveBeenCalled();
+        payments.destroy();
+    });
+
+    it("tells every answer under its document's session, and tells nothing of an older document's checkout once another document has spoken", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay, () => null);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "doc1" });
+        await flush();
+        // Another document (the page was reloaded): it is told busy under its own id and session, even with the same id as the first one
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "other", session: "doc2" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "doc2" });
+        await flush();
+        expect(pay).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(3_000);
+        // The first document's result is told to nobody, and no result of it reaches the second
+        expect(toldAll()).toEqual([
+            { universe: "app-result", status: "started", request: "first", session: "doc1" },
+            { universe: "app-result", status: "busy", request: "other", session: "doc2" },
+            { universe: "app-result", status: "busy", request: "first", session: "doc2" },
+        ]);
+        // The buyer's line still shows what happened, and offers Restore purchase to the document that was turned away
+        expect(get(payments.line)).toMatchObject({ paid: { test: false } });
+        payments.destroy();
     });
 
     it("answers the newer request under its own id once the earlier checkout has ended", async () => {
@@ -189,10 +235,10 @@ describe("a page that takes payments, in the game's window", () => {
                 app: "Example",
             });
         const payments = make(pay, () => null);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(3_000);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second", session: "s1" });
         await flush();
         expect(toldAll().map((m) => `${m.request}:${m.status}`)).toEqual([
             "first:started",
@@ -270,7 +316,7 @@ describe("a page that takes payments, in the game's window", () => {
             app: "Example",
         });
         const payments = make(pay, () => popup);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(29_000);
         expect(get(payments.line)).toMatchObject({ checking: false, slow: false, problem: null });
@@ -280,17 +326,22 @@ describe("a page that takes payments, in the game's window", () => {
         expect(close).toHaveBeenCalled();
         expect(toldAll()).toEqual([]);
         // Its answer may still come, so no second checkout is made meanwhile: another request is told it is busy, under its own id
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second", session: "s1" });
         await flush();
         expect(pay).toHaveBeenCalledTimes(1);
-        expect(toldAll()).toEqual([{ universe: "app-result", status: "busy", request: "second" }]);
+        expect(toldAll()).toEqual([{ universe: "app-result", status: "busy", request: "second", session: "s1" }]);
         // Dropped for good two minutes after the tap: the page hears "unavailable" once, and nothing is stuck
         await vi.advanceTimersByTimeAsync(90_000);
         expect(dropped.value).toBe(true);
         expect(get(payments.line)).toMatchObject({ checking: false, slow: false, problem: "unavailable" });
-        expect(toldAll().at(-1)).toEqual({ universe: "app-result", status: "unavailable", request: "first" });
+        expect(toldAll().at(-1)).toEqual({
+            universe: "app-result",
+            status: "unavailable",
+            request: "first",
+            session: "s1",
+        });
         expect(pageHears("first")).toEqual(["unavailable"]);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "third" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "third", session: "s1" });
         await flush();
         expect(pay).toHaveBeenCalledTimes(2);
         payments.destroy();
@@ -309,14 +360,14 @@ describe("a page that takes payments, in the game's window", () => {
             .mockResolvedValueOnce({ status: "checking", checkoutUrl: null, testPayment: false })
             .mockResolvedValue({ status: "paid", checkoutUrl: null, testPayment: false });
         const payments = make(pay, () => null);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(31_000);
         // Taking longer, and the page has not been told it failed
         expect(get(payments.line)).toMatchObject({ checking: true, slow: true, problem: null });
         expect(toldAll()).toEqual([]);
         // The page taps again while the first start is still out: refused as busy, no second checkout is made
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second", session: "s1" });
         await flush();
         expect(pay).toHaveBeenCalledTimes(1);
         answerLate({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" } as ArtifactPay);
@@ -334,9 +385,9 @@ describe("a page that takes payments, in the game's window", () => {
         expect(get(payments.line).paid).toMatchObject({ test: false });
         // Everything about that order went out under the first request's id, and the second one only heard "busy"
         expect(toldAll()).toEqual([
-            { universe: "app-result", status: "busy", request: "second" },
-            { universe: "app-result", status: "started", request: "first" },
-            { universe: "app-result", status: "paid", request: "first" },
+            { universe: "app-result", status: "busy", request: "second", session: "s1" },
+            { universe: "app-result", status: "started", request: "first", session: "s1" },
+            { universe: "app-result", status: "paid", request: "first", session: "s1" },
         ]);
         // The page's own recipe keeps listening only while "started": it hears started, then paid, so it unlocks
         expect(pageHears("first")).toEqual(["started", "paid"]);
@@ -347,7 +398,7 @@ describe("a page that takes payments, in the game's window", () => {
         const dropped: { value: boolean; answer?: (value: ArtifactPay) => void } = { value: false };
         const pay = vi.fn().mockImplementationOnce(neverAnswers(dropped));
         const payments = make(pay, () => null);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(120_000);
         expect(dropped.value).toBe(true);
@@ -379,12 +430,12 @@ describe("a page that takes payments, in the game's window", () => {
         const stop = payments.line.subscribe((now) => {
             if (now.resume) links.push(now.resume.url);
         });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(120_000);
         expect(dropped.value).toBe(true);
         // Only now can the buyer try again (a retry never runs beside the start that was waiting), and the page is listening anew
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second", session: "s1" });
         await flush();
         // The first order's answer reaches nobody, even if it arrives now
         dropped.answer?.({
@@ -415,7 +466,7 @@ describe("a page that takes payments, in the game's window", () => {
                 return neverAnswers(dropped)(_id, _chat, _request, signal);
             });
         const payments = make(pay, () => null);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(5_000);
         expect(signalSeen?.aborted).toBe(false);
@@ -436,7 +487,7 @@ describe("a page that takes payments, in the game's window", () => {
                 })
         );
         const payments = make(pay, () => null);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(31_000);
         expect(get(payments.line).slow).toBe(true);
@@ -460,15 +511,20 @@ describe("a page that takes payments, in the game's window", () => {
             .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" })
             .mockResolvedValue({ status: "paid", checkoutUrl: null, testPayment: false });
         const payments = make(pay, () => null);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "first", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(31_000);
         answerLate({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" } as ArtifactPay);
         await flush();
         await vi.advanceTimersByTimeAsync(3_000);
         // The late order ended as not paid, under the first id; only now is a new request taken, under its own id
-        expect(toldAll().at(-1)).toEqual({ universe: "app-result", status: "not_paid", request: "first" });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second" });
+        expect(toldAll().at(-1)).toEqual({
+            universe: "app-result",
+            status: "not_paid",
+            request: "first",
+            session: "s1",
+        });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "second", session: "s1" });
         await flush();
         await vi.advanceTimersByTimeAsync(3_000);
         expect(toldAll().map((one) => `${one.request}:${one.status}`)).toEqual([
@@ -892,6 +948,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             universe: "use-app",
             app: "examplepay",
             request: "r1",
+            session: "s1",
             intentId: "page-made",
             recoveryCode: "page-made",
         });
@@ -903,7 +960,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         first.destroy();
         // The same browser, the same page, the next time: the same code, a new wish
         const second = make(pay, { storage, randomId: ids });
-        ask(second, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        ask(second, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
         await flush();
         expect(pay.mock.calls[1][2]).toMatchObject({ start: true, recoveryCode: CODE(2) });
         expect((pay.mock.calls[1][2] as { intentId: string }).intentId).not.toBe(WISH_1);
@@ -917,7 +974,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             storage,
             randomId: ids,
         });
-        ask(other, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        ask(other, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
         await flush();
         expect(storage.kept.get("universe-pay-recovery:a2")).toBeDefined();
         // A look at an order never carries the code
@@ -991,8 +1048,8 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         expect(get(payments.line)).toMatchObject({ checking: false, paid: { test: false }, problem: null });
         // The page that asked hears it too, under its own request
         expect(heard()).toEqual([
-            { universe: "app-result", status: "unavailable", request: "r1" },
-            { universe: "app-result", status: "paid", request: "r1" },
+            { universe: "app-result", status: "unavailable", request: "r1", session: "s1" },
+            { universe: "app-result", status: "paid", request: "r1", session: "s1" },
         ]);
         payments.destroy();
     });
@@ -1058,7 +1115,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
     });
 
     describe("an early reload finds the buyer's own start unfinished (restore: checking, via own, no checkout yet)", () => {
-        const load = { universe: "use-app", app: "examplepay", request: "load1", restore: true };
+        const load = { universe: "use-app", app: "examplepay", request: "load1", session: "s1", restore: true };
         const unfinished = { status: "checking", via: "own", orderId: null, pollAfterMs: 2_000 } as ArtifactPay;
 
         it("asks Restore again after pollAfterMs, not the order's status, and takes up the checkout when it comes", async () => {
@@ -1185,7 +1242,13 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             paidAt: "2026-11-19T08:00:00.000Z",
         });
         const payments = make(pay, { buyer: () => "account" });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load1",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         // It is a look, not a checkout: no wish, no payment window, and the guest's code goes with it
         expect(pay).toHaveBeenCalledTimes(1);
@@ -1196,12 +1259,18 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             restored: { paidAt: "2026-11-19T08:00:00.000Z" },
             receipt: null,
         });
-        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "load1" }]);
+        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "load1", session: "s1" }]);
         // It ended, so the page can ask again
         pay.mockResolvedValueOnce({ status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load2", restore: true });
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load2",
+            session: "s1",
+            restore: true,
+        });
         await flush();
-        expect(heard().at(-1)).toEqual({ universe: "app-result", status: "none", request: "load2" });
+        expect(heard().at(-1)).toEqual({ universe: "app-result", status: "none", request: "load2", session: "s1" });
         expect(get(payments.line)).toMatchObject({ offerRestore: true, paid: null });
         payments.destroy();
     });
@@ -1211,9 +1280,17 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             .fn()
             .mockResolvedValue({ status: "paid", testPayment: true, orderId: "o9", pollAfterMs: 3000, paidAt: null });
         const restoring = make(pay);
-        ask(restoring, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        ask(restoring, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load1",
+            session: "s1",
+            restore: true,
+        });
         await flush();
-        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "load1", test: true }]);
+        expect(heard()).toEqual([
+            { universe: "app-result", status: "paid", request: "load1", session: "s1", test: true },
+        ]);
         expect(get(restoring.line)).toMatchObject({ paid: { test: true } });
         restoring.destroy();
 
@@ -1229,8 +1306,8 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         await flush();
         await vi.advanceTimersByTimeAsync(3_000);
         expect(heard()).toEqual([
-            { universe: "app-result", status: "started", request: "r1" },
-            { universe: "app-result", status: "paid", request: "r1", test: true },
+            { universe: "app-result", status: "started", request: "r1", session: "s1" },
+            { universe: "app-result", status: "paid", request: "r1", session: "s1", test: true },
         ]);
         expect(get(buying.line)).toMatchObject({ paid: { test: true }, receipt: null });
         buying.destroy();
@@ -1242,7 +1319,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         ask(live);
         await flush();
         await vi.advanceTimersByTimeAsync(3_000);
-        expect(heard().at(-1)).toEqual({ universe: "app-result", status: "paid", request: "r1" });
+        expect(heard().at(-1)).toEqual({ universe: "app-result", status: "paid", request: "r1", session: "s1" });
         live.destroy();
     });
 
@@ -1257,7 +1334,13 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             })
             .mockResolvedValue({ status: "paid", testPayment: false });
         const payments = make(pay);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load1",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         expect(get(payments.line)).toMatchObject({
             checking: true,
@@ -1265,15 +1348,21 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         });
         await vi.advanceTimersByTimeAsync(3_000);
         expect(pay).toHaveBeenLastCalledWith("a1", undefined, { order: "o5" });
-        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "load1" }]);
+        expect(heard()).toEqual([{ universe: "app-result", status: "paid", request: "load1", session: "s1" }]);
         payments.destroy();
     });
 
     it("says it could not look when a restore gets no answer, and the buyer can check", async () => {
         const payments = make(vi.fn().mockRejectedValue(new ArtifactRequestError(0, "offline")));
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load1",
+            session: "s1",
+            restore: true,
+        });
         await flush();
-        expect(heard()).toEqual([{ universe: "app-result", status: "unavailable", request: "load1" }]);
+        expect(heard()).toEqual([{ universe: "app-result", status: "unavailable", request: "load1", session: "s1" }]);
         expect(get(payments.line)).toMatchObject({ problem: "unavailable", canCheck: true });
         payments.destroy();
     });
@@ -1283,10 +1372,16 @@ describe("buying, checking and getting a purchase back, in the game's window (th
     it("does not stay busy when a restore never gets an answer: after thirty seconds it says so, and the buyer can check (Sentry)", async () => {
         const pay = vi.fn(hangs);
         const payments = make(pay);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load1",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         await vi.advanceTimersByTimeAsync(31_000);
-        expect(heard()).toEqual([{ universe: "app-result", status: "unavailable", request: "load1" }]);
+        expect(heard()).toEqual([{ universe: "app-result", status: "unavailable", request: "load1", session: "s1" }]);
         expect(get(payments.line)).toMatchObject({ checking: false, problem: "unavailable", canCheck: true });
         // Free again: Check payment asks, and its request is dropped too after thirty seconds
         payments.checkPayment();
@@ -1353,16 +1448,22 @@ describe("buying, checking and getting a purchase back, in the game's window (th
     it("is busy for one request of one opening: another opening's page is told busy even with the same id, and can use Restore purchase after", async () => {
         const pay = vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "paid", testPayment: false });
         const payments = make(pay);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
         await flush();
         // The same tap heard twice, in the same opening: nothing is said
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
         await flush();
         expect(told()).toEqual(["started"]);
         // The version was opened again (a new page) and its own first ask has the same id: it is another request, and it is told so
         showing = 2;
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         expect(told()).toEqual(["started", "busy", "busy"]);
         expect(
@@ -1379,7 +1480,13 @@ describe("buying, checking and getting a purchase back, in the game's window (th
 
         // Without a payment on its way nothing is owed
         const quiet = make(vi.fn().mockResolvedValue({ status: "none" }));
-        ask(quiet, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        ask(quiet, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         expect(get(quiet.line)).toMatchObject({ offerRestore: true });
         quiet.destroy();
@@ -1388,10 +1495,16 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         vi.clearAllMocks();
         showing = 1;
         const later = make(vi.fn().mockResolvedValueOnce(checkout).mockResolvedValue({ status: "not_paid" }));
-        ask(later, frameWindow, { universe: "use-app", app: "examplepay", request: "r1" });
+        ask(later, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
         await flush();
         showing = 2;
-        ask(later, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        ask(later, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         await vi.advanceTimersByTimeAsync(3_000);
         expect(get(later.line)).toMatchObject({ problem: "not_paid", canCheck: true, offerRestore: true });
@@ -1405,8 +1518,8 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         const payments = make(pay);
         for (const data of [
             { universe: "use-app", app: "examplepay" },
-            { universe: "use-app", app: "examplepay", request: "bad id" },
-            { universe: "use-app", app: "examplepay", request: 7 },
+            { universe: "use-app", app: "examplepay", request: "bad id", session: "s1" },
+            { universe: "use-app", app: "examplepay", request: 7, session: "s1" },
         ]) {
             ask(payments, frameWindow, data);
             // eslint-disable-next-line no-await-in-loop
@@ -1495,7 +1608,13 @@ describe("buying, checking and getting a purchase back, in the game's window (th
             const none = make(vi.fn().mockResolvedValue({ status: "none", buyer: "account" }), {
                 buyer: () => "guest",
             });
-            ask(none, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+            ask(none, frameWindow, {
+                universe: "use-app",
+                app: "examplepay",
+                request: "load1",
+                session: "s1",
+                restore: true,
+            });
             await flush();
             expect(get(none.line)).toMatchObject({ offerRestore: true });
             none.restorePurchase();
@@ -1564,7 +1683,13 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         const back = make(vi.fn().mockResolvedValue({ status: "paid", testPayment: false, paidAt: null }), {
             pageUrl: () => "https://orbit.test/a/a1",
         });
-        ask(back, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        ask(back, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         expect(get(back.line)).toMatchObject({ paid: { test: false }, receipt: null });
         back.destroy();
@@ -1572,7 +1697,13 @@ describe("buying, checking and getting a purchase back, in the game's window (th
 
     it("closes a quiet offer, and never hides a payment on its way", async () => {
         const quiet = make(vi.fn().mockResolvedValue({ status: "none" }));
-        ask(quiet, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        ask(quiet, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         expect(get(quiet.line).offerRestore).toBe(true);
         quiet.dismiss();
@@ -1590,7 +1721,13 @@ describe("buying, checking and getting a purchase back, in the game's window (th
     it("Restore purchase asks what this buyer bought, and says when there is nothing (a guest and an account are told differently)", async () => {
         const pay = vi.fn().mockResolvedValue({ status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 });
         const payments = make(pay);
-        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load", restore: true });
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load",
+            session: "s1",
+            restore: true,
+        });
         await flush();
         payments.restorePurchase();
         await flush();

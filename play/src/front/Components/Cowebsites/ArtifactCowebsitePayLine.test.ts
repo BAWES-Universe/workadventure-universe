@@ -134,13 +134,13 @@ describe("the line under a paying page in the artifact window (the approved mock
             paidAt: "2026-11-19T08:00:00.000Z",
         });
         const { say, text, heard, view } = await mount();
-        await say({ universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        await say({ universe: "use-app", app: "examplepay", request: "load1", session: "s1", restore: true });
         expect(api.payOnArtifact).toHaveBeenCalledWith("a1", undefined, {
             restore: true,
             recoveryCode: expect.any(String),
         });
         expect(text()).toBe("Your purchase from 19 Nov is back.");
-        expect(heard).toEqual([{ universe: "app-result", status: "paid", request: "load1" }]);
+        expect(heard).toEqual([{ universe: "app-result", status: "paid", request: "load1", session: "s1" }]);
         view.$destroy();
     });
 
@@ -155,7 +155,7 @@ describe("the line under a paying page in the artifact window (the approved mock
         });
         vi.spyOn(window, "open").mockReturnValue(null);
         const { say, text, press, target, view } = await mount();
-        await say({ universe: "use-app", app: "examplepay", request: "r1" });
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
         expect(text()).toContain("Checking your payment…");
         await vi.advanceTimersByTimeAsync(3_000);
         await settle();
@@ -176,7 +176,7 @@ describe("the line under a paying page in the artifact window (the approved mock
             .mockResolvedValue({ status: "checking", pollAfterMs: 30_000 });
         vi.spyOn(window, "open").mockReturnValue(null);
         const { say, text, press, view } = await mount();
-        await say({ universe: "use-app", app: "examplepay", request: "r1" });
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
         await vi.advanceTimersByTimeAsync(20 * 60_000);
         await settle();
         expect(text()).toBe(
@@ -222,7 +222,7 @@ describe("the line under a paying page in the artifact window (the approved mock
     it("o3, o4: a page that asked for its purchase and found none gets a quiet Bought this before? that can be closed", async () => {
         api.payOnArtifact.mockResolvedValue({ status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 });
         const { say, text, press, line, view } = await mount();
-        await say({ universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        await say({ universe: "use-app", app: "examplepay", request: "load1", session: "s1", restore: true });
         expect(text()).toBe("× Bought this before? Restore purchase");
         await press("restore");
         expect(text()).toBe(
@@ -240,7 +240,7 @@ describe("the line under a paying page in the artifact window (the approved mock
             .mockResolvedValue({ status: "paid", testPayment: false });
         vi.spyOn(window, "open").mockReturnValue(null);
         const { say, text, view } = await mount(false, "me");
-        await say({ universe: "use-app", app: "examplepay", request: "r1" });
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
         await vi.advanceTimersByTimeAsync(3_000);
         await settle();
         expect(text()).toBe(

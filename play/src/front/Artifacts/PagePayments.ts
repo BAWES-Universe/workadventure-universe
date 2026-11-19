@@ -7,12 +7,15 @@ import type { ArtifactChat, ArtifactPay, ArtifactPayRequest } from "./ArtifactAp
  * The bridge between a page that takes payments and Universe, inside the game's artifact window (Keys for Apps, game #2044).
  * The page runs in a locked frame and can post one kind of message, in two forms:
  *
- *   page → window   { universe: "use-app", app, request }                 start the checkout its owner set up
- *   page → window   { universe: "use-app", app, request, restore: true }  get back a purchase this buyer already made (asked on load)
- *   window → page   { universe: "app-result", status, request, test? }
+ *   page → window   { universe: "use-app", app, request, session }                 start the checkout its owner set up
+ *   page → window   { universe: "use-app", app, request, session, restore: true }  get back a purchase this buyer already made (asked on load)
+ *   window → page   { universe: "app-result", status, request, session, test? }
  *
  * `request` is a short id the page makes up for that tap, and every answer carries it back, so a page (a reloaded one, or one that asked
- * twice) never takes the result of another request as its own. Statuses: started, paid, not_paid, cant_confirm, unavailable, limit, busy
+ * twice) never takes the result of another request as its own. `session` is one id the page's document makes for itself when its scripts
+ * start (same plain-id rule): every answer carries it back and the page ignores one with another session, and a result of a request is told
+ * only while the document that asked is still the one that spoke last. A message without a valid request id or session is never answered
+ * and never starts anything: the line says the page needs an update. Statuses: started, paid, not_paid, cant_confirm, unavailable, limit, busy
  * (another request is on its way) and none (a restore found no purchase); `test: true` rides with `paid` for a test payment, so a page can
  * show a test preview and never unlock real goods. Everything real is decided on the server: only the frame of this window is listened to,
  * the amount and the service are the owner's (the message carries neither), and the page hears back only a status, never an address, a key,
@@ -287,8 +290,31 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
 
     // The frame has no origin of its own, so it can only be addressed with "*": the message holds nothing but a status and the
     // page's own request id. The page, not this window, decides what it trusts: only its parent, and only its own request.
-    const tellRequest = (status: string, request: string, test = false) =>
-        options.frame()?.postMessage({ universe: "app-result", status, request, ...(test ? { test: true } : {}) }, "*");
+    // The session each request came with (the id its document gave itself when its scripts started), and the session of the document that spoke
+    // last: a result is told only while the document that asked is still the one that spoke last (no other document has spoken since)
+    const sessions = new Map<string, string>();
+    let speaker = "";
+    const SESSIONS_MAX = 32;
+    const remember = (request: string, session: string) => {
+        sessions.delete(request);
+        sessions.set(request, session);
+        if (sessions.size > SESSIONS_MAX) sessions.delete(sessions.keys().next().value as string);
+    };
+    const stillSpeaking = (request: string) => {
+        const session = sessions.get(request);
+        return session !== undefined && session === speaker;
+    };
+    const tellRequest = (status: string, request: string, test = false, session = sessions.get(request)) =>
+        options.frame()?.postMessage(
+            {
+                universe: "app-result",
+                status,
+                request,
+                ...(session ? { session } : {}),
+                ...(test ? { test: true } : {}),
+            },
+            "*"
+        );
 
     // How a checkout ended, when this artifact's frame was not there to hear it (the buyer was looking at the code, or the frame
     // was being drawn again, or its page has not loaded yet): kept for this artifact's own frame, by the request it was started for, and told to it when it is
@@ -302,6 +328,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const tellEnd = (status: string, request: string, from: number, test = false) => {
         // The page that asked is gone with its opening: nobody is told
         if (opening() !== from) return;
+        // Another document has spoken since: the one that asked is gone, and nobody is told
+        if (!stillSpeaking(request)) return;
         if (options.frame() && options.loaded()) return tellRequest(status, request, test);
         if (destroyed) return;
         held.delete(request);
@@ -327,7 +355,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         if (destroyed || !options.frame() || !options.loaded()) return;
         const waiting = [...held];
         held.clear();
-        for (const [request, one] of waiting) if (one.from === opening()) tellRequest(one.status, request, one.test);
+        for (const [request, one] of waiting)
+            if (one.from === opening() && stillSpeaking(request)) tellRequest(one.status, request, one.test);
     };
 
     interface Checkout {
@@ -503,7 +532,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 }
                 if (popup) popup.location.href = url;
                 adopt(answer.orderId, { url, app: answer.app ?? "", popup }, request, from);
-                if (opening() === from) tellRequest("started", request);
+                if (opening() === from && stillSpeaking(request)) tellRequest("started", request);
             } catch (error) {
                 popup?.close();
                 if (destroyed) return;
@@ -595,25 +624,43 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const onMessage = (event: MessageEvent) => {
         const frame = options.frame();
         if (destroyed || !frame || event.source !== frame) return;
-        const data = event.data as { universe?: unknown; app?: unknown; request?: unknown; restore?: unknown } | null;
+        const data = event.data as {
+            universe?: unknown;
+            app?: unknown;
+            request?: unknown;
+            session?: unknown;
+            restore?: unknown;
+        } | null;
         if (!data || data.universe !== "use-app" || typeof data.app !== "string") return;
-        // A request without a valid id of its own is never answered: there would be no way to tell whose answer it is, and a bare status
-        // would be taken for whichever request the page is waiting on. The buyer is told so on the window's own line, and can still check a payment.
-        if (typeof data.request !== "string" || !REQUEST_ID.test(data.request)) {
+        // A request without a valid id of its own, or without the session its document gave itself, is never answered: there would be no way to tell
+        // whose answer it is, and a bare status would be taken for whichever request the page is waiting on. The buyer is told so on the window's
+        // own line, and can still check a payment.
+        if (
+            typeof data.request !== "string" ||
+            !REQUEST_ID.test(data.request) ||
+            typeof data.session !== "string" ||
+            !REQUEST_ID.test(data.session)
+        ) {
             if (!busy) show({ needsUpdate: true, canCheck: true });
             else publish({ ...current, needsUpdate: true, canCheck: true });
             return;
         }
+        // The document that spoke last: what comes of an older document's request is told to nobody
+        const session = data.session;
+        const askedBefore = sessions.get(activeRequest);
+        speaker = session;
         if (busy) {
             // The same tap heard twice, in the same opening, is the same request. Anything else while a payment is on its way (or its start
             // is still waiting for an answer, however long it takes) is told so under its own id, and the one on its way keeps its own:
             // its result is never handed to the newer request. A page of another opening that is turned away can still use Restore purchase.
-            if (data.request !== activeRequest || activeFrom !== opening()) {
-                tellRequest("busy", data.request);
-                if (activeFrom !== opening()) restoreOwed = true;
+            // The same id from another document (another session) is another request too.
+            if (data.request !== activeRequest || activeFrom !== opening() || session !== askedBefore) {
+                tellRequest("busy", data.request, false, session);
+                if (activeFrom !== opening() || session !== askedBefore) restoreOwed = true;
             }
             return;
         }
+        remember(data.request, session);
         // The opening the page is in now: what comes of this request is for that page alone
         const from = opening();
         if (data.restore === true) return restore(data.request, from);

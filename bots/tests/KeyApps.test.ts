@@ -421,8 +421,12 @@ describe('the two tools of a Brick for keys', () => {
         expect(description).toContain('e.source !== window.parent');
         expect(description).toContain('!waiting');
         // ...and only for its own request: the game echoes the id back, so an earlier checkout's result is ignored
-        expect(description).toContain('request: waiting');
+        expect(description).toContain('request: waiting, session }');
         expect(description).toContain('e.data.request !== waiting');
+        // ...and only for its own document: the page makes a session id when its scripts start, sends it with every message and ignores an answer with another one
+        expect(description).toContain('const session = crypto.randomUUID()');
+        expect(description).toContain('e.data.session !== session');
+        expect(description).toMatch(/A message without its session is never answered/);
         expect(description).toMatch(/result of an earlier request/);
         expect(description).toContain('"busy"');
         expect(description).toMatch(/Show "paid" only for status "paid" heard that way/);
@@ -430,7 +434,7 @@ describe('the two tools of a Brick for keys', () => {
 
     it('teach a page to ask once on load whether this visitor already bought, to keep the pay button on "none", and to show a test payment as a preview only', () => {
         const description = String(keyToolDefinitions().find((tool) => tool.function.name === PAYMENT_TOOL)?.function.description);
-        expect(description).toContain('request: waiting, restore: true');
+        expect(description).toContain('request: waiting, session, restore: true');
         expect(description).toContain('"none"');
         expect(description).toMatch(/A restore is not a checkout: it never opens a payment window/);
         expect(description).toContain('e.data.test === true');
