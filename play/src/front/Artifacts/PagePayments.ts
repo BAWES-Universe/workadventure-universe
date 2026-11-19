@@ -337,14 +337,19 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         if (held.size > HELD_MAX) held.delete(held.keys().next().value as string);
     };
 
+    /** What a payment that ends owes the page that was turned away while it ran: Restore purchase, unless it ended paid. Owed once. */
+    const owedRestore = (update: Partial<PayLine>): Partial<PayLine> => {
+        const owed = restoreOwed && !update.paid;
+        restoreOwed = false;
+        return owed ? { offerRestore: true } : {};
+    };
+
     // Every status goes out under the id of the request its checkout was started for, never under whichever request is newest
     const end = (update: Partial<PayLine>, status: string, request: string, from: number, test = false) => {
         busy = false;
         activeRequest = "";
-        const owed = restoreOwed && !update.paid;
-        restoreOwed = false;
         show({
-            ...(owed ? { offerRestore: true } : {}),
+            ...owedRestore(update),
             ...update,
             receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
         });
@@ -684,6 +689,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 busy = false;
                 activeRequest = "";
                 show({
+                    ...owedRestore(update),
                     ...update,
                     receipt: update.paid && !update.paid.test && !update.restored ? receiptLink() ?? null : null,
                 });
@@ -724,7 +730,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 }
                 busy = false;
                 activeRequest = "";
-                show({ problem: "unavailable", canCheck: true });
+                const update: Partial<PayLine> = { problem: "unavailable", canCheck: true };
+                show({ ...owedRestore(update), ...update });
             }
         })();
     };
