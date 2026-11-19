@@ -922,8 +922,8 @@ describe("buying, checking and getting a purchase back, in the game's window (th
     it("sends a start whose answer was lost again with the SAME wish, makes one order, and never repeats an answer that said no", async () => {
         const pay = vi
             .fn()
-            .mockRejectedValueOnce(new Error("network"))
-            .mockRejectedValueOnce(new Error("network"))
+            .mockRejectedValueOnce(new ArtifactRequestError(0, "offline"))
+            .mockRejectedValueOnce(new ArtifactRequestError(0, "offline"))
             .mockResolvedValueOnce(checkout)
             .mockResolvedValue({ status: "paid", testPayment: false });
         const payments = make(pay);
@@ -961,9 +961,9 @@ describe("buying, checking and getting a purchase back, in the game's window (th
     it("says it could not hear back after three lost answers, keeps the wish, and Check payment asks about that same wish", async () => {
         const pay = vi
             .fn()
-            .mockRejectedValueOnce(new Error("network"))
-            .mockRejectedValueOnce(new Error("network"))
-            .mockRejectedValueOnce(new Error("network"))
+            .mockRejectedValueOnce(new ArtifactRequestError(0, "offline"))
+            .mockRejectedValueOnce(new ArtifactRequestError(0, "offline"))
+            .mockRejectedValueOnce(new ArtifactRequestError(0, "offline"))
             .mockResolvedValueOnce({ status: "paid", testPayment: false, orderId: "o1", pollAfterMs: 3000 });
         const payments = make(pay);
         ask(payments);
@@ -1138,7 +1138,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
     });
 
     it("says it could not look when a restore gets no answer, and the buyer can check", async () => {
-        const payments = make(vi.fn().mockRejectedValue(new Error("network")));
+        const payments = make(vi.fn().mockRejectedValue(new ArtifactRequestError(0, "offline")));
         ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
         await flush();
         expect(heard()).toEqual([{ universe: "app-result", status: "unavailable", request: "load1" }]);

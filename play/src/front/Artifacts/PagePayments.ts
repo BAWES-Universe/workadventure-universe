@@ -396,12 +396,18 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         return url ? { url, app: answer.app ?? "", popup: null } : null;
     };
 
+    /**
+     * No answer ever came: the connection dropped, or the browser gave up (the api says so as status 0, "offline"), as against an answer
+     * of the server's, whatever it says. Only then may the order exist without the window knowing it.
+     */
+    const gotNoAnswer = (error: unknown) => !(error instanceof ArtifactRequestError) || error.status === 0;
+
     /** A start that got no answer at all is sent again with the same wish; an answer, whatever it says, is final. */
     const startWithTries = async (intentId: string, signal: AbortSignal, attempt = 1): Promise<ArtifactPay> => {
         try {
             return await ask({ start: true, intentId }, signal);
         } catch (error) {
-            if (error instanceof ArtifactRequestError || signal.aborted || destroyed || attempt >= START_TRIES) {
+            if (!gotNoAnswer(error) || signal.aborted || destroyed || attempt >= START_TRIES) {
                 throw error;
             }
             await waitFor(TRY_AGAIN_MS);
@@ -495,7 +501,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (destroyed) return;
                 const limit = error instanceof ArtifactRequestError && (error.code === "limit" || error.status === 429);
                 // No answer ever came (not even after the same wish was sent again): an order may or may not have been made, and the wish can be asked about
-                const lost = !(error instanceof ArtifactRequestError);
+                const lost = gotNoAnswer(error);
                 end(
                     { problem: limit ? "limit" : "unavailable", ...(lost ? { canCheck: true } : {}) },
                     limit ? "limit" : "unavailable",
