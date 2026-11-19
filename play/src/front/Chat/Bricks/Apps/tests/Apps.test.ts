@@ -197,7 +197,7 @@ describe("the words around apps (#2001)", () => {
     });
 
     it("says a day in the short form, and nothing for a day it cannot read", () => {
-        expect(dayOf("2026-11-12T09:00:00.000Z", "en-US")).toBe("12 Nov");
+        expect(dayOf("2026-11-12T12:00:00", "en-US")).toBe("12 Nov");
         expect(dayOf(null, "en-US")).toBe("");
         expect(dayOf("not a day", "en-US")).toBe("");
     });
