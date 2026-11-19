@@ -275,7 +275,7 @@
         <ArtifactsSummary
             {room}
             botName={partner.isBot ? name : undefined}
-            botId={partner.isBot ? botIdFromChatId(partner.chatId) : undefined}
+            botId={botIdFromChatId(partner.chatId)}
         />
 
         <SharedSummary {room} />

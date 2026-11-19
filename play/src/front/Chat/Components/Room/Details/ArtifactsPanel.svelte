@@ -1,6 +1,6 @@
 <script lang="ts">
     import { getContext, hasContext, onDestroy, onMount } from "svelte";
-    import { readable } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { ChatRoom } from "../../../Connection/ChatConnection";
@@ -32,9 +32,23 @@
         ? getContext(ARTIFACT_CHAT_CONTEXT)
         : () => undefined;
     const chat = chatOf();
-    const list = chat ? chatArtifactsList(chat, botIdFromChatId(partnerChatId)) : undefined;
-    const state: Readable<ChatArtifactsState> =
-        list ?? readable({ artifacts: [], total: 0, next: null, loading: false, failed: false, loaded: true });
+    const noList: Readable<ChatArtifactsState> = readable({
+        artifacts: [],
+        total: 0,
+        next: null,
+        loading: false,
+        failed: false,
+        loaded: true,
+    });
+    // The partner's chat id arrives with the chat's details: in a chat with a bot the list follows it, and so does the
+    // summary, which reads the same one
+    $: list = chat ? chatArtifactsList(chat, botIdFromChatId(partnerChatId)) : undefined;
+    $: state = list ?? noList;
+    let refreshed: typeof list;
+    $: if (list && list !== refreshed) {
+        refreshed = list;
+        if (!get(list).loaded) list.refresh().catch((error) => console.error(error));
+    }
     const roomName = room.name;
     const nameByChatId: Readable<Map<string, string>> = hasContext(NAME_BY_CHAT_ID_CONTEXT)
         ? getContext(NAME_BY_CHAT_ID_CONTEXT)
@@ -82,7 +96,6 @@
     let sentinel: HTMLDivElement | undefined;
     let observer: IntersectionObserver | undefined;
     onMount(() => {
-        if (list && !$state.loaded) list.refresh().catch((error) => console.error(error));
         if (typeof IntersectionObserver === "undefined") return;
         observer = new IntersectionObserver((entries) => {
             if (entries.some((entry) => entry.isIntersecting) && !$state.failed) more();
