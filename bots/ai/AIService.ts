@@ -533,6 +533,9 @@ export class AIService {
                     return refused;
                 }
             }
+            // A ready-made App is reached only through Orbit, which holds the key its link needs: with no route through Orbit (no address for it, or no
+            // check of who asks, as on a call a person approved on a card) its stored link is never called, whatever else is known about it
+            if (entry.readyMade && !(entry.orbitUrl && use)) return { error: appNotUsedLine('unavailable'), outcome: 'not_sent' };
             let sharedTry = !!shared && !!use;
             try {
                 const rawResult = await MCPConnector.executeToolCall(

@@ -426,6 +426,8 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
             mcpSessionInitCache.set(key, { sessionId, initializedAt: Date.now(), usedAt: Date.now() });
         }
         const requestId = method === 'tools/list' ? '1' : '2';
+        // Opening or checking the session may have used up the time left: a call is never submitted once Patience has run out
+        if (method === 'tools/call' && deadline !== undefined && remaining() <= 0) return NOT_SENT;
         if (method === 'tools/call') callSubmitted = true;
         const answer = await send({ jsonrpc: '2.0', id: requestId, method, ...(params !== undefined ? { params } : {}) }, sessionId, method === 'tools/call' ? link.callId : undefined);
         if (typeof answer.status === 'number' && answer.status >= 400) {
@@ -497,7 +499,7 @@ async function sendJsonRpc(
     // client with an error that names nothing. Nothing is sent, and the log says which header it is.
     const unsendable = unsendableHeader(baseHeaders);
     if (unsendable) {
-        console.warn(`[MCPConnector] Not sent: the "${unsendable}" header has text that cannot be sent (${method} to ${serverUrl})`);
+        console.warn(`[MCPConnector] Not sent: the "${unsendable}" header has text that cannot be sent (${method})`);
         return NOT_SENT;
     }
 
