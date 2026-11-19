@@ -19,6 +19,9 @@ export interface RoomBrickRow {
     since: string | null;
     /** The spot it stands at on the room's map, or null when Orbit did not say. Lets the camera go there before the game has sent the Brick. */
     spot: { x: number; y: number } | null;
+    /** How it behaves here (idle, patrol, social) and the settings of that, as Orbit keeps them: a move of its spot keeps both. */
+    behaviorType: "idle" | "patrol" | "social" | null;
+    behaviorConfig: Record<string, unknown> | null;
 }
 
 /** One of the person's own Bricks that can be added to this room. */
@@ -50,6 +53,33 @@ export function spotOf(behaviorConfig: unknown): { x: number; y: number } | null
     return typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
 }
 
+/**
+ * What is sent to Orbit when a Brick is placed at a spot. A Brick that already stands in this room is moved: it keeps how it
+ * behaves here (patrol, social, its routes and settings) and only its spot changes. One placed for the first time here is sent the
+ * spot alone: Orbit gives it the default, idle. An idle one is never sent as if it were chosen.
+ */
+export function placementOf(
+    existing: Pick<RoomBrickRow, "behaviorType" | "behaviorConfig"> | undefined,
+    spot: { behaviorConfig?: unknown }
+): { behaviorType?: string; behaviorConfig?: unknown } {
+    const placed = (spot.behaviorConfig ?? {}) as { assignedSpace?: { center?: unknown; radius?: unknown } };
+    if (!existing || (!existing.behaviorType && !existing.behaviorConfig))
+        return { behaviorConfig: spot.behaviorConfig };
+    const kept = (existing.behaviorConfig ?? {}) as { assignedSpace?: { center?: unknown; radius?: unknown } };
+    return {
+        ...(existing.behaviorType ? { behaviorType: existing.behaviorType } : {}),
+        behaviorConfig: {
+            ...kept,
+            // Only where it stands changes: how far it roams from there stays as it was set
+            assignedSpace: {
+                ...kept.assignedSpace,
+                center: placed.assignedSpace?.center,
+                radius: kept.assignedSpace?.radius ?? 0,
+            },
+        },
+    };
+}
+
 /** Orbit's answer to "which Bricks live in this room?". Undefined when it is not one: the list then shows nothing about Bricks. */
 export function parseRoomBricks(value: unknown): RoomBricks | undefined {
     if (!value || typeof value !== "object") return undefined;
@@ -69,6 +99,14 @@ export function parseRoomBricks(value: unknown): RoomBricks | undefined {
             mine: row.mine === true,
             since: text(row.since),
             spot: spotOf(row.behaviorConfig),
+            behaviorType:
+                row.behaviorType === "idle" || row.behaviorType === "patrol" || row.behaviorType === "social"
+                    ? row.behaviorType
+                    : null,
+            behaviorConfig:
+                row.behaviorConfig && typeof row.behaviorConfig === "object" && !Array.isArray(row.behaviorConfig)
+                    ? (row.behaviorConfig as Record<string, unknown>)
+                    : null,
         });
     }
     const choices: OwnBrickChoice[] = [];

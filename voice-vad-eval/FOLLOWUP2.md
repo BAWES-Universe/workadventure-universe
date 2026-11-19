@@ -280,14 +280,16 @@ today's gate are counts on synthetic mixtures, with nobody's labels.
 `node` starts. Each run hears two people on their own connections and two in a LiveKit room for 20 s, then idles 75 s.
 Four runs in a row: off, on, off again, and on without the telemetry switch.
 
-| run | started with | observer in the worker | runtime's native library in the process | network calls; of them to anywhere but this machine | Microsoft names in traffic | frames heard |
+| run | started with | observer in the worker | runtime's native library in the process | calls that name a network address (lines with `AF_INET` in the trace: `connect`, and `sendto` with an address); of them to anywhere but this machine | Microsoft names in traffic | frames heard |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1. off | the image's defaults | none; 0 observer counters | not loaded (0 lines in its memory map) | 1,076; 38 | none | 5,760 |
 | 2. on | `VOICE_SPEECH_OBSERVER=1` | on; detector loaded once; 2,390 windows kept; 0 errors | loaded (10 lines) | 1,077; 38 | none | 5,756 |
 | 3. off again | the image's defaults | none; 0 observer counters | not loaded (0 lines) | 1,077; 38 | none | 5,769 |
 | 4. on, telemetry switch emptied | `VOICE_SPEECH_OBSERVER=1`, `ORT_DISABLE_TELEMETRY=` | off; "could not load" counted once; nothing else | not loaded (0 lines) | 1,077; 38 | none | 5,754 |
 
-- **Where it reaches.** In every run the 38 calls that leave the machine are the same thing: name lookups sent to the
+- **Where it reaches.** The counts above are of the calls that name an address. Sends on an already connected socket (a name
+  lookup's query goes out that way, with no address in the call) are not in them; they are kept in the `.outside.strace` files
+  and read there for the names looked up. In every run the 38 address-naming calls that leave the machine are the same thing: name lookups sent to the
   resolver (8.8.8.8, port 53) for three STUN servers that today's worker already uses for the proximity path
   (`global.stun.twilio.com`, `stun.l.google.com`, `stun1.l.google.com`). Everything else is the worker talking to the
   livekit-server and the test people on the same machine. Switched on, the worker reached nothing that it does not reach

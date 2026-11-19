@@ -1,23 +1,37 @@
 // One pass over the fixtures: today's gate (three timer settings, 20 ms frames as a peer lane delivers them) and the
 // Silero probabilities for every clip. Writes raw per-clip outcomes; report.ts turns them into the tables.
 //   tsx src/evaluate.ts <data dir> <out dir> <shard> <shards> [native|wasm]
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildManifest, LEAD } from './fixtures.ts';
 import { runGate, type GateResult } from './gate.ts';
 import { SileroModel, type Runtime } from './silero.ts';
+import { sourceSha } from './sources.ts';
 
 const [data, out, shardArg, shardsArg, runtimeArg] = process.argv.slice(2);
 const shard = Number(shardArg ?? 0);
 const shards = Number(shardsArg ?? 1);
-const runtime = (runtimeArg ?? 'native') as Runtime;
+// A type assertion checks nothing at run time: a misspelt runtime would load the wasm one and be written down as it was spelt
+if (runtimeArg !== undefined && runtimeArg !== 'native' && runtimeArg !== 'wasm') throw new Error(`runtime must be "native" or "wasm", got "${runtimeArg}"`);
+const runtime: Runtime = runtimeArg ?? 'native';
+if (!Number.isInteger(shards) || shards < 1 || !Number.isInteger(shard) || shard < 0 || shard >= shards) throw new Error(`shard ${shardArg} of ${shardsArg} is not a shard`);
 mkdirSync(out, { recursive: true });
+// The marker of an earlier run of this shard goes first: a run that fails before it is written must not leave the old one saying
+// the shard is done
+rmSync(join(out, `done-${shard}.json`), { force: true });
 
 const model = await SileroModel.load(join(data, 'silero_vad_v6.2.3.onnx'), runtime);
 const manifest = buildManifest(data);
 const lines: string[] = [];
 let done = 0;
 const started = Date.now();
+// What each source recording was when it was scored: the report takes it from here and refuses a source that changed since
+const shaBySource = new Map<string, string>();
+function shaOfSource(source: string): string {
+    let sha = shaBySource.get(source);
+    if (sha === undefined) shaBySource.set(source, (sha = sourceSha(data, source)));
+    return sha;
+}
 for (let index = 0; index < manifest.length; index++) {
     if (index % shards !== shard) continue;
     const item = manifest[index];
@@ -36,6 +50,7 @@ for (let index = 0; index < manifest.length; index++) {
             condition: item.condition,
             split: item.split,
             source: item.source,
+            sourceSha: shaOfSource(item.source),
             speaker: item.speaker,
             seconds: built.pcm.length / 16000,
             clipStart: item.kind === 'speech' ? LEAD : undefined,

@@ -31,6 +31,9 @@ async function probsIn(pcm: Int16Array, sizes: () => number): Promise<number[]> 
     return probs;
 }
 
+// The frame-size part says "exact": a difference above this, or a probability that is not a number, fails the run (non-zero exit)
+const SAME_WITHIN = 1e-6;
+const failures: string[] = [];
 const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit room', '', 'Status: **partial, simulated**. Frame-size sameness is exact. The codec and resampler part is a reconstruction; the real transports, packet loss, jitter and reconnects are not exercised here.', ''];
 
 // 1. Frame size
@@ -46,10 +49,16 @@ const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit ro
         for (const sizes of [() => 320, () => 160, () => 480, odd]) {
             const other = await probsIn(pcm, sizes);
             if (other.length !== reference.length) throw new Error('window count differs');
-            for (let i = 0; i < reference.length; i++) worst = Math.max(worst, Math.abs(other[i] - reference[i]));
+            for (let i = 0; i < reference.length; i++) {
+                if (!Number.isFinite(other[i]) || !Number.isFinite(reference[i])) failures.push(`${item.id}: probability ${i} is not a finite number`);
+                worst = Math.max(worst, Math.abs(other[i] - reference[i]));
+            }
         }
+        if (reference.length === 0) failures.push(`${item.id}: no windows at all`);
         windows += reference.length;
     }
+    // NaN never compares greater, so it is checked on its own
+    if (!Number.isFinite(worst) || worst > SAME_WITHIN) failures.push(`frame size: largest difference ${worst} is above ${SAME_WITHIN}`);
     md.push('## Frame size', '', `${sample.length} clips, ${windows} windows, fed in 512, 320 (20 ms, peer lane), 160 (10 ms, room), 480 and random 1 to 997 samples at a time.`, '', `Largest difference in speech probability between any two ways of cutting the same audio: **${worst}**.`, '');
 }
 
@@ -119,5 +128,10 @@ const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit ro
     }
     md.push('');
 }
+if (failures.length) md.push('## FAILED', '', ...failures.slice(0, 20).map((f) => `- ${f}`), '');
 writeFileSync(join(out, 'parity.md'), md.join('\n'));
 console.log(md.join('\n'));
+if (failures.length) {
+    console.error(`parity FAILED: ${failures.length} problem(s), the first: ${failures[0]}`);
+    process.exit(1);
+}

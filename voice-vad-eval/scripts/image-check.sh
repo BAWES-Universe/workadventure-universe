@@ -4,17 +4,22 @@
 #   1. the detector as the image holds it answers with no network at all (speech-observer/check.mts);
 #   2. where the whole worker reaches on the network, off and on, traced from outside the container with strace on
 #      every thread from before node starts: anything the "on" run reaches that the "off" run does not is the observer's;
-#   3. the switch: on = started with VOICE_SPEECH_OBSERVER=1, off = started without it. Off, the worker has no observer,
+#   3. the switch: on = started as the image is (VOICE_SPEECH_OBSERVER=1 is the same), off = the engineers' off switch,
+#      VOICE_SPEECH_OBSERVER=0. Off, the worker has no observer,
 #      no observer counters, and the runtime's native library is not even loaded into the process;
 #   4. the safety catch: switched on but with the runtime's reporting not suppressed, the worker runs as today and the
-#      observer stays off.
+#      observer stays off;
+#   5. with YIELD=1, the pause as the image ships it (every bot), then the switch-off procedure (restarted with
+#      VOICE_SPEECH_OBSERVER=0): no pause counters move. (The load gives its bots no speech-to-text, so the pause's own
+#      gate never runs here: this shows a clean start and a clean switch-off, not a pause; test/measure/imageYield.ts does.)
 # Each run hears two people on their own connections and two in a LiveKit room for a while, then idles.
 #   scripts/image-check.sh <data dir> <out dir> [seconds of audio, default 20] [idle seconds, default 75]
 # Needs Docker, the image (IMAGE), strace, root, and a livekit-server on 127.0.0.1:7880 with the worker's test keys.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+FAILED=0
 DATA="$1"; OUT="$2"; TALK="${3:-20}"; IDLE="${4:-75}"; IMAGE="${IMAGE:-voice-worker:observer-packaged}"; PORT=8832
-mkdir -p "$OUT/go"; chmod 777 "$OUT" "$OUT/go"
+mkdir -p "$OUT/go"; chmod 755 "$OUT" "$OUT/go"
 docker image inspect --format 'image {{.Id}} created {{.Created}}' "$IMAGE" > "$OUT/image.txt"
 echo "== 1. the detector in the image, no network"
 docker run --rm --network none "$IMAGE" node --import tsx speech-observer/check.mts | tee "$OUT/detector-check.json"
@@ -29,12 +34,20 @@ run() { # name, extra docker args...
     strace -f -qq -s 256 -e trace=connect,sendto,sendmsg,sendmmsg -o "$OUT/$name.full.strace" -p "$pid" 2> "$OUT/$name.strace.err" &
     local tracer=$!
     sleep 1; touch "$OUT/go/now"
-    for _ in $(seq 1 120); do curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break; sleep 0.5; done
-    LOAD_TAG=x PEOPLE_PER_BUBBLE=2 npx tsx src/load.ts "ws://127.0.0.1:$PORT" "$DATA" 2 "$TALK" "$OUT/$name.lane.load.json" lane > /dev/null 2>&1 &
+    # A run is valid only if the worker came up and both load generators ended well: what is said about it below is otherwise
+    # "the observer reaches nothing" about a worker that heard nothing. The reasons are kept with the summary
+    local problems="" healthy=0
+    for _ in $(seq 1 120); do curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { healthy=1; break; }; sleep 0.5; done
+    [ "$healthy" = 1 ] || problems="$problems the worker never became healthy;"
+    LOAD_TAG=x PEOPLE_PER_BUBBLE=2 npx tsx src/load.ts "ws://127.0.0.1:$PORT" "$DATA" 2 "$TALK" "$OUT/$name.lane.load.json" lane > "$OUT/$name.lane.log" 2>&1 &
     local lane=$!
-    LOAD_TAG=y PEOPLE_PER_BUBBLE=2 npx tsx src/load.ts "ws://127.0.0.1:$PORT" "$DATA" 2 "$TALK" "$OUT/$name.room.load.json" room > /dev/null 2>&1 &
+    LOAD_TAG=y PEOPLE_PER_BUBBLE=2 npx tsx src/load.ts "ws://127.0.0.1:$PORT" "$DATA" 2 "$TALK" "$OUT/$name.room.load.json" room > "$OUT/$name.room.log" 2>&1 &
     local room=$!
-    wait "$lane" "$room" 2>/dev/null
+    local lane_rc=0 room_rc=0
+    wait "$lane" || lane_rc=$?
+    wait "$room" || room_rc=$?
+    [ "$lane_rc" -eq 0 ] || problems="$problems the lane load generator failed (exit $lane_rc, see $name.lane.log);"
+    [ "$room_rc" -eq 0 ] || problems="$problems the room load generator failed (exit $room_rc, see $name.room.log);"
     sleep "$IDLE"
     curl -fsS "http://127.0.0.1:$PORT/stats" > "$OUT/$name.stats.json" 2>/dev/null || echo '{}' > "$OUT/$name.stats.json"
     # Whether the runtime's native library is in the worker's memory at all
@@ -51,14 +64,24 @@ run() { # name, extra docker args...
     outside=$(grep -acE 'AF_INET6?' "$OUT/$name.strace" || true)
     asked=$(grep -aoE '\\[0-9]{1,3}[a-z0-9-]+(\\[0-9]{1,3}[a-z0-9-]+)+\\0' "$OUT/$name.strace" | sed -E 's/\\[0-9]{1,3}/./g; s/^\.//; s/\.$//' | grep -E '^([a-z0-9-]+\.)+[a-z]{2,}$' | sort | uniq -c | sed -E 's/^ +//' | paste -sd',' || true)
     names=$(grep -aoiE '(microsoft|visualstudio|applicationinsights|events\\[0-9]+data)[a-z0-9.\\-]*' "$OUT/$name.full.strace" | sort -u | tr '\n' ' ' || true)
-    summary=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=s.counters??{};const o=Object.keys(c).filter((k)=>k.startsWith("observer_"));console.log(`observer in /stats: ${s.speechObserver?JSON.stringify(s.speechObserver):"none"}; observer counters: ${o.length}${o.length?` (loaded ${c.observer_loaded??0}, could not load ${c.observer_unavailable??0}, windows kept ${c.observer_windows_accepted??0}, errors ${c.observer_errors??0})`:""}; frames heard: ${c.frames_heard??0}`)' "$OUT/$name.stats.json" 2>/dev/null || echo "stats missing")
-    echo "$name: traced threads and processes=$(cut -d' ' -f1 "$OUT/$name.full.strace" | sort -u | wc -l); network calls=$total, of them to anywhere but this machine=$outside; names looked up: ${asked:-none}; microsoft names seen in traffic: ${names:-none}; runtime library lines in the process's memory map: ${loaded:-0}; $summary" | tee "$OUT/$name.summary.txt"
+    summary=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=s.counters??{};const o=Object.keys(c).filter((k)=>k.startsWith("observer_"));const y=Object.keys(c).filter((k)=>k.startsWith("yield_")&&c[k]);console.log(`observer in /stats: ${s.speechObserver?JSON.stringify(s.speechObserver):"none"}; observer counters: ${o.length}${o.length?` (loaded ${c.observer_loaded??0}, could not load ${c.observer_unavailable??0}, windows kept ${c.observer_windows_accepted??0}, errors ${c.observer_errors??0})`:""}; pause counters moved: ${y.length?y.map((k)=>`${k.slice(6)} ${c[k]}`).join(", "):"none"}; frames heard: ${c.frames_heard??0}`)' "$OUT/$name.stats.json" 2>/dev/null || echo "stats missing")
+    echo "$name: traced threads and processes=$(cut -d' ' -f1 "$OUT/$name.full.strace" | sort -u | wc -l); calls naming a network address=$total, of them to anywhere but this machine=$outside; names looked up: ${asked:-none}; microsoft names seen in traffic: ${names:-none}; runtime library lines in the process's memory map: ${loaded:-0}; $summary" | tee "$OUT/$name.summary.txt"
     rm -f "$OUT/$name.full.strace"
+    if [ -n "$problems" ]; then
+        echo "$name: RUN INVALID:$problems the counts above say nothing about the worker" | tee -a "$OUT/$name.summary.txt"
+        FAILED=1
+    fi
 }
 echo "== 2 and 3. traced runs: off, on, off again"
-run 1-off
+run 1-off -e VOICE_SPEECH_OBSERVER=0
 run 2-on -e VOICE_SPEECH_OBSERVER=1
-run 3-off-again
+run 3-off-again -e VOICE_SPEECH_OBSERVER=0
 echo "== 4. switched on without the runtime's reporting suppressed"
 run 4-on-without-reporting-switch -e VOICE_SPEECH_OBSERVER=1 -e ORT_DISABLE_TELEMETRY=
+if [ "${YIELD:-0}" = 1 ]; then
+    echo "== 5. the pause as shipped, for every bot, then switched off with VOICE_SPEECH_OBSERVER=0 and restarting"
+    run 5-pause-on
+    run 6-pause-removed -e VOICE_SPEECH_OBSERVER=0
+fi
 rm -rf "$OUT/go"
+exit "$FAILED"
