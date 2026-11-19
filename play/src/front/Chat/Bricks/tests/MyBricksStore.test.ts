@@ -661,5 +661,32 @@ describe("how the chat draws a person's own Bricks", () => {
             looks.catalog.set(offered(["woka-ada"]));
             expect(get(picture)).toBeUndefined();
         });
+
+        it("drops the picture when the game forgets the WOKAs (the room changed), so a failed new read does not leave the old room's one", () => {
+            const offered = {
+                woka: {
+                    collections: [
+                        {
+                            name: "WOKAs",
+                            position: 0,
+                            textures: [{ id: "woka-cleo", name: "Cleo", url: "resources/cleo.png", position: 0 }],
+                        },
+                    ],
+                },
+            };
+            looks.catalog.set(offered);
+            const picture = brickPicture("woka-cleo");
+            const seen: (string | undefined)[] = [];
+            const stop = picture.subscribe((value) => seen.push(value));
+            expect(seen[seen.length - 1]).toBe("drawn:http://pusher.test/resources/cleo.png");
+            // The room changed: the list is dropped, and the new read has not answered (or failed)
+            looks.catalog.set(null);
+            expect(seen[seen.length - 1]).toBeUndefined();
+            expect(get(picture)).toBeUndefined();
+            // And it is drawn again when the new room offers it
+            looks.catalog.set(offered);
+            expect(seen[seen.length - 1]).toBe("drawn:http://pusher.test/resources/cleo.png");
+            stop();
+        });
     });
 });

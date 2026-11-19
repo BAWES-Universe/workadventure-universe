@@ -1113,6 +1113,27 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("brickEndVisit")).toBeNull();
         });
 
+        it("does not offer Bring along while the Brick's home is still unknown, only once it is known to have none", async () => {
+            let answer: (value: unknown) => void = () => undefined;
+            game.getBrickHome.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+            );
+            await openMade();
+            // Orbit has said the Brick visits nowhere, and the home read is still out
+            expect(byId("brickBringAlong")).toBeNull();
+            answer({ home: null });
+            await settle();
+            expect(byId("brickBringAlong")).not.toBeNull();
+        });
+
+        it("does not offer Bring along when the home could not be read", async () => {
+            game.getBrickHome.mockRejectedValue(new Error("offline"));
+            await openMade();
+            expect(byId("brickBringAlong")).toBeNull();
+        });
+
         it("says nothing about visiting when Orbit could not be asked, or the Brick is switched off", async () => {
             game.getBrickVisit.mockRejectedValue(new Error("offline"));
             await openMade();

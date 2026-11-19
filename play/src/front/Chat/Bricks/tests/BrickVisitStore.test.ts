@@ -231,6 +231,17 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         expect(api.syncVisitingBrick).toHaveBeenCalledWith(undefined, { ending: true });
     });
 
+    it("stops saying the Brick walks here once the visit is ended, even when reading the page's answer again fails", async () => {
+        api.endBrickVisit.mockResolvedValue({ state: "none", place: null });
+        api.getBrickVisit.mockResolvedValueOnce({ state: "visiting", place: "Universe" });
+        await loadBrickVisit(A);
+        expect(get(brickVisitStore)).toEqual({ state: "visiting", place: "Universe" });
+        api.getBrickVisit.mockRejectedValue(new Error("offline"));
+        await expect(endBrickVisit(A)).resolves.toBe(true);
+        expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
+        expect(api.syncVisitingBrick).toHaveBeenCalledWith(undefined, { ending: true });
+    });
+
     it("asks once more to take the Brick off the map when the bot server did not answer the first time (Sentry on #2023)", async () => {
         api.endBrickVisit.mockResolvedValue({ state: "none", place: null });
         api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
