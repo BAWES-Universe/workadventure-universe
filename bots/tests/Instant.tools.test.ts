@@ -324,6 +324,40 @@ describe('one Instant run', () => {
         expect(receiptStateOf([ran.ended])).toBe('refunded');
     });
 
+    it('says it may have run, never "nothing ran", when a refusal follows an asking that got no answer or was still being checked', async () => {
+        const refusals: InstantRunAnswer[] = [
+            { status: 'refused', reason: 'credit_used_up', message: 'Your Instant Apps credit does not cover it.' } as InstantRunAnswer,
+            { status: 'refused', reason: 'paused', message: 'Paused.' } as InstantRunAnswer,
+            { status: 'rejected' } as InstantRunAnswer,
+            { status: 'not_owner' } as InstantRunAnswer,
+        ];
+        for (const before of [{ status: 'unreachable', retry: true }, { status: 'checking' }] as InstantRunAnswer[]) {
+            for (const refusal of refusals) {
+                const ran = await go(answers(before, refusal));
+                expect(ran).toMatchObject({ ended: 'unsure', notSent: false });
+                expect(ran.result).toMatchObject({ outcome: 'uncertain' });
+                expect(ran.carryOn).toBeNull();
+                expect(String(ran.result.note)).not.toMatch(/Nothing ran/);
+            }
+        }
+        // A rule that said no still ends the task, so nothing more is run in it
+        const rule = await go(answers({ status: 'unreachable', retry: true }, { status: 'refused', reason: 'rule', message: 'No.', stop: true } as InstantRunAnswer));
+        expect(rule).toMatchObject({ ended: 'unsure', stop: true });
+        // A first asking that is refused is still plainly "nothing ran"
+        const first = await go(answers({ status: 'refused', reason: 'credit_used_up', message: 'Credit.' } as InstantRunAnswer));
+        expect(first).toMatchObject({ ended: 'not_sent', notSent: true });
+    });
+
+    it('sends nothing after the deadline: a wait that used the time up ends as unsure, without another asking', async () => {
+        for (const first of [{ status: 'unreachable', retry: true }, { status: 'checking' }] as InstantRunAnswer[]) {
+            const instantRun = answers(first, { status: 'done', data: 1, chargedMicros: 1 });
+            let clock = 0;
+            const ran = await go(instantRun, { sleep: async () => void (clock += 151_000), now: () => clock });
+            expect(instantRun).toHaveBeenCalledTimes(1);
+            expect(ran).toMatchObject({ ended: 'unsure', notSent: false });
+        }
+    });
+
     it('waits and asks again with the same id while Orbit is still checking, then leaves it to settle by itself', async () => {
         const instantRun = answers({ status: 'checking' }, { status: 'done', data: 'ok', chargedMicros: 3 });
         const ran = await go(instantRun);
@@ -472,7 +506,9 @@ describe('one task, one receipt', () => {
     it('ends as done when something worked, checking when an answer never came, and refunded when nothing was taken', () => {
         expect(receiptStateOf(['worked'])).toBe('done');
         expect(receiptStateOf(['failed', 'worked'])).toBe('done');
-        expect(receiptStateOf(['unsure', 'worked'])).toBe('done');
+        // A run nobody could settle keeps the receipt open, however many others worked
+        expect(receiptStateOf(['unsure', 'worked'])).toBe('checking');
+        expect(receiptStateOf(['worked', 'unsure'])).toBe('checking');
         expect(receiptStateOf(['unsure'])).toBe('checking');
         expect(receiptStateOf(['failed', 'unsure'])).toBe('checking');
         expect(receiptStateOf(['failed'])).toBe('refunded');

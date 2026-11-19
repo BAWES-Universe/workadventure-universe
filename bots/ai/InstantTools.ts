@@ -220,6 +220,9 @@ function clipped(data: unknown): { data: unknown; cut?: true } {
     return { data: text.slice(0, DATA_MAX_CHARS), cut: true };
 }
 
+const UNREACHABLE_NOTE =
+    "No answer came back, so nobody can say whether it ran. Say so in one plain sentence, that it will settle by itself and show in their Usage ([Usage](#usage)), and do not run it again in this reply.";
+
 /** Runs one Instant tool for the owner. Never throws: the model is told in plain words what happened. */
 export async function runInstantTool(context: InstantRunContext): Promise<InstantRunResult> {
     const callId = context.callId ?? `bot-${randomUUID()}`;
@@ -236,6 +239,10 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
 
     let noAnswers = 0;
     let checks = 0;
+    // An earlier asking got no answer, or Orbit said it was checking: that run may have started, and a refusal of only the asking
+    // that follows does not undo it, so nothing is then said to have not run
+    const earlierAttempt = () => noAnswers > 0 || checks > 0;
+    const mayHaveRun = 'It may have run, and it settles by itself. Say you are checking whether it worked, that it will show in their Usage ([Usage](#usage)), and do not run it again in this reply.';
     for (;;) {
         const answer = await context.admin.instantRun(context.botId, {
             ...context.who,
@@ -249,11 +256,11 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                 // The run may have started: only the same call id is sent again, never a new one
                 noAnswers++;
                 if (!answer.retry || noAnswers >= NO_ANSWER_TRIES || now() - started >= TOTAL_WAIT_MS) {
-                    return unsure(
-                        "No answer came back, so nobody can say whether it ran. Say so in one plain sentence, that it will settle by itself and show in their Usage ([Usage](#usage)), and do not run it again in this reply."
-                    );
+                    return unsure(UNREACHABLE_NOTE);
                 }
                 await sleep(1_000 * noAnswers);
+                // The wait may have used up the time: nothing is sent after the deadline
+                if (now() - started >= TOTAL_WAIT_MS) return unsure(UNREACHABLE_NOTE);
                 continue;
             case 'checking':
                 if (checks >= CHECK_WAITS_MS.length || now() - started >= TOTAL_WAIT_MS) {
@@ -262,6 +269,9 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                     );
                 }
                 await sleep(CHECK_WAITS_MS[checks++]);
+                if (now() - started >= TOTAL_WAIT_MS) {
+                    return unsure('It is still being checked and settles by itself. Say you are checking whether it worked, that it will show in their Usage ([Usage](#usage)), and do not run it again.');
+                }
                 continue;
             case 'done': {
                 const kept = clipped(answer.data);
@@ -309,6 +319,9 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                 if (answer.reason === 'unclear' || answer.reason === 'already_checking') {
                     return unsure('The same request is still being checked. Say you are checking whether it worked and do not run it again.');
                 }
+                // The same, whatever the refusal says (a rule, credit used up, anything else): an earlier asking may have run. A rule still
+                // ends the task, so nothing more is run in it
+                if (earlierAttempt()) return answer.stop || answer.reason === 'rule' ? { ...unsure(mayHaveRun), stop: true } : unsure(mayHaveRun);
                 // A rule they said in chat: final. Never tried again for this task, and never answered with an offer of more credit
                 if (answer.stop || answer.reason === 'rule') return { ...base, ended: 'not_sent', notSent: true, stop: true, result: ruleStopResult(words) };
                 if (answer.reason === 'credit_used_up') {
@@ -346,9 +359,7 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
             }
             case 'rejected':
                 // An earlier asking got no answer, or Orbit said it was checking: that run may have started, and a refusal of only this asking does not undo it
-                if (noAnswers > 0 || checks > 0) {
-                    return unsure('It may have run, and it settles by itself. Say you are checking whether it worked, that it will show in their Usage ([Usage](#usage)), and do not run it again in this reply.');
-                }
+                if (earlierAttempt()) return unsure(mayHaveRun);
                 // Orbit refused the request before any run: nothing ran, so nothing is unsure and nothing was taken
                 return {
                     ...base,
@@ -363,6 +374,7 @@ export async function runInstantTool(context: InstantRunContext): Promise<Instan
                     },
                 };
             case 'not_owner':
+                if (earlierAttempt()) return unsure(mayHaveRun);
                 return {
                     ...base,
                     ended: 'not_sent',
@@ -440,8 +452,9 @@ export function openInstantReceipt(admin: Pick<AdminApiService, 'openTaskReceipt
 
 /** What the receipt says the task ended as: it worked, or nothing came back yet, or nothing was taken. */
 export function receiptStateOf(ended: readonly InstantEnded[]): TaskReceiptState {
-    if (ended.includes('worked')) return 'done';
+    // A run nobody could settle keeps the receipt open: it may have been paid for, so "done" is only for a task where none is unsure
     if (ended.includes('unsure')) return 'checking';
+    if (ended.includes('worked')) return 'done';
     return 'refunded';
 }
 
