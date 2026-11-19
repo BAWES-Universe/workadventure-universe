@@ -50,6 +50,7 @@ describe("a page that takes payments, in the game's window", () => {
             artifactId: "a1",
             chat: () => undefined,
             frame: () => frameWindow,
+            loaded: () => true,
             openWindow,
             pay: pay as never,
         });
@@ -596,11 +597,14 @@ describe("how a checkout ended while the artifact's frame was away (Code view)",
     let current: Window | undefined;
     // Which opening of the artifact is on show; another version coming on show changes it
     let showing = 1;
+    // Whether the page in that frame has loaded
+    let loadedNow = true;
     const make = (pay: (...args: unknown[]) => Promise<ArtifactPay>) =>
         pagePayments({
             artifactId: "a1",
             chat: () => undefined,
             frame: () => current,
+            loaded: () => loadedNow,
             opening: () => showing,
             openWindow: () => null,
             pay: pay as never,
@@ -608,6 +612,7 @@ describe("how a checkout ended while the artifact's frame was away (Code view)",
 
     beforeEach(() => {
         showing = 1;
+        loadedNow = true;
     });
 
     it("keeps how it ended and tells the frame that comes back, under the request it was started for, once", async () => {
@@ -730,6 +735,56 @@ describe("how a checkout ended while the artifact's frame was away (Code view)",
         // Held for the page that asked; then another version opens and its frame loads
         showing = 2;
         current = frameWindow;
+        payments.frameReady();
+        expect(told()).toEqual(["started"]);
+    });
+
+    it.each([
+        ["paid", { status: "paid", checkoutUrl: null, testPayment: false }],
+        ["not_paid", { status: "not_paid", checkoutUrl: null, testPayment: false }],
+        ["cant_confirm", { status: "cant_confirm", checkoutUrl: null }],
+    ])(
+        "holds '%s' while the frame has a window but its page has not loaded, and tells it once when the page has loaded",
+        async (status, ending) => {
+            current = frameWindow;
+            const pay = vi.fn().mockResolvedValueOnce(checkout).mockResolvedValueOnce(ending);
+            const payments = make(pay);
+            ask(payments);
+            await flush();
+            expect(told()).toEqual(["started"]);
+
+            // The frame is drawn again: it has a window, and its page is not there yet
+            loadedNow = false;
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(told()).toEqual(["started"]);
+            // A load that is not this frame's page yet tells nothing either
+            payments.frameReady();
+            expect(told()).toEqual(["started"]);
+
+            loadedNow = true;
+            payments.frameReady();
+            expect(toldAll().map((message) => [message.status, message.request])).toEqual([
+                ["started", "r1"],
+                [status, "r1"],
+            ]);
+            payments.frameReady();
+            expect(told()).toEqual(["started", status]);
+        }
+    );
+
+    it("does not tell a result held for opening 1 once opening 2 is on show", async () => {
+        current = frameWindow;
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockResolvedValueOnce({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        loadedNow = false;
+        await vi.advanceTimersByTimeAsync(3_000);
+        showing = 2;
+        loadedNow = true;
         payments.frameReady();
         expect(told()).toEqual(["started"]);
     });

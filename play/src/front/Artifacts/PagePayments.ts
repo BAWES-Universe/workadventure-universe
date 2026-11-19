@@ -69,6 +69,12 @@ export interface PagePaymentsOptions {
     chat: () => ArtifactChat | undefined;
     /** The window of the artifact's frame, as it is now: a message from any other window is ignored. */
     frame: () => Window | null | undefined;
+    /**
+     * Whether that frame has loaded the page it was drawn for. A frame has a window before its page is there (a new frame after
+     * the Code view, a redraw, a new opening), and a message sent in that time goes to a blank or the previous document, where
+     * nobody hears it: how a checkout ended is then held until the page has loaded (see `frameReady`).
+     */
+    loaded: () => boolean;
     /** Opens the checkout's window straight from the tap's moment; undefined when the browser blocked it. */
     openWindow?: () => Window | null;
     pay?: typeof payOnArtifact;
@@ -110,7 +116,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         options.frame()?.postMessage({ universe: "app-result", status, request }, "*");
 
     // How a checkout ended, when this artifact's frame was not there to hear it (the buyer was looking at the code, or the frame
-    // was being drawn again): kept for this artifact's own frame, by the request it was started for, and told to it when it is
+    // was being drawn again, or its page has not loaded yet): kept for this artifact's own frame, by the request it was started for, and told to it when it is
     // there again. Told once and forgotten; a new request from the page also forgets it (the page asked again, so it has heard).
     // Never sent to any other window: the frame is always asked from the artifact's own element.
     const held = new Map<string, { status: string; from: number }>();
@@ -121,7 +127,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const tellEnd = (status: string, request: string, from: number) => {
         // The page that asked is gone with its opening: nobody is told
         if (opening() !== from) return;
-        if (options.frame()) return tellRequest(status, request);
+        if (options.frame() && options.loaded()) return tellRequest(status, request);
         if (destroyed) return;
         held.delete(request);
         held.set(request, { status, from });
@@ -136,7 +142,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     };
 
     const frameReady = () => {
-        if (destroyed || !options.frame()) return;
+        if (destroyed || !options.frame() || !options.loaded()) return;
         const waiting = [...held];
         held.clear();
         for (const [request, one] of waiting) if (one.from === opening()) tellRequest(one.status, request);

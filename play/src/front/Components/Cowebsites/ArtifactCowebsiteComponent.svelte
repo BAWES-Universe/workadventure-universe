@@ -123,11 +123,22 @@
     let addressOver = false;
 
     // A page that takes payments asks for its checkout by message (game #2044); only this window's own frame is listened to
-    let frameElement: HTMLIFrameElement | undefined;
+    let frameElement: HTMLIFrameElement | null | undefined;
+    // Whether the page in the frame on show has loaded: a frame has a window before its page is there, and a payment result
+    // sent in that time reaches nobody. Cleared each time the frame is drawn again (a new element, or another address).
+    let frameLoaded = false;
+    let frameDrawn: { element: HTMLIFrameElement | null | undefined; url: string | null | undefined } | undefined;
+    function watchFrame(element: HTMLIFrameElement | null | undefined, url: string | null | undefined) {
+        if (frameDrawn && frameDrawn.element === element && frameDrawn.url === url) return;
+        frameDrawn = { element, url };
+        frameLoaded = false;
+    }
+    $: watchFrame(frameElement, opened?.version.url);
     const payments = pagePayments({
         artifactId: id,
         chat: () => actualCowebsite.chat,
         frame: () => frameElement?.contentWindow,
+        loaded: () => frameLoaded,
         opening: () => opening,
         openWindow: () => window.open("about:blank", "_blank"),
     });
@@ -215,6 +226,9 @@
 
     async function load(version: number | undefined) {
         const mine = ++request;
+        // A renewal of the version on show that is still on its way is out of date from the moment another opening starts:
+        // if it answers "kept private" while this opening is still loading, it must not put away the opening that is coming
+        renewal++;
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
@@ -252,6 +266,8 @@
                 switchFailed = true;
                 versionStore.set(opened.version.number);
                 phase = "ready";
+                // A renewal of the one showing that was on its way was dropped when this opening started: look after it again
+                if (opened.version.url !== null && opened.version.urlHasMedia) renewIn(RENEW_RETRY_MS);
                 return;
             }
             phase = "failed";
@@ -366,7 +382,9 @@
     // The frame has loaded: what a checkout ended with while the buyer was in Code view (it has no frame then) is told to it now.
     // From an address that has stopped it shows nothing, so it waits for the frame of the new one.
     function onFrameLoad() {
-        if (!addressStopped()) payments.frameReady();
+        // From an address that has stopped it shows nothing: it is not a page that can hear anything
+        frameLoaded = !addressStopped();
+        if (frameLoaded) payments.frameReady();
         redrawIfStopped();
     }
 

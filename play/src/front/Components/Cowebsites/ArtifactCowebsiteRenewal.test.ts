@@ -128,4 +128,79 @@ describe("an artifact window's renewals of the address on show", () => {
         expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/1-again");
         view.$destroy();
     });
+    function mount() {
+        const version = writable<number | undefined>(undefined);
+        const cowebsite = {
+            artifactId: "a1",
+            chat: undefined,
+            version,
+            summary: writable({ title: "Menu", kind: "html", makerName: "Omar" }),
+        };
+        const target = document.createElement("div");
+        document.body.appendChild(target);
+        const view = new ArtifactCowebsiteComponent({
+            target,
+            props: { actualCowebsite: cowebsite as never, visible: true },
+        });
+        return { version, target, view };
+    }
+
+    it("keeps the opening of version 2 when a renewal of version 1, asked before it, answers 'kept private' while 2 is still loading", async () => {
+        vi.useFakeTimers();
+        let answerRenewal: (error: Error) => void = () => {};
+        let answerTwo: (value: unknown) => void = () => {};
+        let asked = 0;
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, wanted: number | undefined) => {
+            asked++;
+            if (asked === 1) return Promise.resolve(opened(1, "https://files.test/1-first"));
+            if (asked === 2)
+                return new Promise((_, reject) => {
+                    answerRenewal = reject;
+                });
+            if (wanted === 2)
+                return new Promise((resolve) => {
+                    answerTwo = resolve;
+                });
+            return Promise.resolve(opened(1, "https://files.test/1-again"));
+        });
+        const { version, target, view } = mount();
+        await settle();
+        await vi.advanceTimersByTimeAsync(275_000);
+        expect(asked).toBe(2);
+
+        // Version 2 starts to open (slowly); the old renewal answers in the meantime
+        version.set(2);
+        await settle();
+        answerRenewal(new ArtifactRequestError(404, "kept_private"));
+        await settle();
+        answerTwo(opened(2, "https://files.test/2"));
+        await settle();
+        expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/2");
+        view.$destroy();
+    });
+
+    it("does not let a renewal of version 1 that succeeds late replace the address of version 2", async () => {
+        vi.useFakeTimers();
+        let answerRenewal: (value: unknown) => void = () => {};
+        let asked = 0;
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, wanted: number | undefined) => {
+            asked++;
+            if (asked === 1) return Promise.resolve(opened(1, "https://files.test/1-first"));
+            if (asked === 2)
+                return new Promise((resolve) => {
+                    answerRenewal = resolve;
+                });
+            if (wanted === 2) return Promise.resolve(opened(2, "https://files.test/2"));
+            return Promise.resolve(opened(1, "https://files.test/1-again"));
+        });
+        const { version, target, view } = mount();
+        await settle();
+        await vi.advanceTimersByTimeAsync(275_000);
+        version.set(2);
+        await settle();
+        answerRenewal(opened(1, "https://files.test/1-late"));
+        await settle();
+        expect(target.querySelector("iframe")?.getAttribute("src")).toBe("https://files.test/2");
+        view.$destroy();
+    });
 });
