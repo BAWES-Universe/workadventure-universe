@@ -78,6 +78,11 @@ const TRY_AGAIN_MS = 1_000;
 /** How long the start of a checkout may wait for an answer before the window says it is taking longer (to the buyer only: the page is told nothing yet). */
 const START_FOR_MS = 30_000;
 /**
+ * How long a question that is not a start (a status, a restore, a Check payment) waits for its answer. Past it the question is dropped
+ * and counts as no answer, so a request that hangs never keeps the window busy or "checking" for good (it can be asked again).
+ */
+const STATUS_FOR_MS = 30_000;
+/**
  * How long, from the tap, the start of a checkout is waited for in all. Its order, if it was made, is taken up when the answer comes
  * (so it is never lost) and the page hears "started" then, as for any start; and no other start is taken meanwhile (the window stays
  * busy), so two checkouts are never made for one wish. Past this the request is dropped for good and the page hears "unavailable",
@@ -242,6 +247,24 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             : pay(options.artifactId, options.chat(), body);
     };
 
+    /**
+     * A question that is not a start, with a limit on the wait: when no answer comes in STATUS_FOR_MS it counts as no answer. The
+     * question itself is left to the browser's own end (an answer that comes later is never read).
+     */
+    const askWithin = (request: ArtifactPayRequest): Promise<ArtifactPay> => {
+        let stop: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_resolve, reject) => {
+            stop = setTimeout(() => reject(new Error("no answer")), STATUS_FOR_MS);
+        });
+        // Taken up in whichever way it ends, so a late answer or a late timeout never leaves an unhandled rejection
+        timeout.catch(() => undefined);
+        const asked = Promise.resolve(ask(request));
+        asked.catch(() => undefined);
+        return Promise.race([asked, timeout]).finally(() => {
+            if (stop) clearTimeout(stop);
+        });
+    };
+
     // The frame has no origin of its own, so it can only be addressed with "*": the message holds nothing but a status and the
     // page's own request id. The page, not this window, decides what it trusts: only its parent, and only its own request.
     const tellRequest = (status: string, request: string, test = false) =>
@@ -326,7 +349,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             if (over || destroyed) return;
             let next = FIRST_POLL_MS;
             try {
-                const answer: ArtifactPay = await ask({ order: orderId });
+                const answer: ArtifactPay = await askWithin({ order: orderId });
                 if (over || destroyed) return;
                 // How far apart to ask is the server's word: short for a new order, longer the longer it waits
                 if (typeof answer.pollAfterMs === "number" && Number.isFinite(answer.pollAfterMs)) {
@@ -475,7 +498,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         held.clear();
         void (async () => {
             try {
-                const answer = await ask({ restore: true });
+                const answer = await askWithin({ restore: true });
                 if (destroyed) return;
                 const test = answer.testPayment === true;
                 if (answer.status === "paid") {
@@ -553,7 +576,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (asked.request) tellEnd(told, asked.request, asked.from, test);
             };
             try {
-                const answer = await ask(
+                const answer = await askWithin(
                     asked.intentId ? { check: true, intentId: asked.intentId } : { restore: true }
                 );
                 if (destroyed) return;

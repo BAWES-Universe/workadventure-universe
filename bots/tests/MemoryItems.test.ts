@@ -1117,6 +1117,23 @@ describe('PersistentMemory: Forget is kept before it is promised, and stale data
         clearTimeout(memory.unreportedRetryTimer);
     });
 
+    it('keeps 0 ("whenever it was said") when a later ask for the same thing is noted here, in what is owed and in the ledger (Sentry)', async () => {
+        const memory = await start();
+        const entry = (since: number) => ({ botId: BOT, userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', since, first: 3 });
+        const key = forgetKeyOf(entry(0) as never);
+        memory.recordForget(entry(0));
+        memory.recordForget(entry(50));
+        expect(memory.unreportedItemForgets.get(key)).toMatchObject({ since: 0 });
+        expect(memory.forgottenLedger.get(key)).toMatchObject({ since: 0 });
+        // And the other way round: a time that was held, then an ask with none, is the latest of all
+        memory.unreportedItemForgets.delete(key);
+        memory.forgottenLedger.delete(key);
+        memory.recordForget(entry(50));
+        memory.recordForget(entry(0));
+        expect(memory.unreportedItemForgets.get(key)).toMatchObject({ since: 0 });
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
     it('writes a ledger entry again on the timer when the store was down, even when nothing is owed to Orbit', async () => {
         const memory = await start();
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

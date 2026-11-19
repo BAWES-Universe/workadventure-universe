@@ -523,7 +523,9 @@ describe("a page that takes payments, in the game's window", () => {
                     new Promise<ArtifactPay>((resolve) => {
                         answerLate = resolve;
                     })
-            );
+            )
+            // Every later question hangs too (each is dropped after thirty seconds and asked again, until the deadline)
+            .mockImplementation(() => new Promise<ArtifactPay>(() => {}));
         const payments = make(pay, () => null);
         ask(payments);
         await flush();
@@ -536,10 +538,11 @@ describe("a page that takes payments, in the game's window", () => {
         expect(get(payments.line)).toMatchObject({ paid: null, problem: "cant_confirm" });
         expect(told().filter((status) => status === "paid")).toEqual([]);
         // The payment is free to be started again
+        const before = pay.mock.calls.length;
         pay.mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" });
         ask(payments);
         await flush();
-        expect(pay).toHaveBeenCalledTimes(3);
+        expect(pay).toHaveBeenCalledTimes(before + 1);
     });
 
     it("gives the same checkout back as a link when the buyer closes its tab before paying", async () => {
@@ -1140,6 +1143,46 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         await flush();
         expect(heard()).toEqual([{ universe: "app-result", status: "unavailable", request: "load1" }]);
         expect(get(payments.line)).toMatchObject({ problem: "unavailable", canCheck: true });
+        payments.destroy();
+    });
+
+    const hangs = () => new Promise<ArtifactPay>(() => {});
+
+    it("does not stay busy when a restore never gets an answer: after thirty seconds it says so, and the buyer can check (Sentry)", async () => {
+        const pay = vi.fn(hangs);
+        const payments = make(pay);
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "load1", restore: true });
+        await flush();
+        await vi.advanceTimersByTimeAsync(31_000);
+        expect(heard()).toEqual([{ universe: "app-result", status: "unavailable", request: "load1" }]);
+        expect(get(payments.line)).toMatchObject({ checking: false, problem: "unavailable", canCheck: true });
+        // Free again: Check payment asks, and its request is dropped too after thirty seconds
+        payments.checkPayment();
+        await flush();
+        expect(pay).toHaveBeenCalledTimes(2);
+        expect(get(payments.line)).toMatchObject({ checking: true });
+        await vi.advanceTimersByTimeAsync(31_000);
+        expect(get(payments.line)).toMatchObject({ checking: false, problem: "unavailable", canCheck: true });
+        payments.dismiss();
+        expect(get(payments.line).problem).toBeNull();
+        payments.destroy();
+    });
+
+    it("drops a status question that never gets an answer after thirty seconds, and asks the order again (Sentry)", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce(checkout)
+            .mockImplementationOnce(hangs)
+            .mockResolvedValue({ status: "paid", checkoutUrl: null, testPayment: false });
+        const payments = make(pay);
+        ask(payments);
+        await flush();
+        // The first status question (at 3 s) hangs: it is dropped at 33 s, and the order is asked about again after that
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(pay).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(40_000);
+        expect(pay.mock.calls.length).toBeGreaterThanOrEqual(3);
+        expect(get(payments.line)).toMatchObject({ paid: { test: false } });
         payments.destroy();
     });
 

@@ -516,7 +516,9 @@ export class PersistentMemory extends ConversationMemory {
         const now = Date.now();
         // "since" is when the person last asked for it to go, and is what Orbit is told: a later ask must not be reported as
         // an earlier one, or what they said in between would be kept. "first" is when it was first owed.
-        const since = Math.max(entry.since ?? now, before?.since ?? 0);
+        // 0 means "whenever it was said": it is the latest of all and stays 0 (as in the ledger), never turned into a time
+        const asked = entry.since ?? now;
+        const since = asked === 0 || before?.since === 0 ? 0 : Math.max(asked, before?.since ?? 0);
         this.unreportedItemForgets.delete(mapKey);
         this.unreportedItemForgets.set(mapKey, { ...entry, since, first: before?.first ?? entry.first ?? entry.since ?? now });
         this.ledgerForget({ botId: entry.botId, userUuid: entry.userUuid, itemKey: entry.itemKey, kind: entry.kind, since });
