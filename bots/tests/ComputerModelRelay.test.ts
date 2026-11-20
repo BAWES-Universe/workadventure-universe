@@ -599,6 +599,43 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-own-cut', before)).toBe(false);
     });
 
+    it('reads the relay’s own time limit by who made the call long: ours with no output, or a limit we chose; the job’s own when it was writing or asked for the length', async () => {
+        const before = since();
+        const original = RELAY_GUARDS.callTimeoutMs;
+        RELAY_GUARDS.callTimeoutMs = 150;
+        try {
+            // a stream that wrote nothing in time: ours
+            asJob('job-timeout-silent');
+            upstreamHandler = () => undefined;
+            await askAndSettle({ ...agent, stream: true }, 1);
+            expect(notes.endedOnFault('job-timeout-silent', before)).toBe(true);
+
+            // a stream that was writing when the time ran out: the job's own
+            asJob('job-timeout-writing');
+            upstreamHandler = (_req, res) => {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            };
+            await askAndSettle({ ...agent, stream: true }, 2);
+            expect(notes.endedOnFault('job-timeout-writing', before)).toBe(false);
+            expect(notes.sawSince('job-timeout-writing', before)).toBe(true);
+
+            // not streamed, a length the relay chose: ours
+            asJob('job-timeout-ours');
+            upstreamHandler = () => undefined;
+            await askAndSettle(agent, 3);
+            expect(notes.endedOnFault('job-timeout-ours', before)).toBe(true);
+
+            // not streamed, a length the job asked for: the job's own
+            asJob('job-timeout-asked');
+            await askAndSettle({ ...agent, max_tokens: 100 }, 4);
+            expect(notes.endedOnFault('job-timeout-asked', before)).toBe(false);
+            expect(notes.sawSince('job-timeout-asked', before)).toBe(true);
+        } finally {
+            RELAY_GUARDS.callTimeoutMs = original;
+        }
+    });
+
     it('does not note a caller that went away while the provider was still working as a fault of anyone', async () => {
         const before = since();
         asJob('job-hungup');
@@ -773,6 +810,16 @@ describe('how a call ended, for the runner', () => {
 });
 
 describe('whoseProviderError', () => {
+    it('reads a 429 that says this one request is too large as the request’s, and a plain rate limit as ours', () => {
+        expect(whoseProviderError(429, { message: 'Request too large for gpt-4o in organization org-x on tokens per min (TPM): Limit 30000, Requested 45000. The input or output tokens must be reduced in order to run successfully.' })).toBe('request');
+        expect(whoseProviderError(429, { message: 'Limit 30000, Requested 45000' })).toBe('request');
+        expect(whoseProviderError(429, { message: 'Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, Used 28000, Requested 5000. Please try again in 2s.' })).toBe('ours');
+        expect(whoseProviderError(429, {})).toBe('ours');
+    });
+    it('reads the prompt-length wording of a provider that counts the input with the limit as the request’s', () => {
+        expect(whoseProviderError(400, { param: 'max_tokens', message: 'Input validation error: `inputs` tokens + `max_new_tokens` must be <= 32769' }, false)).toBe('request');
+        expect(whoseProviderError(400, { param: 'max_tokens', message: 'max_new_tokens plus prompt tokens exceed the window' }, false)).toBe('request');
+    });
     it('reads a refusal of the token limit by whose limit it was: the job’s own ask is the request’s, a limit we chose is ours unless the wording blames the input', () => {
         // (a) OpenAI’s own body when the job asked for more than the model takes
         expect(whoseProviderError(400, { param: 'max_tokens', code: 'invalid_value', message: 'max_tokens is too large: 32768. This model supports at most 8192 completion tokens' }, true)).toBe('request');

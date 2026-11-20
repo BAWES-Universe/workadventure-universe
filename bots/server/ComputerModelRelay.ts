@@ -154,9 +154,11 @@ function wordsOf(text: string): string {
 const KEY_CODES = /invalid[_ -]?api[_ -]?key|model[_ -]?not[_ -]?found|insufficient[_ -]?(quota|funds|credit)|billing|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
 /** The same said in a message: read only when the error has no status and names no field, since a provider echoes the job's own values in a message. */
 const KEY_MESSAGE = /incorrect api key|invalid api key|model .*does not exist|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
+/** A 429 that is about this one request being larger than the limit (OpenAI: "Request too large ... Limit 30000, Requested 45000 ... must be reduced"), not a rate limit: a rate limit names what was used too (Limit 30000, Used 28000, Requested 5000). */
+const REQUEST_TOO_LARGE = /request too large|too large for|must be reduced|reduce (the length|the size|your (prompt|input|request))|limit \d+,? requested \d+/i;
 const CONTENT_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?(length|window)|maximum context|too many tokens|token limit|prompt (is )?too long|too large/i;
 /** Wording that says the prompt or the context is the problem, not the value of a field: the job's own input. */
-const INPUT_WORDS = /context[_ -]?(length|window)|maximum context|prompt (is )?too long|too many tokens|in the (messages|prompt)|messages? (is|are) too (long|large)|inputs? tokens/i;
+const INPUT_WORDS = /context[_ -]?(length|window)|maximum context|prompt (is )?too long|too many tokens|in the (messages|prompt)|messages? (is|are) too (long|large)|inputs? tokens|max_new_tokens|prompt tokens/i;
 /** The two fields that carry the token limit: the job's own ask up to our setting, so the limit is the job's unless we lowered it. */
 const TOKEN_LIMIT_FIELDS = new Set(['max_tokens', 'max_completion_tokens']);
 /** The fields of a call that the relay sets itself; every other field is what the job's own machine sent, and a job's words can steer it. */
@@ -178,6 +180,7 @@ export function whoseProviderError(status: number | null, error: unknown, jobsLi
         const asNumber = typeof code === 'number' ? code : typeof code === 'string' && /^\d{3}$/.test(code) ? Number(code) : null;
         numeric = asNumber !== null && asNumber >= 100 && asNumber < 600 ? asNumber : null;
     }
+    if (numeric === 429 && REQUEST_TOO_LARGE.test(words)) return 'request';
     if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
     if (numeric === 413) return 'request';
     // A refusal of a field the relay sets (model, n, stream, its options): ours. The token limit is the job's own when the job asked for it and we did not
@@ -414,7 +417,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
                 else {
-                    ended = await callProvider({ body, config, streaming, outputCap, res });
+                    const timing = { timedOut: false };
+                    ended = await callProvider({ body, config, streaming, outputCap, res, timing });
+                    // The relay's own time limit ran out. Ours when the provider gave nothing in time (a stream that wrote nothing) or, for an answer that is
+                    // not streamed, when the relay chose the limit that made it long; a long answer the job asked for, or a stream that was writing when the
+                    // time ran out, is the job's own
+                    if (timing.timedOut && !ended.providerSays) ended = { ...ended, providerSays: (streaming ? ended.outputChars === 0 : !limitIsJobs(body, outputCap)) ? 'ours' : 'request' };
                     // How the call ended, for the runner: a failure of ours is noted as a fault, a whole answer as an answer. What a provider
                     // answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
                     // person's own key the provider, the key and the endpoint are theirs (their credit ran out, their key was revoked)
@@ -483,8 +491,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
     });
 
     /** Makes the call and gives the answer back as it comes. */
-    async function callProvider(call: { body: Record<string, unknown>; config: AIProviderConfig; streaming: boolean; outputCap: number; res: Response }): Promise<Ended> {
-        const { body, config, streaming, outputCap, res } = call;
+    async function callProvider(call: { body: Record<string, unknown>; config: AIProviderConfig; streaming: boolean; outputCap: number; res: Response; timing: { timedOut: boolean } }): Promise<Ended> {
+        const { body, config, streaming, outputCap, res, timing } = call;
         // A key that cannot be read means nothing was sent: the room goes back
         let key: string | null;
         try {
@@ -508,6 +516,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         let cutShort = false;
         const timer = setTimeout(() => {
             cutShort = true;
+            timing.timedOut = true;
             controller.abort();
         }, RELAY_GUARDS.callTimeoutMs);
         // Hermes went away (it was cancelled, the person took over, the computer stopped): the provider call stops too
