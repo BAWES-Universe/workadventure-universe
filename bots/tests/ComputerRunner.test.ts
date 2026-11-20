@@ -9,7 +9,10 @@ import {
     whyOf,
     jobPrompt,
     outputFolderOf,
+    probeRelay,
+    RELAY_UNREACHABLE_WHY,
     relayUrlFromEnv,
+    type RelayProbe,
     runnerOrbitFor,
     type RunnableJob,
     type RunnerEvent,
@@ -17,7 +20,7 @@ import {
     type TurnOpened,
 } from '../server/ComputerRunner';
 import { readRunnerEvents, runnerEventOf, streamLimits } from '../server/ComputerTurnStream';
-import { createRefusalNotes } from '../server/ComputerRefusals';
+import { createRefusalNotes, type CallRow } from '../server/ComputerRefusals';
 
 const JOB: RunnableJob = { jobId: 'job-1', botId: 'brick-1', title: 'Visa form', brief: 'Two people, Kuwait', writes: true, hasTurn: false };
 const RELAY = 'https://bot-server.example.test';
@@ -237,9 +240,9 @@ describe('a job that runs', () => {
             () => (notes.note(JOB.jobId), [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'stream_broke', message: 'broke' }]),
             // the reconnect cannot be made, so the same turn is read again on the next look, and ends failed
             { ok: false, reason: 'failed' },
-            failing(),
-            failing(),
-            failing(),
+            () => (notes.called(JOB.jobId), failing()),
+            () => (notes.called(JOB.jobId), failing()),
+            () => (notes.called(JOB.jobId), failing()),
         ]);
         const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
         orbit.running = async () => [JOB];
@@ -299,7 +302,7 @@ describe('a job that runs', () => {
         });
 
         it('keeps a silent turn the agent’s own when no fault of ours came in during it', async () => {
-            const { seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => done('')));
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.called(JOB.jobId), done(''))));
             await run();
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
         });
@@ -322,7 +325,7 @@ describe('a job that runs', () => {
         });
 
         it('ends as the agent’s when each turn ended on a person’s own provider failing (their key out of credit, their endpoint failing): the relay notes nothing of ours', async () => {
-            const { seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => done('')));
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.called(JOB.jobId), done(''))));
             await run();
             expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
@@ -1403,7 +1406,7 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
     it('does not read a confirmed fault of the turn before as one of this turn, even when both began in the same millisecond', async () => {
         const { call, run } = sameMillisecond();
         // turn 1 had a confirmed fault and then a good answer; turns 2 to 4 are silent turns, the agent's own
-        const { orbit, seen } = fakeOrbit([() => (call('c1', 'fault', 'provider_key_ours'), call('c1b', 'answered', 'provider_5xx'), done('Worked round it')), done(''), done(''), done('')]);
+        const { orbit, seen } = fakeOrbit([() => (call('c1', 'fault', 'provider_key_ours'), call('c1b', 'answered', 'provider_5xx'), done('Worked round it')), () => (call('c2', 'answered', 'provider_5xx'), done('')), () => (call('c3', 'answered', 'provider_5xx'), done('')), () => (call('c4', 'answered', 'provider_5xx'), done(''))]);
         await run(orbit);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [2, 3, 4] }]);
     });
@@ -1463,5 +1466,161 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
         await runJob(orbit, JOB, RELAY, refusals);
         // turn 1 had the confirmed fault; turns 3, 4 and 5 are a new streak of silent turns, the agent's
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [3, 4, 5] }]);
+    });
+});
+
+describe('a machine that cannot reach our own model service', () => {
+    const WHY = RELAY_UNREACHABLE_WHY;
+    /** A runner with real notes whose rows are caught on their way to Orbit. */
+    const rig = (scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, options: { probe?: (relay: string) => Promise<RelayProbe> } = {}) => {
+        let t = 0;
+        const clock = () => ++t;
+        const rows: CallRow[] = [];
+        const notes = createRefusalNotes(clock, {
+            sink: async (_botId, _jobId, sent) => {
+                rows.push(...sent);
+                return true;
+            },
+        });
+        const fake = fakeOrbit(scripts);
+        const runner = createComputerRunner({ orbit: fake.orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, runId: () => 'run1', ...(options.probe ? { relayProbe: options.probe } : {}), timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+        fake.orbit.running = async () => [JOB];
+        return { ...fake, notes, rows, run: async () => { await runner.tick(); await runner.idle(); } };
+    };
+    const unreachable = () => ({ ok: false as const, reason: 'relay_unreachable' });
+
+    it('ends the job as a confirmed fault of ours, said in plain words, when Orbit says the machine could not reach the relay', async () => {
+        const { seen, setPrepare, rows, run } = rig([]);
+        setPrepare(unreachable);
+        await run();
+        // tried again like any failure to get ready (three tries), no turn sent, and ended once
+        expect(seen.prepares).toHaveLength(3);
+        expect(seen.turns).toEqual([]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
+        expect(finishedWithRun(seen)[0].run).toBe('run1');
+        // the record Orbit judges by: one confirmed fault of ours on that turn of that run, sent before the finish
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ turn: 1, run: 'run1', kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: null });
+    });
+
+    it('goes on when the relay came back between two tries', async () => {
+        const { seen, setPrepare, rows, run } = rig([done('[[done]]')]);
+        let asked = 0;
+        setPrepare(() => (++asked < 2 ? unreachable() : { ok: true }));
+        await run();
+        expect(seen.prepares).toHaveLength(2);
+        expect(seen.turns).toHaveLength(1);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(rows).toEqual([]);
+    });
+
+    it('ends it the same way, without asking Orbit to prepare, when the relay’s address answers as something else (an error page)', async () => {
+        const { seen, rows, run } = rig([], { probe: async () => 'wrong' });
+        await run();
+        expect(seen.prepares).toEqual([]);
+        expect(seen.turns).toEqual([]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', turn: 1, run: 'run1' });
+    });
+
+    it('goes on when the address is the relay, and when it could not be asked from here (that proves nothing about the machine)', async () => {
+        for (const answer of ['relay', 'unknown'] as const) {
+            const { seen, rows, run } = rig([done('[[done]]')], { probe: async () => answer });
+            await run();
+            expect(seen.prepares, answer).toHaveLength(1);
+            expect(finished(seen), answer).toEqual([{ action: 'finish', outcome: 'done' }]);
+            expect(rows, answer).toEqual([]);
+        }
+    });
+
+    it('asks the address once in a while, not for every job and turn', async () => {
+        const probe = vi.fn(async () => 'relay' as const);
+        const { run } = rig([done('Carrying on'), done('[[done]]')], { probe });
+        await run();
+        expect(probe).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats turns that failed with no call ever reaching the relay as ours, even though Orbit’s prepare said yes', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'No route' }];
+        const { seen, rows, run } = rig([failing(), failing(), failing()]);
+        await run();
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        // a confirmed fault for each turn, under ids of their own, so Orbit never counts it against the goodwill a month allows
+        expect(rows.map((row) => [row.turn, row.kind, row.reason])).toEqual([
+            [1, 'fault', 'relay_down'],
+            [2, 'fault', 'relay_down'],
+            [3, 'fault', 'relay_down'],
+        ]);
+        expect(new Set(rows.map((row) => row.callId)).size).toBe(3);
+        expect(rows.every((row) => row.run === 'run1')).toBe(true);
+    });
+
+    it('does the same for silent turns with no call at all (a model answers even to say nothing)', async () => {
+        const { seen, rows, run } = rig([done(''), done(''), done('')]);
+        await run();
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        expect(rows).toHaveLength(3);
+    });
+
+    it('does not read a good turn as a fault when no call reached the relay (a job’s words and endings are what they are)', async () => {
+        const { seen, rows, run } = rig([done('[[done]]')]);
+        await run();
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(rows).toEqual([]);
+    });
+
+    it('leaves a turn alone when a call did reach the relay: a silent turn after a call is still the agent’s, and nothing is noted', async () => {
+        const { notes, seen, rows, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.called(JOB.jobId), done(''))));
+        await run();
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        expect(rows).toEqual([]);
+    });
+});
+
+describe('asking an address whether it is the relay', () => {
+    const answer = (status: number, body: string): typeof fetch => (async () => new Response(body, { status })) as never;
+    it('reads the relay’s own answers (a JSON error without a key, the list, an Orbit that is away) as the relay', async () => {
+        expect(await probeRelay('https://x.test', answer(401, JSON.stringify({ error: { message: 'Invalid API key.', code: 'invalid_api_key' } })))).toBe('relay');
+        expect(await probeRelay('https://x.test', answer(503, JSON.stringify({ error: { message: 'The service is busy.', code: 'service_unavailable' } })))).toBe('relay');
+        expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ object: 'list', data: [] })))).toBe('relay');
+    });
+
+    it('reads an error page, a body that is not JSON and a JSON that is not an error or a list as something else', async () => {
+        expect(await probeRelay('https://x.test', answer(404, '<!DOCTYPE html><html><body>404 Not Found</body></html>'))).toBe('wrong');
+        expect(await probeRelay('https://x.test', answer(502, '<html>Bad gateway</html>'))).toBe('wrong');
+        expect(await probeRelay('https://x.test', answer(200, 'ok'))).toBe('wrong');
+        expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ hello: 'world' })))).toBe('wrong');
+        expect(await probeRelay('https://x.test', answer(200, 'null'))).toBe('wrong');
+    });
+
+    it('says it could not be asked when nothing answers, and asks the model list with no key', async () => {
+        const failing = (async () => {
+            throw new Error('connect ECONNREFUSED');
+        }) as never;
+        expect(await probeRelay('https://x.test', failing)).toBe('unknown');
+        const seen: Array<[string, RequestInit | undefined]> = [];
+        await probeRelay('https://x.test', (async (url: string, init?: RequestInit) => (seen.push([url, init]), new Response('{}', { status: 200 }))) as never);
+        expect(seen[0][0]).toBe('https://x.test/v1/models');
+        expect(JSON.stringify(seen[0][1])).not.toMatch(/authorization/i);
+    });
+});
+
+describe('saying where the relay is assumed to be', () => {
+    it('says so once, with the host only, when the address is taken from the play address, and says nothing when it was chosen', () => {
+        const log = { error: vi.fn() };
+        expect(relayUrlFromEnv({ PUSHER_URL: 'https://play.dev.example.test' } as never, log)).toBe('https://bot-server.dev.example.test');
+        expect(log.error).toHaveBeenCalledTimes(1);
+        const line = String(log.error.mock.calls[0][0]);
+        expect(line).toContain('bot-server.dev.example.test');
+        expect(line).toContain('COMPUTER_RELAY_URL');
+        expect(line).not.toContain('https://');
+        const quietLog = { error: vi.fn() };
+        expect(relayUrlFromEnv({ COMPUTER_RELAY_URL: 'https://relay.example.test' } as never, quietLog)).toBe('https://relay.example.test');
+        expect(relayUrlFromEnv({ BOT_SERVER_URL: 'https://bot.example.test' } as never, quietLog)).toBe('https://bot.example.test');
+        expect(relayUrlFromEnv({ PUSHER_URL: 'http://pusher:8080' } as never, quietLog)).toBeNull();
+        expect(relayUrlFromEnv({} as never, quietLog)).toBeNull();
+        expect(quietLog.error).not.toHaveBeenCalled();
     });
 });

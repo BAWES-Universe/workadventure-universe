@@ -177,7 +177,41 @@ export interface RunnerDeps {
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
     /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
     runId?: () => string;
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince'>>;
+    /**
+     * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
+     * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
+     */
+    relayProbe?: (relay: string) => Promise<RelayProbe>;
+}
+
+/** What the relay's address answered: `relay` (it is the relay), `wrong` (something else is there), `unknown` (no answer to read from here). */
+export type RelayProbe = 'relay' | 'wrong' | 'unknown';
+
+/** The one line said to the person when the machine could not reach our own model service: nothing was taken. */
+export const RELAY_UNREACHABLE_WHY = "We couldn't reach our own service, you weren't charged.";
+
+/**
+ * Asks an address for the relay's model list WITHOUT a key and reads who answers: the relay answers with a JSON error (401 `invalid_api_key`, or 503
+ * while Orbit is away) or the list; an error page (an HTML 404 from the wrong host, a proxy's 502) or any other body is not the relay. An address that
+ * does not answer at all is `unknown`: from the bot server's own side that proves nothing about the machine's way in (a server cannot always reach
+ * its own public name), so only an answer from something else counts against the address.
+ */
+export async function probeRelay(relay: string, fetcher: typeof fetch = fetch, timeoutMs = 5000): Promise<RelayProbe> {
+    try {
+        const answer = await fetcher(`${relay}/v1/models`, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+        const text = (await answer.text()).slice(0, 4000);
+        let body: unknown;
+        try {
+            body = JSON.parse(text);
+        } catch {
+            return 'wrong';
+        }
+        const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null;
+        return record && (typeof record.error === 'object' || record.object === 'list') ? 'relay' : 'wrong';
+    } catch {
+        return 'unknown';
+    }
 }
 
 const realSleep = (ms: number, signal: AbortSignal) =>
@@ -305,16 +339,40 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         }
     }
 
-    async function prepared(job: RunnableJob, relay: string, signal: AbortSignal): Promise<'ready' | 'look' | 'failed' | 'stopped'> {
+    /** The relay's address, asked once in a while and not for every turn: what it answered and when. */
+    let probed: { relay: string; at: number; answer: RelayProbe } | null = null;
+    const PROBE_KEEP_MS = 60_000;
+    async function relayAnswer(relay: string): Promise<RelayProbe> {
+        if (!deps.relayProbe) return 'unknown';
+        if (probed && probed.relay === relay && now() - probed.at < (probed.answer === 'relay' ? PROBE_KEEP_MS : PROBE_KEEP_MS / 6)) return probed.answer;
+        const answer = await deps.relayProbe(relay).catch(() => 'unknown' as const);
+        probed = { relay, at: now(), answer };
+        return answer;
+    }
+
+    /**
+     * Gets the machine ready. `unreachable` when the machine's own way to the relay is proven closed: the address answers as something that is not
+     * the relay, or Orbit (which asks the machine itself to call the relay with its own key) says the relay could not be reached. It is tried again
+     * as a failure is, since a relay may be coming back up, and only then said.
+     */
+    async function prepared(job: RunnableJob, relay: string, signal: AbortSignal): Promise<'ready' | 'look' | 'failed' | 'unreachable' | 'stopped'> {
         for (let attempt = 0; ; attempt++) {
             if (signal.aborted) return 'stopped';
-            const answer = await orbit.prepare(job.jobId, relay).catch(() => ({ ok: false as const, reason: 'failed' }));
+            let unreachable = false;
+            let answer: { ok: true } | { ok: false; reason: string } = { ok: true };
+            if ((await relayAnswer(relay)) === 'wrong') unreachable = true;
+            else {
+                answer = await orbit.prepare(job.jobId, relay).catch(() => ({ ok: false as const, reason: 'failed' }));
+                if ('reason' in answer && answer.reason === 'relay_unreachable') unreachable = true;
+            }
             // A stop that came while Orbit was being asked is no failure of the job: nothing is ended on it
             if (signal.aborted) return 'stopped';
-            if (!('reason' in answer)) return 'ready';
-            // The job is not Brick's to work on now (taken over, over, no machine awake): look at it again, do not retry
-            if (answer.reason !== 'failed') return 'look';
-            if (attempt >= timing.prepareMs.length) return 'failed';
+            if (!unreachable) {
+                if (!('reason' in answer)) return 'ready';
+                // The job is not Brick's to work on now (taken over, over, no machine awake): look at it again, do not retry
+                if (answer.reason !== 'failed') return 'look';
+            }
+            if (attempt >= timing.prepareMs.length) return unreachable ? 'unreachable' : 'failed';
             await sleep(timing.prepareMs[attempt], signal);
         }
     }
@@ -449,6 +507,20 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         }
     }
 
+    /** A confirmed fault of ours on a turn: the machine could not get to the relay (nothing of the job's can cause that). Noted for Orbit's record and for this runner. */
+    function noteNoRelay(job: RunnableJob, turn: number, run: string, why: 'relay_unreachable' | 'no_call'): void {
+        deps.refusals?.record?.(job.botId, job.jobId, {
+            callId: `${why}_${run}_${turn}`,
+            kind: 'fault',
+            reason: 'relay_down',
+            source: 'universe-ai',
+            route: 'unknown',
+            providerStatus: null,
+            turn,
+            run,
+        });
+    }
+
     async function work(job: RunnableJob, signal: AbortSignal): Promise<void> {
         if (!deps.relayUrl) {
             log.error('[ComputerRunner] A job cannot run: no address is set for the model relay (COMPUTER_RELAY_URL or BOT_SERVER_URL).');
@@ -536,6 +608,19 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             }
             if (ready === 'failed') {
                 if ((await finish(job, 'failed', { cause: 'ours', generation })) === 'stale') {
+                    await readAgain();
+                    continue;
+                }
+                return;
+            }
+            if (ready === 'unreachable') {
+                // The machine cannot reach our own model service: a confirmed fault of ours (nothing the job or the person did can cause it), noted on
+                // a turn of this run so Orbit reads it against the turn it is told of, and said to the person in plain words
+                turnNo += 1;
+                deps.refusals?.turn?.(job.jobId, turnNo, run);
+                say('A job ended: the machine could not reach the model relay (check COMPUTER_RELAY_URL).');
+                noteNoRelay(job, turnNo, run, 'relay_unreachable');
+                if ((await finish(job, 'failed', { cause: 'ours', generation, turns: [turnNo], run, why: RELAY_UNREACHABLE_WHY })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -692,6 +777,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             const ourFault = (!result.failed && readFrom !== null && deps.refusals?.endedOnFault?.(job.jobId, readFrom)) || false;
             if (result.failed || silent || ourFault) {
                 const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
+                // A turn that failed or said nothing and in which no call of the job ever reached the relay: the machine could not get to it (or never
+                // tried), and the model is ours, so no word of the job's made it fail. A confirmed fault of ours, noted before the streak is read
+                if (readFrom !== null && deps.refusals?.calledSince && !deps.refusals.calledSince(job.jobId, readFrom)) noteNoRelay(job, turnNo, run, 'no_call');
                 bad += 1;
                 badTurns.push(turnNo);
                 // A confirmed fault of Universe's in any turn of the streak (our key refused, no route, no room, a model gone) makes the ending ours, whatever
@@ -798,7 +886,7 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
  * the game's own front uses). The last is only used when it is an https address; an internal one (http, or a bare host) is no door a machine
  * outside could use. Null when none fits, and the job then ends with a clear line rather than hand the machine an address it cannot reach.
  */
-export function relayUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+export function relayUrlFromEnv(env: NodeJS.ProcessEnv = process.env, log: Pick<Console, 'error'> = console): string | null {
     const clean = (text: string) => text.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
     const chosen = clean(env.COMPUTER_RELAY_URL || env.BOT_SERVER_URL || '');
     if (chosen) {
@@ -814,7 +902,10 @@ export function relayUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string | 
         const labels = pusher.hostname.split('.');
         if (pusher.protocol !== 'https:' || labels.length < 3 || /^[0-9.]+$/.test(pusher.hostname)) return null;
         labels[0] = 'bot-server';
-        return `https://${labels.join('.')}${pusher.port ? `:${pusher.port}` : ''}`;
+        const derived = `https://${labels.join('.')}${pusher.port ? `:${pusher.port}` : ''}`;
+        // A guess, and one that can be another environment's host (a development server derives the production name): said once, with the host only
+        log.error(`[ComputerRunner] Neither COMPUTER_RELAY_URL nor BOT_SERVER_URL is set: the model relay is assumed to be at ${new URL(derived).host}, taken from the play address. If that is not THIS environment's bot server, machines cannot reach the relay and every job fails: set COMPUTER_RELAY_URL.`);
+        return derived;
     } catch {
         return null;
     }

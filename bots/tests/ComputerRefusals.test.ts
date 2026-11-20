@@ -699,3 +699,44 @@ describe('the evidence kept before the money decision is final, and delivered af
         expect(await notes.resume()).toBe(true);
     });
 });
+
+describe('whether any call of a job reached the relay', () => {
+    it('is true from the moment one is noted, for that job only, and false for the window before it', () => {
+        const notes = createRefusalNotes(() => 1000);
+        const before = notes.mark();
+        expect(notes.calledSince('a', before)).toBe(false);
+        notes.called('a');
+        expect(notes.calledSince('a', before)).toBe(true);
+        expect(notes.calledSince('b', before)).toBe(false);
+        // a window that began after it does not hold it
+        expect(notes.calledSince('a', notes.mark())).toBe(false);
+    });
+
+    it('is true after a call that ended in any way: an answer, a fault, a refusal of the person’s allowance, a note', () => {
+        const notes = createRefusalNotes(() => 1000);
+        for (const [job, make] of [
+            ['answered', () => notes.answered('answered')],
+            ['fault', () => notes.fault('fault')],
+            ['note', () => notes.note('note')],
+            ['row-fault', () => notes.record('b', 'row-fault', { callId: 'c1', kind: 'fault', reason: 'provider_5xx', source: 'universe-ai', route: 'r', providerStatus: 500 })],
+            ['row-not-ours', () => notes.record('b', 'row-not-ours', { callId: 'c2', kind: 'not_ours', reason: 'allowance', source: 'universe-ai', route: 'r', providerStatus: 429 })],
+            ['row-answered', () => notes.record('b', 'row-answered', { callId: 'c3', kind: 'answered', reason: 'provider_5xx', source: 'universe-ai', route: 'r', providerStatus: 200 })],
+        ] as const) {
+            const before = notes.mark();
+            expect(notes.calledSince(job, before), job).toBe(false);
+            make();
+            expect(notes.calledSince(job, before), job).toBe(true);
+        }
+    });
+
+    it('is told in milliseconds as well, and forgotten after a while', () => {
+        let at = 1000;
+        const notes = createRefusalNotes(() => at);
+        notes.called('a');
+        expect(notes.calledSince('a', 1000)).toBe(true);
+        expect(notes.calledSince('a', 1001)).toBe(false);
+        at = REFUSAL_NOTE_KEEP_MS + 5000;
+        notes.called('new');
+        expect(notes.calledSince('a', 0)).toBe(false);
+    });
+});

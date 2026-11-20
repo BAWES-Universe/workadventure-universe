@@ -136,6 +136,30 @@ describe('who may call', () => {
     });
 });
 
+describe('a call that reached the relay is noted for the runner', () => {
+    it('notes it for a key Orbit knows, on the model list and on a chat call, and for no other key', async () => {
+        const before = notes.mark();
+        expect(notes.calledSince(JOB, before)).toBe(false);
+        // a key Orbit does not know reached the relay too, but proves nothing of this job's machine
+        orbit.identify.mockResolvedValueOnce({ ok: false });
+        await fetch(`${relayBase}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+        expect(notes.calledSince(JOB, before)).toBe(false);
+        // an Orbit that cannot be asked proves nothing either
+        orbit.identify.mockRejectedValueOnce(new Error('down'));
+        await fetch(`${relayBase}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+        expect(notes.calledSince(JOB, before)).toBe(false);
+        // the model list asked with the job's own key
+        await fetch(`${relayBase}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+        expect(notes.calledSince(JOB, before)).toBe(true);
+        // a chat call too, whatever became of it
+        const afterList = notes.mark();
+        expect(notes.calledSince(JOB, afterList)).toBe(false);
+        await ask({ messages });
+        expect(notes.calledSince(JOB, afterList)).toBe(true);
+        expect(notes.calledSince('another-job', before)).toBe(false);
+    });
+});
+
 describe('room before the call', () => {
     it('notes a refusal for the person’s allowance or a rule of theirs for the job, and no other refusal', async () => {
         const before = Date.now() - 1;

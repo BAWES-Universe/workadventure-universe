@@ -550,6 +550,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
         }
         if (!who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
+        // The machine of this job reached the relay (the runner reads that: a turn that failed with no call at all never got here)
+        deps.refusals?.called?.(who.jobId);
         // One name: Hermes never chooses the model, the Brick's own AI does
         res.json({ object: 'list', data: [{ id: 'universe-ai', object: 'model', created: 0, owned_by: 'universe' }] });
     });
@@ -572,6 +574,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
         if (!token || !who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         const { jobId, botId } = who as { ok: true; jobId: string; botId: string };
+        deps.refusals?.called?.(jobId);
         // A call that failed for a fault of ours is noted for the runner (see ComputerRefusals): Hermes may hand its error back as a finished turn
         // Only the agent's own calls (they carry its tools) count: a side call Hermes makes with the same key (a summary, a title) that fails
         // after the turn was answered is no failure of the turn. Set once the body is read.

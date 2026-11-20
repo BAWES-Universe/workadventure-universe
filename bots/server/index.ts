@@ -36,7 +36,7 @@ import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChat
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
 import { createRefusalNotes } from './ComputerRefusals';
 import { RedisEvidenceStore } from './ComputerEvidenceStore';
-import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
+import { createComputerRunner, probeRelay, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
 import { ChatPurgeSweeper } from '../services/ChatPurges';
@@ -243,7 +243,7 @@ function startComputers(): void {
     const relayUrl = relayUrlFromEnv();
     // The host only: never a path, a token or anything after it
     console.log(`[BotServer] Computer model address for machines: ${relayUrl ? new URL(relayUrl).host : 'none (a job will end with a clear line)'}`);
-    computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl, refusals: computerRefusals });
+    computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl, refusals: computerRefusals, relayProbe: (relay) => probeRelay(relay) });
     computerRunner.start(COMPUTER_RUNNER_EVERY_MS);
 }
 
