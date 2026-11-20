@@ -74,9 +74,12 @@ export interface SettleInput {
 /** How the Brick's AI runs now, as Orbit says (the same answer a reply gets). Null when it cannot be told or the key is resting. */
 export type RelayRoute = { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null };
 
+/** Orbit says the Brick's own key is down and its owner chose to stop replying: no AI is called, and the person's own key is why. */
+export type RelayRestingOwnKey = { restingOwnKey: true };
+
 export interface RelayDeps {
     orbit: RelayOrbit;
-    routeFor(botId: string): Promise<RelayRoute | null>;
+    routeFor(botId: string): Promise<RelayRoute | RelayRestingOwnKey | null>;
     /** For tests: how a call to the provider is made. Defaults to the global fetch (the address guard for an address a person typed). */
     fetchFor?: (config: AIProviderConfig) => typeof fetch;
     /** For tests: how long to wait between tries to settle. */
@@ -147,6 +150,28 @@ function wordsOf(text: string): string {
 }
 
 /** A provider that says our key is wrong is our problem, not Hermes's: Hermes must not read it as its own key being refused. */
+const REQUEST_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?length|maximum context|too many tokens|token limit|invalid[_ -]?(request|prompt|argument|parameter)|unsupported|bad request|not[_ -]?found/i;
+
+/**
+ * Whose a provider's error is. `ours`: its own service failing (5xx), a rate limit (429), our key refused or out of credit (401, 402, a 403
+ * that is no moderation), or an error that says nothing of a code. `request`: the job's own request was wrong or refused (moderation, a
+ * context that is too long, an invalid request, any other 4xx): neither a fault of ours nor an answer.
+ */
+export function whoseProviderError(status: number | null, error: unknown): 'ours' | 'request' {
+    const record = isRecord(error) ? error : {};
+    const words = ['code', 'type', 'message', 'status'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
+    let numeric = status;
+    if (numeric === null) {
+        const code = record.code ?? record.status;
+        const asNumber = typeof code === 'number' ? code : typeof code === 'string' && /^\d{3}$/.test(code) ? Number(code) : null;
+        numeric = asNumber !== null && asNumber >= 100 && asNumber < 600 ? asNumber : null;
+    }
+    if (numeric === null) return REQUEST_WORDS.test(words) ? 'request' : 'ours';
+    if (numeric >= 500 || numeric === 429 || numeric === 401 || numeric === 402 || numeric === 408 || numeric === 425) return 'ours';
+    if (numeric === 403) return REQUEST_WORDS.test(words) ? 'request' : 'ours';
+    return numeric >= 400 ? 'request' : 'ours';
+}
+
 const statusToHermes = (status: number): number => (status === 401 || status === 402 || status === 403 ? 502 : status >= 400 && status < 600 ? status : 502);
 
 /** An error in the shape every OpenAI client reads. */
@@ -214,8 +239,8 @@ interface Ended {
     notSent: boolean;
     /** The call failed on our side before the provider was asked (its stored key could not be read): ours whoever's key it is. */
     relaySide?: boolean;
-    /** The provider answered 200 but put an error in its stream: no answer, the provider's fault. */
-    streamError?: boolean;
+    /** What the provider said was wrong, when it said so (an error answer, or an error object inside a 200 answer): whose it is. Neither is an answer. */
+    providerSays?: 'ours' | 'request';
 }
 
 export function createComputerModelRelay(deps: RelayDeps): Router {
@@ -283,13 +308,19 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         const streaming = body.stream === true;
         agentCall = Array.isArray(body.tools) && body.tools.length > 0;
 
-        let route: RelayRoute | null;
+        let asked: RelayRoute | RelayRestingOwnKey | null;
         try {
-            route = await deps.routeFor(botId);
+            asked = await deps.routeFor(botId);
         } catch {
             return fault(503, 'The AI could not be reached. Try again in a moment.', 'service_unavailable');
         }
-        if (!route) return fault(503, 'This Brick’s AI is not answering right now.', 'ai_resting');
+        // The Brick's own key is down and its owner chose to stop: that is the person's, never ours. Universe's AI resting, or a route nobody can tell, is ours
+        if (asked && 'restingOwnKey' in asked) {
+            if (agentCall) deps.refusals?.note(jobId);
+            return problem(res, 503, 'This Brick’s AI is not answering right now.', 'ai_resting', 'server_error');
+        }
+        if (!asked) return fault(503, 'This Brick’s AI is not answering right now.', 'ai_resting');
+        const route = asked as RelayRoute;
         const { config, source } = route;
         // Only OpenAI-format providers are reached directly here; others come with their own translation
         if (config.type !== 'openai') return fault(501, 'This Brick’s AI cannot be used from a computer yet.', 'provider_not_supported');
@@ -342,13 +373,17 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     // answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
                     // person's own key the provider, the key and the endpoint are theirs (their credit ran out, their key was revoked)
                     if (agentCall) {
-                        // A caller that went away is no fault of anyone's (the 504 written for a cut-off wait goes to nobody)
-                        const providerSaid = !gone && (res.statusCode >= 500 || res.statusCode === 429 || ended.cutShort || ended.streamError === true);
+                        // A caller that went away is no fault of anyone's (the 504 written for a cut-off wait goes to nobody). What the provider said
+                        // was wrong of the job's own request (moderation, a context too long, an invalid request) is neither a fault nor an answer
+                        const requestWrong = ended.providerSays === 'request';
+                        // Not ours, so noted off our side: the runner never ends a job as ours for a turn that the job's own request failed
+                        if (requestWrong && !gone) deps.refusals?.note(jobId);
+                        const providerSaid = !gone && !requestWrong && (ended.providerSays === 'ours' || res.statusCode >= 500 || ended.cutShort);
                         if (providerSaid) {
                             if (source !== 'own-key' || ended.relaySide) deps.refusals?.fault(jobId);
                             // A person's own provider failing is not ours: it is noted on the person's side, so the runner never ends the job as ours for it
                             else deps.refusals?.note(jobId);
-                        } else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
+                        } else if (!requestWrong && res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
                     }
                 }
             } catch (error) {
@@ -476,8 +511,15 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 const message = providerErrorText(wordsOf(text)).split(key ?? '\u0000').join('[redacted]');
                 console.warn('[ComputerRelay] The provider refused a call:', upstream.status);
                 problem(res, statusToHermes(upstream.status), message, 'upstream_error', 'server_error');
-                // A call the provider refused was not billed
-                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false };
+                // A call the provider refused was not billed. Whose the refusal is is read from what it said
+                let said: unknown = null;
+                try {
+                    const parsed = JSON.parse(text) as unknown;
+                    said = isRecord(parsed) && parsed.error !== undefined ? parsed.error : parsed;
+                } catch {
+                    /* a body that is not JSON says nothing more than its status */
+                }
+                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, providerSays: whoseProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }) };
             }
 
             if (!streaming) {
@@ -487,7 +529,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
                 }
                 res.status(200).json(data);
-                const answerError = Boolean((data as { error?: unknown }).error) && !data.choices?.length;
+                const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? whoseProviderError(null, (data as { error?: unknown }).error) : null;
                 const usage = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
                 const message = data.choices?.[0]?.message;
                 // What the model wrote counts whether it was words, thinking or a tool call
@@ -497,7 +539,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     outputChars: written,
                     cutShort,
                     notSent: false,
-                    ...(answerError ? { streamError: true } : {}),
+                    ...(answerError ? { providerSays: answerError } : {}),
                 };
             }
 
@@ -514,7 +556,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             let pending = '';
             let usage: CallMetadata | undefined;
             let outputChars = 0;
-            let streamError = false;
+            let providerSays: 'ours' | 'request' | undefined;
             const read = (line: string) => {
                 if (!line.startsWith('data:')) return;
                 const data = line.slice(5).trim();
@@ -522,7 +564,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 try {
                     const chunk = JSON.parse(data) as { error?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
                     // A provider can answer 200 and put its error in the stream: that is no answer
-                    if (chunk.error) streamError = true;
+                    if (chunk.error !== undefined && chunk.error !== null) {
+                        const kind = whoseProviderError(null, chunk.error);
+                        providerSays = providerSays === 'ours' || kind === 'ours' ? 'ours' : 'request';
+                    }
                     if (chunk.usage) usage = { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, ...readUsageDetail(chunk.usage) };
                     for (const choice of chunk.choices ?? []) {
                         if (typeof choice.delta?.content === 'string') outputChars += choice.delta.content.length;
@@ -554,7 +599,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 }
                 if (!res.writableEnded) res.end();
             }
-            return { usage, outputChars, cutShort, notSent: false, ...(streamError ? { streamError: true } : {}) };
+            return { usage, outputChars, cutShort, notSent: false, ...(providerSays ? { providerSays } : {}) };
         } finally {
             clearTimeout(timer);
             res.off('close', onClose);

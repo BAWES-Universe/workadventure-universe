@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
 import { createRefusalNotes } from '../server/ComputerRefusals';
-import { createComputerModelRelay, estimateCallMicros, inputTokensOf, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { createComputerModelRelay, estimateCallMicros, inputTokensOf, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -646,6 +646,63 @@ describe('how a call ended, for the runner', () => {
         expect(notes.sawSince('job-own-stream-error', before)).toBe(true);
     });
 
+    it('says the Brick’s own key resting is the person’s: noted on their side, never a fault of ours; Universe AI resting or an unknown route stays ours', async () => {
+        const before = since();
+        asJob('job-own-resting');
+        route = { restingOwnKey: true } as never;
+        expect((await ask(agent)).status).toBe(503);
+        expect(notes.endedOnFault('job-own-resting', before)).toBe(false);
+        expect(notes.sawSince('job-own-resting', before)).toBe(true);
+        expect(upstreamRequests).toHaveLength(0);
+
+        asJob('job-unknown-route');
+        route = null as never;
+        expect((await ask(agent)).status).toBe(503);
+        expect(notes.endedOnFault('job-unknown-route', before)).toBe(true);
+    });
+
+    it('reads what the provider said: 401, 402 and a 403 that is no moderation are our key (ours); a moderation 403 or another 4xx is the request’s (not ours, not an answer)', async () => {
+        const before = since();
+        let count = 0;
+        const said = async (name: string, status: number, error: Record<string, unknown>) => {
+            asJob(name);
+            upstreamHandler = (_req, res) => res.status(status).json({ error });
+            count += 1;
+            await askAndSettle(agent, count);
+        };
+        await said('job-403-plain', 403, { message: 'Forbidden' });
+        await said('job-401', 401, { message: 'revoked' });
+        await said('job-402', 402, { message: 'out of credit' });
+        await said('job-403-moderation', 403, { message: 'Your request was flagged by content moderation', code: 'content_policy_violation' });
+        await said('job-400', 400, { message: 'bad' });
+        await said('job-413', 413, { message: 'too long' });
+        for (const name of ['job-403-plain', 'job-401', 'job-402']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-403-moderation', 'job-400', 'job-413']) {
+            expect(notes.endedOnFault(name, before)).toBe(false);
+            // the request's own failure is off our side: the runner never ends the job as ours for it
+            expect(notes.sawSince(name, before)).toBe(true);
+        }
+    });
+
+    it('reads an error object inside a 200 by its code: a 4xx or a request word is the request’s; a 5xx, a 429 or no code is ours', async () => {
+        const before = since();
+        let count = 0;
+        const inBody = async (name: string, error: Record<string, unknown>) => {
+            asJob(name);
+            upstreamHandler = (_req, res) => res.json({ error });
+            count += 1;
+            await askAndSettle(agent, count);
+        };
+        await inBody('job-200-400', { code: 400, message: 'invalid request' });
+        await inBody('job-200-context', { code: 'context_length_exceeded', message: 'too long' });
+        await inBody('job-200-moderation', { message: 'blocked by moderation' });
+        await inBody('job-200-500', { code: 500, message: 'internal' });
+        await inBody('job-200-429', { code: '429', message: 'rate' });
+        await inBody('job-200-nocode', { message: 'something broke' });
+        for (const name of ['job-200-400', 'job-200-context', 'job-200-moderation']) expect(notes.endedOnFault(name, before)).toBe(false);
+        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode']) expect(notes.endedOnFault(name, before)).toBe(true);
+    });
+
     it('does not let a side call that carries no tools make or unmake a fault of the turn', async () => {
         asJob('job-side');
         const before = since();
@@ -685,5 +742,23 @@ describe('how a call ended, for the runner', () => {
         };
         await askAndSettle({ ...agent, stream: true }, 2);
         expect(notes.endedOnFault('job-whole', before)).toBe(false);
+    });
+});
+
+describe('whoseProviderError', () => {
+    it('is ours for a provider failing, a rate limit, our key refused, and an error with no code; the request’s for moderation and other 4xx', () => {
+        expect(whoseProviderError(500, {})).toBe('ours');
+        expect(whoseProviderError(503, {})).toBe('ours');
+        expect(whoseProviderError(429, {})).toBe('ours');
+        expect(whoseProviderError(401, {})).toBe('ours');
+        expect(whoseProviderError(402, {})).toBe('ours');
+        expect(whoseProviderError(403, { message: 'nope' })).toBe('ours');
+        expect(whoseProviderError(403, { code: 'moderation_blocked' })).toBe('request');
+        expect(whoseProviderError(400, {})).toBe('request');
+        expect(whoseProviderError(404, {})).toBe('request');
+        expect(whoseProviderError(422, {})).toBe('request');
+        expect(whoseProviderError(null, { code: 'invalid_request_error' })).toBe('request');
+        expect(whoseProviderError(null, { code: 524 })).toBe('ours');
+        expect(whoseProviderError(null, 'a string')).toBe('ours');
     });
 });

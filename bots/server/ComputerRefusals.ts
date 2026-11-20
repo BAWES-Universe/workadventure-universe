@@ -2,7 +2,8 @@
  * What the model relay refused for a job because of the person's side of the books (their computer allowance used up, or one of their
  * spending rules), noted for the runner that runs the same job in this process.
  *
- * A person's own provider, key or endpoint failing (their credit ran out, their key was revoked) is noted the same way: it is their side too.
+ * A person's own provider, key or endpoint failing (their credit ran out, their key was revoked, the Brick's own key resting) and a call the
+ * provider refused as wrong of the job's own request (moderation, a context too long) are noted the same way: not ours either.
  *
  * Why it exists: Hermes sees such a refusal only as a failed call, so a turn that ends because of it looks, to the runner, like any other
  * failed turn. A failed turn Universe is to blame for is given back to the person; one the person's own allowance or rules stopped is not.
