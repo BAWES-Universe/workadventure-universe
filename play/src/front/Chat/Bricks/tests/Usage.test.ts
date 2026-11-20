@@ -333,6 +333,25 @@ describe("real numbers (credits and grants)", () => {
                 outcomeText: null,
             });
         });
+
+        it("keeps an unconfirmed task as unconfirmed once its hold is released and Orbit sends it as refunded: the money line stays the refund's", () => {
+            const item = read({
+                state: "refunded",
+                spentMicros: null,
+                outcome: "unconfirmed",
+                outcomeText: "Couldn't confirm",
+                outcomeNote: "We couldn't confirm whether Exa finished. We released your hold.",
+                actions: [step("unknown", { takenText: "Hold released" })],
+            });
+            expect(item).toMatchObject({
+                state: "refunded",
+                outcome: "unconfirmed",
+                outcomeText: "Couldn't confirm",
+                outcomeNote: "We couldn't confirm whether Exa finished. We released your hold.",
+            });
+            expect(item?.actions).toHaveLength(1);
+            expect(item?.actions[0]).toMatchObject({ outcome: "unknown", takenText: "Hold released" });
+        });
     });
 
     it("reads at most fifty tasks", () => {
