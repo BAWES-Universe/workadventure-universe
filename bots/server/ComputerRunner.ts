@@ -45,6 +45,16 @@ export type FinishCause = 'ours' | 'agent';
 
 export type TurnOpened = { ok: true; events: AsyncIterable<RunnerEvent> } | { ok: false; reason: string; responseId?: string };
 
+/**
+ * What the bot server tells Orbit with a prepare: the run of this runner the job's turns are numbered in, and, when the relay's address answered as
+ * something that is not the relay, `relayReached: false` with the HTTP status it saw (null when none).
+ */
+export interface PrepareFacts {
+    run?: string;
+    relayReached?: false;
+    relayStatus?: number | null;
+}
+
 export interface RunnerOrbit {
     running(): Promise<RunnableJob[]>;
     /**
@@ -53,7 +63,8 @@ export interface RunnerOrbit {
      */
     job(botId: string, jobId: string): Promise<{ status: string; control: string; generation?: number } | null>;
     action(botId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
-    prepare(jobId: string, relay: string): Promise<{ ok: true } | { ok: false; reason: string }>;
+    /** `extra` is what the bot server itself saw of the relay (see `PrepareFacts`): sent along, for Orbit's record. */
+    prepare(jobId: string, relay: string, extra?: PrepareFacts): Promise<{ ok: true } | { ok: false; reason: string }>;
     turn(jobId: string, input: string, signal: AbortSignal): Promise<TurnOpened>;
     stream(jobId: string, signal: AbortSignal): Promise<TurnOpened>;
     cancel(jobId: string): Promise<void>;
@@ -182,11 +193,16 @@ export interface RunnerDeps {
      * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
      * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
      */
-    relayProbe?: (relay: string) => Promise<RelayProbe>;
+    relayProbe?: (relay: string) => Promise<RelayProbeResult>;
 }
 
 /** What the relay's address answered: `relay` (it is the relay), `wrong` (something else is there), `unknown` (no answer to read from here). */
 export type RelayProbe = 'relay' | 'wrong' | 'unknown';
+/** The reading, and the HTTP status seen (null when there was no answer). */
+export interface RelayProbeResult {
+    answer: RelayProbe;
+    status: number | null;
+}
 
 /** The one line said to the person when the machine could not reach our own model service: nothing was taken. */
 export const RELAY_UNREACHABLE_WHY = "We couldn't reach our own service, you weren't charged.";
@@ -197,20 +213,21 @@ export const RELAY_UNREACHABLE_WHY = "We couldn't reach our own service, you wer
  * does not answer at all is `unknown`: from the bot server's own side that proves nothing about the machine's way in (a server cannot always reach
  * its own public name), so only an answer from something else counts against the address.
  */
-export async function probeRelay(relay: string, fetcher: typeof fetch = fetch, timeoutMs = 5000): Promise<RelayProbe> {
+export async function probeRelay(relay: string, fetcher: typeof fetch = fetch, timeoutMs = 5000): Promise<RelayProbeResult> {
     try {
         const answer = await fetcher(`${relay}/v1/models`, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+        const status = answer.status;
         const text = (await answer.text()).slice(0, 4000);
         let body: unknown;
         try {
             body = JSON.parse(text);
         } catch {
-            return 'wrong';
+            return { answer: 'wrong', status };
         }
         const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null;
-        return record && (typeof record.error === 'object' || record.object === 'list') ? 'relay' : 'wrong';
+        return { answer: record && (typeof record.error === 'object' || record.object === 'list') ? 'relay' : 'wrong', status };
     } catch {
-        return 'unknown';
+        return { answer: 'unknown', status: null };
     }
 }
 
@@ -340,29 +357,33 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     }
 
     /** The relay's address, asked once in a while and not for every turn: what it answered and when. */
-    let probed: { relay: string; at: number; answer: RelayProbe } | null = null;
+    let probed: { relay: string; at: number; result: RelayProbeResult } | null = null;
     const PROBE_KEEP_MS = 60_000;
-    async function relayAnswer(relay: string): Promise<RelayProbe> {
-        if (!deps.relayProbe) return 'unknown';
-        if (probed && probed.relay === relay && now() - probed.at < (probed.answer === 'relay' ? PROBE_KEEP_MS : PROBE_KEEP_MS / 6)) return probed.answer;
-        const answer = await deps.relayProbe(relay).catch(() => 'unknown' as const);
-        probed = { relay, at: now(), answer };
-        return answer;
+    async function relayAnswer(relay: string): Promise<RelayProbeResult> {
+        if (!deps.relayProbe) return { answer: 'unknown', status: null };
+        if (probed && probed.relay === relay && now() - probed.at < (probed.result.answer === 'relay' ? PROBE_KEEP_MS : PROBE_KEEP_MS / 6)) return probed.result;
+        const result = await deps.relayProbe(relay).catch(() => ({ answer: 'unknown', status: null }) as RelayProbeResult);
+        probed = { relay, at: now(), result };
+        return result;
     }
 
     /**
      * Gets the machine ready. `unreachable` when the machine's own way to the relay is proven closed: the address answers as something that is not
      * the relay, or Orbit (which asks the machine itself to call the relay with its own key) says the relay could not be reached. It is tried again
-     * as a failure is, since a relay may be coming back up, and only then said.
+     * as a failure is, since a relay may be coming back up, and only then said. Orbit is told the run, and what the bot server saw of the address.
      */
-    async function prepared(job: RunnableJob, relay: string, signal: AbortSignal): Promise<'ready' | 'look' | 'failed' | 'unreachable' | 'stopped'> {
+    async function prepared(job: RunnableJob, relay: string, run: string, signal: AbortSignal): Promise<'ready' | 'look' | 'failed' | 'unreachable' | 'stopped'> {
         for (let attempt = 0; ; attempt++) {
             if (signal.aborted) return 'stopped';
             let unreachable = false;
             let answer: { ok: true } | { ok: false; reason: string } = { ok: true };
-            if ((await relayAnswer(relay)) === 'wrong') unreachable = true;
-            else {
-                answer = await orbit.prepare(job.jobId, relay).catch(() => ({ ok: false as const, reason: 'failed' }));
+            const seen = await relayAnswer(relay);
+            if (seen.answer === 'wrong') {
+                unreachable = true;
+                // Orbit is told what was seen, for its record; it is not asked to prepare a machine for a job that ends here
+                await orbit.prepare(job.jobId, relay, { run, relayReached: false, relayStatus: seen.status }).catch(() => undefined);
+            } else {
+                answer = await orbit.prepare(job.jobId, relay, { run }).catch(() => ({ ok: false as const, reason: 'failed' }));
                 if ('reason' in answer && answer.reason === 'relay_unreachable') unreachable = true;
             }
             // A stop that came while Orbit was being asked is no failure of the job: nothing is ended on it
@@ -508,11 +529,12 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     }
 
     /** A confirmed fault of ours on a turn: the machine could not get to the relay (nothing of the job's can cause that). Noted for Orbit's record and for this runner. */
-    function noteNoRelay(job: RunnableJob, turn: number, run: string, why: 'relay_unreachable' | 'no_call'): void {
+    function noteNoRelay(job: RunnableJob, turn: number, run: string, why: 'prepare' | 'no_call'): void {
         deps.refusals?.record?.(job.botId, job.jobId, {
-            callId: `${why}_${run}_${turn}`,
+            // The row Orbit keeps for a machine that could not reach the relay at prepare has one id (and Orbit may write it too: it is the same row)
+            callId: why === 'prepare' ? 'relay_unreachable' : `relay_unreachable_${run}_${turn}`,
             kind: 'fault',
-            reason: 'relay_down',
+            reason: 'relay_unreachable',
             source: 'universe-ai',
             route: 'unknown',
             providerStatus: null,
@@ -598,7 +620,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 }
                 return;
             }
-            const ready = await prepared(job, deps.relayUrl, signal);
+            const ready = await prepared(job, deps.relayUrl, run, signal);
             if (ready === 'stopped') return;
             if (ready === 'look') {
                 // Waiting for the machine is not a turn: it must not use up the turns a job is allowed
@@ -619,7 +641,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 turnNo += 1;
                 deps.refusals?.turn?.(job.jobId, turnNo, run);
                 say('A job ended: the machine could not reach the model relay (check COMPUTER_RELAY_URL).');
-                noteNoRelay(job, turnNo, run, 'relay_unreachable');
+                noteNoRelay(job, turnNo, run, 'prepare');
                 if ((await finish(job, 'failed', { cause: 'ours', generation, turns: [turnNo], run, why: RELAY_UNREACHABLE_WHY })) === 'stale') {
                     await readAgain();
                     continue;
@@ -867,8 +889,8 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
             return job ? { status: job.status, control: job.control, ...(job.generation === undefined ? {} : { generation: job.generation }) } : null;
         },
         action: (botId, jobId, body) => admin.computerJobAction(botId, jobId, body),
-        prepare: async (jobId, relay) => {
-            const answer = await admin.computerBroker(jobId, 'prepare', { relay });
+        prepare: async (jobId, relay, extra) => {
+            const answer = await admin.computerBroker(jobId, 'prepare', { relay, ...extra });
             if (answer.status === 200 && answer.data.ok === true) return { ok: true };
             return { ok: false, reason: answer.status >= 500 || typeof answer.data.reason !== 'string' ? 'failed' : answer.data.reason };
         },

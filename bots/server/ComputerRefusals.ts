@@ -17,13 +17,15 @@
 /** How a model call of a job ended, as Orbit's fault record takes it. `answered` is never sent (an answer is no fault). */
 export type CallKind = 'fault' | 'not_ours' | 'uncertain' | 'answered';
 /**
- * Why. `fault` (a confirmed Universe fault no job's words can cause): relay_down, pool_busy, route_unknown, provider_key_ours.
+ * Why. `fault` (a confirmed Universe fault no job's words can cause): relay_down, relay_unreachable (the machine could not reach the relay, or no
+ * call of a turn ever did), pool_busy, route_unknown, provider_key_ours.
  * `not_ours` (the person's, with evidence): allowance, rule, own_provider, field_job_set (what the job itself sent was refused).
  * `uncertain` (unresolved, for Orbit's bounded goodwill and reconciliation): provider_5xx, provider_429, stream_cut, timeout_no_output,
  * timeout_after_output, field_relay_set, fieldless_400, provider_403.
  */
 export type FaultReason =
     | 'relay_down'
+    | 'relay_unreachable'
     | 'pool_busy'
     | 'route_unknown'
     | 'provider_key_ours'

@@ -12,7 +12,7 @@ import {
     probeRelay,
     RELAY_UNREACHABLE_WHY,
     relayUrlFromEnv,
-    type RelayProbe,
+    type RelayProbeResult,
     runnerOrbitFor,
     type RunnableJob,
     type RunnerEvent,
@@ -32,7 +32,7 @@ const stream = (events: RunnerEvent[]): TurnOpened => ({ ok: true, events: (asyn
 
 /** A scripted Orbit: each turn answers with the next script, and `look` says how the job stands each time the runner asks. */
 function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number } | null = () => ({ status: 'running', control: 'brick' })) {
-    const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
+    const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], prepareFacts: [] as Array<{ run?: string; relayReached?: false; relayStatus?: number | null } | undefined>, actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
     let renewAnswer: (n: number) => Record<string, unknown> = () => ({ ok: true, renewInSeconds: 240 });
     let handoverFails = 0;
     let prepareAnswer: () => { ok: true } | { ok: false; reason: string } = () => ({ ok: true });
@@ -56,8 +56,9 @@ function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) 
             }
             return body.action === 'renew' ? renewAnswer(seen.actions.filter((a) => a.action === 'renew').length) : { ok: true };
         },
-        prepare: async (_jobId, relay) => {
+        prepare: async (_jobId, relay, extra) => {
             seen.prepares.push(relay);
+            seen.prepareFacts.push(extra);
             return prepareAnswer();
         },
         turn: async (_jobId, input) => {
@@ -1169,6 +1170,16 @@ describe('the bot server’s calls to Orbit', () => {
         // a server error is "failed", never a reason of Orbit's own
         admin.computerBroker.mockResolvedValueOnce({ status: 502, data: { ok: false, reason: 'failed' } });
         expect(await orbit.prepare('j', RELAY)).toEqual({ ok: false, reason: 'failed' });
+        // what the bot server saw of the relay goes with the address, and nothing else is added
+        admin.computerBroker.mockClear();
+        await orbit.prepare('j', RELAY);
+        await orbit.prepare('j', RELAY, { run: 'run1' });
+        await orbit.prepare('j', RELAY, { run: 'run1', relayReached: false, relayStatus: 404 });
+        expect(admin.computerBroker.mock.calls.map((call) => [call[1], call[2]])).toEqual([
+            ['prepare', { relay: RELAY }],
+            ['prepare', { relay: RELAY, run: 'run1' }],
+            ['prepare', { relay: RELAY, run: 'run1', relayReached: false, relayStatus: 404 }],
+        ]);
     });
 
     it('reads every page of the running jobs, and stops when a page gives no way forward', async () => {
@@ -1472,7 +1483,7 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
 describe('a machine that cannot reach our own model service', () => {
     const WHY = RELAY_UNREACHABLE_WHY;
     /** A runner with real notes whose rows are caught on their way to Orbit. */
-    const rig = (scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, options: { probe?: (relay: string) => Promise<RelayProbe> } = {}) => {
+    const rig = (scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, options: { probe?: (relay: string) => Promise<RelayProbeResult> } = {}) => {
         let t = 0;
         const clock = () => ++t;
         const rows: CallRow[] = [];
@@ -1495,12 +1506,13 @@ describe('a machine that cannot reach our own model service', () => {
         await run();
         // tried again like any failure to get ready (three tries), no turn sent, and ended once
         expect(seen.prepares).toHaveLength(3);
+        expect(seen.prepareFacts).toEqual([{ run: 'run1' }, { run: 'run1' }, { run: 'run1' }]);
         expect(seen.turns).toEqual([]);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
         expect(finishedWithRun(seen)[0].run).toBe('run1');
         // the record Orbit judges by: one confirmed fault of ours on that turn of that run, sent before the finish
         expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ turn: 1, run: 'run1', kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: null });
+        expect(rows[0]).toMatchObject({ turn: 1, run: 'run1', kind: 'fault', reason: 'relay_unreachable', source: 'universe-ai', providerStatus: null });
     });
 
     it('goes on when the relay came back between two tries', async () => {
@@ -1515,18 +1527,20 @@ describe('a machine that cannot reach our own model service', () => {
     });
 
     it('ends it the same way, without asking Orbit to prepare, when the relay’s address answers as something else (an error page)', async () => {
-        const { seen, rows, run } = rig([], { probe: async () => 'wrong' });
+        const { seen, rows, run } = rig([], { probe: async () => ({ answer: 'wrong', status: 404 }) });
         await run();
-        expect(seen.prepares).toEqual([]);
+        // Orbit is only told what the bot server saw (the run and that the address is not the relay, with the status), for its record
+        expect(seen.prepareFacts.length).toBeGreaterThan(0);
+        expect(seen.prepareFacts.every((facts) => facts?.run === 'run1' && facts.relayReached === false && facts.relayStatus === 404)).toBe(true);
         expect(seen.turns).toEqual([]);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
         expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', turn: 1, run: 'run1' });
+        expect(rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_unreachable', turn: 1, run: 'run1' });
     });
 
     it('goes on when the address is the relay, and when it could not be asked from here (that proves nothing about the machine)', async () => {
         for (const answer of ['relay', 'unknown'] as const) {
-            const { seen, rows, run } = rig([done('[[done]]')], { probe: async () => answer });
+            const { seen, rows, run } = rig([done('[[done]]')], { probe: async () => ({ answer, status: answer === 'relay' ? 401 : null }) });
             await run();
             expect(seen.prepares, answer).toHaveLength(1);
             expect(finished(seen), answer).toEqual([{ action: 'finish', outcome: 'done' }]);
@@ -1535,7 +1549,7 @@ describe('a machine that cannot reach our own model service', () => {
     });
 
     it('asks the address once in a while, not for every job and turn', async () => {
-        const probe = vi.fn(async () => 'relay' as const);
+        const probe = vi.fn(async (): Promise<RelayProbeResult> => ({ answer: 'relay', status: 401 }));
         const { run } = rig([done('Carrying on'), done('[[done]]')], { probe });
         await run();
         expect(probe).toHaveBeenCalledTimes(1);
@@ -1549,9 +1563,9 @@ describe('a machine that cannot reach our own model service', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
         // a confirmed fault for each turn, under ids of their own, so Orbit never counts it against the goodwill a month allows
         expect(rows.map((row) => [row.turn, row.kind, row.reason])).toEqual([
-            [1, 'fault', 'relay_down'],
-            [2, 'fault', 'relay_down'],
-            [3, 'fault', 'relay_down'],
+            [1, 'fault', 'relay_unreachable'],
+            [2, 'fault', 'relay_unreachable'],
+            [3, 'fault', 'relay_unreachable'],
         ]);
         expect(new Set(rows.map((row) => row.callId)).size).toBe(3);
         expect(rows.every((row) => row.run === 'run1')).toBe(true);
@@ -1582,24 +1596,25 @@ describe('a machine that cannot reach our own model service', () => {
 describe('asking an address whether it is the relay', () => {
     const answer = (status: number, body: string): typeof fetch => (async () => new Response(body, { status })) as never;
     it('reads the relay’s own answers (a JSON error without a key, the list, an Orbit that is away) as the relay', async () => {
-        expect(await probeRelay('https://x.test', answer(401, JSON.stringify({ error: { message: 'Invalid API key.', code: 'invalid_api_key' } })))).toBe('relay');
-        expect(await probeRelay('https://x.test', answer(503, JSON.stringify({ error: { message: 'The service is busy.', code: 'service_unavailable' } })))).toBe('relay');
-        expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ object: 'list', data: [] })))).toBe('relay');
+        expect(await probeRelay('https://x.test', answer(401, JSON.stringify({ error: { message: 'Invalid API key.', code: 'invalid_api_key' } })))).toEqual(expect.objectContaining({ answer: 'relay' }));
+        expect(await probeRelay('https://x.test', answer(503, JSON.stringify({ error: { message: 'The service is busy.', code: 'service_unavailable' } })))).toEqual(expect.objectContaining({ answer: 'relay' }));
+        expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ object: 'list', data: [] })))).toEqual(expect.objectContaining({ answer: 'relay' }));
     });
 
     it('reads an error page, a body that is not JSON and a JSON that is not an error or a list as something else', async () => {
-        expect(await probeRelay('https://x.test', answer(404, '<!DOCTYPE html><html><body>404 Not Found</body></html>'))).toBe('wrong');
-        expect(await probeRelay('https://x.test', answer(502, '<html>Bad gateway</html>'))).toBe('wrong');
-        expect(await probeRelay('https://x.test', answer(200, 'ok'))).toBe('wrong');
-        expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ hello: 'world' })))).toBe('wrong');
-        expect(await probeRelay('https://x.test', answer(200, 'null'))).toBe('wrong');
+        expect(await probeRelay('https://x.test', answer(404, '<!DOCTYPE html><html><body>404 Not Found</body></html>'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+        expect(await probeRelay('https://x.test', answer(502, '<html>Bad gateway</html>'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+        expect(await probeRelay('https://x.test', answer(200, 'ok'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+        expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ hello: 'world' })))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+        expect(await probeRelay('https://x.test', answer(200, 'null'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
     });
 
     it('says it could not be asked when nothing answers, and asks the model list with no key', async () => {
         const failing = (async () => {
             throw new Error('connect ECONNREFUSED');
         }) as never;
-        expect(await probeRelay('https://x.test', failing)).toBe('unknown');
+        expect(await probeRelay('https://x.test', failing)).toEqual({ answer: 'unknown', status: null });
+        expect(await probeRelay('https://x.test', answer(404, '<html></html>'))).toEqual({ answer: 'wrong', status: 404 });
         const seen: Array<[string, RequestInit | undefined]> = [];
         await probeRelay('https://x.test', (async (url: string, init?: RequestInit) => (seen.push([url, init]), new Response('{}', { status: 200 }))) as never);
         expect(seen[0][0]).toBe('https://x.test/v1/models');
