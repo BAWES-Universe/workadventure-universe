@@ -340,7 +340,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     // answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
                     // person's own key the provider, the key and the endpoint are theirs (their credit ran out, their key was revoked)
                     if (agentCall) {
-                        const providerSaid = res.statusCode >= 500 || res.statusCode === 429 || (ended.cutShort && !gone);
+                        // A caller that went away is no fault of anyone's (the 504 written for a cut-off wait goes to nobody)
+                        const providerSaid = !gone && (res.statusCode >= 500 || res.statusCode === 429 || ended.cutShort);
                         if (providerSaid && (source !== 'own-key' || ended.relaySide)) deps.refusals?.fault(jobId);
                         else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
                     }
@@ -349,10 +350,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 console.error('[ComputerRelay] A call failed:', providerErrorText(error));
                 // An error nobody expected, while the provider was being called: ours only when the provider is ours
                 if (!res.headersSent) {
-                    if (source !== 'own-key') fault(502, 'The AI did not answer.', 'upstream_error');
+                    if (source !== 'own-key' && !gone) fault(502, 'The AI did not answer.', 'upstream_error');
                     else problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
                 } else {
-                    if (agentCall && source !== 'own-key') deps.refusals?.fault(jobId);
+                    if (agentCall && source !== 'own-key' && !gone) deps.refusals?.fault(jobId);
                     res.end();
                 }
                 ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };

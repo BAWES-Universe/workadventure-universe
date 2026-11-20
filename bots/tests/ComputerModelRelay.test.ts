@@ -594,6 +594,20 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-own-cut', before)).toBe(false);
     });
 
+    it('does not note a caller that went away while the provider was still working as a fault of anyone', async () => {
+        const before = since();
+        asJob('job-hungup');
+        // the provider hangs; the caller gives up and goes away
+        upstreamHandler = () => undefined;
+        const controller = new AbortController();
+        const pending = fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(agent) }).catch(() => null);
+        await vi.waitFor(() => expect(upstreamRequests).toHaveLength(1), { timeout: 3000 });
+        controller.abort();
+        await pending;
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect(notes.endedOnFault('job-hungup', before)).toBe(false);
+    });
+
     it('does not let a side call that carries no tools make or unmake a fault of the turn', async () => {
         asJob('job-side');
         const before = since();
