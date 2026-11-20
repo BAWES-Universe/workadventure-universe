@@ -150,12 +150,13 @@ function wordsOf(text: string): string {
 }
 
 /** A provider that says our key is wrong is our problem, not Hermes's: Hermes must not read it as its own key being refused. */
-const REQUEST_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?length|maximum context|too many tokens|token limit|invalid[_ -]?(request|prompt|argument|parameter)|unsupported|bad request|not[_ -]?found/i;
+const CONTENT_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?(length|window)|maximum context|too many tokens|token limit|prompt (is )?too long|too large/i;
 
 /**
- * Whose a provider's error is. `ours`: its own service failing (5xx), a rate limit (429), our key refused or out of credit (401, 402, a 403
- * that is no moderation), or an error that says nothing of a code. `request`: the job's own request was wrong or refused (moderation, a
- * context that is too long, an invalid request, any other 4xx): neither a fault of ours nor an answer.
+ * Whose a provider's error is. `request`: what the job itself sent was refused (moderation, a content policy, a context that is too long, a
+ * body too large): neither a fault of ours nor an answer. Everything else is `ours`: its own service failing (5xx), a rate limit (429), our key
+ * refused or out of credit (401, 402, a 403 that is no moderation), a model or address that is gone (404), a parameter it will not take (400,
+ * 422: the request is built from our own settings), and an error that says nothing of a code.
  */
 export function whoseProviderError(status: number | null, error: unknown): 'ours' | 'request' {
     const record = isRecord(error) ? error : {};
@@ -166,10 +167,9 @@ export function whoseProviderError(status: number | null, error: unknown): 'ours
         const asNumber = typeof code === 'number' ? code : typeof code === 'string' && /^\d{3}$/.test(code) ? Number(code) : null;
         numeric = asNumber !== null && asNumber >= 100 && asNumber < 600 ? asNumber : null;
     }
-    if (numeric === null) return REQUEST_WORDS.test(words) ? 'request' : 'ours';
-    if (numeric >= 500 || numeric === 429 || numeric === 401 || numeric === 402 || numeric === 408 || numeric === 425) return 'ours';
-    if (numeric === 403) return REQUEST_WORDS.test(words) ? 'request' : 'ours';
-    return numeric >= 400 ? 'request' : 'ours';
+    if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
+    if (numeric === 413) return 'request';
+    return CONTENT_WORDS.test(words) ? 'request' : 'ours';
 }
 
 const statusToHermes = (status: number): number => (status === 401 || status === 402 || status === 403 ? 502 : status >= 400 && status < 600 ? status : 502);

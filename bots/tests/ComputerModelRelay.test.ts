@@ -506,7 +506,7 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-pool', before)).toBe(true);
     });
 
-    it('does not note a refusal for the person’s allowance or rule, or a call the provider found wrong, as a fault of ours', async () => {
+    it('does not note a refusal for the person’s allowance or rule, or a call the provider refused for its content, as a fault of ours', async () => {
         const before = since();
         asJob('job-allowance');
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
@@ -515,7 +515,7 @@ describe('how a call ended, for the runner', () => {
 
         asJob('job-wrong');
         orbit.authorize.mockResolvedValue({ ok: true });
-        upstreamHandler = (_req, res) => res.status(400).json({ error: { message: 'bad request' } });
+        upstreamHandler = (_req, res) => res.status(400).json({ error: { message: 'maximum context length exceeded' } });
         await askAndSettle(agent);
         expect(notes.endedOnFault('job-wrong', before)).toBe(false);
     });
@@ -661,7 +661,7 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-unknown-route', before)).toBe(true);
     });
 
-    it('reads what the provider said: 401, 402 and a 403 that is no moderation are our key (ours); a moderation 403 or another 4xx is the request’s (not ours, not an answer)', async () => {
+    it('reads what the provider said: 401, 402, 403, 404 and a parameter 400 are our key or our settings (ours); moderation, a context too long and a body too large are the request’s (not ours, not an answer)', async () => {
         const before = since();
         let count = 0;
         const said = async (name: string, status: number, error: Record<string, unknown>) => {
@@ -674,17 +674,19 @@ describe('how a call ended, for the runner', () => {
         await said('job-401', 401, { message: 'revoked' });
         await said('job-402', 402, { message: 'out of credit' });
         await said('job-403-moderation', 403, { message: 'Your request was flagged by content moderation', code: 'content_policy_violation' });
-        await said('job-400', 400, { message: 'bad' });
-        await said('job-413', 413, { message: 'too long' });
-        for (const name of ['job-403-plain', 'job-401', 'job-402']) expect(notes.endedOnFault(name, before)).toBe(true);
-        for (const name of ['job-403-moderation', 'job-400', 'job-413']) {
+        await said('job-404', 404, { message: 'The model does not exist' });
+        await said('job-400-param', 400, { message: 'Unsupported parameter: max_tokens' });
+        await said('job-400-context', 400, { code: 'context_length_exceeded', message: 'maximum context length exceeded' });
+        await said('job-413', 413, { message: 'payload' });
+        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-403-moderation', 'job-400-context', 'job-413']) {
             expect(notes.endedOnFault(name, before)).toBe(false);
             // the request's own failure is off our side: the runner never ends the job as ours for it
             expect(notes.sawSince(name, before)).toBe(true);
         }
     });
 
-    it('reads an error object inside a 200 by its code: a 4xx or a request word is the request’s; a 5xx, a 429 or no code is ours', async () => {
+    it('reads an error object inside a 200 by what it says: moderation or a context too long is the request’s; a 5xx, a 429, a parameter error or no code is ours', async () => {
         const before = since();
         let count = 0;
         const inBody = async (name: string, error: Record<string, unknown>) => {
@@ -693,14 +695,15 @@ describe('how a call ended, for the runner', () => {
             count += 1;
             await askAndSettle(agent, count);
         };
-        await inBody('job-200-400', { code: 400, message: 'invalid request' });
+        await inBody('job-200-400', { code: 400, message: 'prompt is too long' });
         await inBody('job-200-context', { code: 'context_length_exceeded', message: 'too long' });
         await inBody('job-200-moderation', { message: 'blocked by moderation' });
         await inBody('job-200-500', { code: 500, message: 'internal' });
         await inBody('job-200-429', { code: '429', message: 'rate' });
         await inBody('job-200-nocode', { message: 'something broke' });
+        await inBody('job-200-param', { code: 400, message: 'invalid parameter' });
         for (const name of ['job-200-400', 'job-200-context', 'job-200-moderation']) expect(notes.endedOnFault(name, before)).toBe(false);
-        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode', 'job-200-param']) expect(notes.endedOnFault(name, before)).toBe(true);
     });
 
     it('does not let a side call that carries no tools make or unmake a fault of the turn', async () => {
@@ -746,18 +749,21 @@ describe('how a call ended, for the runner', () => {
 });
 
 describe('whoseProviderError', () => {
-    it('is ours for a provider failing, a rate limit, our key refused, and an error with no code; the request’s for moderation and other 4xx', () => {
+    it('is the request’s only for moderation, a context too long and a body too large; everything else is ours', () => {
         expect(whoseProviderError(500, {})).toBe('ours');
-        expect(whoseProviderError(503, {})).toBe('ours');
+        expect(whoseProviderError(503, { message: 'moderation backend down' })).toBe('ours');
         expect(whoseProviderError(429, {})).toBe('ours');
         expect(whoseProviderError(401, {})).toBe('ours');
         expect(whoseProviderError(402, {})).toBe('ours');
         expect(whoseProviderError(403, { message: 'nope' })).toBe('ours');
+        expect(whoseProviderError(404, { message: 'model not found' })).toBe('ours');
+        expect(whoseProviderError(400, { message: 'Unsupported parameter' })).toBe('ours');
+        expect(whoseProviderError(422, {})).toBe('ours');
         expect(whoseProviderError(403, { code: 'moderation_blocked' })).toBe('request');
-        expect(whoseProviderError(400, {})).toBe('request');
-        expect(whoseProviderError(404, {})).toBe('request');
-        expect(whoseProviderError(422, {})).toBe('request');
-        expect(whoseProviderError(null, { code: 'invalid_request_error' })).toBe('request');
+        expect(whoseProviderError(400, { code: 'context_length_exceeded' })).toBe('request');
+        expect(whoseProviderError(400, { message: 'Your prompt is too long' })).toBe('request');
+        expect(whoseProviderError(413, {})).toBe('request');
+        expect(whoseProviderError(null, { code: 'content_filter' })).toBe('request');
         expect(whoseProviderError(null, { code: 524 })).toBe('ours');
         expect(whoseProviderError(null, 'a string')).toBe('ours');
     });
