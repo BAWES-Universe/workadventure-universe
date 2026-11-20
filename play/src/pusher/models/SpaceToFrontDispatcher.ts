@@ -353,14 +353,11 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
 
         const sender = this._space.users.get(message.senderUserId);
 
-        // An event that says it is for one person alone, from someone who has left the space: it cannot be told whether the sender was
-        // a bot (whose word that is), so it is never sent on to everyone. It is dropped.
-        if (!sender && targetOf(spaceEvent.event)) {
-            console.warn(
-                `Dropped an event for one person alone: its sender ${message.senderUserId} is no longer in space ${this._space.name}.`
-            );
-            return;
-        }
+        // An event that says it is for one person alone, from someone this pusher has no record of: they left the space while it was on its
+        // way, or the space lists only some of its people (a live stream lists the streamers: a sender who is not listed is not in the map).
+        // It cannot be told whether the sender was a bot (whose word that is), but what it names is the most it may reach: it goes to that
+        // person alone, never on to everyone, and never dropped (the person it was written for still gets it).
+        const unknownSenderTarget = sender ? undefined : targetOf(spaceEvent.event);
 
         const subMessage: SubMessage = {
             message: {
@@ -378,7 +375,7 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
 
         // A bot's reply to someone who was alone with it is for that person and nobody else (#1993): someone who walks up
         // while it is being written is never sent any of it
-        const onlyReader = onlyReaderOf(spaceEvent.event, sender);
+        const onlyReader = unknownSenderTarget ?? onlyReaderOf(spaceEvent.event, sender);
         if (onlyReader !== undefined) {
             this.notifyOnly(subMessage, onlyReader);
             return;

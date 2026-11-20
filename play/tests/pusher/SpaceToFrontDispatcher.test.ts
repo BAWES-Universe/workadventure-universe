@@ -768,20 +768,30 @@ describe("SpaceToFrontDispatcher", () => {
                 expect(sara.emitInBatch).not.toHaveBeenCalled();
             });
 
-            it("reaches nobody when the bot that sent it has left the space meanwhile", () => {
+            it("reaches only that person when its sender is not in the pusher's map: it left meanwhile, or the space lists only some of its people", () => {
                 const khalid = user("room_7");
                 const sara = user("room_9");
                 const dispatcher = new SpaceToFrontDispatcher(spaceWith(khalid, sara), new EventProcessor());
-                vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-                // The bot "room_12" is not in the space any more: what it said for one person is not sent on to everyone
+                // The bot "room_12" is not in the space map: what it said for one person is told to that person, never to everyone, never dropped
                 dispatcher.handleMessage(reply("room_12", "room_7"));
 
-                expect(khalid.emitInBatch).not.toHaveBeenCalled();
+                expect(khalid.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(JSON.stringify(khalid.emitInBatch.mock.calls[0][0])).toContain("Your interview is at 10.");
                 expect(sara.emitInBatch).not.toHaveBeenCalled();
                 // The same for a picture, a file or a card sent with the reply
                 dispatcher.handleMessage(sent("room_12", "room_7"));
-                expect(khalid.emitInBatch).not.toHaveBeenCalled();
+                expect(khalid.emitInBatch).toHaveBeenCalledTimes(2);
+                expect(sara.emitInBatch).not.toHaveBeenCalled();
+            });
+
+            it("reaches nobody when the person an unknown sender named is not here", () => {
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(sara), new EventProcessor());
+
+                dispatcher.handleMessage(reply("room_12", "room_7"));
+                dispatcher.handleMessage(sent("room_12", "room_7"));
+
                 expect(sara.emitInBatch).not.toHaveBeenCalled();
             });
 
