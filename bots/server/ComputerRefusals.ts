@@ -60,6 +60,12 @@ export type CallInput = Omit<CallRow, 'turn' | 'at' | 'kind'> & {
     turn?: number;
 };
 
+/**
+ * Where a turn's window begins: a point in the order of events (from `mark`), or a moment in ms. A point in the order tells events of one millisecond apart,
+ * which a moment cannot: what was noted before the mark is not in the window, whatever the clock said.
+ */
+export type Since = number | { order: number };
+
 export interface RefusalNotes {
     /** The runner says which turn of this job it is on, so the rows of the calls made in it carry the number. */
     turn(jobId: string, turn: number): void;
@@ -75,18 +81,20 @@ export interface RefusalNotes {
      * left unsent. Called before a job is ended. Rows left over go on being sent in the background (later, a few times).
      */
     flush(jobId: string): Promise<boolean>;
-    /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job at or after this moment (ms). */
-    confirmedSince(jobId: string, sinceMs: number): boolean;
+    /** The point in the order of events from which a turn's window starts: what is noted after this call, and only that, is in the window. */
+    mark(): { order: number };
+    /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job since this point (or at or after this moment, ms). */
+    confirmedSince(jobId: string, since: Since): boolean;
     /** The relay refused a call of this job for the person's allowance or a rule of theirs, or the person's own provider failed it. */
     note(jobId: string): void;
-    /** Whether a refusal was noted for this job at or after this moment (ms). */
-    sawSince(jobId: string, sinceMs: number): boolean;
+    /** Whether a refusal was noted for this job since this point (or at or after this moment, ms). */
+    sawSince(jobId: string, since: Since): boolean;
     /** A model call of this job failed for a fault of Universe's (not the person's allowance or rules, not a call the agent got wrong). */
     fault(jobId: string): void;
     /** A model call of this job was answered whole. */
     answered(jobId: string): void;
-    /** Whether the job's last call at or after this moment (ms) was a fault of ours that no later call made good. */
-    endedOnFault(jobId: string, sinceMs: number): boolean;
+    /** Whether the job's last call since this point (or at or after this moment, ms) was a fault of ours that no later call made good. */
+    endedOnFault(jobId: string, since: Since): boolean;
 }
 
 /** A note older than this can no longer belong to a turn that is being read. */
@@ -115,16 +123,18 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
     const laterMs = options.laterMs ?? DEFAULT_LATER_MS;
     const flushBudgetMs = options.flushBudgetMs ?? DEFAULT_FLUSH_BUDGET_MS;
-    const last = new Map<string, number>();
+    const last = new Map<string, { at: number; order: number }>();
     // The order of events is kept by count, since two can land in the same millisecond
     let count = 0;
-    const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: number; answered?: { at: number; order: number } }>();
+    const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: { at: number; order: number }; answered?: { at: number; order: number } }>();
+    /** Whether an event is inside a window that begins at `since`. */
+    const within = (event: { at: number; order: number }, since: Since) => (typeof since === 'number' ? event.at >= since : event.order > since.order);
     const turns = new Map<string, { turn: number; at: number }>();
     // Rows not yet taken by Orbit, per job. A row is sent again until Orbit takes it (Orbit keeps one per job and call).
     const queued = new Map<string, { botId: string; rows: Map<string, CallRow>; sending?: Promise<boolean>; at: number; later?: ReturnType<typeof setTimeout>; laterTries: number }>();
     const forget = () => {
         const cutoff = now() - REFUSAL_NOTE_KEEP_MS;
-        for (const [jobId, at] of last) if (at < cutoff) last.delete(jobId);
+        for (const [jobId, seen] of last) if (seen.at < cutoff) last.delete(jobId);
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if (seen.at < cutoff) turns.delete(jobId);
         for (const [jobId, entry] of queued) {
@@ -137,7 +147,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         forget();
         const seen = calls.get(jobId) ?? {};
         seen[kind] = { at: now(), order: ++count };
-        if (confirmed) seen.confirmed = now();
+        if (confirmed) seen.confirmed = { at: now(), order: count };
         calls.set(jobId, seen);
     };
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -200,7 +210,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             if (call.kind === 'answered') return mark(jobId, 'answered');
             if (call.kind === 'not_ours') {
                 forget();
-                last.set(jobId, now());
+                last.set(jobId, { at: now(), order: ++count });
             } else {
                 mark(jobId, 'fault', call.kind === 'fault');
             }
@@ -240,23 +250,24 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             });
             return Promise.race([again(), budget]).finally(() => clearTimeout(timer));
         },
-        confirmedSince(jobId, sinceMs) {
-            const at = calls.get(jobId)?.confirmed;
-            return at !== undefined && at >= sinceMs;
+        mark: () => ({ order: count }),
+        confirmedSince(jobId, since) {
+            const seen = calls.get(jobId)?.confirmed;
+            return seen !== undefined && within(seen, since);
         },
         note(jobId) {
             forget();
-            last.set(jobId, now());
+            last.set(jobId, { at: now(), order: ++count });
         },
-        sawSince(jobId, sinceMs) {
-            const at = last.get(jobId);
-            return at !== undefined && at >= sinceMs;
+        sawSince(jobId, since) {
+            const seen = last.get(jobId);
+            return seen !== undefined && within(seen, since);
         },
         fault: (jobId) => mark(jobId, 'fault'),
         answered: (jobId) => mark(jobId, 'answered'),
-        endedOnFault(jobId, sinceMs) {
+        endedOnFault(jobId, since) {
             const seen = calls.get(jobId);
-            if (!seen?.fault || seen.fault.at < sinceMs) return false;
+            if (!seen?.fault || !within(seen.fault, since)) return false;
             return !seen.answered || seen.answered.order < seen.fault.order;
         },
     };

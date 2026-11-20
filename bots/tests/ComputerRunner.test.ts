@@ -819,7 +819,8 @@ describe('a turn that is lost, or room that is gone', () => {
 
             it('a failure refused as stale ends nothing, and the job is read again: the next failure names its cause with the generation it has now', async () => {
                 let generation = 1;
-                const { orbit, seen } = fakeOrbit([failing, failing, failing, failing], () => ({ status: 'running', control: 'brick', generation }));
+                // The refusal says the job changed hands: the streak of the three failed turns is cleared, so three new failed turns are needed to end it
+                const { orbit, seen } = fakeOrbit([failing, failing, failing, failing, failing, failing], () => ({ status: 'running', control: 'brick', generation }));
                 const original = orbit.action;
                 let refused = false;
                 orbit.action = async (botId, jobId, body) => {
@@ -834,7 +835,7 @@ describe('a turn that is lost, or room that is gone', () => {
                 await runJob(orbit);
                 expect(finished(seen)).toEqual([
                     { action: 'finish', outcome: 'failed', cause: 'ours', generation: 1, turns: [1, 2, 3] },
-                    { action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [1, 2, 3, 4] },
+                    { action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [4, 5, 6] },
                 ]);
             });
 
@@ -1345,6 +1346,78 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
         );
         await runJob(orbit);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [4, 5, 6] }]);
+    });
+
+    // The real notes on a clock that never moves: every event lands in the same millisecond, so only the order of events can tell the turns apart
+    const sameMillisecond = () => {
+        const notes = createRefusalNotes(() => 1000);
+        const call = (callId: string, kind: 'fault' | 'not_ours' | 'answered', reason: 'provider_key_ours' | 'allowance' | 'provider_5xx') => notes.record('bot', JOB.jobId, { callId, kind, reason, source: 'universe-ai', route: 'universe-ai:p', providerStatus: null });
+        const run = async (orbit: RunnerOrbit) => {
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: () => 1000, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes });
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await runner.idle();
+        };
+        return { notes, call, run };
+    };
+
+    it('does not read a refusal of the turn before as one of this turn, even when both began in the same millisecond', async () => {
+        const { call, run } = sameMillisecond();
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        // turn 1 recovered after the person's allowance refused a call; turns 2 to 4 failed for no reason of the person's
+        const { orbit, seen } = fakeOrbit([() => (call('c1', 'not_ours', 'allowance'), done('Worked round it')), failing(), failing(), failing()]);
+        await run(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2, 3, 4] }]);
+    });
+
+    it('does not read a confirmed fault of the turn before as one of this turn, even when both began in the same millisecond', async () => {
+        const { call, run } = sameMillisecond();
+        // turn 1 had a confirmed fault and then a good answer; turns 2 to 4 are silent turns, the agent's own
+        const { orbit, seen } = fakeOrbit([() => (call('c1', 'fault', 'provider_key_ours'), call('c1b', 'answered', 'provider_5xx'), done('Worked round it')), done(''), done(''), done('')]);
+        await run(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [2, 3, 4] }]);
+    });
+
+    it('gives the turn that replaces a cancelled one its own number and window: a fault noted in the cancelled turn is not the new turn’s', async () => {
+        const { call, run } = sameMillisecond();
+        const stepped: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'tool', state: 'completed', tool: 'click' }, { type: 'text', text: 'Old words' }, { type: 'completed', outputText: 'Old words', usage: null }];
+        // the generation does not change: only the cancellation tells the runner this turn is over
+        const stale = Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true, response: { status: 409, data: { ok: false, reason: 'stale' } } });
+        const refused = (callId: string) => () => (call(callId, 'not_ours', 'allowance'), [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }] as RunnerEvent[]);
+        const { orbit, seen } = fakeOrbit([() => (call('c0', 'fault', 'provider_key_ours'), stepped), refused('c1'), refused('c2'), refused('c3')]);
+        const original = orbit.action;
+        let cancelled = false;
+        orbit.action = async (botId, jobId, body) => {
+            if (body.action === 'progress' && !cancelled) {
+                cancelled = true;
+                seen.actions.push(body);
+                throw stale;
+            }
+            return original(botId, jobId, body);
+        };
+        await run(orbit);
+        expect(seen.cancels).toBe(1);
+        // the replacement and the two after it are numbered 2, 3 and 4, and the person's allowance is what stopped them, not the fault of the cancelled turn
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [2, 3, 4] }]);
+    });
+
+    it('does not carry a streak across a time the person had the machine between two turns: the next failed turn is the first of a new streak', async () => {
+        let looks = 0;
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        // two silent turns (the agent's own); then the person has the machine when the next turn is to start, and gives it back
+        const { orbit, seen } = fakeOrbit([done(''), done(''), failing(), failing(), failing()], () => (looks++ === 4 ? { status: 'running', control: 'person' } : { status: 'running', control: 'brick' }));
+        await runJob(orbit);
+        // the first failed turn after the person came back does not end the job on the strength of the two before; three of them do, and they are ours
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [3, 4, 5] }]);
+    });
+
+    it('does not carry a streak across a generation that changed between two turns (taken and given back while no turn was being read)', async () => {
+        let looks = 0;
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        // two silent turns on generation 1; the next turn finds the job on generation 2
+        const { orbit, seen } = fakeOrbit([done(''), done(''), failing(), failing(), failing()], () => ({ status: 'running', control: 'brick', generation: looks++ < 4 ? 1 : 2 }));
+        await runJob(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [3, 4, 5] }]);
     });
 
     it('does not carry a confirmed fault into the next streak: a good turn clears it', async () => {

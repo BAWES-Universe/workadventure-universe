@@ -16,7 +16,7 @@
  */
 
 import type { AdminApiService } from './AdminApiService';
-import type { RefusalNotes } from './ComputerRefusals';
+import type { RefusalNotes, Since } from './ComputerRefusals';
 import { readRunnerEvents } from './ComputerTurnStream';
 
 export type RunnerEvent =
@@ -171,7 +171,7 @@ export interface RunnerDeps {
     now?: () => number;
     log?: Pick<Console, 'warn' | 'error' | 'info'>;
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark'>>;
 }
 
 const realSleep = (ms: number, signal: AbortSignal) =>
@@ -467,7 +467,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let turnNo = 0;
         // Where the turn being read began. It is kept while the same turn is read again after a reconnect that could not be made (a refusal
         // that came before it must still be seen), and starts again with the next turn or after the person had the machine
-        let turnStartedAt: number | null = null;
+        let turnStartedAt: Since | null = null;
         for (;;) {
             if (signal.aborted) return;
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
@@ -480,14 +480,27 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (state.status !== 'running' || state.control !== 'brick') {
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;
+                // The person had the machine: what came before is no part of the job's next streak, nor of the next turn's window
                 turnStartedAt = null;
+                bad = 0;
+                notOurs = false;
+                confirmed = false;
+                badTurns = [];
                 input = follow(RESUME_PROMPT);
                 continue;
             }
             // The control generation this turn starts on: every action it takes for the job carries it, so one from an older turn changes nothing
             const generation = state.generation;
             // The person took the machine and gave it back after the last turn's closing read: this is not a plain "carry on", the agent looks at the page first
-            if (lastGeneration !== undefined && generation !== undefined && generation !== lastGeneration) input = follow(RESUME_PROMPT);
+            if (lastGeneration !== undefined && generation !== undefined && generation !== lastGeneration) {
+                input = follow(RESUME_PROMPT);
+                // Control changed hands between two turns: the streak before it, and the turn's number and window, are not carried over
+                turnStartedAt = null;
+                bad = 0;
+                notOurs = false;
+                confirmed = false;
+                badTurns = [];
+            }
             lastGeneration = generation;
             // An action refused as stale: the job changed hands or paused meanwhile. It is read again, and this turn's words are not acted on
             const readAgain = async () => {
@@ -521,7 +534,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A turn is numbered when it begins, and keeps its number while it is read again after a reconnect: the relay stamps the rows of the calls
             // made in it with the number, and the number is what the finish names, so both must mean the same turn
             if (turnStartedAt === null) {
-                turnStartedAt = now();
+                // A point in the order of events when the notes can give one (events of the same millisecond are told apart), else the moment
+                turnStartedAt = deps.refusals?.mark?.() ?? now();
                 turnNo += 1;
             }
             deps.refusals?.turn?.(job.jobId, turnNo);
@@ -531,8 +545,12 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (result.kind === 'look') {
                 // A turn that was stopped here is not reconnected to: the agent is told to look at the page again before it goes on
                 // A turn the agent has taken is not sent again: the next try reconnects to it (a turn that is gone says so there)
-                if (result.cancelled) input = follow(RESUME_PROMPT);
-                else if (accepted.turn) input = null;
+                if (result.cancelled) {
+                    input = follow(RESUME_PROMPT);
+                    // The turn was stopped: the replacement is a new turn, with its own number and its own window (it must not inherit a fault noted in
+                    // the one that was cancelled). Only a reconnect to the same turn keeps them
+                    turnStartedAt = null;
+                } else if (accepted.turn) input = null;
                 await sleep(timing.waitMs, signal);
                 continue;
             }

@@ -158,6 +158,31 @@ describe('the durable record of how a job’s model calls ended (sent to Orbit)'
         expect(sent.map((rows) => rows.map((row) => row.kind))).toEqual([['uncertain'], ['fault']]);
     });
 
+    it('tells the events of one millisecond apart by their order: a mark takes in only what is noted after it, while a moment still takes in the whole millisecond', () => {
+        const notes = createRefusalNotes(() => 1000);
+        notes.record('b', 'j', call('c1', { kind: 'not_ours', reason: 'allowance' }));
+        notes.record('b', 'j', call('c2', { kind: 'fault' }));
+        const mark = notes.mark();
+        // nothing was noted since the mark, though everything happened at the same moment
+        expect(notes.sawSince('j', mark)).toBe(false);
+        expect(notes.confirmedSince('j', mark)).toBe(false);
+        expect(notes.endedOnFault('j', mark)).toBe(false);
+        // a moment can only say "this millisecond or later", so it still takes the earlier events in
+        expect(notes.sawSince('j', 1000)).toBe(true);
+        notes.record('b', 'j', call('c3', { kind: 'not_ours', reason: 'rule' }));
+        notes.record('b', 'j', call('c4', { kind: 'fault' }));
+        expect(notes.sawSince('j', mark)).toBe(true);
+        expect(notes.confirmedSince('j', mark)).toBe(true);
+        expect(notes.endedOnFault('j', mark)).toBe(true);
+        // an answer after the fault, in the same window, makes it good
+        notes.record('b', 'j', call('c5', { kind: 'answered' }));
+        expect(notes.endedOnFault('j', mark)).toBe(false);
+        // and the other notes (the in-process ones) are ordered the same way
+        const later = notes.mark();
+        notes.note('j');
+        expect(notes.sawSince('j', later)).toBe(true);
+    });
+
     it('is true for a job with nothing to send, and with no sink at all (the in-process notes still work)', async () => {
         const { notes } = rig();
         expect(await notes.flush('nothing')).toBe(true);

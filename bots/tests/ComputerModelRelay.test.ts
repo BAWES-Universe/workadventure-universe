@@ -1535,11 +1535,13 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
     it('records a person’s own provider failing as the person’s side, never a fault', async () => {
         route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
         asJob('job-r-own');
+        // the window begins before the request, by the order of events: it does not depend on how long the request and the queue take
+        const before = notes.mark();
         upstreamHandler = refused(500, { message: 'their provider is down' });
         await askAndSettle(agent);
         expect((await rowsSent('job-r-own'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider', source: 'own-key', route: 'own-key', providerStatus: 500 });
-        expect(notes.confirmedSince('job-r-own', since())).toBe(false);
-        expect(notes.sawSince('job-r-own', since())).toBe(true);
+        expect(notes.confirmedSince('job-r-own', before)).toBe(false);
+        expect(notes.sawSince('job-r-own', before)).toBe(true);
     });
 
     it('notes the person’s side for a gone endpoint and a cut stream on their own key (what the runner reads), and sends a row for each', async () => {
@@ -1571,11 +1573,12 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
 
         sinkAnswers = false;
         asJob('job-r-orbit-down');
+        const beforeDown = notes.mark();
         upstreamHandler = refused(500, { message: 'down' });
         const answer = await ask(agent);
         expect(answer.status).toBe(500);
         // the runner of the job can still read the fault in this process, and the rows wait to be sent
-        expect(notes.endedOnFault('job-r-orbit-down', since())).toBe(true);
+        expect(notes.endedOnFault('job-r-orbit-down', beforeDown)).toBe(true);
         sinkAnswers = true;
         expect(await notes.flush('job-r-orbit-down')).toBe(true);
         expect(rowsOf('job-r-orbit-down')).toHaveLength(1);
