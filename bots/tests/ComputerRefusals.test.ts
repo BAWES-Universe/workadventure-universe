@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createRefusalNotes, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow } from '../server/ComputerRefusals';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow, type EvidenceStore } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -460,5 +460,186 @@ describe('the durable record of how a job’s model calls ended (sent to Orbit)'
         notes.record('b', 'j', call('c1'));
         await notes.flush('j');
         expect(sent.flatMap((entry) => entry.rows.map((row) => 'run' in row))).toEqual([false]);
+    });
+});
+
+describe('the evidence kept before the money decision is final, and delivered after a restart', () => {
+    const call = (callId: string, over: Partial<Parameters<ReturnType<typeof createRefusalNotes>['record']>[2]> = {}) => ({
+        callId,
+        kind: 'fault' as const,
+        reason: 'relay_down' as const,
+        source: 'universe-ai' as const,
+        route: 'universe-ai:p1',
+        providerStatus: 503 as number | null,
+        ...over,
+    });
+    /** A shared store in memory that survives the "process" (the ledger) and can be told to fail or to hold a write. */
+    const memoryStore = () => {
+        const held = new Map<string, { botId: string; jobId: string; row: CallRow }>();
+        const log: string[] = [];
+        const state = { failSaves: 0, failLoad: false, gate: undefined as Promise<void> | undefined };
+        const store: EvidenceStore = {
+            save: async (botId, jobId, row) => {
+                if (state.gate) await state.gate;
+                if (state.failSaves > 0) {
+                    state.failSaves--;
+                    return false;
+                }
+                log.push(`save ${row.callId}`);
+                held.set(`${jobId}|${row.callId}`, { botId, jobId, row: { ...row } });
+                return true;
+            },
+            drop: async (jobId, callIds) => {
+                for (const id of callIds) {
+                    log.push(`drop ${id}`);
+                    held.delete(`${jobId}|${id}`);
+                }
+            },
+            load: async () => {
+                if (state.failLoad) throw new Error('store down');
+                const byJob = new Map<string, { botId: string; jobId: string; rows: CallRow[] }>();
+                for (const one of held.values()) {
+                    const entry = byJob.get(one.jobId) ?? { botId: one.botId, jobId: one.jobId, rows: [] };
+                    entry.rows.push({ ...one.row });
+                    byJob.set(one.jobId, entry);
+                }
+                return [...byJob.values()];
+            },
+        };
+        return { store, held, log, state };
+    };
+    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number } = {}) => {
+        const sent: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
+        let at = 1000;
+        const notes = createRefusalNotes(() => at, {
+            retryMs: [0],
+            laterMs: [],
+            store,
+            ...extra,
+            sink: async (botId, jobId, rows) => {
+                if (!sinkAnswers()) return false;
+                sent.push({ botId, jobId, rows: rows.map((row) => ({ ...row })) });
+                return true;
+            },
+        });
+        return { notes, sent, advance: (ms: number) => (at += ms) };
+    };
+
+    it('keeps a row in the store as it is made, before Orbit has taken it, and removes it once Orbit has', async () => {
+        const mem = memoryStore();
+        let orbitUp = false;
+        const { notes, sent } = ledger(mem.store, () => orbitUp);
+        notes.turn('j', 2, 'run-a');
+        notes.record('b', 'j', call('c1'));
+        await vi.waitFor(() => expect(mem.held.has('j|c1')).toBe(true));
+        expect(mem.held.get('j|c1')?.row).toMatchObject({ turn: 2, run: 'run-a', callId: 'c1', kind: 'fault', reason: 'relay_down' });
+        expect(sent).toHaveLength(0);
+        orbitUp = true;
+        expect(await notes.flush('j')).toBe(true);
+        expect(sent.flatMap((one) => one.rows.map((row) => row.callId))).toEqual(['c1']);
+        expect(mem.held.size).toBe(0);
+    });
+
+    it('after a restart a new ledger on the same store delivers the kept rows unchanged: same call, turn, run and time', async () => {
+        const mem = memoryStore();
+        const first = ledger(mem.store, () => false);
+        first.notes.turn('j', 4, 'run-z');
+        first.notes.record('bot-9', 'j', call('c1', { kind: 'uncertain', reason: 'stream_cut', providerStatus: null }));
+        first.notes.record('bot-9', 'j', call('c2'));
+        await vi.waitFor(() => expect(mem.held.size).toBe(2));
+        const kept = [...mem.held.values()].map((one) => one.row);
+        // the process is gone: a new one starts, Orbit is up
+        const second = ledger(mem.store, () => true);
+        expect(await second.notes.resume()).toBe(true);
+        await vi.waitFor(() => expect(second.sent.flatMap((one) => one.rows).length).toBe(2));
+        expect(second.sent.every((one) => one.botId === 'bot-9' && one.jobId === 'j')).toBe(true);
+        expect(second.sent.flatMap((one) => one.rows).sort((a, b) => a.callId.localeCompare(b.callId))).toEqual(kept.sort((a, b) => a.callId.localeCompare(b.callId)));
+        await vi.waitFor(() => expect(mem.held.size).toBe(0));
+    });
+
+    it('does not make the call, or anything else, run again: only rows are delivered, never an answered call', async () => {
+        const mem = memoryStore();
+        const first = ledger(mem.store, () => false);
+        first.notes.record('b', 'j', call('c1', { kind: 'answered' }));
+        await first.notes.flush('j');
+        expect(mem.held.size).toBe(0);
+    });
+
+    it('flush waits for the write to the store, and a write that failed is made again before the flush ends', async () => {
+        const mem = memoryStore();
+        mem.state.failSaves = 1;
+        const { notes } = ledger(mem.store, () => true);
+        notes.record('b', 'j', call('c1'));
+        // Orbit takes it at once; the store never kept it, so there is nothing to remove and nothing is left behind
+        expect(await notes.flush('j')).toBe(true);
+        expect(mem.held.size).toBe(0);
+        // with Orbit down the failed write is made again by the flush
+        const down = memoryStore();
+        down.state.failSaves = 1;
+        const second = ledger(down.store, () => false);
+        second.notes.record('b', 'j', call('c1'));
+        await second.notes.flush('j');
+        expect(down.held.has('j|c1')).toBe(true);
+    });
+
+    it('removes a row only after the write of that row has ended, so a late write does not bring a delivered row back', async () => {
+        const mem = memoryStore();
+        let release!: () => void;
+        mem.state.gate = new Promise<void>((resolve) => (release = resolve));
+        const { notes, sent } = ledger(mem.store, () => true);
+        notes.record('b', 'j', call('c1'));
+        await vi.waitFor(() => expect(sent).toHaveLength(1));
+        expect(mem.log).toEqual([]);
+        release();
+        await vi.waitFor(() => expect(mem.log).toEqual(['save c1', 'drop c1']));
+        expect(mem.held.size).toBe(0);
+    });
+
+    it('says false while the store cannot be read and true once it can, and keeps what it has meanwhile', async () => {
+        const mem = memoryStore();
+        const first = ledger(mem.store, () => false);
+        first.notes.record('b', 'j', call('c1'));
+        await vi.waitFor(() => expect(mem.held.size).toBe(1));
+        const second = ledger(mem.store, () => true);
+        mem.state.failLoad = true;
+        expect(await second.notes.resume()).toBe(false);
+        expect(second.sent).toHaveLength(0);
+        mem.state.failLoad = false;
+        expect(await second.notes.resume()).toBe(true);
+        await vi.waitFor(() => expect(second.sent).toHaveLength(1));
+    });
+
+    it('goes on trying slowly while rows are kept and Orbit does not answer, and delivers when it does', async () => {
+        const mem = memoryStore();
+        let orbitUp = false;
+        const { notes, sent } = ledger(mem.store, () => orbitUp, { storeLaterMs: 5 });
+        notes.record('b', 'j', call('c1'));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(sent).toHaveLength(0);
+        expect(mem.held.size).toBe(1);
+        orbitUp = true;
+        await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 2000 });
+        expect(mem.held.size).toBe(0);
+    });
+
+    it('a row made in this process wins over the same call kept before, and a row older than a day is no longer sent from memory', async () => {
+        const mem = memoryStore();
+        const old = ledger(mem.store, () => false);
+        old.notes.record('b', 'j', call('c1', { kind: 'uncertain', reason: 'stream_cut', providerStatus: null }));
+        await vi.waitFor(() => expect(mem.held.size).toBe(1));
+        let up = false;
+        const fresh = ledger(mem.store, () => up);
+        fresh.notes.record('b', 'j', call('c1', { kind: 'fault', reason: 'relay_down' }));
+        await fresh.notes.resume();
+        up = true;
+        await fresh.notes.flush('j');
+        const rows = fresh.sent.flatMap((one) => one.rows).filter((row) => row.callId === 'c1');
+        expect(rows.map((row) => row.kind)).toEqual(['fault']);
+        expect(EVIDENCE_KEEP_MS).toBe(24 * 60 * 60 * 1000);
+    });
+
+    it('a ledger with no store behaves as before: rows are not kept anywhere but memory, and resume is a yes', async () => {
+        const notes = createRefusalNotes(() => 1000, { sink: async () => true });
+        expect(await notes.resume()).toBe(true);
     });
 });

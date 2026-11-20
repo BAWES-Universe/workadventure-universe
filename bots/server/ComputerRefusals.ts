@@ -59,6 +59,20 @@ export interface CallRow {
     at: string;
 }
 
+/**
+ * Where the rows not yet taken by Orbit are kept so a restart of the bot server does not lose them (Redis, shared by every bot server). Rows are small
+ * and hold ids, a reason and a time: nothing anyone said. A row is written when it is made, replaces the one under the same call id, and is removed when
+ * Orbit has taken it.
+ */
+export interface EvidenceStore {
+    /** Keeps one row (replacing the one with the same call id). Resolves false when it could not be kept. */
+    save(botId: string, jobId: string, row: CallRow): Promise<boolean>;
+    /** Takes the rows with these call ids out (Orbit has them). Never throws into the caller's way: a row left behind is only sent again, which is harmless. */
+    drop(jobId: string, callIds: string[]): Promise<void>;
+    /** Every row kept and not yet taken, by job. Throws when the store cannot be reached (an empty store is an empty answer). */
+    load(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>>;
+}
+
 export type CallInput = Omit<CallRow, 'turn' | 'run' | 'at' | 'kind'> & {
     kind: CallKind;
     /** The turn the call STARTED in (see `turnOf`): a call that ends after the runner moved on still belongs to the turn it began in. */
@@ -96,6 +110,12 @@ export interface RefusalNotes {
      * left unsent. Called before a job is ended. Rows left over go on being sent in the background (later, a few times).
      */
     flush(jobId: string): Promise<boolean>;
+    /**
+     * Brings back the rows that were kept (in the store) and not taken by Orbit before the bot server stopped, and sends them again under the ids they
+     * had (the external action is never repeated: only the evidence is delivered). False when the store could not be read (ask again later); true
+     * when it was read, or there is no store.
+     */
+    resume(): Promise<boolean>;
     /** The point in the order of events from which a turn's window starts: what is noted after this call, and only that, is in the window. */
     mark(): { order: number };
     /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job since this point (or at or after this moment, ms). */
@@ -124,7 +144,15 @@ export interface RefusalOptions {
     laterMs?: number[];
     /** The most time a flush waits in all, across every try. */
     flushBudgetMs?: number;
+    /** Where rows are kept until Orbit takes them, so they survive a restart. Without one they are kept in memory only. */
+    store?: EvidenceStore;
+    /** With a store: how long to wait between tries once the later ones are used up (rows are kept `EVIDENCE_KEEP_MS` in all). */
+    storeLaterMs?: number;
 }
+
+/** How long a row that Orbit has not taken is kept and sent again, in the store and in memory: a day. */
+export const EVIDENCE_KEEP_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_STORE_LATER_MS = 10 * 60 * 1000;
 
 /** The most rows Orbit takes in one call. */
 export const FAULT_ROWS_PER_CALL = 50;
@@ -138,6 +166,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
     const laterMs = options.laterMs ?? DEFAULT_LATER_MS;
     const flushBudgetMs = options.flushBudgetMs ?? DEFAULT_FLUSH_BUDGET_MS;
+    const store = options.store;
+    const storeLaterMs = options.storeLaterMs ?? DEFAULT_STORE_LATER_MS;
     const last = new Map<string, { at: number; order: number }>();
     // The order of events is kept by count, since two can land in the same millisecond
     let count = 0;
@@ -150,14 +180,54 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const TURN_HISTORY = 16;
     const lastTurn = (jobId: string) => turns.get(jobId)?.at(-1);
     // Rows not yet taken by Orbit, per job. A row is sent again until Orbit takes it (Orbit keeps one per job and call).
-    const queued = new Map<string, { botId: string; rows: Map<string, CallRow>; sending?: Promise<boolean>; at: number; later?: ReturnType<typeof setTimeout>; laterTries: number }>();
+    type Queue = {
+        botId: string;
+        rows: Map<string, CallRow>;
+        sending?: Promise<boolean>;
+        at: number;
+        later?: ReturnType<typeof setTimeout>;
+        laterTries: number;
+        /** The writes to the store that have not ended, by call id (a later write or a removal of the same row waits for the one before it). */
+        writes: Map<string, Promise<boolean>>;
+        /** Rows the store could not keep: written again when the job is about to end, so what the money decision rests on is kept before it is final. */
+        unsaved: Map<string, CallRow>;
+    };
+    const queued = new Map<string, Queue>();
+    const newQueue = (botId: string): Queue => ({ botId, rows: new Map(), at: now(), laterTries: 0, writes: new Map(), unsaved: new Map() });
+    /** Keeps a row in the store; the write is tracked so a flush can wait for it and a removal can follow it. Never throws. */
+    const keep = (entry: Queue, jobId: string, row: CallRow) => {
+        if (!store) return;
+        const before = entry.writes.get(row.callId) ?? Promise.resolve(true);
+        const write = before
+            .then(() => store.save(entry.botId, jobId, row))
+            .catch(() => false)
+            .then((kept) => {
+                if (kept) {
+                    if (entry.unsaved.get(row.callId) === row) entry.unsaved.delete(row.callId);
+                } else if (entry.rows.get(row.callId) === row) entry.unsaved.set(row.callId, row);
+                return kept;
+            });
+        entry.writes.set(row.callId, write);
+        void write.then(() => {
+            if (entry.writes.get(row.callId) === write) entry.writes.delete(row.callId);
+        });
+    };
+    /** Takes rows Orbit has taken out of the store, after any write of them that is still going. */
+    const release = (entry: Queue, jobId: string, callIds: string[]) => {
+        if (!store || callIds.length === 0) return;
+        void Promise.all(callIds.map((id) => entry.writes.get(id) ?? true))
+            .then(() => store.drop(jobId, callIds))
+            .catch(() => undefined);
+    };
     const forget = () => {
         const cutoff = now() - REFUSAL_NOTE_KEEP_MS;
         for (const [jobId, seen] of last) if (seen.at < cutoff) last.delete(jobId);
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
+        // With a store, rows Orbit has not taken are kept (and sent again) for a day, as in the store
+        const queueCutoff = store ? now() - EVIDENCE_KEEP_MS : cutoff;
         for (const [jobId, entry] of queued) {
-            if (entry.at >= cutoff || entry.sending) continue;
+            if (entry.at >= queueCutoff || entry.sending) continue;
             if (entry.later) clearTimeout(entry.later);
             queued.delete(jobId);
         }
@@ -190,7 +260,14 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     }
                     if (!taken) break;
                     // A row that was changed while it was being sent (an upgrade) stays for the next batch
-                    for (const row of batch) if (entry.rows.get(row.callId) === row) entry.rows.delete(row.callId);
+                    const takenIds: string[] = [];
+                    for (const row of batch) {
+                        if (entry.rows.get(row.callId) !== row) continue;
+                        entry.rows.delete(row.callId);
+                        entry.unsaved.delete(row.callId);
+                        takenIds.push(row.callId);
+                    }
+                    release(entry, jobId, takenIds);
                 }
                 if (entry.rows.size === 0) {
                     // Everything was taken: the budget of later tries starts again for rows that come next, and a try still waiting has nothing to send
@@ -219,12 +296,14 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     /** After the quick tries failed (the last flush before the job ended included), one more try is set for later, a few times, never more than one waiting. */
     const later = (jobId: string) => {
         const entry = queued.get(jobId);
-        if (!entry || entry.later || entry.rows.size === 0 || entry.laterTries >= laterMs.length) return;
+        // With a store the tries go on, slowly, for as long as the rows are kept; without one they stop after the last of the later ones
+        const delay = laterMs[entry.laterTries] ?? (store ? storeLaterMs : undefined);
+        if (!entry || entry.later || entry.rows.size === 0 || delay === undefined) return;
         const timer = setTimeout(() => {
             entry.later = undefined;
             entry.laterTries += 1;
             void send(jobId);
-        }, laterMs[entry.laterTries]);
+        }, delay);
         // A try for later never keeps the process alive
         timer.unref?.();
         entry.later = timer;
@@ -259,14 +338,14 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     mark(jobId, 'fault', call.kind === 'fault');
                 }
             }
-            if (!options.sink) return;
-            const entry = queued.get(jobId) ?? { botId, rows: new Map<string, CallRow>(), at: now(), laterTries: 0 };
+            if (!options.sink && !store) return;
+            const entry = queued.get(jobId) ?? newQueue(botId);
             entry.at = now();
             // Orbit keeps ids up to 120 characters: the row is kept under the id it is sent with
             const callId = call.callId.slice(0, 120);
             // A call that carries its turn carries that turn's run, and one that does not takes both from where the runner is now: never one of each
             const runOfRow = call.turn !== undefined ? call.run : lastTurn(jobId)?.run;
-            entry.rows.set(callId, {
+            const row: CallRow = {
                 turn: call.turn ?? lastTurn(jobId)?.turn ?? 0,
                 ...(runOfRow ? { run: runOfRow } : {}),
                 callId,
@@ -276,9 +355,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 route: call.route.slice(0, 80),
                 providerStatus: call.providerStatus,
                 at: new Date(now()).toISOString(),
-            });
+            };
+            entry.rows.set(callId, row);
             queued.set(jobId, entry);
-            // Sent without waiting: the call that made the row is not held for Orbit
+            // Kept where a restart does not lose it, and sent without waiting: the call that made the row is not held for either
+            keep(entry, jobId, row);
             void send(jobId);
         },
         flush(jobId) {
@@ -286,6 +367,13 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             if (!entry) return Promise.resolve(true);
             // What is being sent now may leave rows behind (a failed batch, rows added meanwhile): look again when it is over
             const again = async (): Promise<boolean> => {
+                // First what the money decision rests on is kept where a restart does not lose it (a write that failed is made again), then it is delivered
+                if (store) {
+                    // A write still going may end in a failure: wait for the writes first, then make again what did not stay (once, not for ever)
+                    await Promise.all([...entry.writes.values()]).catch(() => undefined);
+                    for (const row of [...entry.unsaved.values()]) keep(entry, jobId, row);
+                    await Promise.all([...entry.writes.values()]).catch(() => undefined);
+                }
                 if (entry.sending) await entry.sending.catch(() => false);
                 return entry.rows.size === 0 ? true : send(jobId);
             };
@@ -297,6 +385,25 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 timer.unref?.();
             });
             return Promise.race([again(), budget]).finally(() => clearTimeout(timer));
+        },
+        async resume() {
+            if (!store) return true;
+            let kept: Awaited<ReturnType<EvidenceStore['load']>>;
+            try {
+                kept = await store.load();
+            } catch {
+                return false;
+            }
+            for (const { botId, jobId, rows } of kept) {
+                const entry = queued.get(jobId) ?? newQueue(botId);
+                entry.at = now();
+                // A row made in this process since the start is newer than the one that was kept: it stays
+                for (const row of rows) if (!entry.rows.has(row.callId)) entry.rows.set(row.callId, row);
+                if (entry.rows.size === 0) continue;
+                queued.set(jobId, entry);
+                void send(jobId);
+            }
+            return true;
         },
         mark: () => ({ order: count }),
         confirmedSince(jobId, since) {
