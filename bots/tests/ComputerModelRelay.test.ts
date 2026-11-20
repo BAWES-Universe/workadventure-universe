@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
 import { createRefusalNotes, type CallRow } from '../server/ComputerRefusals';
-import { createComputerModelRelay, estimateCallMicros, inputTokensOf, jobsOwnLimit, leadingFieldsOf, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, outputCapOf, relayOrbitFor, readProviderError, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { createComputerModelRelay, estimateCallMicros, inputTokensOf, jobsOwnLimit, leadingFieldsOf, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, ROUTING_FIELDS, outputCapOf, relayOrbitFor, readProviderError, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -712,6 +712,26 @@ describe('how a call ended, for the runner', () => {
         expect((await rowsSent('job-run')).map((row) => [row.turn, row.run])).toEqual([[3, 'run-before']]);
     });
 
+    it('never forwards the routing fields of a job to the provider: it cannot choose another model or provider for a call paid on our key', async () => {
+        asJob('job-routing');
+        await askAndSettle({
+            ...agent,
+            models: ['openai/gpt-5-expensive', 'anthropic/claude-opus'],
+            provider: { only: ['SomeHost'], max_price: { prompt: 1000 } },
+            route: 'fallback',
+            transforms: ['middle-out'],
+            plugins: [{ id: 'web', max_results: 50 }],
+            preset: '@someone/preset',
+            fallbacks: ['x/y'],
+            temperature: 0.2,
+        });
+        const sent = upstreamRequests.at(-1)?.body as Record<string, unknown>;
+        for (const field of ROUTING_FIELDS) expect(sent).not.toHaveProperty(field);
+        // what the job's own machine is allowed to set still goes through, and the model is the relay's own
+        expect(sent).toMatchObject({ temperature: 0.2, model: route.config.model });
+        expect(sent.messages).toBeDefined();
+    });
+
     it('notes a whole reply cut at the bound as unresolved (class 3), never a confirmed fault of ours and never the person’s', async () => {
         asJob('job-too-long');
         const before = since();
@@ -1321,6 +1341,23 @@ describe('what #2078 (bounded provider reads, per-call metering) and #2101 (whos
         expect(text.length).toBeLessThan(RELAY_GUARDS.maxErrorBytes);
         // the call was refused, so nothing is priced
         expect(settled()[1]).toMatchObject({ jobId: 'job-long-refusal', sent: true, costMicros: 0, tokens: { input: 0, output: 0 } });
+    });
+
+    it('reads a 404 cut at the bound whose error fields were cut away as unresolved, never from the raw words: a model named in a sibling object is no confirmed fault', async () => {
+        const before = since();
+        asJob('job-cut-404');
+        // `meta` says a model does not exist; the `error` object (what a full parse would read) was cut before its words
+        upstreamHandler = (_req, res) =>
+            res.status(404).type('application/json').send(`{"meta":{"message":"model xyz does not exist"},"error":{"pad":"${tooBig}","message":"model xyz does not exist"}}`);
+        await askAndSettle(agent);
+        expect(notes.confirmedSince('job-cut-404', before)).toBe(false);
+        expect((await rowsSent('job-cut-404'))[0]).toMatchObject({ kind: 'uncertain', providerStatus: 404 });
+        // The same words inside the error object, whole, are what they always were: our model is gone, ours
+        const whole = since();
+        asJob('job-whole-404');
+        upstreamHandler = (_req, res) => res.status(404).json({ error: { message: 'model xyz does not exist' } });
+        await askAndSettle(agent, 2);
+        expect(notes.confirmedSince('job-whole-404', whole)).toBe(true);
     });
 
     it('reads a refusal cut at the bound from its error object only: a key code in a sibling object is no confirmed fault, as the full body would not read it either', async () => {

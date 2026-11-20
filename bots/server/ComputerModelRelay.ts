@@ -280,6 +280,9 @@ const KEY_CODES = /invalid[_ -]?api[_ -]?key|model[_ -]?not[_ -]?found|insuffici
 /** The same said in a message: read only when the error has no status and names no field, since a provider echoes the job's own values in a message. */
 const KEY_MESSAGE = /incorrect api key|invalid api key|model .*does not exist|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
 /** A 404 that says the model we named is missing (the relay chooses the model; the job cannot). */
+/** The fields of a call that choose the model or the provider that serves it (OpenRouter's routing and its server-side plugins): never the job's to set. */
+export const ROUTING_FIELDS = ['models', 'provider', 'route', 'transforms', 'plugins', 'preset', 'fallbacks'] as const;
+
 const MODEL_MISSING = /\bmodel\b[^.]{0,120}\b(does not exist|not found|is not available|has been (deprecated|decommissioned|removed))|no endpoints found for\b/i;
 /** A 404 that says the request needs something the model lacks (image input, tool use...): the job's own request, not a missing model. */
 const NEEDS_FEATURE = /that support|support(s|ed)? (image|tool|function|vision|json|structured|reasoning|streaming|input)|(image|tool|vision|function)[ _-](input|use|calling)/i;
@@ -731,6 +734,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         const url = `${(config.endpoint || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`;
 
         const sent: Record<string, unknown> = { ...body, model: config.model, n: 1, stream: streaming };
+        // A job never chooses where or by what its call is served: routing fields a gateway (OpenRouter) reads would let it have the call served by
+        // a dearer fallback model than the room held for it, or get a "no endpoints found" that reads as a fault of ours. Only the relay's own
+        // model and the route it was given are used
+        for (const field of ROUTING_FIELDS) delete sent[field];
         // The reply is never longer than the room held for it. OpenAI's own models want the newer field name.
         delete sent.max_tokens;
         delete sent.max_completion_tokens;
@@ -802,7 +809,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 } catch {
                     // A body that is not JSON says nothing more than its status. One that was cut at the bound is JSON that was never finished: the
                     // fields the provider put before the cut (its code, type, param and message) still say whose the refusal is
-                    if (tooLong) said = leadingFieldsOf(text);
+                    // When none of them can be read (the cut came first, or the scope cannot be told) it says nothing: never the raw words, which the
+                    // job's own input may be echoing, or which sit in a sibling object a full parse would not read as the error
+                    if (tooLong) said = leadingFieldsOf(text) ?? {};
                 }
                 return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, upstreamStatus: upstream.status, reading: readProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, { ...jobsOwnLimit(body, config), outputCap }) };
             }
