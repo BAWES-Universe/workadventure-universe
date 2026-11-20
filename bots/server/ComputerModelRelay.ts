@@ -155,6 +155,8 @@ const KEY_CODES = /invalid[_ -]?api[_ -]?key|model[_ -]?not[_ -]?found|insuffici
 /** The same said in a message: read only when the error has no status and names no field, since a provider echoes the job's own values in a message. */
 const KEY_MESSAGE = /incorrect api key|invalid api key|model .*does not exist|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
 const CONTENT_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?(length|window)|maximum context|too many tokens|token limit|prompt (is )?too long|too large/i;
+/** Wording that says the prompt or the context is the problem, not the value of a field: the job's own input. */
+const INPUT_WORDS = /context[_ -]?(length|window)|maximum context|prompt (is )?too long|too many tokens|in the (messages|prompt)|messages? (is|are) too (long|large)/i;
 /** The fields of a call that the relay sets itself; every other field is what the job's own machine sent, and a job's words can steer it. */
 const RELAY_FIELDS = new Set(['model', 'max_tokens', 'max_completion_tokens', 'n', 'stream', 'stream_options']);
 
@@ -176,12 +178,11 @@ export function whoseProviderError(status: number | null, error: unknown): 'ours
     }
     if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
     if (numeric === 413) return 'request';
-    // A refusal of a field only the relay sets (the token limit, the model, n, stream): ours, even when its message says "too large". Only the provider's
-    // own code and type are read for a context that is too long, never the message, which can carry the job's words
+    // A refusal of a field only the relay sets (the token limit, the model, n, stream): ours, even when its message says "too large" about the value.
+    // Wording that blames the prompt or the context (a context that is too long, N tokens in the messages) is the job's own input: the request's
     const paramField = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
     const refusedShape = numeric === null || numeric === 400 || numeric === 422;
-    const codesOnly = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
-    if (refusedShape && RELAY_FIELDS.has(paramField) && !CONTENT_WORDS.test(codesOnly)) return 'ours';
+    if (refusedShape && RELAY_FIELDS.has(paramField) && !INPUT_WORDS.test(words)) return 'ours';
     if (CONTENT_WORDS.test(words)) return 'request';
     // Our key, our credit or our model, named by the error itself: ours, before its shape is looked at. Only what the provider sets (code, type) is
     // read for that, never a message on a call that names a field: a message echoes the job's own values, and a job can steer those

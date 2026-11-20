@@ -776,6 +776,8 @@ describe('whoseProviderError', () => {
         expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'max_tokens', message: 'token limit too large' })).toBe('ours');
         expect(whoseProviderError(400, { param: 'messages', code: 'context_length_exceeded', message: 'maximum context length' })).toBe('request');
         expect(whoseProviderError(400, { param: 'max_tokens', code: 'context_length_exceeded', message: 'too large' })).toBe('request');
+        expect(whoseProviderError(400, { param: 'max_tokens', message: "This model's maximum context length is 4096 tokens. However, you requested 5000 tokens (3000 in the messages, 2000 in the completion)." })).toBe('request');
+        expect(whoseProviderError(400, { param: 'max_completion_tokens', message: 'max_completion_tokens exceeds the maximum allowed for this model' })).toBe('ours');
         expect(whoseProviderError(400, { param: 'messages[0].content', message: 'content is too large' })).toBe('request');
     });
     it('is the request’s for moderation, a context too long, a body too large and a 400/422 about anything but the relay’s own fields; everything else is ours', () => {
