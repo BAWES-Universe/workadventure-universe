@@ -72,7 +72,7 @@ function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) 
     return { orbit, seen, setRenew: (fn: typeof renewAnswer) => (renewAnswer = fn), setPrepare: (fn: typeof prepareAnswer) => (prepareAnswer = fn), failHandovers: (n: number) => (handoverFails = n) };
 }
 
-const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY, refusals?: { sawSince(jobId: string, sinceMs: number): boolean }) => {
+const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY, refusals?: Parameters<typeof createComputerRunner>[0]['refusals']) => {
     const runner = createComputerRunner({ orbit, relayUrl, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, ...(refusals ? { refusals } : {}) });
     orbit.running = async () => [job];
     await runner.tick();
@@ -175,7 +175,7 @@ describe('a job that runs', () => {
         const a = fakeOrbit([failing, failing, failing]);
         await runJob(a.orbit);
         expect(a.seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
 
         const b = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxTurns + 5 }, () => done('still on it')));
         await runJob(b.orbit);
@@ -188,19 +188,19 @@ describe('a job that runs', () => {
         const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => done('')));
         await runJob(orbit);
         expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
     });
 
     it('is ours only when every bad turn really failed: one silent turn among failed ones makes it the agent’s', async () => {
         const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
         const mixed = fakeOrbit([failing(), done(''), failing()]);
         await runJob(mixed.orbit);
-        expect(finished(mixed.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        expect(finished(mixed.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
 
         // a good turn in between starts the count again, and the streak that follows is judged on its own
         const again = fakeOrbit([done(''), done('Working on it'), failing(), failing(), failing()]);
         await runJob(again.orbit);
-        expect(finished(again.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(finished(again.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [3, 4, 5] }]);
     });
 
     it('never calls a turn ours when the relay refused a call of the job for the person’s allowance or a rule during it', async () => {
@@ -209,7 +209,7 @@ describe('a job that runs', () => {
         const a = fakeOrbit([failing(), failing(), failing()]);
         await runJob(a.orbit, JOB, RELAY, { sawSince: () => true });
         expect(a.seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
 
         // a turn that said something after a call was refused went on: it is no bad turn, so a job is not ended for refusals it got round
         const b = fakeOrbit([done('One call was refused, so I used another way'), done('[[done]]')]);
@@ -222,7 +222,7 @@ describe('a job that runs', () => {
         const c = fakeOrbit([failing(), failing(), failing()]);
         await runJob(c.orbit, JOB, RELAY, { sawSince: (_job, at) => (since.push(at), false) });
         expect(since).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(c.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(finished(c.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
     });
 
     it('keeps the refusal window of a turn across a reconnect that could not be made, with the real refusal notes', async () => {
@@ -245,7 +245,7 @@ describe('a job that runs', () => {
         await runner.idle();
         expect(seen.turns).toHaveLength(3);
         expect(seen.streams).toBe(2);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
     });
 
     it('does not carry a refusal into the next turn: a turn that got round it is a good turn, and the failures after it are ours', async () => {
@@ -259,7 +259,7 @@ describe('a job that runs', () => {
         await runner.tick();
         await runner.idle();
         expect(seen.turns).toHaveLength(1 + RUNNER_GUARDS.maxBadTurns);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2, 3, 4] }]);
     });
 
     describe('a fault of ours that Hermes hands back as a finished turn', () => {
@@ -277,13 +277,13 @@ describe('a job that runs', () => {
             const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.fault(JOB.jobId), done('Error: the service is busy (503)'))));
             await run();
             expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
         });
 
         it('ends the job as failed and ours when every turn completed with no words after a provider 500', async () => {
             const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.fault(JOB.jobId), done(''))));
             await run();
-            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
         });
 
         it('does not charge the person for a turn that did its work: a fault a later call made good is a good turn', async () => {
@@ -299,7 +299,7 @@ describe('a job that runs', () => {
         it('keeps a silent turn the agent’s own when no fault of ours came in during it', async () => {
             const { seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => done('')));
             await run();
-            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
         });
 
         it('does not read a fault from an earlier turn into the turn that followed it', async () => {
@@ -316,14 +316,14 @@ describe('a job that runs', () => {
         it('leaves it to the person’s allowance when a refusal of theirs came in during the same turn', async () => {
             const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.note(JOB.jobId), notes.fault(JOB.jobId), done('Error'))));
             await run();
-            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
         });
 
         it('ends as the agent’s when each turn ended on a person’s own provider failing (their key out of credit, their endpoint failing): the relay notes nothing of ours', async () => {
             const { seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => done('')));
             await run();
             expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
         });
 
         it('ends as the agent’s when turns failed on a person’s own provider (noted on their side), never as ours', async () => {
@@ -336,7 +336,7 @@ describe('a job that runs', () => {
             orbit.running = async () => [JOB];
             await runner.tick();
             await runner.idle();
-            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
         });
 
         it('still takes the agent’s own ending from a turn, and a turn that completed ahead of a done marker is done', async () => {
@@ -350,7 +350,7 @@ describe('a job that runs', () => {
         const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => ({ ok: false as const, reason: 'no_turn' })));
         await runJob(orbit);
         expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
     });
 
     it('does not count the time it waits for a machine as turns: a machine that is slow to come back never ends the job before it ran', async () => {
@@ -608,7 +608,7 @@ describe('a turn that is lost, or room that is gone', () => {
         const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns * 3 }, () => broke()));
         await runJob(orbit);
         expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
     });
 
     it('never sends a cause with a job that is done', async () => {
@@ -798,7 +798,7 @@ describe('a turn that is lost, or room that is gone', () => {
 
                 const ours = fakeOrbit([failing, failing, failing], at);
                 await runJob(ours.orbit);
-                expect(finished(ours.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', generation: 4 }]);
+                expect(finished(ours.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', generation: 4, turns: [1, 2, 3] }]);
 
                 for (const [error, cause] of [[status(404), 'agent'], [status(500), 'ours']] as const) {
                     const handover = fakeOrbit([done('[[handover signin]]')], at);
@@ -833,8 +833,8 @@ describe('a turn that is lost, or room that is gone', () => {
                 };
                 await runJob(orbit);
                 expect(finished(seen)).toEqual([
-                    { action: 'finish', outcome: 'failed', cause: 'ours', generation: 1 },
-                    { action: 'finish', outcome: 'failed', cause: 'ours', generation: 2 },
+                    { action: 'finish', outcome: 'failed', cause: 'ours', generation: 1, turns: [1, 2, 3] },
+                    { action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [1, 2, 3, 4] },
                 ]);
             });
 
@@ -862,7 +862,7 @@ describe('a turn that is lost, or room that is gone', () => {
             it('a refusal the relay saw still makes a streak of failed turns the agent’s, on a job whose turns carry a generation', async () => {
                 const { orbit, seen } = fakeOrbit([failing, failing, failing], () => ({ status: 'running', control: 'brick', generation: 9 }));
                 await runJob(orbit, JOB, RELAY, { sawSince: () => true });
-                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', generation: 9 }]);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', generation: 9, turns: [1, 2, 3] }]);
             });
         });
 
@@ -1246,5 +1246,99 @@ describe('whyOf: the one sentence the agent gave for why it could not go on', ()
     it('is cut to the last 300 characters, so a runaway reply is not sent whole', () => {
         const long = whyOf(`${'word '.repeat(200)}[[failed]]`);
         expect(long && long.length).toBeLessThanOrEqual(300);
+    });
+});
+
+describe('which turns of a failed streak are named, and whose the ending is, from the relay’s call record', () => {
+    const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+
+    it('names the turns the streak was made of, and what the relay recorded for the job reaches Orbit before the finish does', async () => {
+        const order: string[] = [];
+        const { orbit, seen } = fakeOrbit([done('Working on it'), failing(), failing(), failing()]);
+        const original = orbit.action;
+        orbit.action = async (botId, jobId, body) => {
+            if (body.action === 'finish') order.push('finish');
+            return original(botId, jobId, body);
+        };
+        await runJob(orbit, JOB, RELAY, {
+            sawSince: () => false,
+            flush: async () => {
+                order.push('flush');
+                return true;
+            },
+        });
+        // the good turn started the count again: the streak is turns 2, 3 and 4
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2, 3, 4] }]);
+        expect(order).toEqual(['flush', 'finish']);
+    });
+
+    it('does not name turns for a failure that was no streak (the agent’s own words, no relay), and still sends the record first', async () => {
+        const flushed: string[] = [];
+        const a = fakeOrbit([done('Stuck. [[failed]]')]);
+        await runJob(a.orbit, JOB, RELAY, { sawSince: () => false, flush: async (jobId) => (flushed.push(jobId), true) });
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', why: 'Stuck.' }]);
+        expect(flushed).toEqual([JOB.jobId]);
+        // a job that finishes well has no use for the record
+        flushed.length = 0;
+        const b = fakeOrbit([done('All fine. [[done]]')]);
+        await runJob(b.orbit, JOB, RELAY, { sawSince: () => false, flush: async (jobId) => (flushed.push(jobId), true) });
+        expect(flushed).toEqual([]);
+    });
+
+    it('ends the job whatever happens to the record: a flush that throws or never says yes does not keep a job from ending', async () => {
+        const a = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(a.orbit, JOB, RELAY, { sawSince: () => false, flush: () => Promise.reject(new Error('orbit is down')) });
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        const b = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(b.orbit, JOB, RELAY, { sawSince: () => false, flush: async () => false });
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+    });
+
+    it('numbers a turn when it begins, tells the relay, and keeps the number while the same turn is read again after a reconnect', async () => {
+        const told: number[] = [];
+        const { orbit } = fakeOrbit([done('one'), done('two'), done('[[done]]')]);
+        await runJob(orbit, JOB, RELAY, { sawSince: () => false, turn: (_job, n) => void told.push(n) });
+        expect(Array.from(new Set(told))).toEqual([1, 2, 3]);
+    });
+
+    it('is ours when a bad turn of the streak had a confirmed fault, even after a silent one: silent first, then two documented failures on our key', async () => {
+        let call = 0;
+        // turn 1 says nothing; turns 2 and 3 ended on a fault of ours that the relay recorded as confirmed (our key refused)
+        const refusals = {
+            sawSince: () => false,
+            endedOnFault: () => (call += 1) > 1,
+            confirmedSince: () => call > 1,
+        };
+        const { orbit, seen } = fakeOrbit([done(''), done('The model said no'), done('The model said no')]);
+        await runJob(orbit, JOB, RELAY, refusals);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+    });
+
+    it('stays the agent’s for a silent turn and unresolved faults only (nothing confirmed), and for a streak the person’s allowance or a rule stopped', async () => {
+        let call = 0;
+        const unresolved = { sawSince: () => false, endedOnFault: () => (call += 1) > 1, confirmedSince: () => false };
+        const a = fakeOrbit([done(''), done('The model did not answer'), done('The model did not answer')]);
+        await runJob(a.orbit, JOB, RELAY, unresolved);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+
+        // a spending rule or the allowance stops the job as the person's, even when a fault was confirmed in a turn of its own
+        const b = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(b.orbit, JOB, RELAY, { sawSince: () => true, confirmedSince: () => false });
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+    });
+
+    it('does not carry a confirmed fault into the next streak: a good turn clears it', async () => {
+        let confirmedNow = true;
+        const refusals = { sawSince: () => false, confirmedSince: () => confirmedNow };
+        const { orbit, seen } = fakeOrbit([
+            failing(),
+            () => (confirmedNow = false, done('Working on it')),
+            done(''),
+            done(''),
+            done(''),
+        ]);
+        await runJob(orbit, JOB, RELAY, refusals);
+        // turn 1 had the confirmed fault; turns 3, 4 and 5 are a new streak of silent turns, the agent's
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [3, 4, 5] }]);
     });
 });

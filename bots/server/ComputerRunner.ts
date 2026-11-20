@@ -171,7 +171,7 @@ export interface RunnerDeps {
     now?: () => number;
     log?: Pick<Console, 'warn' | 'error' | 'info'>;
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince'>>;
 }
 
 const realSleep = (ms: number, signal: AbortSignal) =>
@@ -263,11 +263,21 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function finish(
         job: RunnableJob,
         outcome: 'done' | 'failed',
-        options: { cause?: FinishCause; generation?: number; why?: string | null } = {}
+        options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[] } = {}
     ): Promise<'ended' | 'stale'> {
-        const { cause, generation, why } = options;
+        const { cause, generation, why, turns } = options;
         let stale = false;
-        const body = { action: 'finish', outcome, ...(outcome === 'failed' && cause ? { cause } : {}), ...(outcome === 'failed' && why ? { why } : {}) };
+        // Orbit judges a failure from the call rows it holds, so what the relay recorded for this job reaches it BEFORE the finish does (a moment of
+        // retry at most: a record that cannot be sent never keeps a job from ending, and Orbit then has the cause below as its only hint)
+        if (outcome === 'failed') await deps.refusals?.flush?.(job.jobId)?.catch(() => false);
+        const body = {
+            action: 'finish',
+            outcome,
+            ...(outcome === 'failed' && cause ? { cause } : {}),
+            ...(outcome === 'failed' && why ? { why } : {}),
+            // The turns this runner judged failed (the ones the streak was made of), which Orbit reads against the call rows of each
+            ...(outcome === 'failed' && turns && turns.length > 0 ? { turns: [...turns] } : {}),
+        };
         await orbit.action(job.botId, job.jobId, fenced(body, generation)).catch((error) => {
             if (staleForOrbit(error)) stale = true;
             else say('Could not end a job:', error);
@@ -450,6 +460,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let lastGeneration: number | undefined;
         // Whether any turn of the bad streak was not a failure of ours (the agent said nothing, or the person's allowance or a rule stopped it)
         let notOurs = false;
+        // Whether a bad turn of the streak had a confirmed fault of Universe's (kind `fault` in the relay's record), and which turns the streak was made of
+        let confirmed = false;
+        let badTurns: number[] = [];
+        // The number of the turn being read (see where a turn begins)
+        let turnNo = 0;
         // Where the turn being read began. It is kept while the same turn is read again after a reconnect that could not be made (a refusal
         // that came before it must still be seen), and starts again with the next turn or after the person had the machine
         let turnStartedAt: number | null = null;
@@ -503,7 +518,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 return;
             }
 
-            turnStartedAt ??= now();
+            // A turn is numbered when it begins, and keeps its number while it is read again after a reconnect: the relay stamps the rows of the calls
+            // made in it with the number, and the number is what the finish names, so both must mean the same turn
+            if (turnStartedAt === null) {
+                turnStartedAt = now();
+                turnNo += 1;
+            }
+            deps.refusals?.turn?.(job.jobId, turnNo);
             const result = await oneTurn(job, input, signal, renewing, accepted, generation);
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
@@ -539,6 +560,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 input = follow(RESUME_PROMPT);
                 bad = 0;
                 notOurs = false;
+                confirmed = false;
+                badTurns = [];
                 continue;
             }
             // The job changed hands or paused while the turn went on (even if it is Brick's again): the turn is an old one, so its words are
@@ -546,6 +569,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (generation !== undefined && after.generation !== undefined && after.generation !== generation) {
                 input = follow(RESUME_PROMPT);
                 bad = 0;
+                confirmed = false;
+                badTurns = [];
                 continue;
             }
             if (result.fenced) {
@@ -566,6 +591,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (ending.kind === 'handover') {
                 bad = 0;
                 notOurs = false;
+                confirmed = false;
+                badTurns = [];
                 // The person is only told to come when Orbit took the handover: if it did not, waiting would take the job straight
                 // back to Brick as if they had finished, so it is asked again, and a job that cannot be handed over is ended
                 let handed = false;
@@ -634,14 +661,23 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (result.failed || silent || ourFault) {
                 const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
                 bad += 1;
+                badTurns.push(turnNo);
+                // A confirmed fault of Universe's in any turn of the streak (our key refused, no route, no room, a model gone) makes the ending ours, whatever
+                // else the streak held: a silent turn followed by two documented failures on our key must not become the person's expense
+                if (readFrom !== null && deps.refusals?.confirmedSince?.(job.jobId, readFrom)) confirmed = true;
                 if (refused || (silent && !ourFault)) notOurs = true;
             } else {
                 bad = 0;
                 notOurs = false;
+                confirmed = false;
+                badTurns = [];
             }
             if (bad >= RUNNER_GUARDS.maxBadTurns) {
                 say('A job kept failing to answer and was ended.');
-                if ((await finish(job, 'failed', { cause: notOurs ? 'agent' : 'ours', generation })) === 'stale') {
+                // The cause is a hint: Orbit reads the call rows of each turn named here. A confirmed fault anywhere in the streak is ours; else the person's
+                // side (a silent turn, their allowance or a rule) makes it the agent's; else it is unresolved, for Orbit's bounded goodwill
+                const cause: FinishCause = confirmed ? 'ours' : notOurs ? 'agent' : 'ours';
+                if ((await finish(job, 'failed', { cause, generation, turns: badTurns })) === 'stale') {
                     await readAgain();
                     continue;
                 }

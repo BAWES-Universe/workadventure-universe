@@ -2,8 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
-import { createRefusalNotes } from '../server/ComputerRefusals';
-import { createComputerModelRelay, estimateCallMicros, inputTokensOf, jobsOwnLimit, leadingFieldsOf, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, outputCapOf, relayOrbitFor, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { createRefusalNotes, type CallRow } from '../server/ComputerRefusals';
+import { createComputerModelRelay, estimateCallMicros, inputTokensOf, jobsOwnLimit, leadingFieldsOf, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, outputCapOf, relayOrbitFor, readProviderError, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -51,7 +51,23 @@ const listen = (app: express.Express) => new Promise<Server>((resolve) => { cons
 const urlOf = (server: Server) => `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 const messages = [{ role: 'user', content: 'Fill the form' }];
 
-const notes = createRefusalNotes();
+// Rows the relay sent to Orbit's fault record, per job; `sinkAnswers` false makes Orbit unreachable
+const sunk: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
+let sinkAnswers = true;
+const notes = createRefusalNotes(Date.now, {
+    sink: async (botId, jobId, rows) => {
+        if (!sinkAnswers) return false;
+        sunk.push({ botId, jobId, rows });
+        return true;
+    },
+    retryMs: [0, 0],
+});
+const rowsOf = (jobId: string): CallRow[] => sunk.filter((entry) => entry.jobId === jobId).flatMap((entry) => entry.rows);
+/** Waits for the rows of a job to reach Orbit's record. */
+const rowsSent = async (jobId: string, count = 1): Promise<CallRow[]> => {
+    await vi.waitFor(() => expect(rowsOf(jobId).length).toBeGreaterThanOrEqual(count), { timeout: 3000 });
+    return rowsOf(jobId);
+};
 
 beforeAll(async () => {
     const up = express();
@@ -81,6 +97,8 @@ beforeEach(() => {
     orbit.authorize.mockReset().mockResolvedValue({ ok: true });
     orbit.settle.mockReset().mockResolvedValue({ ok: true });
     route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
+    sunk.length = 0;
+    sinkAnswers = true;
 });
 
 describe('who may call', () => {
@@ -774,40 +792,35 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-limit-setting', before)).toBe(true);
     });
 
-    it('reads the relay’s own time limit by who made the call long: ours with no output, or a limit we chose; the job’s own when it was writing or asked for the length', async () => {
+    it('reads the relay’s own time limit as unresolved either way: no output in time and output that was still coming are both for Orbit’s bounded goodwill, each with its own reason', async () => {
         const before = since();
         const original = RELAY_GUARDS.callTimeoutMs;
         (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = 150;
         try {
-            // a stream that wrote nothing in time: ours
+            // a stream that wrote nothing in time
             asJob('job-timeout-silent');
             upstreamHandler = () => undefined;
             await askAndSettle({ ...agent, stream: true }, 1);
             expect(notes.endedOnFault('job-timeout-silent', before)).toBe(true);
+            expect(notes.confirmedSince('job-timeout-silent', before)).toBe(false);
+            expect((await rowsSent('job-timeout-silent'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_no_output', source: 'universe-ai' });
 
-            // a stream that was writing when the time ran out: the job's own
+            // a stream that was writing when the time ran out proves progress only
             asJob('job-timeout-writing');
             upstreamHandler = (_req, res) => {
                 res.setHeader('Content-Type', 'text/event-stream');
                 res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
             };
             await askAndSettle({ ...agent, stream: true }, 2);
-            expect(notes.endedOnFault('job-timeout-writing', before)).toBe(false);
-            expect(notes.sawSince('job-timeout-writing', before)).toBe(true);
+            expect(notes.endedOnFault('job-timeout-writing', before)).toBe(true);
+            expect(notes.confirmedSince('job-timeout-writing', before)).toBe(false);
+            expect((await rowsSent('job-timeout-writing'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_after_output' });
 
-            // not streamed, a length the relay chose: ours
-            asJob('job-timeout-ours');
+            // not streamed: nothing came through
+            asJob('job-timeout-plain');
             upstreamHandler = () => undefined;
             await askAndSettle(agent, 3);
-            expect(notes.endedOnFault('job-timeout-ours', before)).toBe(true);
-
-            // not streamed, a length the job asked for: the job's own
-            asJob('job-timeout-asked');
-            // with no setting of ours the length is the job's own ask
-            route = { config: config({ endpoint: upstreamBase, maxTokens: 0 }), source: 'universe-ai', keyOwnerId: null };
-            await askAndSettle({ ...agent, max_tokens: 100 }, 4);
-            expect(notes.endedOnFault('job-timeout-asked', before)).toBe(false);
-            expect(notes.sawSince('job-timeout-asked', before)).toBe(true);
+            expect((await rowsSent('job-timeout-plain'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_no_output' });
         } finally {
             (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = original;
         }
@@ -900,8 +913,15 @@ describe('how a call ended, for the runner', () => {
         await said('job-422-messages', 422, { message: 'invalid image url', param: 'messages[0].content' });
         await said('job-400-context', 400, { code: 'context_length_exceeded', message: 'maximum context length exceeded' });
         await said('job-413', 413, { message: 'payload' });
-        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param', 'job-401-invalid-request', 'job-404-invalid-request']) expect(notes.endedOnFault(name, before)).toBe(true);
-        for (const name of ['job-403-moderation', 'job-400-context', 'job-413', 'job-400-temperature', 'job-400-noparam', 'job-422-messages']) {
+        // A fieldless 400 (a bad payload of the job's, or a serialization error of ours, cannot be told apart) is unresolved: a fault of the turn, never confirmed
+        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param', 'job-400-noparam', 'job-401-invalid-request', 'job-404-invalid-request']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-401-invalid-request', 'job-404-invalid-request']) expect(notes.confirmedSince(name, before)).toBe(true);
+        for (const name of ['job-400-param', 'job-400-noparam']) expect(notes.confirmedSince(name, before)).toBe(false);
+        expect((await rowsSent('job-400-noparam'))[0]).toMatchObject({ kind: 'uncertain', reason: 'fieldless_400', providerStatus: 400 });
+        expect((await rowsSent('job-400-param'))[0]).toMatchObject({ kind: 'uncertain', reason: 'field_relay_set' });
+        expect((await rowsSent('job-401'))[0]).toMatchObject({ kind: 'fault', reason: 'provider_key_ours', providerStatus: 401, source: 'universe-ai' });
+        expect((await rowsSent('job-400-temperature'))[0]).toMatchObject({ kind: 'not_ours', reason: 'field_job_set' });
+        for (const name of ['job-403-moderation', 'job-400-context', 'job-413', 'job-400-temperature', 'job-422-messages']) {
             expect(notes.endedOnFault(name, before)).toBe(false);
             // the request's own failure is off our side: the runner never ends the job as ours for it
             expect(notes.sawSince(name, before)).toBe(true);
@@ -928,8 +948,11 @@ describe('how a call ended, for the runner', () => {
         await inBody('job-200-422', { code: 422, message: 'unprocessable' });
         await inBody('job-200-key', { type: 'invalid_request_error', code: 'invalid_api_key', param: null, message: 'Incorrect API key provided' });
         await inBody('job-200-model', { type: 'invalid_request_error', code: 'model_not_found', param: 'messages', message: 'The model does not exist' });
-        for (const name of ['job-200-400', 'job-200-context', 'job-200-moderation', 'job-200-tools', 'job-200-422']) expect(notes.endedOnFault(name, before)).toBe(false);
-        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode', 'job-200-param', 'job-200-key', 'job-200-model']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-200-400', 'job-200-context', 'job-200-moderation', 'job-200-tools']) expect(notes.endedOnFault(name, before)).toBe(false);
+        // job-200-422 names no field: unresolved
+        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode', 'job-200-param', 'job-200-key', 'job-200-model', 'job-200-422']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-200-key', 'job-200-model']) expect(notes.confirmedSince(name, before)).toBe(true);
+        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode', 'job-200-param', 'job-200-422']) expect(notes.confirmedSince(name, before)).toBe(false);
     });
 
     it('reads a key or model error inside a stream as ours, whatever type it carries', async () => {
@@ -1075,13 +1098,14 @@ describe('whoseProviderError', () => {
         expect(whoseProviderError(400, { param: 'messages[0].role', message: "Invalid value: 'billing'. Supported values are: 'system', 'user'." })).toBe('request');
         expect(whoseProviderError(400, { param: 'messages[0].content[1].file.file_id', message: "The file 'file-abc' does not exist" })).toBe('request');
         expect(whoseProviderError(422, { param: 'tool_choice', message: "tool 'permission_denied' does not exist" })).toBe('request');
-        expect(whoseProviderError(400, { message: "Invalid value: 'billing'" })).toBe('request');
+        // a 400 or 422 that names no field cannot be told from a bad payload of the job's or a serialization error of ours: unresolved, and never confirmed from an echoed word
+        expect(readProviderError(400, { message: "Invalid value: 'billing'" })).toEqual({ who: 'ours', kind: 'uncertain', reason: 'fieldless_400' });
         expect(whoseProviderError(null, { param: 'messages[0].role', message: "Invalid value: 'billing'. Supported values are" })).toBe('request');
         expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'tools[0]', message: "tool 'insufficient_quota' does not exist" })).toBe('request');
         expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'context_length_exceeded', param: 'messages' })).toBe('request');
         expect(whoseProviderError(400, { param: 'messages[0].content[1].image_url' })).toBe('request');
-        expect(whoseProviderError(400, {})).toBe('request');
-        expect(whoseProviderError(422, {})).toBe('request');
+        expect(readProviderError(400, {})).toEqual({ who: 'ours', kind: 'uncertain', reason: 'fieldless_400' });
+        expect(readProviderError(422, {})).toEqual({ who: 'ours', kind: 'uncertain', reason: 'fieldless_400' });
         expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'tools' })).toBe('request');
         expect(whoseProviderError(403, { code: 'moderation_blocked' })).toBe('request');
         expect(whoseProviderError(400, { code: 'context_length_exceeded' })).toBe('request');
@@ -1127,12 +1151,13 @@ describe('what #2078 (bounded provider reads, per-call metering) and #2101 (whos
         expect(settled()[1]).toMatchObject({ jobId: 'job-long-refusal', sent: true, costMicros: 0, tokens: { input: 0, output: 0 } });
     });
 
-    it('does not read a field the cut took away: a refusal whose words come after the bound says nothing of whose it was, and is not noted as ours', async () => {
+    it('does not read a field the cut took away: a refusal whose words come after the bound names no field, so it is unresolved (fieldless), never confirmed as ours', async () => {
         const before = since();
         asJob('job-cut-away');
         upstreamHandler = refused(400, { pad: tooBig, message: 'Unsupported parameter: max_tokens', param: 'max_tokens', code: 'unsupported_parameter', type: 'invalid_request_error' });
         await askAndSettle(agent);
-        expect(notes.endedOnFault('job-cut-away', before)).toBe(false);
+        expect(notes.confirmedSince('job-cut-away', before)).toBe(false);
+        expect((await rowsSent('job-cut-away'))[0]).toMatchObject({ kind: 'uncertain', reason: 'fieldless_400' });
     });
 
     it('keeps a refusal of ours as ours by its status when its answer is too long to keep, and reads nothing the provider only echoed after the cut', async () => {
@@ -1214,5 +1239,145 @@ describe('leadingFieldsOf', () => {
 
     it('is null when no field was said', () => {
         expect(leadingFieldsOf('<html>Bad gateway</html>')).toBeNull();
+    });
+});
+
+describe('the rows the relay sends to Orbit’s fault record', () => {
+    const agent = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
+    const since = () => Date.now() - 1;
+    const asJob = (jobId: string) => orbit.identify.mockResolvedValue({ ok: true, jobId, botId: BOT });
+    const refused = (status: number, error: Record<string, unknown>) => (_req: express.Request, res: express.Response) => res.status(status).json({ error });
+    const cutStream = (_req: express.Request, res: express.Response) => {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+        setTimeout(() => res.socket?.destroy(), 10);
+    };
+
+    it('sends one row per failed agent call with its job, turn, call, kind, reason, source, route and upstream status, and nothing for an answer', async () => {
+        asJob('job-rows-401');
+        notes.turn('job-rows-401', 4);
+        upstreamHandler = refused(401, { message: 'revoked' });
+        await askAndSettle(agent, 1);
+        const rows = await rowsSent('job-rows-401');
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ turn: 4, kind: 'fault', reason: 'provider_key_ours', source: 'universe-ai', route: `universe-ai:${config().providerId}`, providerStatus: 401 });
+        expect(typeof rows[0].callId).toBe('string');
+        expect(Number.isNaN(Date.parse(rows[0].at))).toBe(false);
+        // the call id is the one Orbit settled the call under
+        expect(settled()[0].callId).toBe(rows[0].callId);
+
+        asJob('job-rows-ok');
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { content: 'hi' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+        await askAndSettle(agent, 2);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(rowsOf('job-rows-ok')).toEqual([]);
+    });
+
+    it('tells a confirmed fault (our key or model refused, no route, no room, Orbit down) from an unresolved one (the provider’s 5xx or 429, a stream that broke) and from the person’s side', async () => {
+        const reasons = async (jobId: string, count: number) => (await rowsSent(jobId, count)).map((row) => `${row.kind}:${row.reason}`);
+        let settledCount = 0;
+        const call = async (name: string, handler: typeof upstreamHandler, body: unknown = agent) => {
+            asJob(name);
+            upstreamHandler = handler;
+            settledCount += 1;
+            await askAndSettle(body, settledCount);
+        };
+        await call('job-r-500', refused(500, { message: 'down' }));
+        expect(await reasons('job-r-500', 1)).toEqual(['uncertain:provider_5xx']);
+        await call('job-r-429', refused(429, { message: 'Rate limit reached for gpt-4o: Limit 30000, Used 28000, Requested 5000.' }));
+        expect(await reasons('job-r-429', 1)).toEqual(['uncertain:provider_429']);
+        await call('job-r-429-large', refused(429, { message: 'Request too large for gpt-4o: Limit 30000, Requested 45000. Must be reduced.' }));
+        expect(await reasons('job-r-429-large', 1)).toEqual(['not_ours:field_job_set']);
+        await call('job-r-404', refused(404, { message: 'The model does not exist', code: 'model_not_found' }));
+        expect(await reasons('job-r-404', 1)).toEqual(['fault:provider_key_ours']);
+        await call('job-r-fieldless', refused(400, { message: 'bad request' }));
+        expect(await reasons('job-r-fieldless', 1)).toEqual(['uncertain:fieldless_400']);
+        await call('job-r-relayfield', refused(400, { message: 'Invalid value', param: 'model' }));
+        expect(await reasons('job-r-relayfield', 1)).toEqual(['uncertain:field_relay_set']);
+        await call('job-r-jobfield', refused(400, { message: 'Invalid value', param: 'temperature' }));
+        expect(await reasons('job-r-jobfield', 1)).toEqual(['not_ours:field_job_set']);
+        await call('job-r-cut', cutStream, { ...agent, stream: true });
+        expect(await reasons('job-r-cut', 1)).toEqual(['uncertain:stream_cut']);
+    });
+
+    it('records the faults that come before any provider call: Orbit down, no room, no route, a route Orbit has no way to call, and the person’s own key resting', async () => {
+        asJob('job-r-authorize');
+        orbit.authorize.mockRejectedValue(new Error('down'));
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-r-authorize'))[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
+
+        asJob('job-r-pool');
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool' });
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-r-pool'))[0]).toMatchObject({ kind: 'fault', reason: 'pool_busy' });
+
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
+        asJob('job-r-allowance');
+        expect((await ask(agent)).status).toBe(429);
+        expect((await rowsSent('job-r-allowance'))[0]).toMatchObject({ kind: 'not_ours', reason: 'allowance', providerStatus: 429 });
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'rule' });
+        asJob('job-r-rule');
+        expect((await ask(agent)).status).toBe(429);
+        expect((await rowsSent('job-r-rule'))[0]).toMatchObject({ kind: 'not_ours', reason: 'rule' });
+
+        orbit.authorize.mockResolvedValue({ ok: true });
+        asJob('job-r-noroute');
+        route = null;
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-r-noroute'))[0]).toMatchObject({ kind: 'fault', reason: 'route_unknown', source: 'universe-ai' });
+
+        asJob('job-r-resting');
+        route = { restingOwnKey: true } as unknown as RelayRoute;
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-r-resting'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider', source: 'own-key' });
+    });
+
+    it('records a person’s own provider failing as the person’s side, never a fault', async () => {
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-r-own');
+        upstreamHandler = refused(500, { message: 'their provider is down' });
+        await askAndSettle(agent);
+        expect((await rowsSent('job-r-own'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider', source: 'own-key', route: 'own-key', providerStatus: 500 });
+        expect(notes.confirmedSince('job-r-own', since())).toBe(false);
+        expect(notes.sawSince('job-r-own', since())).toBe(true);
+    });
+
+    it('notes the person’s side for a gone endpoint and a cut stream on their own key (what the runner reads), and sends a row for each', async () => {
+        const before = since();
+        route = { config: config({ endpoint: 'http://127.0.0.1:1/v1' }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-own-gone');
+        await askAndSettle(agent, 1);
+        expect(notes.endedOnFault('job-own-gone', before)).toBe(false);
+        expect(notes.sawSince('job-own-gone', before)).toBe(true);
+        expect((await rowsSent('job-own-gone'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider' });
+
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-own-cut');
+        upstreamHandler = cutStream;
+        const cut = await ask({ ...agent, stream: true });
+        await cut.text().catch(() => '');
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(2), { timeout: 3000 });
+        expect(notes.endedOnFault('job-own-cut', before)).toBe(false);
+        expect(notes.sawSince('job-own-cut', before)).toBe(true);
+        expect((await rowsSent('job-own-cut'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider' });
+    });
+
+    it('sends nothing for a side call with no tools, and is not held up by an Orbit that cannot take the rows', async () => {
+        asJob('job-r-side');
+        upstreamHandler = refused(500, { message: 'down' });
+        await askAndSettle({ messages }, 1);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(rowsOf('job-r-side')).toEqual([]);
+
+        sinkAnswers = false;
+        asJob('job-r-orbit-down');
+        upstreamHandler = refused(500, { message: 'down' });
+        const answer = await ask(agent);
+        expect(answer.status).toBe(500);
+        // the runner of the job can still read the fault in this process, and the rows wait to be sent
+        expect(notes.endedOnFault('job-r-orbit-down', since())).toBe(true);
+        sinkAnswers = true;
+        expect(await notes.flush('job-r-orbit-down')).toBe(true);
+        expect(rowsOf('job-r-orbit-down')).toHaveLength(1);
     });
 });

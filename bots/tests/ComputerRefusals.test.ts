@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRefusalNotes, REFUSAL_NOTE_KEEP_MS } from '../server/ComputerRefusals';
+import { createRefusalNotes, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -54,3 +54,131 @@ describe('how a job’s model calls fared on Universe’s side', () => {
     });
 });
 
+
+describe('the durable record of how a job’s model calls ended (sent to Orbit)', () => {
+    const call = (callId: string, over: Partial<Parameters<ReturnType<typeof createRefusalNotes>['record']>[2]> = {}) => ({
+        callId,
+        kind: 'fault' as const,
+        reason: 'provider_key_ours' as const,
+        source: 'universe-ai' as const,
+        route: 'universe-ai:p1',
+        providerStatus: 401 as number | null,
+        ...over,
+    });
+    const rig = (answers: boolean[] = []) => {
+        const sent: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
+        let at = 1000;
+        const notes = createRefusalNotes(() => at, {
+            retryMs: [0, 0],
+            sink: async (botId, jobId, rows) => {
+                const answer = answers.length > 0 ? (answers.shift() as boolean) : true;
+                if (answer) sent.push({ botId, jobId, rows: rows.map((row) => ({ ...row })) });
+                return answer;
+            },
+        });
+        return { notes, sent, advance: (ms: number) => (at += ms) };
+    };
+
+    it('stamps a row with the turn the runner was on, the ids, the reason and the time, and sends it to Orbit with the job’s bot', async () => {
+        const { notes, sent } = rig();
+        notes.turn('job-1', 3);
+        notes.record('bot-1', 'job-1', call('call-a'));
+        expect(await notes.flush('job-1')).toBe(true);
+        expect(sent).toEqual([
+            {
+                botId: 'bot-1',
+                jobId: 'job-1',
+                rows: [{ turn: 3, callId: 'call-a', kind: 'fault', reason: 'provider_key_ours', source: 'universe-ai', route: 'universe-ai:p1', providerStatus: 401, at: new Date(1000).toISOString() }],
+            },
+        ]);
+    });
+
+    it('sends nothing for an answer, notes it as one, and keeps a fault that a later answer made good as no fault of the turn’s end', async () => {
+        const { notes, sent } = rig();
+        notes.record('b', 'j', call('c1', { kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 }));
+        expect(notes.endedOnFault('j', 0)).toBe(true);
+        notes.record('b', 'j', call('c2', { kind: 'answered' }));
+        expect(notes.endedOnFault('j', 0)).toBe(false);
+        await notes.flush('j');
+        expect(sent.flatMap((entry) => entry.rows.map((row) => row.callId))).toEqual(['c1']);
+    });
+
+    it('counts a confirmed fault apart from an unresolved one, and a person’s side as neither', () => {
+        const { notes } = rig();
+        notes.record('b', 'a', call('c1', { kind: 'uncertain', reason: 'timeout_no_output', providerStatus: null }));
+        expect(notes.endedOnFault('a', 0)).toBe(true);
+        expect(notes.confirmedSince('a', 0)).toBe(false);
+        notes.record('b', 'a', call('c2', { kind: 'fault', reason: 'relay_down', providerStatus: 503 }));
+        expect(notes.confirmedSince('a', 0)).toBe(true);
+        expect(notes.confirmedSince('a', 1001)).toBe(false);
+        notes.record('b', 'p', call('c3', { kind: 'not_ours', reason: 'allowance', providerStatus: 429 }));
+        expect(notes.sawSince('p', 0)).toBe(true);
+        expect(notes.endedOnFault('p', 0)).toBe(false);
+        expect(notes.confirmedSince('p', 0)).toBe(false);
+    });
+
+    it('keeps rows Orbit did not take and sends them again, in batches of at most 50, without losing or doubling any', async () => {
+        const { notes, sent } = rig([false, false, true]);
+        for (let n = 0; n < 120; n++) notes.record('b', 'j', call(`c${n}`, { kind: 'uncertain', reason: 'stream_cut', providerStatus: null }));
+        expect(await notes.flush('j')).toBe(true);
+        const ids = sent.flatMap((entry) => entry.rows.map((row) => row.callId));
+        expect(new Set(ids).size).toBe(120);
+        expect(ids).toHaveLength(120);
+        expect(Math.max(...sent.map((entry) => entry.rows.length))).toBeLessThanOrEqual(FAULT_ROWS_PER_CALL);
+    });
+
+    it('says false when Orbit stays unreachable, keeps the rows, and sends them on the next flush', async () => {
+        const { notes, sent } = rig([false, false, false, false, false, false, false, false]);
+        notes.record('b', 'j', call('c1'));
+        expect(await notes.flush('j')).toBe(false);
+        expect(sent).toHaveLength(0);
+        // Orbit is back (the scripted answers ran out: the sink says yes)
+        expect(await notes.flush('j')).toBe(true);
+        expect(sent.flatMap((entry) => entry.rows.map((row) => row.callId))).toEqual(['c1']);
+    });
+
+    it('does not keep a sink’s exception from ending a flush, and sends the same row again after an upgrade', async () => {
+        let first = true;
+        const sent: CallRow[][] = [];
+        const notes = createRefusalNotes(() => 1000, {
+            retryMs: [0],
+            sink: async (_b, _j, rows) => {
+                if (first) {
+                    first = false;
+                    throw new Error('network');
+                }
+                sent.push(rows.map((row) => ({ ...row })));
+                return true;
+            },
+        });
+        notes.record('b', 'j', call('c1', { kind: 'uncertain', reason: 'fieldless_400', providerStatus: 400 }));
+        expect(await notes.flush('j')).toBe(true);
+        notes.record('b', 'j', call('c1', { kind: 'fault', reason: 'provider_key_ours', providerStatus: 401 }));
+        expect(await notes.flush('j')).toBe(true);
+        expect(sent.map((rows) => rows.map((row) => row.kind))).toEqual([['uncertain'], ['fault']]);
+    });
+
+    it('is true for a job with nothing to send, and with no sink at all (the in-process notes still work)', async () => {
+        const { notes } = rig();
+        expect(await notes.flush('nothing')).toBe(true);
+        const plain = createRefusalNotes(() => 1000);
+        plain.record('b', 'j', call('c1'));
+        expect(await plain.flush('j')).toBe(true);
+        expect(plain.endedOnFault('j', 0)).toBe(true);
+    });
+
+    it('cuts a long call id and route to what Orbit takes, and forgets the rows of a finished job after a while', async () => {
+        const { notes, sent, advance } = rig();
+        notes.record('b', 'j', call('x'.repeat(300), { route: 'r'.repeat(300) }));
+        await notes.flush('j');
+        expect(sent[0].rows[0].callId).toHaveLength(120);
+        expect(sent[0].rows[0].route).toHaveLength(80);
+        const down = rig([false, false, false, false, false, false, false, false]);
+        down.notes.record('b', 'old', call('c1'));
+        expect(await down.notes.flush('old')).toBe(false);
+        down.advance(REFUSAL_NOTE_KEEP_MS + 1);
+        down.notes.record('b', 'new', call('c2'));
+        advance(0);
+        expect(await down.notes.flush('old')).toBe(true);
+    });
+});
