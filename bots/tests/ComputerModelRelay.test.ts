@@ -709,8 +709,22 @@ describe('how a call ended, for the runner', () => {
         await inBody('job-200-param', { code: 400, message: 'invalid parameter', param: 'model' });
         await inBody('job-200-tools', { type: 'invalid_request_error', message: 'bad schema', param: 'tools[0]' });
         await inBody('job-200-422', { code: 422, message: 'unprocessable' });
+        await inBody('job-200-key', { type: 'invalid_request_error', code: 'invalid_api_key', param: null, message: 'Incorrect API key provided' });
+        await inBody('job-200-model', { type: 'invalid_request_error', code: 'model_not_found', param: 'messages', message: 'The model does not exist' });
         for (const name of ['job-200-400', 'job-200-context', 'job-200-moderation', 'job-200-tools', 'job-200-422']) expect(notes.endedOnFault(name, before)).toBe(false);
-        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode', 'job-200-param']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode', 'job-200-param', 'job-200-key', 'job-200-model']) expect(notes.endedOnFault(name, before)).toBe(true);
+    });
+
+    it('reads a key or model error inside a stream as ours, whatever type it carries', async () => {
+        const before = since();
+        asJob('job-stream-key');
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ error: { type: 'invalid_request_error', code: 'invalid_api_key', param: null, message: 'Incorrect API key provided' } })}\n\n`);
+            res.end();
+        };
+        await askAndSettle({ ...agent, stream: true });
+        expect(notes.endedOnFault('job-stream-key', before)).toBe(true);
     });
 
     it('does not let a side call that carries no tools make or unmake a fault of the turn', async () => {
@@ -773,6 +787,13 @@ describe('whoseProviderError', () => {
         expect(whoseProviderError(402, { type: 'invalid_request_error' })).toBe('ours');
         expect(whoseProviderError(404, { type: 'invalid_request_error', code: 'model_not_found', param: 'messages' })).toBe('ours');
         expect(whoseProviderError(403, { type: 'invalid_request_error', param: 'tools' })).toBe('ours');
+        // with no status (an error object inside a 200 or a stream) the error names it itself
+        expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'invalid_api_key', param: null })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'model_not_found', param: 'messages' })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'insufficient_quota', code: 'insufficient_quota' })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'billing_hard_limit_reached' })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'temperature' })).toBe('request');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'context_length_exceeded', param: 'messages' })).toBe('request');
         expect(whoseProviderError(400, { param: 'messages[0].content[1].image_url' })).toBe('request');
         expect(whoseProviderError(400, {})).toBe('request');
         expect(whoseProviderError(422, {})).toBe('request');

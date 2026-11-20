@@ -150,6 +150,8 @@ function wordsOf(text: string): string {
 }
 
 /** A provider that says our key is wrong is our problem, not Hermes's: Hermes must not read it as its own key being refused. */
+/** What an error says when it is about our key, our credit or our model, whatever else it carries: ours. */
+const KEY_WORDS = /invalid[_ -]?api[_ -]?key|incorrect api key|model[_ -]?not[_ -]?found|does not exist|insufficient[_ -]?(quota|funds|credit)|billing|exceeded your (current )?quota|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
 const CONTENT_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?(length|window)|maximum context|too many tokens|token limit|prompt (is )?too long|too large/i;
 /** The fields of a call that the relay sets itself; every other field is what the job's own machine sent, and a job's words can steer it. */
 const RELAY_FIELDS = new Set(['model', 'max_tokens', 'max_completion_tokens', 'n', 'stream', 'stream_options']);
@@ -173,6 +175,8 @@ export function whoseProviderError(status: number | null, error: unknown): 'ours
     if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
     if (numeric === 413) return 'request';
     if (CONTENT_WORDS.test(words)) return 'request';
+    // Our key, our credit or our model, named by the error itself: ours, before its shape is looked at (an error with no status says it only so)
+    if (KEY_WORDS.test(words)) return 'ours';
     // A refusal of the shape of the call: ours only when it names a field the relay itself sets
     // (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is about our key or our model)
     const badShape = numeric === null ? record.type === 'invalid_request_error' || typeof record.param === 'string' : numeric === 400 || numeric === 422;
