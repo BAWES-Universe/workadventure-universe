@@ -330,6 +330,34 @@ describe('the durable record of how a job’s model calls ended (sent to Orbit)'
         }
     });
 
+    it('sends a row that was queued while the sender was going idle: it joined a sender that had already looked and would otherwise stay unsent', async () => {
+        // The row is queued after a number of microtask ticks that is tried from 0 up, so one of them falls between the sender's last look at its rows
+        // and the moment it is gone, wherever that moment is
+        for (let ticks = 0; ticks < 12; ticks++) {
+            const sent: string[] = [];
+            let queuedSecond = false;
+            const notes: ReturnType<typeof createRefusalNotes> = createRefusalNotes(() => 1000, {
+                retryMs: [],
+                laterMs: [],
+                sink: async (_bot, _job, rows) => {
+                    sent.push(...rows.map((row) => row.callId));
+                    if (!queuedSecond) {
+                        queuedSecond = true;
+                        let wait: Promise<void> = Promise.resolve();
+                        for (let tick = 0; tick < ticks; tick++) wait = wait.then(() => undefined);
+                        void wait.then(() => notes.record('b', 'j', call('second')));
+                    }
+                    return true;
+                },
+            });
+            notes.record('b', 'j', call('first'));
+            await vi.waitFor(() => expect(sent).toEqual(['first', 'second']), { timeout: 1000 });
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            // once each: a row Orbit took is final
+            expect(sent).toEqual(['first', 'second']);
+        }
+    });
+
     it('lets a call that belongs to a turn or a run the runner has left send its row, but not change what the runner reads for the turn it is on', async () => {
         const { notes, sent } = rig();
         notes.turn('j', 1, 'run-a');

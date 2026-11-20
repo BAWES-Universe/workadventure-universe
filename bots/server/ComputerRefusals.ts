@@ -209,6 +209,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         });
         void entry.sending.then((sent) => {
             if (!sent) later(jobId);
+            // A row that was queued while the sender was going idle joined a sender that had already looked: it is sent now that the sender is gone
+            // (a failed send stays on its own schedule)
+            else if (entry.rows.size > 0 && queued.get(jobId) === entry) void send(jobId);
         });
         return entry.sending;
     };
