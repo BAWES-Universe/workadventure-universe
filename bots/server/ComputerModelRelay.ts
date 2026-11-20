@@ -214,6 +214,8 @@ interface Ended {
     notSent: boolean;
     /** The call failed on our side before the provider was asked (its stored key could not be read): ours whoever's key it is. */
     relaySide?: boolean;
+    /** The provider answered 200 but put an error in its stream: no answer, the provider's fault. */
+    streamError?: boolean;
 }
 
 export function createComputerModelRelay(deps: RelayDeps): Router {
@@ -325,7 +327,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             }
             if (!allowed.ok) {
                 const reason = 'reason' in allowed ? allowed.reason : 'refused';
-                if (reason === 'allowance' || reason === 'rule') deps.refusals?.note(jobId);
+                if ((reason === 'allowance' || reason === 'rule') && agentCall) deps.refusals?.note(jobId);
                 if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
                 if (reason === 'rule') return problem(res, 429, 'A spending rule stops this call.', 'insufficient_quota', 'insufficient_quota');
                 if (reason === 'pool') return fault(503, 'Computers are busy right now. Try again in a moment.', 'overloaded');
@@ -341,9 +343,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     // person's own key the provider, the key and the endpoint are theirs (their credit ran out, their key was revoked)
                     if (agentCall) {
                         // A caller that went away is no fault of anyone's (the 504 written for a cut-off wait goes to nobody)
-                        const providerSaid = !gone && (res.statusCode >= 500 || res.statusCode === 429 || ended.cutShort);
-                        if (providerSaid && (source !== 'own-key' || ended.relaySide)) deps.refusals?.fault(jobId);
-                        else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
+                        const providerSaid = !gone && (res.statusCode >= 500 || res.statusCode === 429 || ended.cutShort || ended.streamError === true);
+                        if (providerSaid) {
+                            if (source !== 'own-key' || ended.relaySide) deps.refusals?.fault(jobId);
+                            // A person's own provider failing is not ours: it is noted on the person's side, so the runner never ends the job as ours for it
+                            else deps.refusals?.note(jobId);
+                        } else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
                     }
                 }
             } catch (error) {
@@ -351,9 +356,15 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 // An error nobody expected, while the provider was being called: ours only when the provider is ours
                 if (!res.headersSent) {
                     if (source !== 'own-key' && !gone) fault(502, 'The AI did not answer.', 'upstream_error');
-                    else problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
+                    else {
+                        if (agentCall && !gone) deps.refusals?.note(jobId);
+                        problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
+                    }
                 } else {
-                    if (agentCall && source !== 'own-key' && !gone) deps.refusals?.fault(jobId);
+                    if (agentCall && !gone) {
+                        if (source !== 'own-key') deps.refusals?.fault(jobId);
+                        else deps.refusals?.note(jobId);
+                    }
                     res.end();
                 }
                 ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
@@ -476,6 +487,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
                 }
                 res.status(200).json(data);
+                const answerError = Boolean((data as { error?: unknown }).error) && !data.choices?.length;
                 const usage = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
                 const message = data.choices?.[0]?.message;
                 // What the model wrote counts whether it was words, thinking or a tool call
@@ -485,6 +497,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     outputChars: written,
                     cutShort,
                     notSent: false,
+                    ...(answerError ? { streamError: true } : {}),
                 };
             }
 
@@ -501,12 +514,15 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             let pending = '';
             let usage: CallMetadata | undefined;
             let outputChars = 0;
+            let streamError = false;
             const read = (line: string) => {
                 if (!line.startsWith('data:')) return;
                 const data = line.slice(5).trim();
                 if (!data || data === '[DONE]') return;
                 try {
-                    const chunk = JSON.parse(data) as { usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
+                    const chunk = JSON.parse(data) as { error?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
+                    // A provider can answer 200 and put its error in the stream: that is no answer
+                    if (chunk.error) streamError = true;
                     if (chunk.usage) usage = { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, ...readUsageDetail(chunk.usage) };
                     for (const choice of chunk.choices ?? []) {
                         if (typeof choice.delta?.content === 'string') outputChars += choice.delta.content.length;
@@ -538,7 +554,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 }
                 if (!res.writableEnded) res.end();
             }
-            return { usage, outputChars, cutShort, notSent: false };
+            return { usage, outputChars, cutShort, notSent: false, ...(streamError ? { streamError: true } : {}) };
         } finally {
             clearTimeout(timer);
             res.off('close', onClose);

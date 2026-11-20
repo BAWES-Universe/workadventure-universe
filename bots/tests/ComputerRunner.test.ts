@@ -326,6 +326,19 @@ describe('a job that runs', () => {
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
         });
 
+        it('ends as the agent’s when turns failed on a person’s own provider (noted on their side), never as ours', async () => {
+            const failing = (notes: ReturnType<typeof createRefusalNotes>) => () => (notes.note(JOB.jobId), [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'upstream_error', message: 'The AI did not answer.' }] as RunnerEvent[]);
+            let t = 0;
+            const clock = () => ++t;
+            const notes = createRefusalNotes(clock);
+            const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => failing(notes)));
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await runner.idle();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        });
+
         it('still takes the agent’s own ending from a turn, and a turn that completed ahead of a done marker is done', async () => {
             const { notes, seen, run } = rig([() => (notes.fault(JOB.jobId), notes.answered(JOB.jobId), done('Finished [[done]]'))]);
             await run();

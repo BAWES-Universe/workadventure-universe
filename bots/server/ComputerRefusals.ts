@@ -2,6 +2,8 @@
  * What the model relay refused for a job because of the person's side of the books (their computer allowance used up, or one of their
  * spending rules), noted for the runner that runs the same job in this process.
  *
+ * A person's own provider, key or endpoint failing (their credit ran out, their key was revoked) is noted the same way: it is their side too.
+ *
  * Why it exists: Hermes sees such a refusal only as a failed call, so a turn that ends because of it looks, to the runner, like any other
  * failed turn. A failed turn Universe is to blame for is given back to the person; one the person's own allowance or rules stopped is not.
  * The relay notes the refusal here and the runner asks, for the turn it just read, whether one came in during it.
@@ -11,7 +13,7 @@
  * Kept in memory only (ids and times, nothing anyone said) and forgotten after a while.
  */
 export interface RefusalNotes {
-    /** The relay refused a call of this job for the person's allowance or a rule of theirs. */
+    /** The relay refused a call of this job for the person's allowance or a rule of theirs, or the person's own provider failed it. */
     note(jobId: string): void;
     /** Whether a refusal was noted for this job at or after this moment (ms). */
     sawSince(jobId: string, sinceMs: number): boolean;

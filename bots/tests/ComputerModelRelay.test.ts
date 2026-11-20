@@ -123,12 +123,12 @@ describe('room before the call', () => {
         const before = Date.now() - 1;
         for (const reason of ['pool', 'refused'] as const) {
             orbit.authorize.mockResolvedValue({ ok: false, reason });
-            await ask({ messages });
+            await ask({ messages, tools: [{ type: 'function', function: { name: 'x' } }] });
         }
         expect(notes.sawSince(JOB, before)).toBe(false);
 
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'rule' });
-        const rule = await ask({ messages });
+        const rule = await ask({ messages, tools: [{ type: 'function', function: { name: 'x' } }] });
         // a rule is said as a refusal for room, not as a wrong key, and the provider is never reached
         expect(rule.status).toBe(429);
         expect((await rule.json()).error.code).toBe('insufficient_quota');
@@ -139,7 +139,7 @@ describe('room before the call', () => {
     it('notes an allowance refusal too', async () => {
         const before = Date.now() - 1;
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
-        await ask({ messages });
+        await ask({ messages, tools: [{ type: 'function', function: { name: 'x' } }] });
         expect(notes.sawSince(JOB, before)).toBe(true);
         expect(notes.sawSince(JOB, Date.now() + 1000)).toBe(false);
     });
@@ -572,6 +572,8 @@ describe('how a call ended, for the runner', () => {
             count += 1;
             await askAndSettle(agent, count);
             expect(notes.endedOnFault(name, before)).toBe(false);
+            // it is noted on the person's side, so a turn that ends on it is never ours
+            expect(notes.sawSince(name, before)).toBe(true);
         }
         asJob('job-own-gone');
         route = { config: config({ endpoint: 'http://127.0.0.1:1/v1' }), source: 'own-key', keyOwnerId: 'person-owner' };
@@ -606,6 +608,42 @@ describe('how a call ended, for the runner', () => {
         await pending;
         await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
         expect(notes.endedOnFault('job-hungup', before)).toBe(false);
+    });
+
+    it('does not note a refusal for the person’s allowance on a side call with no tools', async () => {
+        const before = since();
+        asJob('job-side-refused');
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
+        expect((await ask({ messages })).status).toBe(429);
+        expect(notes.sawSince('job-side-refused', before)).toBe(false);
+        expect((await ask(agent)).status).toBe(429);
+        expect(notes.sawSince('job-side-refused', before)).toBe(true);
+    });
+
+    it('reads an error the provider put in a 200 stream (or a 200 body with no choices) as its fault: ours on our key, the person’s on theirs', async () => {
+        const before = since();
+        const sseError = (_req: express.Request, res: express.Response) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ error: { message: 'overloaded' } })}\n\n`);
+            res.end();
+        };
+        asJob('job-stream-error');
+        upstreamHandler = sseError;
+        await askAndSettle({ ...agent, stream: true });
+        expect(notes.endedOnFault('job-stream-error', before)).toBe(true);
+
+        asJob('job-body-error');
+        upstreamHandler = (_req, res) => res.json({ error: { message: 'overloaded' } });
+        await askAndSettle(agent, 2);
+        expect(notes.endedOnFault('job-body-error', before)).toBe(true);
+
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-own-stream-error');
+        upstreamHandler = sseError;
+        await askAndSettle({ ...agent, stream: true }, 3);
+        expect(notes.endedOnFault('job-own-stream-error', before)).toBe(false);
+        expect(notes.sawSince('job-own-stream-error', before)).toBe(true);
     });
 
     it('does not let a side call that carries no tools make or unmake a fault of the turn', async () => {
