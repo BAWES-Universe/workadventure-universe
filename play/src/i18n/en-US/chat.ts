@@ -1057,6 +1057,9 @@ const chat: BaseTranslation = {
         wokas: "WOKAs",
         readyToTalk: "Ready to talk as soon as you create it, on Universe AI.",
         makeFailed: "Couldn't make the Brick. Try again.",
+        // New Bricks per hour (30 a person, set in Orbit): said kindly, with the real time on their own clock
+        limitReached: "You've made a lot of Bricks this hour. Try again at {time}.",
+        limitReachedLater: "You've made a lot of Bricks this hour. Try again in a few minutes.",
         // The name New Brick starts with, from the colour picked: "Teal Brick"
         lookName: "{colour} Brick",
         colours: {

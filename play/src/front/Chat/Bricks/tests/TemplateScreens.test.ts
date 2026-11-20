@@ -261,6 +261,22 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(game.closeAllModals).not.toHaveBeenCalled();
         });
 
+        it("says the kind line with the time, keeps the sheet, when too many new Bricks were made this hour", async () => {
+            game.getTemplatePreview.mockResolvedValue({ template: template() });
+            game.makeFromTemplate.mockRejectedValue(
+                Object.assign(new Error("limit"), {
+                    status: 429,
+                    code: "new_bricks_limit",
+                    retryAt: new Date(Date.now() + 25 * 60 * 1000).toISOString(),
+                })
+            );
+            await open();
+            await click("templateCreate");
+            expect(game.warn).toHaveBeenCalledTimes(1);
+            expect(game.warn.mock.calls[0][0]).toMatch(/^You've made a lot of Bricks this hour\. Try again at .+\.$/);
+            expect(game.closeAllModals).not.toHaveBeenCalled();
+        });
+
         it("keeps a template for later with Star, and puts it back when Orbit refuses", async () => {
             game.getTemplatePreview.mockResolvedValue({ template: template() });
             await open();

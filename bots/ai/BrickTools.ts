@@ -8,6 +8,7 @@
  * that asks, so neither tool can reach anyone else's Bricks.
  */
 import type { AdminApiService } from '../server/AdminApiService';
+import { BrickLimitReached } from './BrickLimit';
 
 export const MAKE_BRICK_TOOL = 'make_brick';
 export const SUGGEST_BRICK_TOOL = 'suggest_brick';
@@ -194,6 +195,10 @@ async function makeBrick(brickName: string, line: string, instructions: string, 
             ? { made: true, name: brick.name, note: `It is ready and knows its job. Say so in one or two short sentences, and give them this link to its chat, with its words in their language and its address exactly as written: ${chatLink(brick.id)}. It is in their Chats too.` }
             : { made: false, name: brick.name, note: `They already have a Brick of this name, so nothing new was made. Tell them, and give them this link to its chat, with its words in their language and its address exactly as written: ${chatLink(brick.id)}. Make a second only if they ask for one.` };
     } catch (error) {
+        // Over "New Bricks per hour": nothing was made, and trying again now cannot work. Orbit's line names when it can.
+        if (error instanceof BrickLimitReached) {
+            return { error: `They have made a lot of Bricks this hour, so no new one can be made yet. Do not try again. Tell them so in their language in one or two kind sentences, with the time in this line exactly as written: "${error.line}"` };
+        }
         console.warn('[BrickTools] Could not make a Brick:', error instanceof Error ? error.message : error);
         return { error: 'The Brick could not be made just now. Say so in one plain sentence and offer to try again.' };
     }

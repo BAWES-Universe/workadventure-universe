@@ -455,6 +455,7 @@ export class BotApiService {
         code?: string;
         reason?: string;
         place?: string;
+        retryAt?: string;
     }> {
         const errorText = await response.text();
         let message = `API error: ${response.status}`;
@@ -462,6 +463,7 @@ export class BotApiService {
         let code: string | undefined;
         let reason: string | undefined;
         let place: string | undefined;
+        let retryAt: string | undefined;
 
         try {
             const errorJson = JSON.parse(errorText);
@@ -470,6 +472,8 @@ export class BotApiService {
             // Why a Brick's visit was refused, and in which place (#2005): `lives_in` names the room it lives in
             reason = typeof errorJson.reason === "string" ? errorJson.reason : undefined;
             place = typeof errorJson.place === "string" ? errorJson.place : undefined;
+            // When a person over "New Bricks per hour" can make another (ISO time)
+            retryAt = typeof errorJson.retryAt === "string" ? errorJson.retryAt : undefined;
             // Check if it's a session expiration error
             if (
                 message.toLowerCase().includes("session expired") ||
@@ -480,7 +484,7 @@ export class BotApiService {
         } catch {
             message = errorText || message;
         }
-        return { status: response.status, message, isSessionExpired, code, reason, place };
+        return { status: response.status, message, isSessionExpired, code, reason, place, retryAt };
     }
 
     private refusalError(refusal: {
@@ -489,18 +493,21 @@ export class BotApiService {
         code?: string;
         reason?: string;
         place?: string;
+        retryAt?: string;
     }): Error {
         const error = new Error(refusal.message) as Error & {
             status?: number;
             code?: string;
             reason?: string;
             place?: string;
+            retryAt?: string;
         };
         error.status = refusal.status;
         // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
         if (refusal.code !== undefined) error.code = refusal.code;
         if (refusal.reason !== undefined) error.reason = refusal.reason;
         if (refusal.place !== undefined) error.place = refusal.place;
+        if (refusal.retryAt !== undefined) error.retryAt = refusal.retryAt;
         return error;
     }
 
@@ -1334,9 +1341,11 @@ export class BotApiService {
 
     /**
      * Makes another Brick for the signed-in person (game #1996): New Brick on their Bricks page. Answers with
-     * `{ brick }`. Throws when Orbit refuses or can't be reached.
+     * `{ brick }`. Throws when Orbit refuses or can't be reached: with `status` 429 and `code` "new_bricks_limit" (and `retryAt`,
+     * when they can make another) when they have made too many new Bricks this hour. A `requestKey` makes a repeat of the same
+     * request, after a dropped connection, give back the first Brick and not a second one.
      */
-    async makeMyBrick(brick: { name: string; characterTextureId?: string }): Promise<unknown> {
+    async makeMyBrick(brick: { name: string; characterTextureId?: string; requestKey?: string }): Promise<unknown> {
         return await this.brickWrite("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
     }
 
