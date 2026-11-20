@@ -4,7 +4,7 @@ import { newBricksLimitLine } from "../NewBrick";
 const t = {
     limitReached: ({ time }: { time: string }) => `You've made a lot of Bricks this hour. Try again at ${time}.`,
     limitReachedLater: () => "You've made a lot of Bricks this hour. Try again in a few minutes.",
-};
+} as unknown as Parameters<typeof newBricksLimitLine>[2];
 
 describe("the line for a person who made too many new Bricks this hour", () => {
     it("names the time they can make another, on their own clock", () => {
