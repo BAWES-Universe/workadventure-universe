@@ -1629,6 +1629,11 @@ describe('leadingFieldsOf', () => {
         expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":null,"pad":"xx')).toBeNull();
         expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":429,"pad":"xx')).toBeNull();
         expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":true,"pad":"xx')).toBeNull();
+        // a decimal or an exponent is a second say too, not a number to ignore (a whole parse keeps it as the last value)
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":1.5,"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":1e5,"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"code":429,"code":4.5,"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":-2.5E+3,"message":"x","pad":"xx')).toEqual({ message: 'x' });
         expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":{"a":1},"pad":"xx')).toBeNull();
         expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":["x"],"pad":"xx')).toBeNull();
         // a third say of a value that agreed with the first stays unreadable

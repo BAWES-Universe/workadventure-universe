@@ -252,7 +252,11 @@ export function leadingFieldsOf(text: string): Record<string, unknown> | null {
             const token = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(i, i + 40))?.[0] ?? char;
             // a number cut off by the end of the text is not a whole number
             if (i + token.length >= text.length) break;
-            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key) && /^-?\d+$/.test(token)) take(top.key, Number(token));
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key)) {
+                // a whole number is the value; a decimal or an exponent is said as something no code is, so it disagrees like any other second say
+                if (/^-?\d+$/.test(token)) take(top.key, Number(token));
+                else unreadable(top.key);
+            }
             i += token.length;
         } else if (text.startsWith('true', i) || text.startsWith('false', i)) {
             if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key)) unreadable(top.key);
