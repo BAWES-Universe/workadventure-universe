@@ -685,10 +685,13 @@ describe("the Usage page (#1999)", () => {
         expect(stepRows()).toEqual(["Gmail · worked $0.02", "Gmail · didn't work Nothing taken"]);
     });
 
-    it("only calls a task partly done when Orbit says so and a step worked and one did not; otherwise it reads as before", async () => {
+    it("only calls a task partly done when Orbit says so and a step worked; otherwise it reads as before", async () => {
+        // Orbit says every step worked: done. (Orbit saying "partial" with one worked step is partly done, since the other step can be the computer)
         const noFailure = partly({
             id: "act_a",
             title: "All worked",
+            outcome: "done",
+            outcomeNote: undefined,
             actions: [{ label: "gmail", outcome: "worked", text: "Gmail · worked", takenText: null }],
         });
         const noWord = partly({ id: "act_b", title: "Older Orbit", outcome: undefined, outcomeNote: undefined });
