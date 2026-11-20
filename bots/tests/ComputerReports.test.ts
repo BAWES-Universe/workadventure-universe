@@ -144,6 +144,19 @@ describe('what Brick says when a computer job ends or waits', () => {
         expect(text).toContain('I stopped Visa form because of a rule you set. You said: “no more than $1 a month”.');
     });
 
+    it('never says a job is done for any ending but done: a job stopped at a rule or its computer time, and every other report that is not a finished one, says what it is instead', () => {
+        for (const kind of ['failed', 'needs', 'unanswered', 'month', 'rule'] as const) {
+            const text = reportText(report({ kind, why: 'no more than $1 a month' }));
+            expect(text).not.toMatch(/\bis done\b|\bwas done\b|\bfinished it\b/i);
+        }
+        // what did work before the stop is said as what it is, beside the stop, never as the job being done
+        const stopped = reportText(report({ kind: 'rule', effects: [{ kind: 'send', state: 'done', where: 'the embassy' }] }));
+        expect(stopped).toContain('I stopped Visa form because of a rule you set.');
+        expect(stopped).toContain('Sent to the embassy.');
+        expect(stopped).not.toMatch(/\bis done\b/);
+        expect(reportText(report({ kind: 'done' }))).toMatch(/is done\./);
+    });
+
     it('keeps a long title short and without a stop, so the headline is still a headline', () => {
         const text = reportText(report({ title: 'Apply for the tourist visa for two people at the embassy of Kuwait in London.' }));
         expect(firstSentence(text).length).toBeLessThanOrEqual(70);
