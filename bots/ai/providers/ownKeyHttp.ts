@@ -28,8 +28,11 @@ export function statusFromError(error: unknown): number | undefined {
     return status;
 }
 
-/** A login written into an address (`https://user:password@host`), up to the last `@` before the path. */
-const URL_LOGIN = /([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/gi;
+/**
+ * A login written into an address (`https://user:password@host`), up to the last `@` before the path. It starts only where a scheme starts, not
+ * inside a long run of letters: a run of a few tens of thousands of them would be tried from every letter on, for seconds, with the event loop held.
+ */
+const URL_LOGIN = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/gi;
 
 /** A key or token a provider's error text could carry: `Bearer ...`, `sk-...`, `AIza...`, or any long run of key-like characters. */
 const TOKEN_LIKE = /\bBearer\s+\S+|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}|\bAIza[0-9A-Za-z_-]{20,}|[A-Za-z0-9_+/=-]{32,}/g;

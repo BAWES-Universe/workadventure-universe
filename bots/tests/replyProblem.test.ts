@@ -62,6 +62,17 @@ describe('providerErrorText', () => {
         );
     });
 
+    it('does not hold the event loop on a very long run of letters (a refusal read up to the bound), and still drops a login and a key in the same text', () => {
+        const started = Date.now();
+        const text = providerErrorText(`${'x'.repeat(65_536)} https://me:hunter2@llm.example.com/v1 sk-proj-abcDEF1234567890xyz`);
+        // This took about four seconds when the run was tried from every letter
+        expect(Date.now() - started).toBeLessThan(1000);
+        expect(text).toContain('[redacted]');
+        expect(text).not.toContain('hunter2');
+        expect(providerErrorText(`${'x'.repeat(50_000)} see https://me:hunter2@llm.example.com/v1`)).not.toContain('hunter2');
+        expect(providerErrorText('abc https://me:hunter2@host/x and ftp://u:p@h/y')).toBe('abc https://[redacted]@host/x and ftp://[redacted]@h/y');
+    });
+
     it('reads a plain string and an empty error', () => {
         expect(providerErrorText('timeout')).toBe('timeout');
         expect(providerErrorText(new Error(''))).toBe('unknown error');

@@ -16,6 +16,7 @@
  */
 
 import type { AdminApiService } from './AdminApiService';
+import type { RefusalNotes } from './ComputerRefusals';
 import { readRunnerEvents } from './ComputerTurnStream';
 
 export type RunnerEvent =
@@ -34,6 +35,9 @@ export interface RunnableJob {
     writes: boolean;
     hasTurn: boolean;
 }
+
+/** Whose fault a failed job is, as Orbit's finish call takes it: `ours` is given back to the person, `agent` is the person's. */
+export type FinishCause = 'ours' | 'agent';
 
 export type TurnOpened = { ok: true; events: AsyncIterable<RunnerEvent> } | { ok: false; reason: string; responseId?: string };
 
@@ -166,6 +170,8 @@ export interface RunnerDeps {
     sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
     now?: () => number;
     log?: Pick<Console, 'warn' | 'error' | 'info'>;
+    /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault'>>;
 }
 
 const realSleep = (ms: number, signal: AbortSignal) =>
@@ -180,10 +186,15 @@ const realSleep = (ms: number, signal: AbortSignal) =>
         signal.addEventListener('abort', done, { once: true });
     });
 
+const statusOf = (error: unknown): number | undefined => {
+    const status = typeof error === 'object' && error !== null && 'response' in error ? (error as { response?: { status?: unknown } }).response?.status : undefined;
+    return typeof status === 'number' ? status : undefined;
+};
+
 /** An answer from Orbit that says no (a 4xx, other than "slow down" or "try again"), as opposed to an Orbit that could not be reached. */
 function refusedByOrbit(error: unknown): boolean {
-    const status = typeof error === 'object' && error !== null && 'response' in error ? (error as { response?: { status?: unknown } }).response?.status : undefined;
-    return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429;
+    const status = statusOf(error);
+    return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429;
 }
 
 /** An answer from Orbit that says the action came from an older turn than the job is on now (409 `stale`): the job changed hands or paused meanwhile. */
@@ -197,6 +208,13 @@ function staleForOrbit(error: unknown): boolean {
 function fenced(body: Record<string, unknown>, generation: number | undefined): Record<string, unknown> {
     return generation === undefined ? body : { ...body, generation };
 }
+
+/**
+ * An answer from Orbit that says no to what a job told it, as opposed to one that is ours to answer for. Orbit's job route (#981) answers
+ * 200 for everything it does, 404 when the job is gone, 400 when the request does not fit (a bug of ours), 401 when our own key is not
+ * accepted (ours) and 500 when it failed itself (ours). So only a 404, or another 4xx a later Orbit may give for a no, is a refusal.
+ */
+const orbitSaidNo = (error: unknown): boolean => refusedByOrbit(error) && statusOf(error) !== 400 && statusOf(error) !== 401 && statusOf(error) !== 403;
 
 type TurnResult =
     /** The turn ended and what the agent said is here (it may be empty). */
@@ -235,11 +253,21 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
     const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? error.message : '');
 
-    /** Ends the job. 'stale' when Orbit says the turn this comes from is an old one: nothing was ended, and the job is to be read again. */
-    async function finish(job: RunnableJob, outcome: 'done' | 'failed', generation?: number, why?: string | null): Promise<'ended' | 'stale'> {
+    /**
+     * Ends the job at Orbit. A failure says whose it was: `ours` (no relay, a machine that would not get ready, turns that kept going wrong,
+     * a handover Orbit would not take) is given back to the person by Orbit; `agent` (the agent gave up in its own words, or the job used up
+     * every turn it may take) is not. Orbit reads a failure with no cause as the person's, so every failure here names one.
+     * The computer's own sentence about why it could not go on (`why`) goes with a failure, for the message that tells the person: Orbit cleans it before it keeps it.
+     * With the control generation the turn started on, 'stale' says Orbit found the turn an old one: nothing was ended, and the job is to be read again.
+     */
+    async function finish(
+        job: RunnableJob,
+        outcome: 'done' | 'failed',
+        options: { cause?: FinishCause; generation?: number; why?: string | null } = {}
+    ): Promise<'ended' | 'stale'> {
+        const { cause, generation, why } = options;
         let stale = false;
-        // The computer's own sentence about why it could not go on goes with a failure, for the message that tells the person: Orbit cleans it before it keeps it
-        const body = { action: 'finish', outcome, ...(outcome === 'failed' && why ? { why } : {}) };
+        const body = { action: 'finish', outcome, ...(outcome === 'failed' && cause ? { cause } : {}), ...(outcome === 'failed' && why ? { why } : {}) };
         await orbit.action(job.botId, job.jobId, fenced(body, generation)).catch((error) => {
             if (staleForOrbit(error)) stale = true;
             else say('Could not end a job:', error);
@@ -352,7 +380,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // The agent is still on a turn of its own (we lost it, or Orbit restarted): read that one instead of starting another
             if ('reason' in opened && opened.reason === 'busy') opened = await orbit.stream(job.jobId, turnController.signal);
             if ('reason' in opened) {
-                if (opened.reason === 'no_turn') return { kind: 'ended', words: '', failed: false, fenced: false };
+                // A turn that is gone is no silence of the agent's: it counts as a failed turn, like one lost on a reconnect
+                if (opened.reason === 'no_turn') return { kind: 'ended', words: '', failed: true, fenced: false };
                 return opened.reason === 'failed' ? { kind: 'ended', words: '', failed: true, fenced: false } : { kind: 'look' };
             }
 
@@ -405,7 +434,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function work(job: RunnableJob, signal: AbortSignal): Promise<void> {
         if (!deps.relayUrl) {
             log.error('[ComputerRunner] A job cannot run: no address is set for the model relay (COMPUTER_RELAY_URL or BOT_SERVER_URL).');
-            await finish(job, 'failed');
+            await finish(job, 'failed', { cause: 'ours' });
             return;
         }
         // The job's own first words stay the ones to send until the agent has taken a turn: a turn that could not be started, or a take-over
@@ -419,6 +448,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let bad = 0;
         // The generation the last turn started on: a job that was taken and given back between two turns is read on a later one
         let lastGeneration: number | undefined;
+        // Whether any turn of the bad streak was not a failure of ours (the agent said nothing, or the person's allowance or a rule stopped it)
+        let notOurs = false;
+        // Where the turn being read began. It is kept while the same turn is read again after a reconnect that could not be made (a refusal
+        // that came before it must still be seen), and starts again with the next turn or after the person had the machine
+        let turnStartedAt: number | null = null;
         for (;;) {
             if (signal.aborted) return;
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
@@ -431,6 +465,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (state.status !== 'running' || state.control !== 'brick') {
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;
+                turnStartedAt = null;
                 input = follow(RESUME_PROMPT);
                 continue;
             }
@@ -446,7 +481,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             };
             if (++turns > RUNNER_GUARDS.maxTurns) {
                 say('A job took more turns than allowed and was ended.');
-                if ((await finish(job, 'failed', generation)) === 'stale') {
+                if ((await finish(job, 'failed', { cause: 'agent', generation })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -461,13 +496,14 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             if (ready === 'failed') {
-                if ((await finish(job, 'failed', generation)) === 'stale') {
+                if ((await finish(job, 'failed', { cause: 'ours', generation })) === 'stale') {
                     await readAgain();
                     continue;
                 }
                 return;
             }
 
+            turnStartedAt ??= now();
             const result = await oneTurn(job, input, signal, renewing, accepted, generation);
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
@@ -479,6 +515,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 await sleep(timing.waitMs, signal);
                 continue;
             }
+
+            // The turn has ended: its refusal window is read once, and the next turn starts its own
+            const readFrom = turnStartedAt;
+            turnStartedAt = null;
 
             // Only what Orbit still says is Brick's is acted on: if the person took over meanwhile, their hands win and the words are dropped.
             // An Orbit that cannot be asked is not a yes: the words wait for it, and the agent is nudged on instead
@@ -498,6 +538,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (back !== 'back') return;
                 input = follow(RESUME_PROMPT);
                 bad = 0;
+                notOurs = false;
                 continue;
             }
             // The job changed hands or paused while the turn went on (even if it is Brick's again): the turn is an old one, so its words are
@@ -515,7 +556,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
             const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
             if (ending.kind === 'done' || ending.kind === 'failed') {
-                if ((await finish(job, ending.kind, generation, ending.kind === 'failed' ? whyOf(result.words) : undefined)) === 'stale') {
+                const ended = ending.kind === 'done' ? await finish(job, 'done', { generation }) : await finish(job, 'failed', { cause: 'agent', generation, why: whyOf(result.words) });
+                if (ended === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -523,10 +565,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             }
             if (ending.kind === 'handover') {
                 bad = 0;
+                notOurs = false;
                 // The person is only told to come when Orbit took the handover: if it did not, waiting would take the job straight
                 // back to Brick as if they had finished, so it is asked again, and a job that cannot be handed over is ended
                 let handed = false;
                 let stale = false;
+                // Orbit answered no at least once: then it is not Orbit that could not be reached, and the failure is not ours to answer for
+                let refusedHandover = false;
                 for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && !handed && !stale; attempt++) {
                     if (signal.aborted) return;
                     if (attempt > 0) await sleep(timing.waitMs, signal);
@@ -544,11 +589,19 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                             )
                         )
                         // An answer that says it was refused (ok false) is no handover
-                        .then((answer) => answer.ok !== false)
+                        .then((answer) => {
+                            if (answer.ok === false) refusedHandover = true;
+                            return answer.ok !== false;
+                        })
                         .catch((error) => {
                             // An old turn's handover is no failure to hand over: the job is read again, and not ended
-                            if (staleForOrbit(error)) stale = true;
-                            else say('Could not hand over:', error);
+                            if (staleForOrbit(error)) {
+                                stale = true;
+                                return false;
+                            }
+                            say('Could not hand over:', error);
+                            // A refusal Orbit gave as an error status is a no all the same; only an Orbit that could not be reached is ours
+                            if (orbitSaidNo(error)) refusedHandover = true;
                             return false;
                         });
                 }
@@ -557,7 +610,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     continue;
                 }
                 if (!handed) {
-                    if ((await finish(job, 'failed', generation)) === 'stale') {
+                    if ((await finish(job, 'failed', { cause: refusedHandover ? 'agent' : 'ours', generation })) === 'stale') {
                         await readAgain();
                         continue;
                     }
@@ -569,10 +622,26 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             // No ending said: carry on, but not for ever when turns keep going wrong
-            bad = result.failed || result.words.trim() === '' ? bad + 1 : 0;
+            // A bad turn is one that failed, said nothing, or ended on a fault of ours. It is Universe's failure only when the turn really failed
+            // (a model or transport error, a stream that broke) and nothing of the person's (their allowance, a rule of theirs) stopped it: a
+            // turn with no words at all can be what the job asked for ("never reply in text"), so it is the agent's, and the streak is ours
+            // only when every turn of it was ours. A refusal only decides whose a bad turn is: a turn that went on and said something after one
+            // call was refused is no bad turn (the agent got round it), so a job is never ended for refusals it recovered from.
+            // Hermes can hand an error of ours back as a finished turn, with the error as its words or with none: the relay says whether the
+            // turn's last call failed for a fault of ours (nothing answered after it), and then the turn is a bad one that is ours, words or not
+            const silent = !result.failed && result.words.trim() === '';
+            const ourFault = (!result.failed && readFrom !== null && deps.refusals?.endedOnFault?.(job.jobId, readFrom)) || false;
+            if (result.failed || silent || ourFault) {
+                const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
+                bad += 1;
+                if (refused || (silent && !ourFault)) notOurs = true;
+            } else {
+                bad = 0;
+                notOurs = false;
+            }
             if (bad >= RUNNER_GUARDS.maxBadTurns) {
                 say('A job kept failing to answer and was ended.');
-                if ((await finish(job, 'failed', generation)) === 'stale') {
+                if ((await finish(job, 'failed', { cause: notOurs ? 'agent' : 'ours', generation })) === 'stale') {
                     await readAgain();
                     continue;
                 }
