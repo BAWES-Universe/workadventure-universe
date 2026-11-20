@@ -2,7 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
-import { createComputerModelRelay, estimateCallMicros, inputTokensOf, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { createRefusalNotes } from '../server/ComputerRefusals';
+import { createComputerModelRelay, estimateCallMicros, inputTokensOf, jobsOwnLimit, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -50,6 +51,8 @@ const listen = (app: express.Express) => new Promise<Server>((resolve) => { cons
 const urlOf = (server: Server) => `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 const messages = [{ role: 'user', content: 'Fill the form' }];
 
+const notes = createRefusalNotes();
+
 beforeAll(async () => {
     const up = express();
     up.use(express.json());
@@ -62,7 +65,7 @@ beforeAll(async () => {
 
     orbit = { identify: vi.fn(), authorize: vi.fn(), settle: vi.fn() } as never;
     const app = express();
-    app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1] }));
+    app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], refusals: notes }));
     relay = await listen(app);
     relayBase = urlOf(relay);
 });
@@ -116,6 +119,31 @@ describe('who may call', () => {
 });
 
 describe('room before the call', () => {
+    it('notes a refusal for the person’s allowance or a rule of theirs for the job, and no other refusal', async () => {
+        const before = Date.now() - 1;
+        for (const reason of ['pool', 'refused'] as const) {
+            orbit.authorize.mockResolvedValue({ ok: false, reason });
+            await ask({ messages, tools: [{ type: 'function', function: { name: 'x' } }] });
+        }
+        expect(notes.sawSince(JOB, before)).toBe(false);
+
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'rule' });
+        const rule = await ask({ messages, tools: [{ type: 'function', function: { name: 'x' } }] });
+        // a rule is said as a refusal for room, not as a wrong key, and the provider is never reached
+        expect(rule.status).toBe(429);
+        expect((await rule.json()).error.code).toBe('insufficient_quota');
+        expect(upstreamRequests).toHaveLength(0);
+        expect(notes.sawSince(JOB, before)).toBe(true);
+    });
+
+    it('notes an allowance refusal too', async () => {
+        const before = Date.now() - 1;
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
+        await ask({ messages, tools: [{ type: 'function', function: { name: 'x' } }] });
+        expect(notes.sawSince(JOB, before)).toBe(true);
+        expect(notes.sawSince(JOB, Date.now() + 1000)).toBe(false);
+    });
+
     it('is asked of Orbit for this one call before anything is sent, and a refusal is said with its reason', async () => {
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
         const answer = await ask({ messages });
@@ -160,7 +188,10 @@ describe('room before the call', () => {
     it('allows a reply as long as Hermes asked, up to the guard, else what the provider says', () => {
         expect(outputCapOf({ max_tokens: 500 }, config())).toBe(500);
         expect(outputCapOf({ max_completion_tokens: 900 }, config())).toBe(900);
-        expect(outputCapOf({ max_tokens: 10_000_000 }, config())).toBe(32_768);
+        expect(outputCapOf({ max_tokens: 10_000_000 }, config({ maxTokens: 0 }))).toBe(32_768);
+        // Never more than our own setting, even when the job asks for more
+        expect(outputCapOf({ max_tokens: 32_768 }, config({ maxTokens: 8192 }))).toBe(8192);
+        expect(outputCapOf({ max_completion_tokens: 2000 }, config({ maxTokens: 8192 }))).toBe(2000);
         expect(outputCapOf({}, config({ maxTokens: 1000 }))).toBe(1000);
         expect(outputCapOf({ max_tokens: -5 }, config({ maxTokens: 0 }))).toBe(4096);
     });
@@ -427,6 +458,7 @@ describe('the Orbit calls', () => {
         const input = { token: 't', callId: 'c', estimateMicros: 1, payer: 'universe' as const };
         expect(await relayOrbitFor(admin(200, { ok: true })).authorize(input)).toEqual({ ok: true });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'allowance' })).authorize(input)).toEqual({ ok: false, reason: 'allowance' });
+        expect(await relayOrbitFor(admin(200, { ok: false, reason: 'rule' })).authorize(input)).toEqual({ ok: false, reason: 'rule' });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'something new' })).authorize(input)).toEqual({ ok: false, reason: 'refused' });
         await expect(relayOrbitFor(admin(500, {})).authorize(input)).rejects.toThrow();
     });
@@ -436,5 +468,468 @@ describe('the Orbit calls', () => {
         expect(await relayOrbitFor(admin(404, { ok: false })).settle(input)).toEqual({ ok: false });
         expect(await relayOrbitFor(admin(200, { ok: true })).settle(input)).toEqual({ ok: true });
         await expect(relayOrbitFor(admin(502, {})).settle(input)).rejects.toThrow();
+    });
+});
+
+describe('how a call ended, for the runner', () => {
+    // The agent's own calls carry its tools; a side call (a summary, a title) does not
+    const agent = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
+    const since = () => Date.now() - 1;
+    const asJob = (jobId: string) => orbit.identify.mockResolvedValue({ ok: true, jobId, botId: BOT });
+
+    it('notes a provider that answered with an error of its own, or could not be reached, as a fault of ours', async () => {
+        asJob('job-fault-500');
+        const before = since();
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'The model broke' } });
+        await askAndSettle(agent);
+        expect(notes.endedOnFault('job-fault-500', before)).toBe(true);
+
+        asJob('job-fault-unreachable');
+        route = { config: config({ endpoint: 'http://127.0.0.1:1/v1' }), source: 'universe-ai', keyOwnerId: null };
+        await askAndSettle(agent, 2);
+        expect(notes.endedOnFault('job-fault-unreachable', before)).toBe(true);
+    });
+
+    it('notes Orbit that cannot be asked, a Brick with no AI, and computers all busy as faults of ours', async () => {
+        const before = since();
+        asJob('job-busy');
+        orbit.authorize.mockRejectedValue(new Error('down'));
+        expect((await ask(agent)).status).toBe(503);
+        expect(notes.endedOnFault('job-busy', before)).toBe(true);
+
+        asJob('job-resting');
+        route = null as never;
+        expect((await ask(agent)).status).toBe(503);
+        expect(notes.endedOnFault('job-resting', before)).toBe(true);
+
+        asJob('job-pool');
+        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool' });
+        expect((await ask(agent)).status).toBe(503);
+        expect(notes.endedOnFault('job-pool', before)).toBe(true);
+    });
+
+    it('does not note a refusal for the person’s allowance or rule, or a call the provider refused for its content, as a fault of ours', async () => {
+        const before = since();
+        asJob('job-allowance');
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
+        await ask(agent);
+        expect(notes.endedOnFault('job-allowance', before)).toBe(false);
+
+        asJob('job-wrong');
+        orbit.authorize.mockResolvedValue({ ok: true });
+        upstreamHandler = (_req, res) => res.status(400).json({ error: { message: 'maximum context length exceeded' } });
+        await askAndSettle(agent);
+        expect(notes.endedOnFault('job-wrong', before)).toBe(false);
+    });
+
+    it('does not note a fault that a later call made good, and notes one that came after an answer', async () => {
+        asJob('job-retry');
+        const before = since();
+        upstreamHandler = (_req, res) => res.status(503).json({ error: { message: 'busy' } });
+        await askAndSettle(agent);
+        expect(notes.endedOnFault('job-retry', before)).toBe(true);
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+        await askAndSettle(agent, 2);
+        expect(notes.endedOnFault('job-retry', before)).toBe(false);
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'broke' } });
+        await askAndSettle(agent, 3);
+        expect(notes.endedOnFault('job-retry', before)).toBe(true);
+    });
+
+    it('notes a rate limit on our own key, a 502 for a revoked key of ours, and a stored key that cannot be read, as faults of ours', async () => {
+        const before = since();
+        asJob('job-ratelimit');
+        upstreamHandler = (_req, res) => res.status(429).json({ error: { message: 'slow down' } });
+        await askAndSettle(agent);
+        expect(notes.endedOnFault('job-ratelimit', before)).toBe(true);
+
+        asJob('job-revoked');
+        upstreamHandler = (_req, res) => res.status(401).json({ error: { message: 'revoked' } });
+        await askAndSettle(agent, 2);
+        expect(notes.endedOnFault('job-revoked', before)).toBe(true);
+
+        // a stored key that cannot be read is ours on a person's key too
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-unreadable-own');
+        const encryption = await import('../ai/encryption');
+        const spy = vi.spyOn(encryption, 'decryptApiKey').mockImplementation(() => {
+            throw new Error('bad key');
+        });
+        try {
+            await askAndSettle(agent, 3);
+            expect(notes.endedOnFault('job-unreadable-own', before)).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it('does not note what a person’s own provider, key or endpoint did as a fault of ours', async () => {
+        const before = since();
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        let count = 0;
+        // their provider's own error, their key out of credit (402 comes to Hermes as 502), a revoked key, a rate limit, an endpoint that is gone
+        for (const [name, status] of [['job-own-500', 500], ['job-own-402', 402], ['job-own-401', 401], ['job-own-429', 429]] as const) {
+            asJob(name);
+            upstreamHandler = (_req, res) => res.status(status).json({ error: { message: 'no' } });
+            count += 1;
+            await askAndSettle(agent, count);
+            expect(notes.endedOnFault(name, before)).toBe(false);
+            // it is noted on the person's side, so a turn that ends on it is never ours
+            expect(notes.sawSince(name, before)).toBe(true);
+        }
+        asJob('job-own-gone');
+        route = { config: config({ endpoint: 'http://127.0.0.1:1/v1' }), source: 'own-key', keyOwnerId: 'person-owner' };
+        count += 1;
+        await askAndSettle(agent, count);
+        expect(notes.endedOnFault('job-own-gone', before)).toBe(false);
+
+        // a stream their endpoint cut off
+        asJob('job-own-cut');
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        upstreamHandler = (req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            setTimeout(() => req.socket.destroy(), 10);
+        };
+        const cut = await ask({ ...agent, stream: true });
+        await cut.text().catch(() => '');
+        count += 1;
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(count), { timeout: 3000 });
+        expect(notes.endedOnFault('job-own-cut', before)).toBe(false);
+    });
+
+    it('reads a refused token limit by whose value it was: the job’s own ask with no setting of ours is the request’s, a value under our setting is ours', async () => {
+        const before = since();
+        const tooLarge = (_req: express.Request, res: express.Response) => res.status(400).json({ error: { param: 'max_tokens', code: 'invalid_value', message: 'max_tokens is too large: 32768. This model supports at most 8192' } });
+        asJob('job-limit-asked');
+        route = { config: config({ endpoint: upstreamBase, maxTokens: 0 }), source: 'universe-ai', keyOwnerId: null };
+        upstreamHandler = tooLarge;
+        await askAndSettle({ ...agent, max_tokens: 100_000 }, 1);
+        expect(notes.endedOnFault('job-limit-asked', before)).toBe(false);
+        expect(notes.sawSince('job-limit-asked', before)).toBe(true);
+
+        asJob('job-limit-setting');
+        route = { config: config({ endpoint: upstreamBase, maxTokens: 32_768 }), source: 'universe-ai', keyOwnerId: null };
+        await askAndSettle({ ...agent, max_tokens: 16_384 }, 2);
+        expect(notes.endedOnFault('job-limit-setting', before)).toBe(true);
+    });
+
+    it('reads the relay’s own time limit by who made the call long: ours with no output, or a limit we chose; the job’s own when it was writing or asked for the length', async () => {
+        const before = since();
+        const original = RELAY_GUARDS.callTimeoutMs;
+        (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = 150;
+        try {
+            // a stream that wrote nothing in time: ours
+            asJob('job-timeout-silent');
+            upstreamHandler = () => undefined;
+            await askAndSettle({ ...agent, stream: true }, 1);
+            expect(notes.endedOnFault('job-timeout-silent', before)).toBe(true);
+
+            // a stream that was writing when the time ran out: the job's own
+            asJob('job-timeout-writing');
+            upstreamHandler = (_req, res) => {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            };
+            await askAndSettle({ ...agent, stream: true }, 2);
+            expect(notes.endedOnFault('job-timeout-writing', before)).toBe(false);
+            expect(notes.sawSince('job-timeout-writing', before)).toBe(true);
+
+            // not streamed, a length the relay chose: ours
+            asJob('job-timeout-ours');
+            upstreamHandler = () => undefined;
+            await askAndSettle(agent, 3);
+            expect(notes.endedOnFault('job-timeout-ours', before)).toBe(true);
+
+            // not streamed, a length the job asked for: the job's own
+            asJob('job-timeout-asked');
+            // with no setting of ours the length is the job's own ask
+            route = { config: config({ endpoint: upstreamBase, maxTokens: 0 }), source: 'universe-ai', keyOwnerId: null };
+            await askAndSettle({ ...agent, max_tokens: 100 }, 4);
+            expect(notes.endedOnFault('job-timeout-asked', before)).toBe(false);
+            expect(notes.sawSince('job-timeout-asked', before)).toBe(true);
+        } finally {
+            (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = original;
+        }
+    });
+
+    it('does not note a caller that went away while the provider was still working as a fault of anyone', async () => {
+        const before = since();
+        asJob('job-hungup');
+        // the provider hangs; the caller gives up and goes away
+        upstreamHandler = () => undefined;
+        const controller = new AbortController();
+        const pending = fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(agent) }).catch(() => null);
+        await vi.waitFor(() => expect(upstreamRequests).toHaveLength(1), { timeout: 3000 });
+        controller.abort();
+        await pending;
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect(notes.endedOnFault('job-hungup', before)).toBe(false);
+    });
+
+    it('does not note a refusal for the person’s allowance on a side call with no tools', async () => {
+        const before = since();
+        asJob('job-side-refused');
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
+        expect((await ask({ messages })).status).toBe(429);
+        expect(notes.sawSince('job-side-refused', before)).toBe(false);
+        expect((await ask(agent)).status).toBe(429);
+        expect(notes.sawSince('job-side-refused', before)).toBe(true);
+    });
+
+    it('reads an error the provider put in a 200 stream (or a 200 body with no choices) as its fault: ours on our key, the person’s on theirs', async () => {
+        const before = since();
+        const sseError = (_req: express.Request, res: express.Response) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ error: { message: 'overloaded' } })}\n\n`);
+            res.end();
+        };
+        asJob('job-stream-error');
+        upstreamHandler = sseError;
+        await askAndSettle({ ...agent, stream: true });
+        expect(notes.endedOnFault('job-stream-error', before)).toBe(true);
+
+        asJob('job-body-error');
+        upstreamHandler = (_req, res) => res.json({ error: { message: 'overloaded' } });
+        await askAndSettle(agent, 2);
+        expect(notes.endedOnFault('job-body-error', before)).toBe(true);
+
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-own-stream-error');
+        upstreamHandler = sseError;
+        await askAndSettle({ ...agent, stream: true }, 3);
+        expect(notes.endedOnFault('job-own-stream-error', before)).toBe(false);
+        expect(notes.sawSince('job-own-stream-error', before)).toBe(true);
+    });
+
+    it('says the Brick’s own key resting is the person’s: noted on their side, never a fault of ours; Universe AI resting or an unknown route stays ours', async () => {
+        const before = since();
+        asJob('job-own-resting');
+        route = { restingOwnKey: true } as never;
+        expect((await ask(agent)).status).toBe(503);
+        expect(notes.endedOnFault('job-own-resting', before)).toBe(false);
+        expect(notes.sawSince('job-own-resting', before)).toBe(true);
+        expect(upstreamRequests).toHaveLength(0);
+
+        asJob('job-unknown-route');
+        route = null as never;
+        expect((await ask(agent)).status).toBe(503);
+        expect(notes.endedOnFault('job-unknown-route', before)).toBe(true);
+    });
+
+    it('reads what the provider said: 401, 402, 403, 404 and a parameter 400 are our key or our settings (ours); moderation, a context too long and a body too large are the request’s (not ours, not an answer)', async () => {
+        const before = since();
+        let count = 0;
+        const said = async (name: string, status: number, error: Record<string, unknown>) => {
+            asJob(name);
+            upstreamHandler = (_req, res) => res.status(status).json({ error });
+            count += 1;
+            await askAndSettle(agent, count);
+        };
+        await said('job-403-plain', 403, { message: 'Forbidden' });
+        await said('job-401', 401, { message: 'revoked' });
+        await said('job-402', 402, { message: 'out of credit' });
+        await said('job-403-moderation', 403, { message: 'Your request was flagged by content moderation', code: 'content_policy_violation' });
+        await said('job-404', 404, { message: 'The model does not exist' });
+        await said('job-400-param', 400, { message: 'Unsupported parameter: max_tokens', param: 'max_tokens' });
+        await said('job-400-temperature', 400, { message: 'temperature must be at most 2', param: 'temperature' });
+        await said('job-400-noparam', 400, { message: 'bad request' });
+        await said('job-401-invalid-request', 401, { type: 'invalid_request_error', code: 'invalid_api_key', message: 'Incorrect API key' });
+        await said('job-404-invalid-request', 404, { type: 'invalid_request_error', code: 'model_not_found', message: 'The model does not exist' });
+        await said('job-422-messages', 422, { message: 'invalid image url', param: 'messages[0].content' });
+        await said('job-400-context', 400, { code: 'context_length_exceeded', message: 'maximum context length exceeded' });
+        await said('job-413', 413, { message: 'payload' });
+        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param', 'job-401-invalid-request', 'job-404-invalid-request']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-403-moderation', 'job-400-context', 'job-413', 'job-400-temperature', 'job-400-noparam', 'job-422-messages']) {
+            expect(notes.endedOnFault(name, before)).toBe(false);
+            // the request's own failure is off our side: the runner never ends the job as ours for it
+            expect(notes.sawSince(name, before)).toBe(true);
+        }
+    });
+
+    it('reads an error object inside a 200 by what it says: moderation or a context too long is the request’s; a 5xx, a 429, a parameter error or no code is ours', async () => {
+        const before = since();
+        let count = 0;
+        const inBody = async (name: string, error: Record<string, unknown>) => {
+            asJob(name);
+            upstreamHandler = (_req, res) => res.json({ error });
+            count += 1;
+            await askAndSettle(agent, count);
+        };
+        await inBody('job-200-400', { code: 400, message: 'prompt is too long' });
+        await inBody('job-200-context', { code: 'context_length_exceeded', message: 'too long' });
+        await inBody('job-200-moderation', { message: 'blocked by moderation' });
+        await inBody('job-200-500', { code: 500, message: 'internal' });
+        await inBody('job-200-429', { code: '429', message: 'rate' });
+        await inBody('job-200-nocode', { message: 'something broke' });
+        await inBody('job-200-param', { code: 400, message: 'invalid parameter', param: 'model' });
+        await inBody('job-200-tools', { type: 'invalid_request_error', message: 'bad schema', param: 'tools[0]' });
+        await inBody('job-200-422', { code: 422, message: 'unprocessable' });
+        await inBody('job-200-key', { type: 'invalid_request_error', code: 'invalid_api_key', param: null, message: 'Incorrect API key provided' });
+        await inBody('job-200-model', { type: 'invalid_request_error', code: 'model_not_found', param: 'messages', message: 'The model does not exist' });
+        for (const name of ['job-200-400', 'job-200-context', 'job-200-moderation', 'job-200-tools', 'job-200-422']) expect(notes.endedOnFault(name, before)).toBe(false);
+        for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode', 'job-200-param', 'job-200-key', 'job-200-model']) expect(notes.endedOnFault(name, before)).toBe(true);
+    });
+
+    it('reads a key or model error inside a stream as ours, whatever type it carries', async () => {
+        const before = since();
+        asJob('job-stream-key');
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ error: { type: 'invalid_request_error', code: 'invalid_api_key', param: null, message: 'Incorrect API key provided' } })}\n\n`);
+            res.end();
+        };
+        await askAndSettle({ ...agent, stream: true });
+        expect(notes.endedOnFault('job-stream-key', before)).toBe(true);
+    });
+
+    it('does not let a side call that carries no tools make or unmake a fault of the turn', async () => {
+        asJob('job-side');
+        const before = since();
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+        await askAndSettle(agent);
+        // a summary or title call that fails after the turn was answered is no fault of the turn
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'broke' } });
+        await askAndSettle({ messages }, 2);
+        expect(notes.endedOnFault('job-side', before)).toBe(false);
+        // and a side call that works does not make good a fault of the agent's own call
+        asJob('job-side-2');
+        await askAndSettle(agent, 3);
+        expect(notes.endedOnFault('job-side-2', before)).toBe(true);
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+        await askAndSettle({ messages }, 4);
+        expect(notes.endedOnFault('job-side-2', before)).toBe(true);
+    });
+
+    it('notes a streamed answer that the provider cut off as a fault of ours, and a whole one as an answer', async () => {
+        const before = since();
+        asJob('job-cut');
+        upstreamHandler = (req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            setTimeout(() => req.socket.destroy(), 10);
+        };
+        const cut = await ask({ ...agent, stream: true });
+        await cut.text().catch(() => '');
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect(notes.endedOnFault('job-cut', before)).toBe(true);
+
+        asJob('job-whole');
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hello' } }] })}\n\ndata: [DONE]\n\n`);
+            res.end();
+        };
+        await askAndSettle({ ...agent, stream: true }, 2);
+        expect(notes.endedOnFault('job-whole', before)).toBe(false);
+    });
+});
+
+describe('whoseProviderError', () => {
+    it('reads a 429 “Requested” as the input plus our limit: ours when the input alone fits, the request’s when it does not or when the job set the limit', () => {
+        const message = (requested: number) => `Request too large for gpt-4o on tokens per min (TPM): Limit 30000, Requested ${requested}. The input or output tokens must be reduced in order to run successfully.`;
+        // our setting 32768, a 100-token prompt: the input fits, our limit made it too large
+        expect(whoseProviderError(429, { message: message(32_868) }, { limit: false, name: false, outputCap: 32_768 })).toBe('ours');
+        // a 40000-token prompt with our 4096: the input alone does not fit
+        expect(whoseProviderError(429, { message: message(44_096) }, { limit: false, name: false, outputCap: 4096 })).toBe('request');
+        // the job set the limit
+        expect(whoseProviderError(429, { message: message(32_868) }, { limit: true, name: false, outputCap: 32_768 })).toBe('request');
+        // no numbers to read: the request's
+        expect(whoseProviderError(429, { message: 'Request too large for this model' }, { limit: false, name: false, outputCap: 4096 })).toBe('request');
+    });
+    it('reads a 429 that says this one request is too large as the request’s, and a plain rate limit as ours', () => {
+        expect(whoseProviderError(429, { message: 'Request too large for gpt-4o in organization org-x on tokens per min (TPM): Limit 30000, Requested 45000. The input or output tokens must be reduced in order to run successfully.' })).toBe('request');
+        expect(whoseProviderError(429, { message: 'Limit 30000, Requested 45000' })).toBe('request');
+        expect(whoseProviderError(429, { message: 'Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, Used 28000, Requested 5000. Please try again in 2s.' })).toBe('ours');
+        expect(whoseProviderError(429, {})).toBe('ours');
+    });
+    it('reads the prompt-length wording of a provider that counts the input with the limit as the request’s', () => {
+        expect(whoseProviderError(400, { param: 'max_tokens', message: 'Input validation error: `inputs` tokens + `max_new_tokens` must be <= 32769' }, { limit: false, name: false })).toBe('request');
+        expect(whoseProviderError(400, { param: 'max_tokens', message: 'max_new_tokens plus prompt tokens exceed the window' }, { limit: false, name: false })).toBe('request');
+    });
+    it('reads a refusal of the token limit by whose limit it was: the job’s own ask is the request’s, a limit we chose is ours unless the wording blames the input', () => {
+        // (a) OpenAI’s own body when the job asked for more than the model takes
+        expect(whoseProviderError(400, { param: 'max_tokens', code: 'invalid_value', message: 'max_tokens is too large: 32768. This model supports at most 8192 completion tokens' }, { limit: true, name: false })).toBe('request');
+        // (b) a provider that counts the input and the limit together
+        expect(whoseProviderError(400, { param: 'max_tokens', code: null, message: 'Input validation error: inputs tokens + max_new_tokens must be <= 32769' }, { limit: false, name: false })).toBe('request');
+        // (c) a context length
+        expect(whoseProviderError(400, { param: 'max_tokens', message: "This model's maximum context length is 4096 tokens. However, you requested 5000 tokens (3000 in the messages, 2000 in the completion)." }, { limit: false, name: false })).toBe('request');
+        expect(whoseProviderError(400, { param: 'max_tokens', code: 'context_length_exceeded', message: 'too large' }, { limit: false, name: false })).toBe('request');
+        // A limit we chose, refused as too large: ours
+        expect(whoseProviderError(400, { param: 'max_tokens', message: 'max_tokens is too large: 100000. This model supports at most 4096' }, { limit: false, name: false })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'max_completion_tokens', message: 'max_completion_tokens exceeds the maximum allowed for this model' }, { limit: false, name: false })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'max_tokens', message: 'token limit too large' }, { limit: false, name: false })).toBe('ours');
+        // The name of the field is ours either way; model, n and stream are ours whoever asked
+        expect(whoseProviderError(400, { param: 'max_tokens', message: 'Unsupported parameter: max_tokens is not supported with this model' }, { limit: true, name: false })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'model', message: 'too large' }, { limit: true, name: false })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'messages', code: 'context_length_exceeded', message: 'maximum context length' }, { limit: false, name: false })).toBe('request');
+        expect(whoseProviderError(400, { param: 'messages[0].content', message: 'content is too large' }, { limit: false, name: false })).toBe('request');
+    });
+    it('reads whose the token limit and its field name are: the job’s own ask when we set no limit, a setting’s mistake otherwise; the name is the job’s off OpenAI’s host', () => {
+        // no setting: any ask is the job's, including one the guard lowered
+        expect(jobsOwnLimit({ max_tokens: 500 }, config({ maxTokens: 0 })).limit).toBe(true);
+        expect(jobsOwnLimit({ max_tokens: 100_000 }, config({ maxTokens: 0 })).limit).toBe(true);
+        expect(jobsOwnLimit({}, config({ maxTokens: 0 })).limit).toBe(false);
+        // a setting: a refused value is ours, even an honest ask under it
+        expect(jobsOwnLimit({ max_tokens: 16_384 }, config({ maxTokens: 32_768 })).limit).toBe(false);
+        expect(jobsOwnLimit({ max_tokens: 32_768 }, config({ maxTokens: 8192 })).limit).toBe(false);
+        // the name: OpenAI's host gets max_completion_tokens whatever the job wrote; elsewhere the job's own name is kept
+        expect(jobsOwnLimit({ max_completion_tokens: 500 }, config({ endpoint: 'https://api.openai.com/v1' })).name).toBe(false);
+        expect(jobsOwnLimit({ max_completion_tokens: 500 }, config({ endpoint: 'https://api.together.xyz/v1' })).name).toBe(true);
+        // max_tokens is the name the relay sends there anyway (an Azure o-series deployment rejects it whoever wrote it): ours
+        expect(jobsOwnLimit({ max_tokens: 500 }, config({ endpoint: 'https://my.openai.azure.com/v1' })).name).toBe(false);
+        expect(jobsOwnLimit({}, config({ endpoint: 'https://api.together.xyz/v1' })).name).toBe(false);
+    });
+    it('reads a refused field name as ours only when the relay picked it', () => {
+        const unsupported = { param: 'max_completion_tokens', message: "Unsupported parameter: 'max_completion_tokens' is not supported with this model" };
+        expect(whoseProviderError(400, unsupported, { limit: false, name: false })).toBe('ours');
+        expect(whoseProviderError(400, unsupported, { limit: false, name: true })).toBe('request');
+    });
+    it('is the request’s for moderation, a context too long, a body too large and a 400/422 about anything but the relay’s own fields; everything else is ours', () => {
+        expect(whoseProviderError(500, {})).toBe('ours');
+        expect(whoseProviderError(503, { message: 'moderation backend down' })).toBe('ours');
+        expect(whoseProviderError(429, {})).toBe('ours');
+        expect(whoseProviderError(401, {})).toBe('ours');
+        expect(whoseProviderError(402, {})).toBe('ours');
+        expect(whoseProviderError(403, { message: 'nope' })).toBe('ours');
+        expect(whoseProviderError(404, { message: 'model not found' })).toBe('ours');
+        expect(whoseProviderError(400, { message: 'Unsupported parameter', param: 'max_tokens' }, { limit: false, name: false })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'max_tokens' }, { limit: false, name: false })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'stream_options.include_usage' })).toBe('ours');
+        expect(whoseProviderError(422, { param: 'model' })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'temperature' })).toBe('request');
+        // OpenAI says invalid_request_error on a revoked key, no credit and a model that is gone: those are ours
+        expect(whoseProviderError(401, { type: 'invalid_request_error', code: 'invalid_api_key' })).toBe('ours');
+        expect(whoseProviderError(402, { type: 'invalid_request_error' })).toBe('ours');
+        expect(whoseProviderError(404, { type: 'invalid_request_error', code: 'model_not_found', param: 'messages' })).toBe('ours');
+        expect(whoseProviderError(403, { type: 'invalid_request_error', param: 'tools' })).toBe('ours');
+        // with no status (an error object inside a 200 or a stream) the error names it itself
+        expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'invalid_api_key', param: null })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'model_not_found', param: 'messages' })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'insufficient_quota', code: 'insufficient_quota' })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'billing_hard_limit_reached' })).toBe('ours');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'temperature' })).toBe('request');
+        expect(whoseProviderError(null, { message: 'Incorrect API key provided' })).toBe('ours');
+        // a provider echoes the job's own values in its message, and a job can steer those: never read as ours
+        expect(whoseProviderError(400, { param: 'messages[0].role', message: "Invalid value: 'billing'. Supported values are: 'system', 'user'." })).toBe('request');
+        expect(whoseProviderError(400, { param: 'messages[0].content[1].file.file_id', message: "The file 'file-abc' does not exist" })).toBe('request');
+        expect(whoseProviderError(422, { param: 'tool_choice', message: "tool 'permission_denied' does not exist" })).toBe('request');
+        expect(whoseProviderError(400, { message: "Invalid value: 'billing'" })).toBe('request');
+        expect(whoseProviderError(null, { param: 'messages[0].role', message: "Invalid value: 'billing'. Supported values are" })).toBe('request');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'tools[0]', message: "tool 'insufficient_quota' does not exist" })).toBe('request');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'context_length_exceeded', param: 'messages' })).toBe('request');
+        expect(whoseProviderError(400, { param: 'messages[0].content[1].image_url' })).toBe('request');
+        expect(whoseProviderError(400, {})).toBe('request');
+        expect(whoseProviderError(422, {})).toBe('request');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'tools' })).toBe('request');
+        expect(whoseProviderError(403, { code: 'moderation_blocked' })).toBe('request');
+        expect(whoseProviderError(400, { code: 'context_length_exceeded' })).toBe('request');
+        expect(whoseProviderError(400, { message: 'Your prompt is too long' })).toBe('request');
+        expect(whoseProviderError(413, {})).toBe('request');
+        expect(whoseProviderError(null, { code: 'content_filter' })).toBe('request');
+        expect(whoseProviderError(null, { code: 524 })).toBe('ours');
+        expect(whoseProviderError(null, 'a string')).toBe('ours');
     });
 });
