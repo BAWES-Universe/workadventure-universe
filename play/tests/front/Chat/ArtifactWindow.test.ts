@@ -518,6 +518,30 @@ describe("the artifact window", () => {
             expect(byTestId("artifactCopyLink")).not.toBeNull();
         });
 
+        it("keeps who can open it as it was while a publish is on its way, and never writes it over with the answer", async () => {
+            api.fetchArtifact.mockResolvedValue(sharedAs("public", 3));
+            let done: (artifact: unknown) => void = () => {};
+            api.publishArtifact.mockReturnValue(
+                new Promise((resolve) => {
+                    done = resolve;
+                })
+            );
+            mountWindow(3);
+            await openShareMenu();
+            byTestId("artifactPublish")?.click();
+            await tick();
+            // The choices wait, so nothing can be saved that the answer would then undo
+            expect((byTestId("artifactOpenLink") as HTMLButtonElement).disabled).toBe(true);
+            byTestId("artifactOpenLink")?.click();
+            expect(api.shareArtifact).not.toHaveBeenCalled();
+
+            // The answer was made before anything else changed: it says what was published and nothing about sharing
+            done({ ...sharedAs("link", 3).artifact, published: { version: 3, at: "2026-11-20T09:12:00Z" } });
+            await vi.waitFor(() => expect(byTestId("artifactPublished")).not.toBeNull());
+            expect(byTestId("artifactOpenPublic")?.getAttribute("aria-checked")).toBe("true");
+            expect((byTestId("artifactOpenLink") as HTMLButtonElement).disabled).toBe(false);
+        });
+
         it("says a link that was never published shows the latest version, and offers no Publish", async () => {
             api.fetchArtifact.mockResolvedValue(sharedAs("link", 3));
             mountWindow(3);

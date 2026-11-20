@@ -446,7 +446,8 @@
                     ...opened,
                     artifact: {
                         ...opened.artifact,
-                        openScope: artifact.openScope,
+                        // Only what was published: who can open it is not this answer's to say, and a choice made while
+                        // it was on its way would be written over by it
                         published: artifact.published ? { ...artifact.published, available: true } : null,
                     },
                 };
@@ -463,7 +464,7 @@
     // Saved at once, one choice at a time: the list shows the choice while it is on its way, and goes back if it fails.
     // `otherwise` is the choice to save instead when "Just you" cannot be had from the artifacts' server as it is.
     function setSharing(change: ArtifactOpenScope, otherwise?: ArtifactOpenScope) {
-        if (!opened || pendingShare || change === opened.artifact.openScope) return;
+        if (!opened || pendingShare || publishing || change === opened.artifact.openScope) return;
         const before = opened.artifact.openScope;
         pendingShare = change;
         shareFailed = false;
@@ -830,7 +831,7 @@
                             class="choice"
                             class:picked={openScope === "me"}
                             aria-checked={openScope === "me"}
-                            disabled={!!pendingShare}
+                            disabled={!!pendingShare || publishing}
                             data-testid="artifactOpenMe"
                             on:click={() => setSharing("me")}
                         >
@@ -846,7 +847,7 @@
                             class="choice"
                             class:picked={openScope === "chat"}
                             aria-checked={openScope === "chat"}
-                            disabled={!!pendingShare}
+                            disabled={!!pendingShare || publishing}
                             data-testid="artifactOpenChat"
                             on:click={() => setSharing("chat")}
                         >
@@ -864,7 +865,7 @@
                             class="choice"
                             class:picked={openScope !== "link" && openScope !== "public"}
                             aria-checked={openScope !== "link" && openScope !== "public"}
-                            disabled={!!pendingShare}
+                            disabled={!!pendingShare || publishing}
                             data-testid="artifactOpenChat"
                             on:click={pickJustYou}
                         >
@@ -882,7 +883,7 @@
                         class="choice"
                         class:picked={openScope === "link"}
                         aria-checked={openScope === "link"}
-                        disabled={!!pendingShare}
+                        disabled={!!pendingShare || publishing}
                         data-testid="artifactOpenLink"
                         on:click={() => setSharing("link")}
                     >
@@ -898,7 +899,7 @@
                         class="choice"
                         class:picked={openScope === "public"}
                         aria-checked={openScope === "public"}
-                        disabled={!!pendingShare}
+                        disabled={!!pendingShare || publishing}
                         data-testid="artifactOpenPublic"
                         on:click={() => setSharing("public")}
                     >
