@@ -175,6 +175,18 @@ describe('room before the call', () => {
         expect(upstreamRequests).toHaveLength(0);
     });
 
+    it('names the route on the room request, the same string as in its fault rows (universe-ai:<providerId>), so Orbit can count failures and pause a route', async () => {
+        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai' };
+        await askAndSettle({ messages });
+        expect(orbit.authorize).toHaveBeenCalledWith(expect.objectContaining({ payer: 'universe', route: `universe-ai:${config().providerId}` }));
+    });
+
+    it('names the route on the room request for a call on the owner’s own key as own-key', async () => {
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        await askAndSettle({ messages });
+        expect(orbit.authorize).toHaveBeenCalledWith(expect.objectContaining({ payer: 'own-key', route: 'own-key' }));
+    });
+
     it('holds room for a call on the owner’s own key as theirs, with none taken from the pool', async () => {
         route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
         await askAndSettle({ messages });
@@ -587,7 +599,7 @@ describe('the Orbit calls', () => {
     });
 
     it('reads room answers, and takes any odd reason as a refusal', async () => {
-        const input = { token: 't', callId: 'c', estimateMicros: 1, payer: 'universe' as const };
+        const input = { token: 't', callId: 'c', estimateMicros: 1, payer: 'universe' as const, route: 'universe-ai:p' };
         expect(await relayOrbitFor(admin(200, { ok: true })).authorize(input)).toEqual({ ok: true });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'allowance' })).authorize(input)).toEqual({ ok: false, reason: 'allowance' });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'rule' })).authorize(input)).toEqual({ ok: false, reason: 'rule' });
