@@ -536,11 +536,6 @@ export function availableText(microsValue: number, locale: string | undefined): 
     return dollarText(Math.floor(Math.max(0, microsValue) / CENT), locale);
 }
 
-/** What was taken, rounded up to the cent so it never understates: "$0.06", "$0.92". Something taken is never "$0.00". */
-export function spentText(microsValue: number, locale: string | undefined): string {
-    return dollarText(Math.ceil(Math.max(0, microsValue) / CENT), locale);
-}
-
 /**
  * An amount said as Orbit says it in its own sentences: thousandths of a dollar under a cent ("$0.009"), cents above ("$0.05"); null for
  * less than a tenth of a cent (Orbit says "less than $0.001": the caller has the words for that) and for nothing.
@@ -562,12 +557,26 @@ export function availableLabel(microsValue: number, locale: string | undefined, 
 }
 
 /**
- * What was taken, as the page says it and as Orbit says it, so the same amount never reads two ways: thousandths under a cent
- * ("$0.009"), `tiny` ("less than $0.001") for the smallest, "$0" for a true zero, otherwise rounded up to the cent as `spentText` does.
+ * What was taken, said EXACTLY as Orbit's `dollars()` says it, so the same amount never reads two ways between Orbit Activity, this
+ * page and the task reply: "$0" for nothing, `tiny` ("less than $0.001") under half a thousandth, thousandths under a cent
+ * ("$0.009"), cents from a cent up, as Orbit rounds them ("$0.01" for 10_001, "$5.00" for five dollars).
  */
 export function spentLabel(microsValue: number, locale: string | undefined, tiny: string): string {
-    if (!isUnderACent(microsValue)) return spentText(microsValue, locale);
-    return exactDollars(microsValue) ?? tiny;
+    if (!(microsValue > 0)) return "$0";
+    const said = exactDollars(microsValue);
+    if (said === null) return tiny;
+    // The digits are Orbit's (rounded as `toFixed` rounds them); only the way the dollars are written follows the viewer's language
+    const digits = microsValue < 10_000 ? 3 : 2;
+    try {
+        return new Intl.NumberFormat(locale, {
+            style: "currency",
+            currency: "USD",
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
+        }).format(Number(said.slice(1)));
+    } catch {
+        return said;
+    }
 }
 
 /**

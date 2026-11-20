@@ -124,10 +124,15 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     };
 }
 
-/** Money as the person reads it: thousandths of a dollar under a cent (`$0.009`, never less than `$0.001`), cents from a cent up (`$0.05`, `$2.50`). */
+/**
+ * Money as the person reads it, exactly as Orbit's `dollars()` says it (the game's Usage page says it the same way): "$0", "less than $0.001"
+ * under half a thousandth, thousandths of a dollar under a cent (`$0.009`), cents from a cent up (`$0.05`, `$2.50`).
+ */
 export function moneyText(micros: number): string {
-    if (micros < 10_000) return `$${(Math.max(1, Math.round(micros / 1000)) / 1000).toFixed(3)}`;
-    return `$${(Math.round(micros / 10_000) / 100).toFixed(2)}`;
+    if (!(micros > 0)) return '$0';
+    if (micros < 500) return 'less than $0.001';
+    if (micros < 10_000) return `$${(micros / 1_000_000).toFixed(3)}`;
+    return `$${(micros / 1_000_000).toFixed(2)}`;
 }
 
 // --- the words -------------------------------------------------------------------------------------------------------------------------------

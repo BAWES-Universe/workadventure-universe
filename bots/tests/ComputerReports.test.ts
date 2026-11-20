@@ -109,13 +109,29 @@ describe('what Brick says when a computer job ends or waits', () => {
         expect(receiptOf({ effects: [], writes: true, refundPendingMicros: 50_000 })).toBe('My record shows nothing was sent or paid. $0.05 refund pending.');
     });
 
-    it('writes money in thousandths under a cent and in cents above', () => {
-        expect(moneyText(9_000)).toBe('$0.009');
-        expect(moneyText(1_000)).toBe('$0.001');
-        expect(moneyText(100)).toBe('$0.001');
-        expect(moneyText(10_000)).toBe('$0.01');
-        expect(moneyText(50_000)).toBe('$0.05');
-        expect(moneyText(2_500_000)).toBe('$2.50');
+    it("writes money exactly as Orbit's dollars() does: thousandths under a cent, cents above, rounded the same way", () => {
+        const table: Array<[number, string]> = [
+            [0, '$0'],
+            [1, 'less than $0.001'],
+            [499, 'less than $0.001'],
+            [500, '$0.001'],
+            [1200, '$0.001'],
+            [1500, '$0.002'],
+            [2500, '$0.003'],
+            [9000, '$0.009'],
+            [9999, '$0.010'],
+            [10000, '$0.01'],
+            [10001, '$0.01'],
+            [15000, '$0.01'],
+            [25000, '$0.03'],
+            [35000, '$0.04'],
+            [45000, '$0.04'],
+            [50000, '$0.05'],
+            [1250000, '$1.25'],
+            [5000000, '$5.00'],
+            [3209999, '$3.21'],
+        ];
+        for (const [micros, said] of table) expect(moneyText(micros)).toBe(said);
     });
 
     it('reads the refund Orbit has not paid yet as whole micros, and none from an older Orbit or from nonsense', () => {

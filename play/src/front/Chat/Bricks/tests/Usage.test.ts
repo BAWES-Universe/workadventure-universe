@@ -9,7 +9,6 @@ import {
     parseUsage,
     renewsWhen,
     spentLabel,
-    spentText,
     storageSize,
 } from "../Usage";
 
@@ -489,30 +488,38 @@ describe("dollars", () => {
         expect(availableText(9_999, "en-US")).toBe("$0");
         expect(availableText(-5, "en-US")).toBe("$0");
     });
-    it("rounds what was taken up to the cent, so it never understates", () => {
-        expect(spentText(60_000, "en-US")).toBe("$0.06");
-        expect(spentText(920_001, "en-US")).toBe("$0.93");
-        expect(spentText(1, "en-US")).toBe("$0.01");
-        expect(spentText(0, "en-US")).toBe("$0");
-    });
-    it("says a positive amount under a cent as 'less than', a true zero as $0, and anything else as it did", () => {
+    it("says what is available under a cent as 'less than', and what was taken exactly as Orbit does", () => {
         const tiny = "Less than $0.01";
         expect(availableLabel(5_000, "en-US", tiny)).toBe(tiny);
         expect(availableLabel(9_999, "en-US", tiny)).toBe(tiny);
         expect(availableLabel(0, "en-US", tiny)).toBe("$0");
         expect(availableLabel(10_000, "en-US", tiny)).toBe("$0.01");
         expect(availableLabel(3_209_999, "en-US", tiny)).toBe("$3.20");
-        // What was taken is said as Orbit says it: thousandths under a cent, "less than $0.001" for the smallest
+        // What was taken is said EXACTLY as Orbit's dollars() says it (same table in Orbit's and the bots' tests), above a cent too
         const line = "less than $0.001";
-        expect(spentLabel(1, "en-US", line)).toBe(line);
-        expect(spentLabel(499, "en-US", line)).toBe(line);
-        expect(spentLabel(500, "en-US", line)).toBe("$0.001");
-        expect(spentLabel(1_200, "en-US", line)).toBe("$0.001");
-        expect(spentLabel(9_000, "en-US", line)).toBe("$0.009");
-        expect(spentLabel(0, "en-US", line)).toBe("$0");
-        expect(spentLabel(10_000, "en-US", line)).toBe("$0.01");
-        expect(spentLabel(10_001, "en-US", line)).toBe("$0.02");
-        expect(spentLabel(60_000, "en-US", line)).toBe("$0.06");
+        const table: Array<[number, string]> = [
+            [0, "$0"],
+            [1, "less than $0.001"],
+            [499, "less than $0.001"],
+            [500, "$0.001"],
+            [1200, "$0.001"],
+            [1500, "$0.002"],
+            [2500, "$0.003"],
+            [9000, "$0.009"],
+            [9999, "$0.010"],
+            [10000, "$0.01"],
+            [10001, "$0.01"],
+            [15000, "$0.01"],
+            [25000, "$0.03"],
+            [35000, "$0.04"],
+            [45000, "$0.04"],
+            [50000, "$0.05"],
+            [1250000, "$1.25"],
+            [5000000, "$5.00"],
+            [3209999, "$3.21"],
+        ];
+        for (const [micros, said] of table) expect(spentLabel(micros, "en-US", line)).toBe(said);
+        expect(spentLabel(Number.NaN, "en-US", line)).toBe("$0");
     });
     it("is used up below a cent, and the bar counts whole cents", () => {
         expect(moneyUsedUp({ availableMicros: 9_999 })).toBe(true);
