@@ -319,6 +319,13 @@ describe('a job that runs', () => {
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
         });
 
+        it('ends as the agent’s when each turn ended on a person’s own provider failing (their key out of credit, their endpoint failing): the relay notes nothing of ours', async () => {
+            const { seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => done('')));
+            await run();
+            expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        });
+
         it('still takes the agent’s own ending from a turn, and a turn that completed ahead of a done marker is done', async () => {
             const { notes, seen, run } = rig([() => (notes.fault(JOB.jobId), notes.answered(JOB.jobId), done('Finished [[done]]'))]);
             await run();

@@ -534,6 +534,66 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-retry', before)).toBe(true);
     });
 
+    it('notes a rate limit on our own key, a 502 for a revoked key of ours, and a stored key that cannot be read, as faults of ours', async () => {
+        const before = since();
+        asJob('job-ratelimit');
+        upstreamHandler = (_req, res) => res.status(429).json({ error: { message: 'slow down' } });
+        await askAndSettle(agent);
+        expect(notes.endedOnFault('job-ratelimit', before)).toBe(true);
+
+        asJob('job-revoked');
+        upstreamHandler = (_req, res) => res.status(401).json({ error: { message: 'revoked' } });
+        await askAndSettle(agent, 2);
+        expect(notes.endedOnFault('job-revoked', before)).toBe(true);
+
+        // a stored key that cannot be read is ours on a person's key too
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-unreadable-own');
+        const encryption = await import('../ai/encryption');
+        const spy = vi.spyOn(encryption, 'decryptApiKey').mockImplementation(() => {
+            throw new Error('bad key');
+        });
+        try {
+            await askAndSettle(agent, 3);
+            expect(notes.endedOnFault('job-unreadable-own', before)).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it('does not note what a person’s own provider, key or endpoint did as a fault of ours', async () => {
+        const before = since();
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        let count = 0;
+        // their provider's own error, their key out of credit (402 comes to Hermes as 502), a revoked key, a rate limit, an endpoint that is gone
+        for (const [name, status] of [['job-own-500', 500], ['job-own-402', 402], ['job-own-401', 401], ['job-own-429', 429]] as const) {
+            asJob(name);
+            upstreamHandler = (_req, res) => res.status(status).json({ error: { message: 'no' } });
+            count += 1;
+            await askAndSettle(agent, count);
+            expect(notes.endedOnFault(name, before)).toBe(false);
+        }
+        asJob('job-own-gone');
+        route = { config: config({ endpoint: 'http://127.0.0.1:1/v1' }), source: 'own-key', keyOwnerId: 'person-owner' };
+        count += 1;
+        await askAndSettle(agent, count);
+        expect(notes.endedOnFault('job-own-gone', before)).toBe(false);
+
+        // a stream their endpoint cut off
+        asJob('job-own-cut');
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        upstreamHandler = (req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            setTimeout(() => req.socket.destroy(), 10);
+        };
+        const cut = await ask({ ...agent, stream: true });
+        await cut.text().catch(() => '');
+        count += 1;
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(count), { timeout: 3000 });
+        expect(notes.endedOnFault('job-own-cut', before)).toBe(false);
+    });
+
     it('does not let a side call that carries no tools make or unmake a fault of the turn', async () => {
         asJob('job-side');
         const before = since();

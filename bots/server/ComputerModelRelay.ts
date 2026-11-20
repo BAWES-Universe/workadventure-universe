@@ -212,6 +212,8 @@ interface Ended {
     cutShort: boolean;
     /** The call could not be made at all (the provider was not reached): nothing was sent, so nothing is owed. */
     notSent: boolean;
+    /** The call failed on our side before the provider was asked (its stored key could not be read): ours whoever's key it is. */
+    relaySide?: boolean;
 }
 
 export function createComputerModelRelay(deps: RelayDeps): Router {
@@ -334,17 +336,23 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
                 else {
                     ended = await callProvider({ body, config, streaming, outputCap, res });
-                    // How the call ended, for the runner: an error answer, or an answer cut off from our side, is a fault of ours; a whole answer is not
+                    // How the call ended, for the runner: a failure of ours is noted as a fault, a whole answer as an answer. What a provider
+                    // answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
+                    // person's own key the provider, the key and the endpoint are theirs (their credit ran out, their key was revoked)
                     if (agentCall) {
-                        if (res.statusCode >= 500 || (ended.cutShort && !gone)) deps.refusals?.fault(jobId);
+                        const providerSaid = res.statusCode >= 500 || res.statusCode === 429 || (ended.cutShort && !gone);
+                        if (providerSaid && (source !== 'own-key' || ended.relaySide)) deps.refusals?.fault(jobId);
                         else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
                     }
                 }
             } catch (error) {
                 console.error('[ComputerRelay] A call failed:', providerErrorText(error));
-                if (!res.headersSent) fault(502, 'The AI did not answer.', 'upstream_error');
-                else {
-                    if (agentCall) deps.refusals?.fault(jobId);
+                // An error nobody expected, while the provider was being called: ours only when the provider is ours
+                if (!res.headersSent) {
+                    if (source !== 'own-key') fault(502, 'The AI did not answer.', 'upstream_error');
+                    else problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
+                } else {
+                    if (agentCall && source !== 'own-key') deps.refusals?.fault(jobId);
                     res.end();
                 }
                 ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
@@ -391,7 +399,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         } catch (error) {
             console.error('[ComputerRelay] A key could not be read:', providerErrorText(error));
             problem(res, 502, 'The AI could not be reached.', 'upstream_unreachable', 'server_error');
-            return { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
+            return { usage: undefined, outputChars: 0, cutShort: false, notSent: true, relaySide: true };
         }
         const url = `${(config.endpoint || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`;
 
