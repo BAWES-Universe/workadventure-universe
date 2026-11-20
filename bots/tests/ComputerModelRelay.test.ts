@@ -1762,6 +1762,20 @@ describe('what #2078 (bounded provider reads, per-call metering) and #2101 (whos
 });
 
 describe('a model that is missing', () => {
+    it('reads a 429 that names our credit or key as ours, always given back, and a plain rate limit as unresolved', () => {
+        // OpenAI-style providers say our used-up credit as 429 + insufficient_quota (code or type); that is not a rate limit
+        expect(readProviderError(429, { code: 'insufficient_quota', type: 'insufficient_quota', message: 'You exceeded your current quota' })).toEqual({ who: 'ours', kind: 'fault', reason: 'provider_key_ours' });
+        expect(readProviderError(429, { type: 'insufficient_quota', message: 'x' })).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+        expect(readProviderError(429, { code: 'billing_hard_limit_reached', message: 'x' })).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+        // the same code in an error that has no status of its own (a stream error event): numeric from the code field is not needed, the status is the call's
+        expect(readProviderError(429, { code: 'rate_limit_exceeded', type: 'requests', message: 'Rate limit reached' })).toEqual({ who: 'ours', kind: 'uncertain', reason: 'provider_429' });
+        expect(readProviderError(429, { message: 'Too many requests' })).toEqual({ who: 'ours', kind: 'uncertain', reason: 'provider_429' });
+        // a key word only in the message (what a provider echoes of the job's own words) is not read as ours
+        expect(readProviderError(429, { code: 'rate_limit_exceeded', message: 'You exceeded your current quota, please check your plan and billing details' })).toMatchObject({ kind: 'uncertain', reason: 'provider_429' });
+        expect(readProviderError(429, { message: 'insufficient_quota billing' })).toMatchObject({ kind: 'uncertain', reason: 'provider_429' });
+        // a request that is too large for the provider's limit is still the request's
+        expect(readProviderError(429, { code: 'rate_limit_exceeded', message: 'Request too large for gpt-4o: Limit 30000, Requested 45000. The input or output tokens must be reduced' })).toMatchObject({ kind: 'not_ours' });
+    });
     it('is confirmed ours by its structured code even when it names the model field, and a field-only model refusal stays unresolved', () => {
         expect(readProviderError(404, { code: 'model_not_found', param: 'model', message: 'The model does not exist' })).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
         expect(readProviderError(400, { type: 'invalid_request_error', code: 'model_not_found', param: 'model', message: 'x' })).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
@@ -1873,6 +1887,11 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
         expect(await reasons('job-r-429', 1)).toEqual(['uncertain:provider_429']);
         await call('job-r-429-large', refused(429, { message: 'Request too large for gpt-4o: Limit 30000, Requested 45000. Must be reduced.' }));
         expect(await reasons('job-r-429-large', 1)).toEqual(['not_ours:field_job_set']);
+        // our credit used up is said as 429 + insufficient_quota: a confirmed fault of ours (always given back), not a rate limit
+        await call('job-r-429-quota', refused(429, { message: 'You exceeded your current quota', code: 'insufficient_quota', type: 'insufficient_quota' }));
+        expect(await reasons('job-r-429-quota', 1)).toEqual(['fault:provider_key_ours']);
+        await call('job-r-429-keyword', refused(429, { message: 'You exceeded your current quota, check billing', code: 'rate_limit_exceeded' }));
+        expect(await reasons('job-r-429-keyword', 1)).toEqual(['uncertain:provider_429']);
         await call('job-r-404', refused(404, { message: 'The model does not exist', code: 'model_not_found' }));
         expect(await reasons('job-r-404', 1)).toEqual(['fault:provider_key_ours']);
         await call('job-r-fieldless', refused(400, { message: 'bad request' }));
@@ -1955,6 +1974,7 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
             ['job-r-own-401', 401, { message: 'bad key' }],
             ['job-r-own-402', 402, { message: 'out of credit' }],
             ['job-r-own-code', 400, { code: 'invalid_api_key', message: 'no' }],
+            ['job-r-own-429-quota', 429, { code: 'insufficient_quota', type: 'insufficient_quota', message: 'You exceeded your current quota' }],
         ] as const) {
             asJob(name);
             upstreamHandler = refused(status, error);

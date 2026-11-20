@@ -355,6 +355,11 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
         const asNumber = typeof code === 'number' ? code : typeof code === 'string' && /^\d{3}$/.test(code) ? Number(code) : null;
         numeric = asNumber !== null && asNumber >= 100 && asNumber < 600 ? asNumber : null;
     }
+    // Our key, our credit or our model, named by the error's own code or type: ours, before anything else is read, 429 included. OpenAI-style providers
+    // answer a used-up credit or a refused key with 429 and `insufficient_quota`, which is not a rate limit: only what the provider sets (code, type) is read
+    // for that, never a message, since a message echoes the job's own values and a job can steer those
+    const codes = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
+    if (numeric === 429 && KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours');
     if (numeric === 429 && REQUEST_TOO_LARGE.test(words)) {
         // "Requested" is the input and the limit we set together: when the input alone fits under the provider's limit, it was our limit that made the
         // request too large (ours); when the job set the limit, or the input alone does not fit, it is the request's
@@ -370,9 +375,7 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
     // changed). The token limit is the job's own when the job asked for it and we did not lower it, and then a refusal of it is the request's; a limit we
     // chose is ours, unless the wording blames the prompt or the context (a context that is too long, N tokens in the messages, inputs tokens)
     // Our key, our credit or our model, named by the error's own code or type: ours, before the field it names is looked at (a `model_not_found` that
-    // names `model` is a missing model of ours, not a refusal of a field). Only what the provider sets (code, type) is read for that, never a message
-    // on a call that names a field: a message echoes the job's own values, and a job can steer those
-    const codes = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
+    // names `model` is a missing model of ours, not a refusal of a field); read above for a 429, here for every other status
     if (KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours');
     const paramField = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
     const refusedShape = numeric === null || numeric === 400 || numeric === 422;
