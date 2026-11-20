@@ -735,9 +735,11 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 const { data, tooLong } = await readBoundedReply<{ usage?: unknown; choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> }>(upstream, RELAY_GUARDS.maxReplyBytes);
                 if (!data) {
                     problem(res, 502, 'The AI answered with something unreadable.', 'upstream_error', 'server_error');
-                    // A reply cut at the bound is the request's: only the job's own settings can make an answer that long (logprobs on every token,
-                    // say), so it is never a fault of Universe's, and three of them can never end a job as ours. A reply that is not JSON is unresolved
-                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: false, ...(tooLong ? { reading: REQUESTS() } : {}) };
+                    // A reply cut at the bound is unresolved (class 3: Orbit's bounded goodwill, never a confirmed fault of ours and never decided
+                    // as the person's): only the job's own settings (logprobs on every token) can make a reply that long, so it is not confirmed
+                    // ours, but nothing proves whose it is either. It is written down explicitly (reason provider_5xx: the 502 the agent gets and
+                    // one of the 15 reasons Orbit takes) so it can never become a confirmed fault. A reply that is not JSON is unresolved too
+                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: false, ...(tooLong ? { reading: OURS_UNSURE('provider_5xx') } : {}) };
                 }
                 res.status(200).json(data);
                 const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? readProviderError(null, (data as { error?: unknown }).error, { ...jobsOwnLimit(body, config), outputCap }) : null;

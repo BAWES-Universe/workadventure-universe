@@ -667,25 +667,18 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-fault-unreachable', before)).toBe(true);
     });
 
-    it('notes a whole reply cut at the bound as the request’s (a job’s own logprobs can make one), and one that is not JSON as ours', async () => {
+    it('notes a whole reply cut at the bound as unresolved (class 3), never a confirmed fault of ours and never the person’s', async () => {
         asJob('job-too-long');
         const before = since();
-        // 17 MiB of JSON: more than the relay reads of one reply
+        // 17 MiB of JSON: more than the relay reads of one reply (only a job's own settings, like logprobs on every token, make one)
         const huge = JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'x'.repeat(17 * 1024 * 1024) } }] });
         upstreamHandler = (_req, res) => res.status(200).type('application/json').send(huge);
         const { answer } = await askAndSettle(agent);
         expect(answer.status).toBe(502);
-        // The person's side, never a fault of Universe's: three such turns cannot end a job as ours
-        expect(notes.endedOnFault('job-too-long', before)).toBe(false);
+        // Unresolved: Orbit's bounded goodwill decides, from a row that says so; never confirmed, and not the person's side either
         expect(notes.confirmedSince('job-too-long', before)).toBe(false);
-        expect(notes.sawSince('job-too-long', before)).toBe(true);
-        expect((await rowsSent('job-too-long')).map((row) => [row.kind, row.reason])).toEqual([['not_ours', 'field_job_set']]);
-
-        // A reply that is not JSON at all is still an answer nobody can read: unresolved, ours
-        asJob('job-garbage');
-        upstreamHandler = (_req, res) => res.status(200).type('application/json').send('<html>not json</html>');
-        await askAndSettle(agent, 2);
-        expect(notes.endedOnFault('job-garbage', before)).toBe(true);
+        expect(notes.sawSince('job-too-long', before)).toBe(false);
+        expect((await rowsSent('job-too-long')).map((row) => [row.kind, row.reason, row.providerStatus])).toEqual([['uncertain', 'provider_5xx', 502]]);
     });
 
     it('notes Orbit that cannot be asked, a Brick with no AI, and computers all busy as faults of ours', async () => {
