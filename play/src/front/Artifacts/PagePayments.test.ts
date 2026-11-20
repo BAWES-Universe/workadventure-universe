@@ -1355,6 +1355,114 @@ describe("buying, checking and getting a purchase back, in the game's window (th
         live.destroy();
     });
 
+    describe("an order that is not this buyer's any more (another account signed in on this device while the checkout was on its way)", () => {
+        const NOT_THERE = new ArtifactRequestError(404, "not_found");
+
+        it("clears the line of the one that left, tells the page unavailable under its own request, never paid, and stops asking", async () => {
+            const pay = vi
+                .fn()
+                .mockResolvedValueOnce(checkout)
+                .mockRejectedValueOnce(NOT_THERE)
+                .mockResolvedValue({ status: "paid", testPayment: false });
+            const payments = make(pay);
+            ask(payments);
+            await flush();
+            expect(get(payments.line)).toMatchObject({ checking: true });
+            await vi.advanceTimersByTimeAsync(3_000);
+            // Cleared: nothing of the order is left on the line, not as a problem, not as a purchase, and no Check payment for it
+            expect(get(payments.line)).toMatchObject({
+                checking: false,
+                paid: null,
+                problem: null,
+                canCheck: false,
+                resume: null,
+            });
+            expect(heard()).toEqual([
+                { universe: "app-result", status: "started", request: "r1", session: "s1" },
+                { universe: "app-result", status: "unavailable", request: "r1", session: "s1" },
+            ]);
+            // The order is not asked about again: a later "paid" answer would never reach this line
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(pay).toHaveBeenCalledTimes(2);
+            expect(told()).not.toContain("paid");
+            payments.destroy();
+        });
+
+        it("clears an order a restore found open as well", async () => {
+            const pay = vi
+                .fn()
+                .mockResolvedValueOnce({ status: "checking", orderId: "o7", checkoutUrl: null, pollAfterMs: 3000 })
+                .mockRejectedValueOnce(NOT_THERE)
+                .mockResolvedValue({ status: "paid", testPayment: false });
+            const payments = make(pay);
+            ask(payments, frameWindow, {
+                universe: "use-app",
+                app: "examplepay",
+                request: "load1",
+                session: "s1",
+                restore: true,
+            });
+            await flush();
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(get(payments.line)).toMatchObject({ checking: false, paid: null, problem: null });
+            expect(heard().at(-1)).toEqual({
+                universe: "app-result",
+                status: "unavailable",
+                request: "load1",
+                session: "s1",
+            });
+            expect(told()).not.toContain("paid");
+            payments.destroy();
+        });
+
+        it("keeps asking after any other failure: a 5xx or no answer proves nothing about whose order it is", async () => {
+            const pay = vi
+                .fn()
+                .mockResolvedValueOnce(checkout)
+                .mockRejectedValueOnce(new ArtifactRequestError(500, "failed"))
+                .mockRejectedValueOnce(new ArtifactRequestError(0, "offline"))
+                .mockRejectedValueOnce(new ArtifactRequestError(403, "forbidden"))
+                .mockResolvedValue({ status: "paid", testPayment: false });
+            const payments = make(pay);
+            ask(payments);
+            await flush();
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(get(payments.line)).toMatchObject({ checking: false, paid: { test: false } });
+            expect(told()).toEqual(["started", "paid"]);
+            payments.destroy();
+        });
+    });
+
+    it("keeps a restored test purchase a test one, from Check payment too: the page hears test, never a live paid", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ status: "none", orderId: null, pollAfterMs: 3000 })
+            .mockResolvedValue({ status: "paid", testPayment: true, orderId: "o9", paidAt: "2026-11-19T08:00:00Z" });
+        const payments = make(pay);
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "load1",
+            session: "s1",
+            restore: true,
+        });
+        await flush();
+        payments.checkPayment();
+        await flush();
+        expect(get(payments.line)).toMatchObject({
+            paid: { test: true },
+            restored: { paidAt: "2026-11-19T08:00:00Z" },
+        });
+        expect(heard().at(-1)).toEqual({
+            universe: "app-result",
+            status: "paid",
+            request: "load1",
+            session: "s1",
+            test: true,
+        });
+        payments.destroy();
+    });
+
     it("gives an order that was adopted with no link its Continue link when a later answer carries one", async () => {
         const pay = vi
             .fn()

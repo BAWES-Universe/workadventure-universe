@@ -27,7 +27,7 @@ describe("the line under a paying page says what the approved mock says", () => 
         ] as Partial<PayLine>[]) {
             expect(view(over)).toMatchObject({
                 title: "We haven't heard back about your payment yet.",
-                sub: "If you paid, it still counts. You can check now.",
+                sub: "If you paid, it still counts. Check it here before paying again.",
                 closable: false,
             });
             expect(labels(over)).toEqual(["check:Check payment:primary"]);
@@ -71,7 +71,7 @@ describe("the line under a paying page says what the approved mock says", () => 
     it("g4: not paid yet, with Check payment", () => {
         expect(view({ problem: "not_paid", canCheck: true })).toMatchObject({
             title: "Not paid yet.",
-            sub: "If you just paid, it can take a few minutes to show.",
+            sub: "If you already paid, it can take a while to show. Check it here before paying again.",
         });
         expect(labels({ problem: "not_paid", canCheck: true })).toEqual(["check:Check payment:primary"]);
     });
@@ -124,12 +124,12 @@ describe("the line under a paying page says what the approved mock says", () => 
         } as Partial<PayLine>;
         expect(view(guest)).toMatchObject({
             title: "Paid. Thank you.",
-            sub: "Save your receipt link. It brings this purchase back on any device.",
+            sub: "A guest purchase on this browser. Save your private receipt link: it brings this purchase back on any device, so share it with no one.",
         });
-        expect(labels(guest)).toEqual(["copy:Copy receipt link:primary"]);
+        expect(labels(guest)).toEqual(["copy:Copy private receipt link:primary"]);
         expect(view(guest, { copied: true })).toMatchObject({
-            title: "Receipt link copied.",
-            sub: "Keep it somewhere safe, like your notes or email.",
+            title: "Private receipt link copied.",
+            sub: "Keep it somewhere safe, like your notes or email. Anyone who has it can bring this purchase back.",
         });
         expect(view(guest, { copied: true })?.actions).toEqual([
             { kind: "copy", label: "Copied", style: "secondary", disabled: true },
@@ -165,10 +165,18 @@ describe("the line under a paying page says what the approved mock says", () => 
         }
     });
 
+    it("a restored test purchase still reads as a test payment, never as a purchase that is back", () => {
+        expect(view({ paid: { test: true }, restored: { paidAt: "2026-11-19T08:00:00Z" } })).toMatchObject({
+            title: "Test payment received. No money moved.",
+            sub: "Only a live payment counts as a purchase.",
+            actions: [],
+        });
+    });
+
     it("u2, u3: a page that cannot ask says it needs an update; the buyer can check, the owner is told to ask the Brick", () => {
         expect(view({ needsUpdate: true, canCheck: true })).toMatchObject({
             title: "This page's pay button needs an update.",
-            sub: "If you already paid, you can check it here.",
+            sub: "If you already paid, check it here before paying again.",
         });
         expect(labels({ needsUpdate: true, canCheck: true })).toEqual(["check:Check payment:primary"]);
         expect(view({ needsUpdate: true, canCheck: true }, { owner: { maker: "Nova" } })).toMatchObject({

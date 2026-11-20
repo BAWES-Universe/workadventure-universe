@@ -866,7 +866,11 @@
                         {/if}
                         {#if receiptByHand}
                             <p class="pay-s" role="alert">{$LL.chat.artifacts.copyFailed()}</p>
-                            <code class="link-text" data-testid="artifactReceiptText">{receiptByHand}</code>
+                            <code
+                                class="link-text"
+                                aria-label={$LL.chat.artifacts.payReceiptLinkLabel()}
+                                data-testid="artifactReceiptText">{receiptByHand}</code
+                            >
                         {/if}
                     </div>
                 {/if}
