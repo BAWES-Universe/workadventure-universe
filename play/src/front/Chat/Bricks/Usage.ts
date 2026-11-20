@@ -347,15 +347,18 @@ function parseActivity(value: unknown): ActivityItem[] {
             item.outcome === "partial" &&
             actions.some((action) => action.outcome === "worked") &&
             actions.some((action) => action.outcome !== "worked");
+        // An unconfirmed task whose hold was released is sent as "refunded" (the money was given back), and it is still one whose delivery
+        // nobody could confirm: the outcome is looked at first, so "Couldn't confirm", its note and its steps are not lost behind "Refunded".
+        // The money line stays the refund's (state)
         const outcome: ActivityOutcome =
-            state === "refunded"
+            item.outcome === "unconfirmed"
+                ? "unconfirmed"
+                : state === "refunded"
                 ? "refunded"
                 : partly
                 ? "partial"
                 : item.outcome === "failed"
                 ? "failed"
-                : item.outcome === "unconfirmed"
-                ? "unconfirmed"
                 : "done";
         out.push({
             id,
@@ -363,8 +366,8 @@ function parseActivity(value: unknown): ActivityItem[] {
             at,
             state,
             outcome,
-            outcomeText: state === "refunded" ? null : short(item.outcomeText) ?? null,
-            outcomeNote: state === "refunded" ? null : short(item.outcomeNote) ?? null,
+            outcomeText: state === "refunded" && outcome !== "unconfirmed" ? null : short(item.outcomeText) ?? null,
+            outcomeNote: state === "refunded" && outcome !== "unconfirmed" ? null : short(item.outcomeNote) ?? null,
             actions,
             spentMicros: micros(item.spentMicros) ?? null,
             category: item.category === "apps" || item.category === "computer" ? item.category : null,

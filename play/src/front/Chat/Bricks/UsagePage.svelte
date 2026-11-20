@@ -165,7 +165,7 @@
      * that headline is shown.
      */
     function headline(item: ActivityItem, text: Words): string {
-        if (item.state === "refunded") return "";
+        if (item.state === "refunded" && item.outcome !== "unconfirmed") return "";
         if (item.outcome === "partial") return text.activityPartly();
         if (item.outcome === "failed") return item.outcomeText ?? text.activityDidntFinish();
         if (item.outcome === "unconfirmed") return item.outcomeText ?? text.activityCouldntConfirm();
@@ -180,7 +180,12 @@
 
     function activityHint(item: ActivityItem, text: Words, locale: string | undefined): string {
         const when = activityWhen(item.at, text, locale);
-        if (item.state === "refunded") return `${when} · ${text.activityRefunded()}`;
+        // A refunded task nobody could confirm says so beside the refund: its delivery is still not known
+        if (item.state === "refunded") {
+            return item.outcome === "unconfirmed"
+                ? [when, headline(item, text), text.refunded()].filter(Boolean).join(" · ")
+                : `${when} · ${text.activityRefunded()}`;
+        }
         const partly = headline(item, text);
         if (item.payer !== "you") {
             return [when, partly, nothingPaid(item) ? "" : paidBy(item, text)].filter(Boolean).join(" · ");
@@ -207,8 +212,7 @@
     }
 
     /** Every outcome but done and refunded shows its actions: a task that did not finish says what each step did */
-    const showsActions = (item: ActivityItem): boolean =>
-        item.state !== "refunded" && item.outcome !== "done" && item.outcome !== "refunded";
+    const showsActions = (item: ActivityItem): boolean => item.outcome !== "done" && item.outcome !== "refunded";
 
     /**
      * A task that did not finish shows each action and how it ended; the lines of what it used follow only when no step that worked
@@ -433,7 +437,7 @@
                                     </div>
                                 {/each}
                             {/if}
-                            {#if item.state === "refunded"}
+                            {#if item.state === "refunded" && item.outcome !== "unconfirmed"}
                                 <p class="why" data-testid="usageReceiptWhy">{text.receiptRefundedWhy()}</p>
                             {:else if item.outcomeNote}
                                 <p class="why" data-testid="usageReceiptWhy">{item.outcomeNote}</p>

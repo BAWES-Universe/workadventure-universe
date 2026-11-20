@@ -776,6 +776,31 @@ describe("the Usage page (#1999)", () => {
             expect(byId("usageReceipt")?.textContent).not.toContain("Paid by");
         });
 
+        it("says a refunded task nobody could confirm as both: couldn't confirm, its steps and Orbit's note, and the refund", async () => {
+            await openTask(
+                failedTask({
+                    id: "act_released",
+                    state: "refunded",
+                    outcome: "unconfirmed",
+                    outcomeText: "Couldn't confirm",
+                    outcomeNote: "We couldn't confirm whether Exa finished. We released your hold.",
+                    spentMicros: null,
+                    actions: [unknownStep({ takenText: "Hold released" })],
+                    lines: [],
+                })
+            );
+            expect(text()).toMatch(/Today, .+ · Couldn't confirm · Refunded/);
+            expect(text()).not.toContain("Refunded, nothing taken");
+            expect(stepRows()).toEqual(["Gmail · couldn't confirm delivery Hold released"]);
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "We couldn't confirm whether Exa finished. We released your hold."
+            );
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Couldn't confirm");
+            // Never the words that say it didn't go through: delivery is not known
+            expect(byId("usageReceipt")?.textContent).not.toContain("This didn't go through on our side");
+            expect(byId("usageReceipt")?.textContent?.replace(/\s+/g, " ")).toMatch(/Couldn't confirm\s*Refunded$/);
+        });
+
         it("says our own words when Orbit sends an outcome with no headline", async () => {
             await openTask(failedTask({ outcomeText: undefined }));
             expect(text()).toContain("Didn't finish");
