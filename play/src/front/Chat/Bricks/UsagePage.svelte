@@ -161,15 +161,15 @@
 
     /**
      * What a task that did not simply finish is called: Orbit's own headline when it sends one, else ours. A done task has none.
-     * An outcome this page does not know reads as done only when Orbit has nothing to say about it; with a headline of its own,
-     * that headline is shown.
+     * An outcome this page does not know reads as done, but keeps its own headline when Orbit sends one (a genuine done task, which
+     * Orbit also gives the word "Done", shows none).
      */
     function headline(item: ActivityItem, text: Words): string {
         if (item.state === "refunded" && item.outcome !== "unconfirmed") return "";
         if (item.outcome === "partial") return text.activityPartly();
         if (item.outcome === "failed") return item.outcomeText ?? text.activityDidntFinish();
         if (item.outcome === "unconfirmed") return item.outcomeText ?? text.activityCouldntConfirm();
-        return item.outcomeNote && item.outcomeText ? item.outcomeText : "";
+        return item.unknownOutcome && item.outcomeText ? item.outcomeText : "";
     }
 
     /** A task that did not finish and took nothing: nobody paid, so no "Paid by" line (the note says what happened) */

@@ -334,6 +334,19 @@ describe("real numbers (credits and grants)", () => {
             });
         });
 
+        it("tells an outcome it does not know from a genuine done task, so its headline can still be shown", () => {
+            expect(read({ outcome: "later", outcomeText: "Held up" })).toMatchObject({
+                outcome: "done",
+                unknownOutcome: true,
+                outcomeText: "Held up",
+            });
+            for (const outcome of ["done", "partial", "failed", "unconfirmed", undefined, "", 7]) {
+                expect(read({ outcome, outcomeText: "x" })?.unknownOutcome).toBe(false);
+            }
+            // A refunded task is the refund, whatever else it says
+            expect(read({ state: "refunded", outcome: "later" })?.unknownOutcome).toBe(false);
+        });
+
         it("keeps an unconfirmed task as unconfirmed once its hold is released and Orbit sends it as refunded: the money line stays the refund's", () => {
             const item = read({
                 state: "refunded",
