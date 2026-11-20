@@ -276,4 +276,28 @@ describe('the durable record of how a job’s model calls ended (sent to Orbit)'
         await notes.flush('j');
         expect(sent.flatMap((entry) => entry.rows.map((row) => [row.callId, row.turn]))).toEqual([['c1', 4], ['c2', 5]]);
     });
+
+    it('stamps a row with the run its turn was in: after a restart the same turn number in another run is another turn', async () => {
+        const { notes, sent } = rig();
+        notes.turn('j', 1, 'run-a');
+        expect(notes.runOf('j')).toBe('run-a');
+        expect(notes.runOf('never')).toBeUndefined();
+        const startedTurn = notes.turnOf('j');
+        const startedRun = notes.runOf('j');
+        // the runner of another run takes the job up and numbers its turns from 1 again, while the first call is still open
+        notes.turn('j', 1, 'run-b');
+        notes.record('b', 'j', call('c1', { turn: startedTurn, run: startedRun }));
+        notes.record('b', 'j', call('c2'));
+        await notes.flush('j');
+        const rows = sent.flatMap((entry) => entry.rows.map((row) => [row.callId, row.turn, row.run]));
+        expect(rows).toEqual([['c1', 1, 'run-a'], ['c2', 1, 'run-b']]);
+    });
+
+    it('sends no run for a runner that names none', async () => {
+        const { notes, sent } = rig();
+        notes.turn('j', 2);
+        notes.record('b', 'j', call('c1'));
+        await notes.flush('j');
+        expect(sent.flatMap((entry) => entry.rows.map((row) => 'run' in row))).toEqual([false]);
+    });
 });

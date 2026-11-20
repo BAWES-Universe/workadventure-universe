@@ -43,6 +43,11 @@ export type FaultReason =
 export interface CallRow {
     /** The runner's turn the call was made in (0 when no turn was known). */
     turn: number;
+    /**
+     * The run of the runner the turn belongs to (see `turn`): turns are numbered from 1 in each run of a job, and a run starts again after a restart
+     * of the bot server, so the turn alone names two turns. Left out when no run was known.
+     */
+    run?: string;
     callId: string;
     kind: Exclude<CallKind, 'answered'>;
     reason: FaultReason;
@@ -54,10 +59,12 @@ export interface CallRow {
     at: string;
 }
 
-export type CallInput = Omit<CallRow, 'turn' | 'at' | 'kind'> & {
+export type CallInput = Omit<CallRow, 'turn' | 'run' | 'at' | 'kind'> & {
     kind: CallKind;
     /** The turn the call STARTED in (see `turnOf`): a call that ends after the runner moved on still belongs to the turn it began in. */
     turn?: number;
+    /** The run that turn was in (see `runOf`), read when the call started. */
+    run?: string;
 };
 
 /**
@@ -67,8 +74,10 @@ export type CallInput = Omit<CallRow, 'turn' | 'at' | 'kind'> & {
 export type Since = number | { order: number };
 
 export interface RefusalNotes {
-    /** The runner says which turn of this job it is on, so the rows of the calls made in it carry the number. */
-    turn(jobId: string, turn: number): void;
+    /** The runner says which turn of this job it is on (and in which run of the runner), so the rows of the calls made in it carry both. */
+    turn(jobId: string, turn: number, run?: string): void;
+    /** The run the runner says this job's turns are in now (undefined when none is known): read when a call starts, like `turnOf`. */
+    runOf(jobId: string): string | undefined;
     /** The turn the runner says this job is on now (0 when none is known): read when a call starts, so its row names the turn it began in. */
     turnOf(jobId: string): number;
     /**
@@ -129,7 +138,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: { at: number; order: number }; answered?: { at: number; order: number } }>();
     /** Whether an event is inside a window that begins at `since`. */
     const within = (event: { at: number; order: number }, since: Since) => (typeof since === 'number' ? event.at >= since : event.order > since.order);
-    const turns = new Map<string, { turn: number; at: number }>();
+    const turns = new Map<string, { turn: number; run?: string; at: number }>();
     // Rows not yet taken by Orbit, per job. A row is sent again until Orbit takes it (Orbit keeps one per job and call).
     const queued = new Map<string, { botId: string; rows: Map<string, CallRow>; sending?: Promise<boolean>; at: number; later?: ReturnType<typeof setTimeout>; laterTries: number }>();
     const forget = () => {
@@ -201,11 +210,12 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     };
 
     return {
-        turn(jobId, turn) {
+        turn(jobId, turn, run) {
             forget();
-            turns.set(jobId, { turn, at: now() });
+            turns.set(jobId, { turn, ...(run ? { run } : {}), at: now() });
         },
         turnOf: (jobId) => turns.get(jobId)?.turn ?? 0,
+        runOf: (jobId) => turns.get(jobId)?.run,
         record(botId, jobId, call) {
             if (call.kind === 'answered') return mark(jobId, 'answered');
             if (call.kind === 'not_ours') {
@@ -219,8 +229,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             entry.at = now();
             // Orbit keeps ids up to 120 characters: the row is kept under the id it is sent with
             const callId = call.callId.slice(0, 120);
+            // A call that carries its turn carries that turn's run, and one that does not takes both from where the runner is now: never one of each
+            const runOfRow = call.turn !== undefined ? call.run : turns.get(jobId)?.run;
             entry.rows.set(callId, {
                 turn: call.turn ?? turns.get(jobId)?.turn ?? 0,
+                ...(runOfRow ? { run: runOfRow } : {}),
                 callId,
                 kind: call.kind,
                 reason: call.reason,

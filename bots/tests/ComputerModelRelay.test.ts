@@ -697,6 +697,21 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-fault-unreachable', before)).toBe(true);
     });
 
+    it('stamps the row of a call with the turn and the run it started in, though the runner moves to another run while it is open', async () => {
+        asJob('job-run');
+        notes.turn('job-run', 3, 'run-before');
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        upstreamHandler = (_req, res) => void gate.then(() => res.status(500).json({ error: { message: 'The model broke' } }));
+        const asked = askAndSettle(agent);
+        await vi.waitFor(() => expect(upstreamRequests.length).toBeGreaterThan(0), { timeout: 3000 });
+        // the bot server restarted, or took the job up again: another run, its turns numbered from 1
+        notes.turn('job-run', 1, 'run-after');
+        release();
+        await asked;
+        expect((await rowsSent('job-run')).map((row) => [row.turn, row.run])).toEqual([[3, 'run-before']]);
+    });
+
     it('notes a whole reply cut at the bound as unresolved (class 3), never a confirmed fault of ours and never the person’s', async () => {
         asJob('job-too-long');
         const before = since();

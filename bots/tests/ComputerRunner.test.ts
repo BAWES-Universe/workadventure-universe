@@ -72,14 +72,16 @@ function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) 
     return { orbit, seen, setRenew: (fn: typeof renewAnswer) => (renewAnswer = fn), setPrepare: (fn: typeof prepareAnswer) => (prepareAnswer = fn), failHandovers: (n: number) => (handoverFails = n) };
 }
 
-const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY, refusals?: Parameters<typeof createComputerRunner>[0]['refusals']) => {
-    const runner = createComputerRunner({ orbit, relayUrl, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, ...(refusals ? { refusals } : {}) });
+const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY, refusals?: Parameters<typeof createComputerRunner>[0]['refusals'], runId?: () => string) => {
+    const runner = createComputerRunner({ orbit, relayUrl, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, ...(refusals ? { refusals } : {}), ...(runId ? { runId } : {}) });
     orbit.running = async () => [job];
     await runner.tick();
     await runner.idle();
     return runner;
 };
-const finished = (seen: { actions: Array<Record<string, unknown>> }) => seen.actions.filter((a) => a.action === 'finish');
+/** The finishes sent, as before: the run they were numbered in is read on its own (see `finishedWithRun`) */
+const finished = (seen: { actions: Array<Record<string, unknown>> }) => finishedWithRun(seen).map(({ run: _run, ...rest }) => rest);
+const finishedWithRun = (seen: { actions: Array<Record<string, unknown>> }) => seen.actions.filter((a) => a.action === 'finish');
 
 describe('how the agent says its turn ended', () => {
     it('reads done, failed, and the last word when it says more than one', () => {
@@ -1326,6 +1328,34 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
         const b = fakeOrbit([failing(), failing(), failing()]);
         await runJob(b.orbit, JOB, RELAY, { sawSince: () => true, confirmedSince: () => false });
         expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+    });
+
+    it('names the run its turns were numbered in, so a restart that numbers turns from 1 again is never read as the same turns', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        const told: Array<[number, string | undefined]> = [];
+        const refusals = { sawSince: () => false, turn: (_jobId: string, turn: number, run?: string) => void told.push([turn, run]) };
+        // The first run of the bot server on the job...
+        const first = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(first.orbit, JOB, RELAY, refusals, () => 'run-first');
+        // ...and after a restart a second one takes the job up again: its turns are numbered from 1 again, in a run of its own
+        const second = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(second.orbit, JOB, RELAY, refusals, () => 'run-second');
+        expect(finishedWithRun(first.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3], run: 'run-first' }]);
+        expect(finishedWithRun(second.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3], run: 'run-second' }]);
+        // The relay is told the run with each turn, so the rows of its calls carry it
+        expect(told).toEqual([[1, 'run-first'], [2, 'run-first'], [3, 'run-first'], [1, 'run-second'], [2, 'run-second'], [3, 'run-second']]);
+    });
+
+    it('gives each run of a job a run of its own when none is named: two runs never share one', async () => {
+        const runs = new Set<string | undefined>();
+        const refusals = { sawSince: () => false, turn: (_jobId: string, _turn: number, run?: string) => void runs.add(run) };
+        for (let i = 0; i < 5; i++) {
+            const { orbit } = fakeOrbit([done('All fine. [[done]]')]);
+            // eslint-disable-next-line no-await-in-loop
+            await runJob(orbit, JOB, RELAY, refusals);
+        }
+        expect(runs.size).toBe(5);
+        expect([...runs].every((run) => typeof run === 'string' && /^[0-9a-z]{9,}$/.test(run))).toBe(true);
     });
 
     it('does not carry a silent turn from before the person had the machine into the next streak: three turns that are ours end ours', async () => {

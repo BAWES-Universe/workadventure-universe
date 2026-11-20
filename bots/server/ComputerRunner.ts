@@ -15,6 +15,7 @@
  *  - What the agent was given never reaches a log, and neither do its tool arguments (Orbit never sends them).
  */
 
+import { randomBytes } from 'node:crypto';
 import type { AdminApiService } from './AdminApiService';
 import type { RefusalNotes, Since } from './ComputerRefusals';
 import { readRunnerEvents } from './ComputerTurnStream';
@@ -26,6 +27,9 @@ export type RunnerEvent =
     | { type: 'completed'; outputText: string; usage: { inputTokens: number | null; outputTokens: number | null } | null }
     | { type: 'failed'; code: string; message: string }
     | { type: 'keepalive' };
+
+/** A run of the runner on a job: the time it began, and four random bytes, so two runs never share one (not even in the same millisecond). */
+const newRunId = (): string => `${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
 
 export interface RunnableJob {
     jobId: string;
@@ -171,6 +175,8 @@ export interface RunnerDeps {
     now?: () => number;
     log?: Pick<Console, 'warn' | 'error' | 'info'>;
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
+    /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
+    runId?: () => string;
     refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark'>>;
 }
 
@@ -263,9 +269,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function finish(
         job: RunnableJob,
         outcome: 'done' | 'failed',
-        options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[] } = {}
+        options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[]; run?: string } = {}
     ): Promise<'ended' | 'stale'> {
-        const { cause, generation, why, turns } = options;
+        const { cause, generation, why, turns, run } = options;
         let stale = false;
         // Orbit judges a failure from the call rows it holds, so what the relay recorded for this job reaches it BEFORE the finish does (a moment of
         // retry at most: a record that cannot be sent never keeps a job from ending, and Orbit then has the cause below as its only hint)
@@ -276,7 +282,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             ...(outcome === 'failed' && cause ? { cause } : {}),
             ...(outcome === 'failed' && why ? { why } : {}),
             // The turns this runner judged failed (the ones the streak was made of), which Orbit reads against the call rows of each
-            ...(outcome === 'failed' && turns && turns.length > 0 ? { turns: [...turns] } : {}),
+            // `run` says which run of this runner they were numbered in: turns start again from 1 after a restart, so Orbit reads a named turn
+            // only against the rows of that run
+            ...(outcome === 'failed' && turns && turns.length > 0 ? { turns: [...turns], ...(run ? { run } : {}) } : {}),
         };
         await orbit.action(job.botId, job.jobId, fenced(body, generation)).catch((error) => {
             if (staleForOrbit(error)) stale = true;
@@ -456,6 +464,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const accepted: Accepted = { turn: false };
         let turns = 0;
         let bad = 0;
+        // This run of the job's work: turns are numbered from 1 in each run, and a run begins again when the bot server restarts and takes the job up
+        // (or when the job is taken up again in this process), so the rows of the calls and the finish name the run along with the turns
+        const run = (deps.runId ?? newRunId)();
         // The generation the last turn started on: a job that was taken and given back between two turns is read on a later one
         let lastGeneration: number | undefined;
         // Whether any turn of the bad streak was not a failure of ours (the agent said nothing, or the person's allowance or a rule stopped it)
@@ -538,7 +549,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 turnStartedAt = deps.refusals?.mark?.() ?? now();
                 turnNo += 1;
             }
-            deps.refusals?.turn?.(job.jobId, turnNo);
+            deps.refusals?.turn?.(job.jobId, turnNo, run);
             const result = await oneTurn(job, input, signal, renewing, accepted, generation);
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
@@ -698,7 +709,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 // The cause is a hint: Orbit reads the call rows of each turn named here. A confirmed fault anywhere in the streak is ours; else the person's
                 // side (a silent turn, their allowance or a rule) makes it the agent's; else it is unresolved, for Orbit's bounded goodwill
                 const cause: FinishCause = confirmed ? 'ours' : notOurs ? 'agent' : 'ours';
-                if ((await finish(job, 'failed', { cause, generation, turns: badTurns })) === 'stale') {
+                if ((await finish(job, 'failed', { cause, generation, turns: badTurns, run })) === 'stale') {
                     await readAgain();
                     continue;
                 }
