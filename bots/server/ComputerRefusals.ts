@@ -54,30 +54,47 @@ export interface CallRow {
     at: string;
 }
 
-export type CallInput = Omit<CallRow, 'turn' | 'at' | 'kind'> & { kind: CallKind };
+export type CallInput = Omit<CallRow, 'turn' | 'at' | 'kind'> & {
+    kind: CallKind;
+    /** The turn the call STARTED in (see `turnOf`): a call that ends after the runner moved on still belongs to the turn it began in. */
+    turn?: number;
+};
+
+/**
+ * Where a turn's window begins: a point in the order of events (from `mark`), or a moment in ms. A point in the order tells events of one millisecond apart,
+ * which a moment cannot: what was noted before the mark is not in the window, whatever the clock said.
+ */
+export type Since = number | { order: number };
 
 export interface RefusalNotes {
     /** The runner says which turn of this job it is on, so the rows of the calls made in it carry the number. */
     turn(jobId: string, turn: number): void;
+    /** The turn the runner says this job is on now (0 when none is known): read when a call starts, so its row names the turn it began in. */
+    turnOf(jobId: string): number;
     /**
      * How one model call of the job ended, noted for the runner of the same process AND queued for Orbit's durable fault record (best effort, with
      * retry): `fault` and `uncertain` count as a fault of Universe's for the runner, `not_ours` as the person's side, `answered` as an answer.
      */
     record(botId: string, jobId: string, call: CallInput): void;
-    /** Sends what is queued for this job to Orbit, trying again for a moment; true when nothing is left unsent. Called before a job is ended. */
+    /**
+     * Sends what is queued for this job to Orbit, trying again for a moment, for at most one short time in all (`flushBudgetMs`); true when nothing is
+     * left unsent. Called before a job is ended. Rows left over go on being sent in the background (later, a few times).
+     */
     flush(jobId: string): Promise<boolean>;
-    /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job at or after this moment (ms). */
-    confirmedSince(jobId: string, sinceMs: number): boolean;
+    /** The point in the order of events from which a turn's window starts: what is noted after this call, and only that, is in the window. */
+    mark(): { order: number };
+    /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job since this point (or at or after this moment, ms). */
+    confirmedSince(jobId: string, since: Since): boolean;
     /** The relay refused a call of this job for the person's allowance or a rule of theirs, or the person's own provider failed it. */
     note(jobId: string): void;
-    /** Whether a refusal was noted for this job at or after this moment (ms). */
-    sawSince(jobId: string, sinceMs: number): boolean;
+    /** Whether a refusal was noted for this job since this point (or at or after this moment, ms). */
+    sawSince(jobId: string, since: Since): boolean;
     /** A model call of this job failed for a fault of Universe's (not the person's allowance or rules, not a call the agent got wrong). */
     fault(jobId: string): void;
     /** A model call of this job was answered whole. */
     answered(jobId: string): void;
-    /** Whether the job's last call at or after this moment (ms) was a fault of ours that no later call made good. */
-    endedOnFault(jobId: string, sinceMs: number): boolean;
+    /** Whether the job's last call since this point (or at or after this moment, ms) was a fault of ours that no later call made good. */
+    endedOnFault(jobId: string, since: Since): boolean;
 }
 
 /** A note older than this can no longer belong to a turn that is being read. */
@@ -88,33 +105,49 @@ export interface RefusalOptions {
     sink?: (botId: string, jobId: string, rows: CallRow[]) => Promise<boolean>;
     /** How long to wait before each new try to send rows. */
     retryMs?: number[];
+    /** How long to wait, after those tries all failed, before each later try in the background (rows are kept an hour in all). */
+    laterMs?: number[];
+    /** The most time a flush waits in all, across every try. */
+    flushBudgetMs?: number;
 }
 
 /** The most rows Orbit takes in one call. */
 export const FAULT_ROWS_PER_CALL = 50;
 const DEFAULT_RETRY_MS = [500, 2000, 8000];
+/** Later tries in the background once the quick ones failed: Orbit may be back after the job has ended. Bounded; the rows are kept an hour. */
+const DEFAULT_LATER_MS = [30_000, 120_000, 600_000];
+/** A job is not held up longer than this to get its rows to Orbit before it ends. */
+const DEFAULT_FLUSH_BUDGET_MS = 5000;
 
 export function createRefusalNotes(now: () => number = Date.now, options: RefusalOptions = {}): RefusalNotes {
     const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
-    const last = new Map<string, number>();
+    const laterMs = options.laterMs ?? DEFAULT_LATER_MS;
+    const flushBudgetMs = options.flushBudgetMs ?? DEFAULT_FLUSH_BUDGET_MS;
+    const last = new Map<string, { at: number; order: number }>();
     // The order of events is kept by count, since two can land in the same millisecond
     let count = 0;
-    const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: number; answered?: { at: number; order: number } }>();
+    const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: { at: number; order: number }; answered?: { at: number; order: number } }>();
+    /** Whether an event is inside a window that begins at `since`. */
+    const within = (event: { at: number; order: number }, since: Since) => (typeof since === 'number' ? event.at >= since : event.order > since.order);
     const turns = new Map<string, { turn: number; at: number }>();
     // Rows not yet taken by Orbit, per job. A row is sent again until Orbit takes it (Orbit keeps one per job and call).
-    const queued = new Map<string, { botId: string; rows: Map<string, CallRow>; sending?: Promise<boolean>; at: number }>();
+    const queued = new Map<string, { botId: string; rows: Map<string, CallRow>; sending?: Promise<boolean>; at: number; later?: ReturnType<typeof setTimeout>; laterTries: number }>();
     const forget = () => {
         const cutoff = now() - REFUSAL_NOTE_KEEP_MS;
-        for (const [jobId, at] of last) if (at < cutoff) last.delete(jobId);
+        for (const [jobId, seen] of last) if (seen.at < cutoff) last.delete(jobId);
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if (seen.at < cutoff) turns.delete(jobId);
-        for (const [jobId, entry] of queued) if (entry.at < cutoff && !entry.sending) queued.delete(jobId);
+        for (const [jobId, entry] of queued) {
+            if (entry.at >= cutoff || entry.sending) continue;
+            if (entry.later) clearTimeout(entry.later);
+            queued.delete(jobId);
+        }
     };
     const mark = (jobId: string, kind: 'fault' | 'answered', confirmed = false) => {
         forget();
         const seen = calls.get(jobId) ?? {};
         seen[kind] = { at: now(), order: ++count };
-        if (confirmed) seen.confirmed = now();
+        if (confirmed) seen.confirmed = { at: now(), order: count };
         calls.set(jobId, seen);
     };
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -147,7 +180,24 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         })().finally(() => {
             entry.sending = undefined;
         });
+        void entry.sending.then((sent) => {
+            if (!sent) later(jobId);
+        });
         return entry.sending;
+    };
+
+    /** After the quick tries failed (the last flush before the job ended included), one more try is set for later, a few times, never more than one waiting. */
+    const later = (jobId: string) => {
+        const entry = queued.get(jobId);
+        if (!entry || entry.later || entry.rows.size === 0 || entry.laterTries >= laterMs.length) return;
+        const timer = setTimeout(() => {
+            entry.later = undefined;
+            entry.laterTries += 1;
+            void send(jobId);
+        }, laterMs[entry.laterTries]);
+        // A try for later never keeps the process alive
+        timer.unref?.();
+        entry.later = timer;
     };
 
     return {
@@ -155,21 +205,22 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             forget();
             turns.set(jobId, { turn, at: now() });
         },
+        turnOf: (jobId) => turns.get(jobId)?.turn ?? 0,
         record(botId, jobId, call) {
             if (call.kind === 'answered') return mark(jobId, 'answered');
             if (call.kind === 'not_ours') {
                 forget();
-                last.set(jobId, now());
+                last.set(jobId, { at: now(), order: ++count });
             } else {
                 mark(jobId, 'fault', call.kind === 'fault');
             }
             if (!options.sink) return;
-            const entry = queued.get(jobId) ?? { botId, rows: new Map<string, CallRow>(), at: now() };
+            const entry = queued.get(jobId) ?? { botId, rows: new Map<string, CallRow>(), at: now(), laterTries: 0 };
             entry.at = now();
             // Orbit keeps ids up to 120 characters: the row is kept under the id it is sent with
             const callId = call.callId.slice(0, 120);
             entry.rows.set(callId, {
-                turn: turns.get(jobId)?.turn ?? 0,
+                turn: call.turn ?? turns.get(jobId)?.turn ?? 0,
                 callId,
                 kind: call.kind,
                 reason: call.reason,
@@ -190,25 +241,33 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 if (entry.sending) await entry.sending.catch(() => false);
                 return entry.rows.size === 0 ? true : send(jobId);
             };
-            return again();
+            // One short time in all, across the sender already at work and the one this starts: the job is not held for Orbit longer than that, and what
+            // is left goes on being sent in the background
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const budget = new Promise<boolean>((resolve) => {
+                timer = setTimeout(() => resolve(false), flushBudgetMs);
+                timer.unref?.();
+            });
+            return Promise.race([again(), budget]).finally(() => clearTimeout(timer));
         },
-        confirmedSince(jobId, sinceMs) {
-            const at = calls.get(jobId)?.confirmed;
-            return at !== undefined && at >= sinceMs;
+        mark: () => ({ order: count }),
+        confirmedSince(jobId, since) {
+            const seen = calls.get(jobId)?.confirmed;
+            return seen !== undefined && within(seen, since);
         },
         note(jobId) {
             forget();
-            last.set(jobId, now());
+            last.set(jobId, { at: now(), order: ++count });
         },
-        sawSince(jobId, sinceMs) {
-            const at = last.get(jobId);
-            return at !== undefined && at >= sinceMs;
+        sawSince(jobId, since) {
+            const seen = last.get(jobId);
+            return seen !== undefined && within(seen, since);
         },
         fault: (jobId) => mark(jobId, 'fault'),
         answered: (jobId) => mark(jobId, 'answered'),
-        endedOnFault(jobId, sinceMs) {
+        endedOnFault(jobId, since) {
             const seen = calls.get(jobId);
-            if (!seen?.fault || seen.fault.at < sinceMs) return false;
+            if (!seen?.fault || !within(seen.fault, since)) return false;
             return !seen.answered || seen.answered.order < seen.fault.order;
         },
     };

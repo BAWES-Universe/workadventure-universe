@@ -176,7 +176,7 @@ describe('room before the call', () => {
     });
 
     it('names the route on the room request, the same string as in its fault rows (universe-ai:<providerId>), so Orbit can count failures and pause a route', async () => {
-        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai' };
+        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
         await askAndSettle({ messages });
         expect(orbit.authorize).toHaveBeenCalledWith(expect.objectContaining({ payer: 'universe', route: `universe-ai:${config().providerId}` }));
     });
@@ -638,7 +638,7 @@ describe('reading a provider’s answer', () => {
         const clone = response.clone();
         const stuck = Symbol('stuck');
         const read = await Promise.race([readBoundedWithFlag(clone, 10), new Promise<symbol>((resolve) => setTimeout(() => resolve(stuck), 500))]);
-        expect(read).toEqual({ text: 'abcdefgh', tooLong: true });
+        expect(read).toEqual({ text: 'abcdefghij', tooLong: true });
         // The original is still there to be read afterwards
         expect(await readBoundedWithFlag(response, 100)).toEqual({ text: 'abcdefghijklmnop', tooLong: false });
     });
@@ -651,8 +651,24 @@ describe('reading a provider’s answer', () => {
         const { response, state } = bodyOf('abcd', 'efgh', 'ijkl', 'mnop');
         const read = await readBoundedWithFlag(response, 10);
         expect(read.tooLong).toBe(true);
-        expect(read.text).toBe('abcdefgh');
+        expect(read.text).toBe('abcdefghij');
         expect(state.cancelled).toBe(true);
+    });
+
+    it('keeps the same first bytes however the chunks fell, never more than the bound, and a field that fits in the chunk that crosses it', async () => {
+        const text = '{"error":{"param":"temperature","message":"' + 'x'.repeat(100) + '"}}';
+        const whole = await readBoundedWithFlag(bodyOf(text).response, 64);
+        expect(whole).toEqual({ text: text.slice(0, 64), tooLong: true });
+        for (const size of [1, 7, 13, 64, 65, 200]) {
+            const pieces = text.match(new RegExp(`[\\s\\S]{1,${size}}`, 'g')) as string[];
+            expect(await readBoundedWithFlag(bodyOf(...pieces).response, 64)).toEqual(whole);
+        }
+        // the field is read from what fit, whether the body came whole or in pieces
+        expect(leadingFieldsOf(whole.text)).toEqual({ param: 'temperature' });
+        // a character cut by the bound is not half-read into more than the bound
+        expect((await readBoundedWithFlag(bodyOf('ééééé').response, 5)).text.length).toBeLessThanOrEqual(5);
+        // exactly the bound is not too long
+        expect(await readBoundedWithFlag(bodyOf('abcd', 'efgh', 'ij').response, 10)).toEqual({ text: 'abcdefghij', tooLong: false });
     });
 
     it('gives no JSON for an answer that is too long or is not JSON', async () => {
@@ -693,6 +709,106 @@ describe('how a call ended, for the runner', () => {
         expect(notes.confirmedSince('job-too-long', before)).toBe(false);
         expect(notes.sawSince('job-too-long', before)).toBe(false);
         expect((await rowsSent('job-too-long')).map((row) => [row.kind, row.reason, row.providerStatus])).toEqual([['uncertain', 'provider_5xx', 502]]);
+    });
+
+    it('keeps the relay’s own cutoff unresolved on a person’s own key too: a reply cut at the bound and a time limit are no refusal by their provider', async () => {
+        const before = since();
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-own-too-long');
+        const huge = JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'x'.repeat(17 * 1024 * 1024) } }] });
+        upstreamHandler = (_req, res) => res.status(200).type('application/json').send(huge);
+        await askAndSettle(agent);
+        expect(notes.confirmedSince('job-own-too-long', before)).toBe(false);
+        expect((await rowsSent('job-own-too-long')).map((row) => [row.kind, row.reason, row.source])).toEqual([['uncertain', 'provider_5xx', 'own-key']]);
+
+        const original = RELAY_GUARDS.callTimeoutMs;
+        (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = 150;
+        try {
+            asJob('job-own-timeout');
+            upstreamHandler = () => undefined;
+            await askAndSettle(agent, 2);
+            expect((await rowsSent('job-own-timeout')).map((row) => [row.kind, row.reason, row.source])).toEqual([['uncertain', 'timeout_no_output', 'own-key']]);
+        } finally {
+            (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = original;
+        }
+        // their own provider refusing is still theirs
+        asJob('job-own-refused');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await askAndSettle(agent, 3);
+        expect((await rowsSent('job-own-refused'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider' });
+    });
+
+    it('does not let an empty 200 clear an earlier fault of the same job: only something the model wrote, or tokens it spent, is an answer', async () => {
+        const before = since();
+        asJob('job-empty-answer');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await askAndSettle({ ...agent, stream: true }, 1);
+        expect(notes.endedOnFault('job-empty-answer', before)).toBe(true);
+        // a retry answers 200 with a stream that closes with nothing in it
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.end('data: [DONE]\n\n');
+        };
+        await askAndSettle({ ...agent, stream: true }, 2);
+        expect(notes.endedOnFault('job-empty-answer', before)).toBe(true);
+        // a retry that wrote something does clear it
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Done' } }] })}\n\n`);
+            res.end('data: [DONE]\n\n');
+        };
+        await askAndSettle({ ...agent, stream: true }, 3);
+        expect(notes.endedOnFault('job-empty-answer', before)).toBe(false);
+        // and so does a tool call, or tokens the provider says it spent
+        asJob('job-empty-tokens');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await askAndSettle(agent, 4);
+        expect(notes.endedOnFault('job-empty-tokens', before)).toBe(true);
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: '' } }], usage: { prompt_tokens: 10, completion_tokens: 3 } });
+        await askAndSettle(agent, 5);
+        expect(notes.endedOnFault('job-empty-tokens', before)).toBe(false);
+    });
+
+    it('stamps a call with the turn it started in, when the runner has moved on by the time it fails', async () => {
+        asJob('job-turn-start');
+        notes.turn('job-turn-start', 4);
+        let fail: () => void = () => undefined;
+        upstreamHandler = (_req, res) => {
+            fail = () => res.status(500).json({ error: { message: 'boom' } });
+        };
+        const asked = ask(agent);
+        await vi.waitFor(() => expect(upstreamRequests).toHaveLength(1), { timeout: 3000 });
+        // the runner ended turn 4 (a reconnect ran out) and began turn 5 while this call was still open
+        notes.turn('job-turn-start', 5);
+        fail();
+        await asked;
+        expect((await rowsSent('job-turn-start'))[0]).toMatchObject({ turn: 4 });
+        // a call that begins in turn 5 is stamped 5
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await ask(agent);
+        expect((await rowsSent('job-turn-start', 2))[1]).toMatchObject({ turn: 5 });
+    });
+
+    it('writes nothing for a caller that went away while Orbit was being asked for room, and Orbit then failed; a caller that is still there gets the fault', async () => {
+        const before = since();
+        asJob('job-gone-authorize');
+        let fail: () => void = () => undefined;
+        orbit.authorize.mockImplementation(() => new Promise((_resolve, reject) => { fail = () => reject(new Error('down')); }));
+        const controller = new AbortController();
+        const asked = fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(agent), signal: controller.signal }).catch(() => null);
+        await vi.waitFor(() => expect(orbit.authorize).toHaveBeenCalled(), { timeout: 3000 });
+        controller.abort();
+        await asked;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        fail();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(notes.endedOnFault('job-gone-authorize', before)).toBe(false);
+        expect(rowsOf('job-gone-authorize')).toHaveLength(0);
+
+        asJob('job-here-authorize');
+        orbit.authorize.mockRejectedValue(new Error('down'));
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-here-authorize'))[0]).toMatchObject({ kind: 'fault', reason: 'relay_down' });
     });
 
     it('notes Orbit that cannot be asked, a Brick with no AI, and computers all busy as faults of ours', async () => {
@@ -1051,6 +1167,10 @@ describe('whoseProviderError', () => {
         const message = (requested: number) => `Request too large for gpt-4o on tokens per min (TPM): Limit 30000, Requested ${requested}. The input or output tokens must be reduced in order to run successfully.`;
         // our setting 32768, a 100-token prompt: the input fits, our limit made it too large
         expect(whoseProviderError(429, { message: message(32_868) }, { limit: false, name: false, outputCap: 32_768 })).toBe('ours');
+        // a prompt of exactly the limit (30000) with our cap of 1000: the input fits, removing our cap would bring the request within the limit
+        expect(readProviderError(429, { message: message(31_000) }, { limit: false, name: false, outputCap: 1000 })).toMatchObject({ who: 'ours', kind: 'uncertain', reason: 'provider_429' });
+        // one token over the limit: the prompt alone does not fit
+        expect(whoseProviderError(429, { message: message(31_001) }, { limit: false, name: false, outputCap: 1000 })).toBe('request');
         // a 40000-token prompt with our 4096: the input alone does not fit
         expect(whoseProviderError(429, { message: message(44_096) }, { limit: false, name: false, outputCap: 4096 })).toBe('request');
         // the job set the limit
@@ -1188,6 +1308,16 @@ describe('what #2078 (bounded provider reads, per-call metering) and #2101 (whos
         expect(settled()[1]).toMatchObject({ jobId: 'job-long-refusal', sent: true, costMicros: 0, tokens: { input: 0, output: 0 } });
     });
 
+    it('reads a refusal cut at the bound from its error object only: a key code in a sibling object is no confirmed fault, as the full body would not read it either', async () => {
+        const before = since();
+        asJob('job-cut-sibling');
+        upstreamHandler = (_req, res) =>
+            res.status(400).type('application/json').send(`{"meta":{"code":"invalid_api_key"},"error":{"message":"Invalid value","param":"temperature","pad":"${tooBig}"}}`);
+        await askAndSettle(agent);
+        expect(notes.confirmedSince('job-cut-sibling', before)).toBe(false);
+        expect((await rowsSent('job-cut-sibling'))[0]).toMatchObject({ kind: 'not_ours', reason: 'field_job_set' });
+    });
+
     it('does not read a field the cut took away: a refusal whose words come after the bound names no field, so it is unresolved (fieldless), never confirmed as ours', async () => {
         const before = since();
         asJob('job-cut-away');
@@ -1260,6 +1390,15 @@ describe('what #2078 (bounded provider reads, per-call metering) and #2101 (whos
     });
 });
 
+describe('a model that is missing', () => {
+    it('is confirmed ours by its structured code even when it names the model field, and a field-only model refusal stays unresolved', () => {
+        expect(readProviderError(404, { code: 'model_not_found', param: 'model', message: 'The model does not exist' })).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+        expect(readProviderError(400, { type: 'invalid_request_error', code: 'model_not_found', param: 'model', message: 'x' })).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+        expect(readProviderError(400, { param: 'model', message: 'Invalid value' })).toMatchObject({ kind: 'uncertain', reason: 'field_relay_set' });
+        expect(readProviderError(400, { code: 'invalid_value', param: 'n', message: 'Invalid value' })).toMatchObject({ kind: 'uncertain', reason: 'field_relay_set' });
+    });
+});
+
 describe('leadingFieldsOf', () => {
     it('reads the first of each field a refusal said, from a body cut in the middle', () => {
         expect(leadingFieldsOf('{"error":{"message":"Unsupported parameter: max_tokens","param":"max_tokens","code":"unsupported_parameter","type":"invalid_request_error","pad":"xxxx')).toEqual({
@@ -1271,7 +1410,21 @@ describe('leadingFieldsOf', () => {
     });
 
     it('reads a number, a null, and the first of a field said twice, and not a value that was cut off', () => {
-        expect(leadingFieldsOf('{"code":429,"param":null,"message":"slow","message":"other","type":"inva')).toEqual({ code: 429, param: null, message: 'slow' });
+        expect(leadingFieldsOf('{"error":{"code":429,"param":null,"message":"slow","message":"other","type":"inva')).toEqual({ code: 429, param: null, message: 'slow' });
+    });
+
+    it('reads only the error object: not a sibling object, not a nested one, not the top level beside an error that may come after the cut', () => {
+        // the fields of `meta` are not the error's: a key code there is no confirmed fault, and the param after it is the error's own
+        expect(leadingFieldsOf('{"meta":{"code":"invalid_api_key"},"error":{"param":"temperature","message":"bad","pad":"xx')).toEqual({ param: 'temperature', message: 'bad' });
+        expect(leadingFieldsOf('{"meta":{"code":"invalid_api_key","type":"authentication_error"},"error":{"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"metadata":{"code":"invalid_api_key"},"param":"temperature","pad":"xx')).toEqual({ param: 'temperature' });
+        expect(leadingFieldsOf('{"error":{"items":[{"code":"invalid_api_key"}],"code":"other","pad":"xx')).toEqual({ code: 'other' });
+        // the top level alone: the full parse would read `error` if it came after, so nothing is read
+        expect(leadingFieldsOf('{"code":"invalid_api_key","type":"authentication_error","pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"code":"invalid_api_key","error":{"param":"temperature","pad":"xx')).toEqual({ param: 'temperature' });
+        // an error that is only words, and strings that hold braces, quotes and colons
+        expect(leadingFieldsOf('{"error":"Rate limited","code":"invalid_api_key"}')).toEqual({ message: 'Rate limited' });
+        expect(leadingFieldsOf('{"error":{"message":"say \\"code\\": {\\"x\\"} now","code":"c1","pad":"xx')).toEqual({ message: 'say "code": {"x"} now', code: 'c1' });
     });
 
     it('is null when no field was said', () => {
@@ -1382,11 +1535,13 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
     it('records a person’s own provider failing as the person’s side, never a fault', async () => {
         route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
         asJob('job-r-own');
+        // the window begins before the request, by the order of events: it does not depend on how long the request and the queue take
+        const before = notes.mark();
         upstreamHandler = refused(500, { message: 'their provider is down' });
         await askAndSettle(agent);
         expect((await rowsSent('job-r-own'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider', source: 'own-key', route: 'own-key', providerStatus: 500 });
-        expect(notes.confirmedSince('job-r-own', since())).toBe(false);
-        expect(notes.sawSince('job-r-own', since())).toBe(true);
+        expect(notes.confirmedSince('job-r-own', before)).toBe(false);
+        expect(notes.sawSince('job-r-own', before)).toBe(true);
     });
 
     it('notes the person’s side for a gone endpoint and a cut stream on their own key (what the runner reads), and sends a row for each', async () => {
@@ -1418,11 +1573,12 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
 
         sinkAnswers = false;
         asJob('job-r-orbit-down');
+        const beforeDown = notes.mark();
         upstreamHandler = refused(500, { message: 'down' });
         const answer = await ask(agent);
         expect(answer.status).toBe(500);
         // the runner of the job can still read the fault in this process, and the rows wait to be sent
-        expect(notes.endedOnFault('job-r-orbit-down', since())).toBe(true);
+        expect(notes.endedOnFault('job-r-orbit-down', beforeDown)).toBe(true);
         sinkAnswers = true;
         expect(await notes.flush('job-r-orbit-down')).toBe(true);
         expect(rowsOf('job-r-orbit-down')).toHaveLength(1);
