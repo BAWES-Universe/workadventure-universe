@@ -534,11 +534,13 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         let agentCall = true;
         // The call's own id: Orbit's fault record keeps one row per job and call, so the same id is sent when a row is sent again
         const callId = randomUUID();
+        // The turn the call starts in: its row names that turn even when the runner has moved on by the time the call ends
+        const startedTurn = deps.refusals?.turnOf?.(jobId) ?? 0;
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
         const noteCall = (kind: CallKind, reason: FaultReason, providerStatus: number | null = null) => {
-            if (agentCall) deps.refusals?.record(botId, jobId, { callId, kind, reason, source: rowSource, route: routeName, providerStatus });
+            if (agentCall) deps.refusals?.record(botId, jobId, { callId, kind, reason, source: rowSource, route: routeName, providerStatus, turn: startedTurn });
         };
         const fault = (reason: FaultReason, status: number, message: string, code: string, type = 'server_error') => {
             noteCall('fault', reason, status);

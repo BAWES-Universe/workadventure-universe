@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createRefusalNotes, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
@@ -180,5 +180,75 @@ describe('the durable record of how a job’s model calls ended (sent to Orbit)'
         down.notes.record('b', 'new', call('c2'));
         advance(0);
         expect(await down.notes.flush('old')).toBe(true);
+        // true only because the row is gone: had it been kept, the sink would have taken it on this try (it has only two refusals left)
+        expect(down.sent.flatMap((entry) => entry.rows.map((row) => row.callId))).not.toContain('c1');
+    });
+
+    it('keeps trying in the background, a few times and then no more, after the quick tries and the last flush failed: Orbit coming back after the job ended still gets the rows', async () => {
+        const sent: string[] = [];
+        let up = false;
+        const notes = createRefusalNotes(() => 1000, {
+            retryMs: [0],
+            laterMs: [20, 20],
+            sink: async (_bot, _job, rows) => {
+                if (up) sent.push(...rows.map((row) => row.callId));
+                return up;
+            },
+        });
+        notes.record('b', 'j', call('c1'));
+        expect(await notes.flush('j')).toBe(false);
+        expect(sent).toEqual([]);
+        // Orbit is back after the job ended: no flush is called again
+        up = true;
+        await vi.waitFor(() => expect(sent).toEqual(['c1']), { timeout: 2000 });
+        // a row once taken is final: nothing sends it again
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(sent).toEqual(['c1']);
+
+        // bounded: with Orbit down throughout, the background tries stop after the last one
+        let tries = 0;
+        const down = createRefusalNotes(() => 1000, { retryMs: [], laterMs: [10, 10], sink: async () => (tries += 1) < 0 });
+        down.record('b', 'k', call('c2'));
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(tries).toBe(3);
+    });
+
+    it('gives a flush one short time in all: it returns false at the budget while the rows go on being sent in the background', async () => {
+        const sent: string[] = [];
+        let first = true;
+        const notes = createRefusalNotes(() => 1000, {
+            retryMs: [100, 100, 100],
+            laterMs: [],
+            flushBudgetMs: 50,
+            sink: async (_bot, _job, rows) => {
+                if (first) {
+                    first = false;
+                    await new Promise((resolve) => setTimeout(resolve, 80));
+                    return false;
+                }
+                sent.push(...rows.map((row) => row.callId));
+                return true;
+            },
+        });
+        notes.record('b', 'j', call('c1'));
+        const started = Date.now();
+        expect(await notes.flush('j')).toBe(false);
+        expect(Date.now() - started).toBeLessThan(150);
+        // the flush did not stop the sender: it tries again and the row arrives
+        await vi.waitFor(() => expect(sent).toEqual(['c1']), { timeout: 2000 });
+    });
+
+    it('stamps a row with the turn the call started in when it is given, and with the turn the runner is on when it is not', async () => {
+        const { notes, sent } = rig();
+        notes.turn('j', 4);
+        expect(notes.turnOf('j')).toBe(4);
+        expect(notes.turnOf('never')).toBe(0);
+        const startedIn = notes.turnOf('j');
+        // the runner moves on while the call is still open; the call then ends
+        notes.turn('j', 5);
+        notes.record('b', 'j', call('c1', { turn: startedIn }));
+        notes.record('b', 'j', call('c2'));
+        await notes.flush('j');
+        expect(sent.flatMap((entry) => entry.rows.map((row) => [row.callId, row.turn]))).toEqual([['c1', 4], ['c2', 5]]);
     });
 });

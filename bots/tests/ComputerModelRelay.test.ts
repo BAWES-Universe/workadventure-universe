@@ -769,6 +769,26 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-empty-tokens', before)).toBe(false);
     });
 
+    it('stamps a call with the turn it started in, when the runner has moved on by the time it fails', async () => {
+        asJob('job-turn-start');
+        notes.turn('job-turn-start', 4);
+        let fail: () => void = () => undefined;
+        upstreamHandler = (_req, res) => {
+            fail = () => res.status(500).json({ error: { message: 'boom' } });
+        };
+        const asked = ask(agent);
+        await vi.waitFor(() => expect(upstreamRequests).toHaveLength(1), { timeout: 3000 });
+        // the runner ended turn 4 (a reconnect ran out) and began turn 5 while this call was still open
+        notes.turn('job-turn-start', 5);
+        fail();
+        await asked;
+        expect((await rowsSent('job-turn-start'))[0]).toMatchObject({ turn: 4 });
+        // a call that begins in turn 5 is stamped 5
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await ask(agent);
+        expect((await rowsSent('job-turn-start', 2))[1]).toMatchObject({ turn: 5 });
+    });
+
     it('writes nothing for a caller that went away while Orbit was being asked for room, and Orbit then failed; a caller that is still there gets the fault', async () => {
         const before = since();
         asJob('job-gone-authorize');
