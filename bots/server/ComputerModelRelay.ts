@@ -176,6 +176,12 @@ export function whoseProviderError(status: number | null, error: unknown): 'ours
     }
     if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
     if (numeric === 413) return 'request';
+    // A refusal of a field only the relay sets (the token limit, the model, n, stream): ours, even when its message says "too large". Only the provider's
+    // own code and type are read for a context that is too long, never the message, which can carry the job's words
+    const paramField = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
+    const refusedShape = numeric === null || numeric === 400 || numeric === 422;
+    const codesOnly = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
+    if (refusedShape && RELAY_FIELDS.has(paramField) && !CONTENT_WORDS.test(codesOnly)) return 'ours';
     if (CONTENT_WORDS.test(words)) return 'request';
     // Our key, our credit or our model, named by the error itself: ours, before its shape is looked at. Only what the provider sets (code, type) is
     // read for that, never a message on a call that names a field: a message echoes the job's own values, and a job can steer those
