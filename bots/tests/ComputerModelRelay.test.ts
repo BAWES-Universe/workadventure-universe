@@ -761,6 +761,25 @@ describe('how a call ended, for the runner', () => {
         expect(sent.messages).toBeDefined();
     });
 
+    it('never forwards them on a person’s own key either: no setting of an owner’s routing exists for a Brick’s AI, so a job cannot invent one', async () => {
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-routing-own');
+        await askAndSettle({
+            ...agent,
+            models: ['openai/gpt-5-expensive'],
+            provider: { only: ['SomeHost'], allow_fallbacks: false },
+            route: 'fallback',
+            transforms: ['middle-out'],
+            plugins: [{ id: 'web' }],
+            preset: '@someone/preset',
+            fallbacks: ['x/y'],
+            temperature: 0.2,
+        });
+        const sent = upstreamRequests.at(-1)?.body as Record<string, unknown>;
+        for (const field of ROUTING_FIELDS) expect(sent).not.toHaveProperty(field);
+        expect(sent).toMatchObject({ temperature: 0.2, model: route.config.model });
+    });
+
     it('notes a whole reply cut at the bound as unresolved (class 3), never a confirmed fault of ours and never the person’s', async () => {
         asJob('job-too-long');
         const before = since();
@@ -795,11 +814,11 @@ describe('how a call ended, for the runner', () => {
         } finally {
             (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = original;
         }
-        // their own provider refusing is still theirs
+        // their own provider failing with a 5xx proves nothing of whose it was: unresolved, as on Universe's key (only a refusal of their key or credit is theirs)
         asJob('job-own-refused');
         upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
         await askAndSettle(agent, 3);
-        expect((await rowsSent('job-own-refused'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider' });
+        expect((await rowsSent('job-own-refused'))[0]).toMatchObject({ kind: 'uncertain', reason: 'provider_5xx', source: 'own-key' });
     });
 
     it('does not let an empty 200 clear an earlier fault of the same job: only something the model wrote, or tokens it spent, is an answer', async () => {
@@ -1203,25 +1222,37 @@ describe('how a call ended, for the runner', () => {
         }
     });
 
-    it('does not note what a person’s own provider, key or endpoint did as a fault of ours', async () => {
+    it('notes a refusal of a person’s own key or credit on their side, never a fault of ours; every other failure of their provider, key or endpoint is unresolved, as on Universe’s key', async () => {
         const before = since();
         route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
         let count = 0;
-        // their provider's own error, their key out of credit (402 comes to Hermes as 502), a revoked key, a rate limit, an endpoint that is gone
-        for (const [name, status] of [['job-own-500', 500], ['job-own-402', 402], ['job-own-401', 401], ['job-own-429', 429]] as const) {
+        // their key out of credit (402 comes to Hermes as 502) and a revoked key: theirs, so a turn that ends on it is never ours
+        for (const [name, status] of [['job-own-402', 402], ['job-own-401', 401]] as const) {
             asJob(name);
             upstreamHandler = (_req, res) => res.status(status).json({ error: { message: 'no' } });
             count += 1;
             await askAndSettle(agent, count);
             expect(notes.endedOnFault(name, before)).toBe(false);
-            // it is noted on the person's side, so a turn that ends on it is never ours
             expect(notes.sawSince(name, before)).toBe(true);
         }
+        // their provider's own error, a rate limit: nothing proves whose it was, so it is read as on our key (unresolved, and a fault the runner may end on)
+        for (const [name, status] of [['job-own-500', 500], ['job-own-429', 429]] as const) {
+            asJob(name);
+            upstreamHandler = (_req, res) => res.status(status).json({ error: { message: 'no' } });
+            count += 1;
+            await askAndSettle(agent, count);
+            expect(notes.endedOnFault(name, before)).toBe(true);
+            expect(notes.confirmedSince(name, before)).toBe(false);
+            expect(notes.sawSince(name, before)).toBe(false);
+        }
+        // an endpoint that is gone
         asJob('job-own-gone');
         route = { config: config({ endpoint: 'http://127.0.0.1:1/v1' }), source: 'own-key', keyOwnerId: 'person-owner' };
         count += 1;
         await askAndSettle(agent, count);
-        expect(notes.endedOnFault('job-own-gone', before)).toBe(false);
+        expect(notes.endedOnFault('job-own-gone', before)).toBe(true);
+        expect(notes.confirmedSince('job-own-gone', before)).toBe(false);
+        expect(notes.sawSince('job-own-gone', before)).toBe(false);
 
         // a stream their endpoint cut off
         asJob('job-own-cut');
@@ -1235,7 +1266,9 @@ describe('how a call ended, for the runner', () => {
         await cut.text().catch(() => '');
         count += 1;
         await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(count), { timeout: 3000 });
-        expect(notes.endedOnFault('job-own-cut', before)).toBe(false);
+        expect(notes.endedOnFault('job-own-cut', before)).toBe(true);
+        expect(notes.confirmedSince('job-own-cut', before)).toBe(false);
+        expect(notes.sawSince('job-own-cut', before)).toBe(false);
     });
 
     it('reads a refused token limit by whose value it was: the job’s own ask with no setting of ours is the request’s, a value under our setting is ours', async () => {
@@ -1312,7 +1345,7 @@ describe('how a call ended, for the runner', () => {
         expect(notes.sawSince('job-side-refused', before)).toBe(true);
     });
 
-    it('reads an error the provider put in a 200 stream (or a 200 body with no choices) as its fault: ours on our key, the person’s on theirs', async () => {
+    it('reads an error the provider put in a 200 stream (or a 200 body with no choices) as its fault: unresolved on our key and on theirs', async () => {
         const before = since();
         const sseError = (_req: express.Request, res: express.Response) => {
             res.setHeader('Content-Type', 'text/event-stream');
@@ -1334,8 +1367,9 @@ describe('how a call ended, for the runner', () => {
         asJob('job-own-stream-error');
         upstreamHandler = sseError;
         await askAndSettle({ ...agent, stream: true }, 3);
-        expect(notes.endedOnFault('job-own-stream-error', before)).toBe(false);
-        expect(notes.sawSince('job-own-stream-error', before)).toBe(true);
+        // on their own key it is unresolved too, not theirs
+        expect(notes.endedOnFault('job-own-stream-error', before)).toBe(true);
+        expect(notes.sawSince('job-own-stream-error', before)).toBe(false);
     });
 
     it('says the Brick’s own key resting is the person’s: noted on their side, never a fault of ours; Universe AI resting or an unknown route stays ours', async () => {
@@ -1386,7 +1420,7 @@ describe('how a call ended, for the runner', () => {
         // A 404 that says the request needs something the model lacks (the job sends the image, the tools), a plain 404 and a plain 403 are not confirmed: unresolved
         for (const name of ['job-400-param', 'job-400-noparam', 'job-403-plain', 'job-404-image', 'job-404-tools', 'job-404-plain', 'job-404-model-image']) expect(notes.confirmedSince(name, before)).toBe(false);
         for (const name of ['job-404-image', 'job-404-tools', 'job-404-plain', 'job-404-model-image']) expect((await rowsSent(name))[0]).toMatchObject({ kind: 'uncertain', reason: 'fieldless_400', providerStatus: 404 });
-        expect((await rowsSent('job-403-plain'))[0]).toMatchObject({ kind: 'uncertain', providerStatus: 403 });
+        expect((await rowsSent('job-403-plain'))[0]).toMatchObject({ kind: 'uncertain', reason: 'provider_403', providerStatus: 403 });
         expect((await rowsSent('job-404-our-model'))[0]).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
         expect((await rowsSent('job-400-noparam'))[0]).toMatchObject({ kind: 'uncertain', reason: 'fieldless_400', providerStatus: 400 });
         expect((await rowsSent('job-400-param'))[0]).toMatchObject({ kind: 'uncertain', reason: 'field_relay_set' });
@@ -1581,6 +1615,8 @@ describe('whoseProviderError', () => {
         expect(whoseProviderError(400, { param: 'messages[0].content[1].image_url' })).toBe('request');
         expect(readProviderError(400, {})).toEqual({ who: 'ours', kind: 'uncertain', reason: 'fieldless_400' });
         expect(readProviderError(422, {})).toEqual({ who: 'ours', kind: 'uncertain', reason: 'fieldless_400' });
+        // a plain 403 is unresolved under a reason of its own, so operations can read it; a 400 with no field keeps its own
+        expect(readProviderError(403, { message: 'Forbidden' })).toEqual({ who: 'ours', kind: 'uncertain', reason: 'provider_403' });
         expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'tools' })).toBe('request');
         expect(whoseProviderError(403, { code: 'moderation_blocked' })).toBe('request');
         expect(whoseProviderError(400, { code: 'context_length_exceeded' })).toBe('request');
@@ -1891,26 +1927,52 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
         expect((await rowsSent('job-r-resting'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider', source: 'own-key' });
     });
 
-    it('records a person’s own provider failing as the person’s side, never a fault', async () => {
+    it('records a person’s own provider failing with a 5xx as unresolved, and a refusal of their key or credit as the person’s side, never a fault', async () => {
         route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
         asJob('job-r-own');
         // the window begins before the request, by the order of events: it does not depend on how long the request and the queue take
         const before = notes.mark();
         upstreamHandler = refused(500, { message: 'their provider is down' });
         await askAndSettle(agent);
-        expect((await rowsSent('job-r-own'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider', source: 'own-key', route: 'own-key', providerStatus: 500 });
+        expect((await rowsSent('job-r-own'))[0]).toMatchObject({ kind: 'uncertain', reason: 'provider_5xx', source: 'own-key', route: 'own-key', providerStatus: 500 });
         expect(notes.confirmedSince('job-r-own', before)).toBe(false);
-        expect(notes.sawSince('job-r-own', before)).toBe(true);
+        expect(notes.sawSince('job-r-own', before)).toBe(false);
+
+        // 429, a plain 403: unresolved with their own reasons
+        asJob('job-r-own-429');
+        upstreamHandler = refused(429, { message: 'slow down', type: 'rate_limit' });
+        await askAndSettle(agent, 2);
+        expect((await rowsSent('job-r-own-429'))[0]).toMatchObject({ kind: 'uncertain', reason: 'provider_429', source: 'own-key', providerStatus: 429 });
+        asJob('job-r-own-403');
+        upstreamHandler = refused(403, { message: 'forbidden' });
+        await askAndSettle(agent, 3);
+        expect((await rowsSent('job-r-own-403'))[0]).toMatchObject({ kind: 'uncertain', reason: 'provider_403', source: 'own-key', providerStatus: 403 });
+
+        // a revoked key, a key out of credit, a key code: theirs
+        const personal = notes.mark();
+        let settled = 3;
+        for (const [name, status, error] of [
+            ['job-r-own-401', 401, { message: 'bad key' }],
+            ['job-r-own-402', 402, { message: 'out of credit' }],
+            ['job-r-own-code', 400, { code: 'invalid_api_key', message: 'no' }],
+        ] as const) {
+            asJob(name);
+            upstreamHandler = refused(status, error);
+            await askAndSettle(agent, ++settled);
+            expect((await rowsSent(name))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider', source: 'own-key', route: 'own-key' });
+        }
+        expect(notes.confirmedSince('job-r-own-401', personal)).toBe(false);
+        expect(notes.sawSince('job-r-own-401', personal)).toBe(true);
     });
 
-    it('notes the person’s side for a gone endpoint and a cut stream on their own key (what the runner reads), and sends a row for each', async () => {
+    it('records a gone endpoint and a cut stream on a person’s own key as unresolved (what the runner reads, and a row for each), never theirs', async () => {
         const before = since();
         route = { config: config({ endpoint: 'http://127.0.0.1:1/v1' }), source: 'own-key', keyOwnerId: 'person-owner' };
         asJob('job-own-gone');
         await askAndSettle(agent, 1);
-        expect(notes.endedOnFault('job-own-gone', before)).toBe(false);
-        expect(notes.sawSince('job-own-gone', before)).toBe(true);
-        expect((await rowsSent('job-own-gone'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider' });
+        expect(notes.endedOnFault('job-own-gone', before)).toBe(true);
+        expect(notes.sawSince('job-own-gone', before)).toBe(false);
+        expect((await rowsSent('job-own-gone'))[0]).toMatchObject({ kind: 'uncertain', reason: 'provider_5xx', source: 'own-key' });
 
         route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
         asJob('job-own-cut');
@@ -1918,9 +1980,9 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
         const cut = await ask({ ...agent, stream: true });
         await cut.text().catch(() => '');
         await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(2), { timeout: 3000 });
-        expect(notes.endedOnFault('job-own-cut', before)).toBe(false);
-        expect(notes.sawSince('job-own-cut', before)).toBe(true);
-        expect((await rowsSent('job-own-cut'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider' });
+        expect(notes.endedOnFault('job-own-cut', before)).toBe(true);
+        expect(notes.sawSince('job-own-cut', before)).toBe(false);
+        expect((await rowsSent('job-own-cut'))[0]).toMatchObject({ kind: 'uncertain', reason: 'stream_cut', source: 'own-key' });
     });
 
     it('sends nothing for a side call with no tools, and is not held up by an Orbit that cannot take the rows', async () => {
@@ -1941,5 +2003,40 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
         sinkAnswers = true;
         expect(await notes.flush('job-r-orbit-down')).toBe(true);
         expect(rowsOf('job-r-orbit-down')).toHaveLength(1);
+    });
+});
+
+describe('an error nobody expected while the provider is called', () => {
+    const agent = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
+    const asJob = (jobId: string) => orbit.identify.mockResolvedValue({ ok: true, jobId, botId: BOT });
+    it('is unresolved on Universe’s key and on a person’s own key alike, never the person’s', async () => {
+        const fetchFor = () =>
+            (async () =>
+                ({
+                    ok: true,
+                    status: 200,
+                    headers: new Headers({ 'content-type': 'text/event-stream' }),
+                    clone: () => new Response('', { status: 200 }),
+                    get body(): never {
+                        throw new Error('an error nobody expected');
+                    },
+                }) as unknown as Response) as typeof fetch;
+        const app = express();
+        app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], refusals: notes, fetchFor }));
+        const own = await listen(app);
+        try {
+            for (const [name, source] of [['job-unexpected-ours', 'universe-ai'], ['job-unexpected-own', 'own-key']] as const) {
+                route = { config: config({ endpoint: upstreamBase }), source, keyOwnerId: source === 'own-key' ? 'person-owner' : null };
+                asJob(name);
+                const before = notes.mark();
+                const answer = await fetch(`${urlOf(own)}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ ...agent, stream: true }) });
+                expect(answer.status).toBe(502);
+                expect((await rowsSent(name))[0]).toMatchObject({ kind: 'uncertain', reason: 'provider_5xx', source, providerStatus: 502 });
+                expect(notes.endedOnFault(name, before)).toBe(true);
+                expect(notes.sawSince(name, before)).toBe(false);
+            }
+        } finally {
+            await new Promise<void>((resolve) => { own.closeAllConnections?.(); own.close(() => resolve()); });
+        }
     });
 });

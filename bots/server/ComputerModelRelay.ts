@@ -394,8 +394,8 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
     // A 404 is ours only when it says OUR model is missing: a provider also answers 404 when the request needs something the model lacks ("No endpoints
     // found that support image input", "... tool use"), and the job decides what it sends. A plain 403 is not enough either (a key code was read above)
     if (numeric === 404 && typeof record.message === 'string' && MODEL_MISSING.test(record.message) && !NEEDS_FEATURE.test(record.message)) return OURS_FAULT('provider_key_ours');
-    // Any other status, or an error that says nothing of a code: unresolved
-    return OURS_UNSURE(numeric === null ? 'provider_5xx' : 'fieldless_400');
+    // Any other status, or an error that says nothing of a code: unresolved (a plain 403 has a reason of its own, so operations can read it)
+    return OURS_UNSURE(numeric === null ? 'provider_5xx' : numeric === 403 ? 'provider_403' : 'fieldless_400');
 }
 
 /** Whose a provider's error is, read as `readProviderError` does: `request` when what the job itself sent was refused, else `ours`. */
@@ -695,8 +695,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                             if (ended.relaySide) noteCall('fault', 'relay_down', status);
                             // The relay's own cutoff (its time limit, its reply bound) is the same on every key: unresolved, never the person's side
                             else if (ended.local && reading) noteCall(reading.kind, reading.reason, status);
-                            // A person's own provider failing is not ours: it is on the person's side, so the runner never ends the job as ours for it
-                            else if (source === 'own-key') noteCall('not_ours', 'own_provider', status);
+                            // On a person's own key only a refusal of the key or the credit is theirs (it was revoked, its credit ran out): the runner never
+                            // ends the job as ours for it. Every other failure of the provider (a 5xx, a rate limit, a cut stream, a timeout, an endpoint that
+                            // could not be reached, a plain 403) is read as on Universe's key: unresolved, since nothing proves whose it was
+                            else if (source === 'own-key' && reading?.reason === 'provider_key_ours') noteCall('not_ours', 'own_provider', status);
                             else if (reading) noteCall(reading.kind, reading.reason, status);
                             // A stream that broke after it began, or an answer that was a 5xx with nothing read from it: unresolved
                             else noteCall('uncertain', cut ? 'stream_cut' : 'provider_5xx', status);
@@ -705,20 +707,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 }
             } catch (error) {
                 console.error('[ComputerRelay] A call failed:', providerErrorText(error));
-                // An error nobody expected, while the provider was being called: ours (unresolved) only when the provider is ours
+                // An error nobody expected, while the provider was being called: unresolved on every key (nothing proves whose it was)
                 if (!res.headersSent) {
-                    if (source !== 'own-key' && !gone) {
-                        noteCall('uncertain', 'provider_5xx', 502);
-                        problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
-                    } else {
-                        if (!gone) noteCall('not_ours', 'own_provider', 502);
-                        problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
-                    }
+                    if (!gone) noteCall('uncertain', 'provider_5xx', 502);
+                    problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
                 } else {
-                    if (!gone) {
-                        if (source !== 'own-key') noteCall('uncertain', 'stream_cut');
-                        else noteCall('not_ours', 'own_provider');
-                    }
+                    if (!gone) noteCall('uncertain', 'stream_cut');
                     res.end();
                 }
                 ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
