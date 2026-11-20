@@ -1188,6 +1188,16 @@ describe('what #2078 (bounded provider reads, per-call metering) and #2101 (whos
         expect(settled()[1]).toMatchObject({ jobId: 'job-long-refusal', sent: true, costMicros: 0, tokens: { input: 0, output: 0 } });
     });
 
+    it('reads a refusal cut at the bound from its error object only: a key code in a sibling object is no confirmed fault, as the full body would not read it either', async () => {
+        const before = since();
+        asJob('job-cut-sibling');
+        upstreamHandler = (_req, res) =>
+            res.status(400).type('application/json').send(`{"meta":{"code":"invalid_api_key"},"error":{"message":"Invalid value","param":"temperature","pad":"${tooBig}"}}`);
+        await askAndSettle(agent);
+        expect(notes.confirmedSince('job-cut-sibling', before)).toBe(false);
+        expect((await rowsSent('job-cut-sibling'))[0]).toMatchObject({ kind: 'not_ours', reason: 'field_job_set' });
+    });
+
     it('does not read a field the cut took away: a refusal whose words come after the bound names no field, so it is unresolved (fieldless), never confirmed as ours', async () => {
         const before = since();
         asJob('job-cut-away');
@@ -1271,7 +1281,21 @@ describe('leadingFieldsOf', () => {
     });
 
     it('reads a number, a null, and the first of a field said twice, and not a value that was cut off', () => {
-        expect(leadingFieldsOf('{"code":429,"param":null,"message":"slow","message":"other","type":"inva')).toEqual({ code: 429, param: null, message: 'slow' });
+        expect(leadingFieldsOf('{"error":{"code":429,"param":null,"message":"slow","message":"other","type":"inva')).toEqual({ code: 429, param: null, message: 'slow' });
+    });
+
+    it('reads only the error object: not a sibling object, not a nested one, not the top level beside an error that may come after the cut', () => {
+        // the fields of `meta` are not the error's: a key code there is no confirmed fault, and the param after it is the error's own
+        expect(leadingFieldsOf('{"meta":{"code":"invalid_api_key"},"error":{"param":"temperature","message":"bad","pad":"xx')).toEqual({ param: 'temperature', message: 'bad' });
+        expect(leadingFieldsOf('{"meta":{"code":"invalid_api_key","type":"authentication_error"},"error":{"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"metadata":{"code":"invalid_api_key"},"param":"temperature","pad":"xx')).toEqual({ param: 'temperature' });
+        expect(leadingFieldsOf('{"error":{"items":[{"code":"invalid_api_key"}],"code":"other","pad":"xx')).toEqual({ code: 'other' });
+        // the top level alone: the full parse would read `error` if it came after, so nothing is read
+        expect(leadingFieldsOf('{"code":"invalid_api_key","type":"authentication_error","pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"code":"invalid_api_key","error":{"param":"temperature","pad":"xx')).toEqual({ param: 'temperature' });
+        // an error that is only words, and strings that hold braces, quotes and colons
+        expect(leadingFieldsOf('{"error":"Rate limited","code":"invalid_api_key"}')).toEqual({ message: 'Rate limited' });
+        expect(leadingFieldsOf('{"error":{"message":"say \\"code\\": {\\"x\\"} now","code":"c1","pad":"xx')).toEqual({ message: 'say "code": {"x"} now', code: 'c1' });
     });
 
     it('is null when no field was said', () => {

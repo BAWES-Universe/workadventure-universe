@@ -183,17 +183,62 @@ export async function readBoundedReply<T>(response: globalThis.Response, max: nu
 
 /**
  * The string and number fields a provider's refusal said (`code`, `type`, `param`, `message`, `status`) in a body that was cut at the bound, so
- * it could not be parsed whole: the first of each, read where it stands. Nothing is guessed: a field that was cut off is not there.
+ * it could not be parsed whole: the first of each, read where it stands, and only from the object the whole body would be read from (`error`, as the
+ * full parse does), never from a sibling object (`meta`), a nested one, or the top level beside an `error` that may come after the cut. Where the
+ * scope cannot be told, nothing is read: a field out of its object could be taken for a confirmed fault, or for the request's. A value that was cut
+ * off is not there. Linear in the text.
  */
 export function leadingFieldsOf(text: string): Record<string, unknown> | null {
+    const wanted = new Set(['code', 'type', 'param', 'message', 'status']);
+    type Frame = { object: boolean; expectKey: boolean; key: string | null; under: string | null };
+    const stack: Frame[] = [];
     const found: Record<string, unknown> = {};
-    const field = /"(code|type|param|message|status)"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+|null)/g;
-    for (let match = field.exec(text); match; match = field.exec(text)) {
-        if (match[1] in found) continue;
-        try {
-            found[match[1]] = JSON.parse(match[2]);
-        } catch {
-            /* a value that was cut in the middle is not read */
+    // Whether the container being read is the top-level `error` object
+    const inError = () => stack.length === 2 && stack[1].object && stack[1].under === 'error';
+    for (let i = 0; i < text.length; ) {
+        const char = text[i];
+        const top = stack[stack.length - 1];
+        if (char === '{' || char === '[') {
+            stack.push({ object: char === '{', expectKey: char === '{', key: null, under: top?.object ? top.key : null });
+            i += 1;
+        } else if (char === '}' || char === ']') {
+            stack.pop();
+            i += 1;
+        } else if (char === ',') {
+            if (top?.object) top.expectKey = true;
+            i += 1;
+        } else if (char === ':') {
+            if (top?.object) top.expectKey = false;
+            i += 1;
+        } else if (char === '"') {
+            let end = i + 1;
+            while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+            // an unfinished string is not read, and nothing after it is there
+            if (end >= text.length) break;
+            let value: unknown;
+            try {
+                value = JSON.parse(text.slice(i, end + 1));
+            } catch {
+                value = undefined;
+            }
+            if (top?.object && top.expectKey) top.key = typeof value === 'string' ? value : null;
+            else if (top?.object && top.key !== null) {
+                if (inError() && wanted.has(top.key) && !(top.key in found) && typeof value === 'string') found[top.key] = value;
+                // `"error": "words"` is a refusal that is only words
+                else if (stack.length === 1 && top.key === 'error' && typeof value === 'string' && !('message' in found)) found.message = value;
+            }
+            i = end + 1;
+        } else if (char === '-' || (char >= '0' && char <= '9')) {
+            const token = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(i, i + 40))?.[0] ?? char;
+            // a number cut off by the end of the text is not a whole number
+            if (i + token.length >= text.length) break;
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key) && !(top.key in found) && /^-?\d+$/.test(token)) found[top.key] = Number(token);
+            i += token.length;
+        } else if (text.startsWith('null', i)) {
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key) && !(top.key in found)) found[top.key] = null;
+            i += 4;
+        } else {
+            i += 1;
         }
     }
     return Object.keys(found).length > 0 ? found : null;
