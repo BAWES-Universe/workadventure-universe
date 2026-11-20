@@ -667,6 +667,27 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-fault-unreachable', before)).toBe(true);
     });
 
+    it('notes a whole reply cut at the bound as the request’s (a job’s own logprobs can make one), and one that is not JSON as ours', async () => {
+        asJob('job-too-long');
+        const before = since();
+        // 17 MiB of JSON: more than the relay reads of one reply
+        const huge = JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'x'.repeat(17 * 1024 * 1024) } }] });
+        upstreamHandler = (_req, res) => res.status(200).type('application/json').send(huge);
+        const { answer } = await askAndSettle(agent);
+        expect(answer.status).toBe(502);
+        // The person's side, never a fault of Universe's: three such turns cannot end a job as ours
+        expect(notes.endedOnFault('job-too-long', before)).toBe(false);
+        expect(notes.confirmedSince('job-too-long', before)).toBe(false);
+        expect(notes.sawSince('job-too-long', before)).toBe(true);
+        expect((await rowsSent('job-too-long')).map((row) => [row.kind, row.reason])).toEqual([['not_ours', 'field_job_set']]);
+
+        // A reply that is not JSON at all is still an answer nobody can read: unresolved, ours
+        asJob('job-garbage');
+        upstreamHandler = (_req, res) => res.status(200).type('application/json').send('<html>not json</html>');
+        await askAndSettle(agent, 2);
+        expect(notes.endedOnFault('job-garbage', before)).toBe(true);
+    });
+
     it('notes Orbit that cannot be asked, a Brick with no AI, and computers all busy as faults of ours', async () => {
         const before = since();
         asJob('job-busy');

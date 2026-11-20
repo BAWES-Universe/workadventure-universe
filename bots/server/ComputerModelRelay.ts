@@ -169,6 +169,16 @@ export async function readBoundedJson(response: globalThis.Response, max: number
     }
 }
 
+/** The JSON of a whole non-streamed answer, and whether it was cut at the bound (then it is not read at all). */
+export async function readBoundedReply<T>(response: globalThis.Response, max: number): Promise<{ data: T | null; tooLong: boolean }> {
+    try {
+        const { text, tooLong } = await readBoundedWithFlag(response, max);
+        return tooLong ? { data: null, tooLong: true } : { data: JSON.parse(text) as T, tooLong: false };
+    } catch {
+        return { data: null, tooLong: false };
+    }
+}
+
 /**
  * The string and number fields a provider's refusal said (`code`, `type`, `param`, `message`, `status`) in a body that was cut at the bound, so
  * it could not be parsed whole: the first of each, read where it stands. Nothing is guessed: a field that was cut off is not there.
@@ -722,10 +732,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             }
 
             if (!streaming) {
-                const data = (await readBoundedJson(upstream, RELAY_GUARDS.maxReplyBytes)) as { usage?: unknown; choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> } | null;
+                const { data, tooLong } = await readBoundedReply<{ usage?: unknown; choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> }>(upstream, RELAY_GUARDS.maxReplyBytes);
                 if (!data) {
                     problem(res, 502, 'The AI answered with something unreadable.', 'upstream_error', 'server_error');
-                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
+                    // A reply cut at the bound is the request's: only the job's own settings can make an answer that long (logprobs on every token,
+                    // say), so it is never a fault of Universe's, and three of them can never end a job as ours. A reply that is not JSON is unresolved
+                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: false, ...(tooLong ? { reading: REQUESTS() } : {}) };
                 }
                 res.status(200).json(data);
                 const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? readProviderError(null, (data as { error?: unknown }).error, { ...jobsOwnLimit(body, config), outputCap }) : null;
