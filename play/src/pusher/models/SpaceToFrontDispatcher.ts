@@ -27,19 +27,42 @@ function targetOf(event: NonNullable<PublicEvent["spaceEvent"]>["event"]): strin
         : undefined;
 }
 
+type SpaceEventOneof = NonNullable<PublicEvent["spaceEvent"]>["event"];
+
+/** Whether a person in a space is a bot (a Brick): its tag or its uuid says so, both set by the world's own sign-in, never by the client. */
+export function isBotSender(sender: Pick<SpaceUser, "tags" | "uuid"> | undefined): boolean {
+    return !!sender && (sender.tags.includes("bot") || (sender.uuid ?? "").startsWith("bot-"));
+}
+
 /**
  * The one person a bot's reply is for (#1993): set by a bot when it writes to someone who is alone with it, on the reply
  * itself and on what it sends with it (a picture, a file, a card). Only a bot's word counts. From anyone else the event
  * goes to everyone in the space, as it always did.
  */
 export function onlyReaderOf(
-    event: NonNullable<PublicEvent["spaceEvent"]>["event"],
+    event: SpaceEventOneof,
     sender: Pick<SpaceUser, "tags" | "uuid"> | undefined
 ): string | undefined {
     const onlyFor = targetOf(event);
     if (!onlyFor) return undefined;
-    const fromBot = !!sender && (sender.tags.includes("bot") || (sender.uuid ?? "").startsWith("bot-"));
-    return fromBot ? onlyFor : undefined;
+    return isBotSender(sender) ? onlyFor : undefined;
+}
+
+/**
+ * An event as the pusher forwards it for the person who sent it, from the sending socket (the one identity the pusher can trust): only a
+ * bot's word that an event is for one person alone is kept. From anyone else the field is cleared, so every event that reaches the
+ * dispatcher with that field set was said by a bot, even when the dispatcher no longer has the sender in its map (it left, or the space
+ * lists only some of its people), and then it can safely go to that one person alone.
+ */
+export function onlyForOfBotsOnly<E extends SpaceEventOneof>(event: E, sender: Pick<SpaceUser, "tags" | "uuid">): E {
+    if (!targetOf(event) || isBotSender(sender)) return event;
+    if (event?.$case === "spaceStreamMessage") {
+        return { ...event, spaceStreamMessage: { ...event.spaceStreamMessage, onlyFor: "" } };
+    }
+    if (event?.$case === "spaceMessage") {
+        return { ...event, spaceMessage: { ...event.spaceMessage, onlyFor: "" } };
+    }
+    return event;
 }
 
 export interface SpaceToFrontDispatcherInterface {
@@ -355,8 +378,9 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
 
         // An event that says it is for one person alone, from someone this pusher has no record of: they left the space while it was on its
         // way, or the space lists only some of its people (a live stream lists the streamers: a sender who is not listed is not in the map).
-        // It cannot be told whether the sender was a bot (whose word that is), but what it names is the most it may reach: it goes to that
-        // person alone, never on to everyone, and never dropped (the person it was written for still gets it).
+        // Whether the sender was a bot is not known here, but it was when the event came in: the socket that sent it clears the field unless the
+        // sender is a bot (see onlyForOfBotsOnly), so a field that is set is a bot's word. It goes to that person alone, never on to everyone, and
+        // never dropped (the person it was written for still gets it).
         const unknownSenderTarget = sender ? undefined : targetOf(spaceEvent.event);
 
         const subMessage: SubMessage = {
