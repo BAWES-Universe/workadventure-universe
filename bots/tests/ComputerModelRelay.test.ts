@@ -1030,6 +1030,53 @@ describe('how a call ended, for the runner', () => {
         expect(notes.confirmedSince('job-whole-401', before)).toBe(true);
     });
 
+    it('keeps what a stream said of its own error when it then stalls until the relay’s time limit: the error was the provider’s whole statement, so timing does not decide it; an error cut in the middle is no statement, and the limit stands', async () => {
+        const before = since();
+        const original = RELAY_GUARDS.callTimeoutMs;
+        (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = 150;
+        const stalledAfter = (text: string) => (_req: express.Request, res: express.Response) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(text);
+        };
+        const whole = `data: ${JSON.stringify({ error: { code: 'invalid_api_key', message: 'Incorrect API key' } })}\n\n`;
+        try {
+            // our key refused, said whole, then nothing more: the same row as a stream that ended, not a timeout
+            asJob('job-stall-error');
+            upstreamHandler = stalledAfter(whole);
+            await askAndSettle({ ...agent, stream: true }, 1);
+            expect(notes.confirmedSince('job-stall-error', before)).toBe(true);
+            expect((await rowsSent('job-stall-error'))[0]).toMatchObject({ kind: 'fault', reason: 'provider_key_ours', source: 'universe-ai' });
+            asJob('job-stall-error-ended');
+            upstreamHandler = (_req, res) => {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.end(whole);
+            };
+            await askAndSettle({ ...agent, stream: true }, 2);
+            expect((await rowsSent('job-stall-error-ended'))[0]).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+
+            // the same on a person's own key: their provider's refusal, theirs, never a timeout of ours
+            route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+            asJob('job-stall-error-own');
+            upstreamHandler = stalledAfter(whole);
+            await askAndSettle({ ...agent, stream: true }, 3);
+            expect(notes.confirmedSince('job-stall-error-own', before)).toBe(false);
+            expect((await rowsSent('job-stall-error-own'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider', source: 'own-key' });
+
+            // the error cut in the middle of its JSON and then silence: nothing was said, so the relay's own cutoff, unresolved, on either key
+            asJob('job-stall-cut-own');
+            upstreamHandler = stalledAfter('data: {"error":{"code":"invalid_api_key","mes');
+            await askAndSettle({ ...agent, stream: true }, 4);
+            expect((await rowsSent('job-stall-cut-own'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_no_output', source: 'own-key' });
+            route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
+            asJob('job-stall-cut');
+            await askAndSettle({ ...agent, stream: true }, 5);
+            expect(notes.confirmedSince('job-stall-cut', before)).toBe(false);
+            expect((await rowsSent('job-stall-cut'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_no_output', source: 'universe-ai' });
+        } finally {
+            (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = original;
+        }
+    });
+
     it('does not confirm a key fault from the first of two codes that disagree in a refusal cut at the bound', async () => {
         const before = since();
         asJob('job-cut-two-codes');
