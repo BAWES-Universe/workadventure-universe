@@ -171,7 +171,7 @@ const RELAY_FIELDS = new Set(['model', 'max_tokens', 'max_completion_tokens', 'n
  * no moderation), a model or address that is gone (404), a 400 or 422 about a field only the relay sets (model, the token limit, n, stream
  * and its options), and an error that says nothing of a code.
  */
-export function whoseProviderError(status: number | null, error: unknown, jobsLimit = true): 'ours' | 'request' {
+export function whoseProviderError(status: number | null, error: unknown, jobs: { limit: boolean; name: boolean } = { limit: true, name: true }): 'ours' | 'request' {
     const record = isRecord(error) ? error : {};
     const words = ['code', 'type', 'message', 'status'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
     let numeric = status;
@@ -190,9 +190,10 @@ export function whoseProviderError(status: number | null, error: unknown, jobsLi
     const refusedShape = numeric === null || numeric === 400 || numeric === 422;
     if (refusedShape && RELAY_FIELDS.has(paramField)) {
         if (!TOKEN_LIMIT_FIELDS.has(paramField)) return 'ours';
-        // The name of the field is the relay's choice (max_tokens or max_completion_tokens by host), whatever the job asked: a refusal of the name is ours
-        if (/unsupported[_ ]parameter/i.test(`${typeof record.code === 'string' ? record.code : ''} ${typeof record.message === 'string' ? record.message.slice(0, 40) : ''}`)) return 'ours';
-        return jobsLimit || INPUT_WORDS.test(words) ? 'request' : 'ours';
+        // The name of the field is the relay's choice on OpenAI's host (max_completion_tokens) and the job's own elsewhere, where the relay keeps the name the job
+        // used: a refusal of the name is ours only when the relay picked it
+        if (/unsupported[_ ]parameter/i.test(`${typeof record.code === 'string' ? record.code : ''} ${typeof record.message === 'string' ? record.message.slice(0, 40) : ''}`)) return jobs.name ? 'request' : 'ours';
+        return jobs.limit || INPUT_WORDS.test(words) ? 'request' : 'ours';
     }
     if (CONTENT_WORDS.test(words)) return 'request';
     // Our key, our credit or our model, named by the error itself: ours, before its shape is looked at. Only what the provider sets (code, type) is
@@ -229,10 +230,17 @@ const bearerOf = (req: Request): string | null => {
 const askedLimitOf = (body: Record<string, unknown>): number | undefined =>
     [body.max_completion_tokens, body.max_tokens].find((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
 
-/** Whether the token limit sent is the job's own: it asked for one and we did not lower it (to our setting or the guard). */
-export function limitIsJobs(body: Record<string, unknown>, outputCap: number): boolean {
+/**
+ * What of the token limit the job chose, for reading a provider's refusal of it. The value is the job's own when it asked for one and we set no
+ * limit of our own (with a setting, a value the provider refuses is our setting's mistake; with none, any ask is the job's, including one the
+ * guard lowered). The field name is the job's own when the host is not OpenAI's (the relay keeps the name the job used there); on OpenAI's it is ours.
+ */
+export function jobsOwnLimit(body: Record<string, unknown>, config: AIProviderConfig): { limit: boolean; name: boolean } {
     const asked = askedLimitOf(body);
-    return asked !== undefined && Math.floor(asked) <= outputCap;
+    return {
+        limit: asked !== undefined && !(config.maxTokens > 0),
+        name: !isOpenAIHost(config.endpoint) && (typeof body.max_completion_tokens === 'number' || typeof body.max_tokens === 'number'),
+    };
 }
 
 /** The most the call may write: what Hermes asked for, else the provider's setting, else the default, never above our setting or the guard. */
@@ -422,7 +430,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     // The relay's own time limit ran out. Ours when the provider gave nothing in time (a stream that wrote nothing) or, for an answer that is
                     // not streamed, when the relay chose the limit that made it long; a long answer the job asked for, or a stream that was writing when the
                     // time ran out, is the job's own
-                    if (timing.timedOut && !ended.providerSays) ended = { ...ended, providerSays: (streaming ? ended.outputChars === 0 : !limitIsJobs(body, outputCap)) ? 'ours' : 'request' };
+                    if (timing.timedOut && !ended.providerSays) ended = { ...ended, providerSays: (streaming ? ended.outputChars === 0 : !jobsOwnLimit(body, config).limit) ? 'ours' : 'request' };
                     // How the call ended, for the runner: a failure of ours is noted as a fault, a whole answer as an answer. What a provider
                     // answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
                     // person's own key the provider, the key and the endpoint are theirs (their credit ran out, their key was revoked)
@@ -574,7 +582,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 } catch {
                     /* a body that is not JSON says nothing more than its status */
                 }
-                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, providerSays: whoseProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, limitIsJobs(body, outputCap)) };
+                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, providerSays: whoseProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, jobsOwnLimit(body, config)) };
             }
 
             if (!streaming) {
@@ -584,7 +592,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
                 }
                 res.status(200).json(data);
-                const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? whoseProviderError(null, (data as { error?: unknown }).error, limitIsJobs(body, outputCap)) : null;
+                const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? whoseProviderError(null, (data as { error?: unknown }).error, jobsOwnLimit(body, config)) : null;
                 const usage = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
                 const message = data.choices?.[0]?.message;
                 // What the model wrote counts whether it was words, thinking or a tool call
@@ -620,7 +628,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     const chunk = JSON.parse(data) as { error?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
                     // A provider can answer 200 and put its error in the stream: that is no answer
                     if (chunk.error !== undefined && chunk.error !== null) {
-                        const kind = whoseProviderError(null, chunk.error, limitIsJobs(body, outputCap));
+                        const kind = whoseProviderError(null, chunk.error, jobsOwnLimit(body, config));
                         providerSays = providerSays === 'ours' || kind === 'ours' ? 'ours' : 'request';
                     }
                     if (chunk.usage) usage = { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, ...readUsageDetail(chunk.usage) };
