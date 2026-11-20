@@ -130,7 +130,7 @@ const toolCallChars = (calls: unknown): number => {
 };
 
 /**
- * A provider's answer read up to `max` bytes. Past that the body is cancelled and the words so far are returned, cut: an answer is never held whole
+ * A provider's answer read up to `max` bytes. Past that the body is cancelled and the first `max` bytes are returned, cut (the same bytes whatever way the chunks fell): an answer is never held whole
  * in memory because a provider (or something in front of it) sent more than any answer needs. `tooLong` says so.
  */
 export async function readBoundedWithFlag(response: globalThis.Response, max: number): Promise<{ text: string; tooLong: boolean }> {
@@ -144,8 +144,11 @@ export async function readBoundedWithFlag(response: globalThis.Response, max: nu
         for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
+            const before = bytes;
             bytes += value.byteLength;
             if (bytes > max) {
+                // What of this chunk fits under the bound is kept, so the text read is the first `max` bytes whatever way the provider split its chunks
+                if (max > before) text += decoder.write(Buffer.from(value.subarray(0, max - before)));
                 // Not waited for: the body of a clone is one of two branches of a tee, and cancelling one branch finishes only when the other is
                 // cancelled or read to its end too, which a caller that reads the original after this returns would never reach
                 void reader.cancel().catch(() => undefined);

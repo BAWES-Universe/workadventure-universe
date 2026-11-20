@@ -638,7 +638,7 @@ describe('reading a provider’s answer', () => {
         const clone = response.clone();
         const stuck = Symbol('stuck');
         const read = await Promise.race([readBoundedWithFlag(clone, 10), new Promise<symbol>((resolve) => setTimeout(() => resolve(stuck), 500))]);
-        expect(read).toEqual({ text: 'abcdefgh', tooLong: true });
+        expect(read).toEqual({ text: 'abcdefghij', tooLong: true });
         // The original is still there to be read afterwards
         expect(await readBoundedWithFlag(response, 100)).toEqual({ text: 'abcdefghijklmnop', tooLong: false });
     });
@@ -651,8 +651,24 @@ describe('reading a provider’s answer', () => {
         const { response, state } = bodyOf('abcd', 'efgh', 'ijkl', 'mnop');
         const read = await readBoundedWithFlag(response, 10);
         expect(read.tooLong).toBe(true);
-        expect(read.text).toBe('abcdefgh');
+        expect(read.text).toBe('abcdefghij');
         expect(state.cancelled).toBe(true);
+    });
+
+    it('keeps the same first bytes however the chunks fell, never more than the bound, and a field that fits in the chunk that crosses it', async () => {
+        const text = '{"error":{"param":"temperature","message":"' + 'x'.repeat(100) + '"}}';
+        const whole = await readBoundedWithFlag(bodyOf(text).response, 64);
+        expect(whole).toEqual({ text: text.slice(0, 64), tooLong: true });
+        for (const size of [1, 7, 13, 64, 65, 200]) {
+            const pieces = text.match(new RegExp(`[\\s\\S]{1,${size}}`, 'g')) as string[];
+            expect(await readBoundedWithFlag(bodyOf(...pieces).response, 64)).toEqual(whole);
+        }
+        // the field is read from what fit, whether the body came whole or in pieces
+        expect(leadingFieldsOf(whole.text)).toEqual({ param: 'temperature' });
+        // a character cut by the bound is not half-read into more than the bound
+        expect((await readBoundedWithFlag(bodyOf('ééééé').response, 5)).text.length).toBeLessThanOrEqual(5);
+        // exactly the bound is not too long
+        expect(await readBoundedWithFlag(bodyOf('abcd', 'efgh', 'ij').response, 10)).toEqual({ text: 'abcdefghij', tooLong: false });
     });
 
     it('gives no JSON for an answer that is too long or is not JSON', async () => {
