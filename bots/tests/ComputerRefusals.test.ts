@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow, type EvidenceStore } from '../server/ComputerRefusals';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow, type EvidenceStore } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -508,7 +508,7 @@ describe('the evidence kept before the money decision is final, and delivered af
         };
         return { store, held, log, state };
     };
-    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number } = {}) => {
+    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: 'not_durable' | 'unacked', info: { jobId: string; callId: string }) => void } = {}) => {
         const sent: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
         let at = 1000;
         const notes = createRefusalNotes(() => at, {
@@ -622,7 +622,7 @@ describe('the evidence kept before the money decision is final, and delivered af
         expect(mem.held.size).toBe(0);
     });
 
-    it('a row made in this process wins over the same call kept before, and a row older than a day is no longer sent from memory', async () => {
+    it('a row made in this process wins over the same call kept before, and rows are kept 7 days', async () => {
         const mem = memoryStore();
         const old = ledger(mem.store, () => false);
         old.notes.record('b', 'j', call('c1', { kind: 'uncertain', reason: 'stream_cut', providerStatus: null }));
@@ -635,7 +635,63 @@ describe('the evidence kept before the money decision is final, and delivered af
         await fresh.notes.flush('j');
         const rows = fresh.sent.flatMap((one) => one.rows).filter((row) => row.callId === 'c1');
         expect(rows.map((row) => row.kind)).toEqual(['fault']);
-        expect(EVIDENCE_KEEP_MS).toBe(24 * 60 * 60 * 1000);
+        expect(EVIDENCE_KEEP_MS).toBe(7 * 24 * 60 * 60 * 1000);
+    });
+
+    it('tells the operators once that evidence is not durable while the store keeps failing, the row staying in memory and still sent, and again after the store recovers and fails again', async () => {
+        const mem = memoryStore();
+        mem.state.failSaves = 2;
+        const told: Array<[string, string, string]> = [];
+        const { notes, sent } = ledger(mem.store, () => true, { report: (what, info) => told.push([what, info.jobId, info.callId]) });
+        notes.record('b', 'j', call('c1'));
+        notes.record('b', 'j', call('c2'));
+        await notes.flush('j');
+        // c1 and c2 failed to be kept: told once, not twice
+        expect(told.filter(([what]) => what === 'not_durable')).toHaveLength(1);
+        expect(sent.flatMap((one) => one.rows).map((row) => row.callId).sort()).toEqual(['c1', 'c2']);
+        // the store works again for a row, then fails again: a new telling
+        notes.record('b', 'j', call('c3'));
+        await notes.flush('j');
+        expect(told.filter(([what]) => what === 'not_durable')).toHaveLength(1);
+        mem.state.failSaves = 1;
+        notes.record('b', 'j', call('c4'));
+        await notes.flush('j');
+        expect(told.filter(([what]) => what === 'not_durable')).toHaveLength(2);
+        expect(told.every(([, jobId]) => jobId === 'j')).toBe(true);
+    });
+
+    it('tells the operators once of a row Orbit has not taken for an hour, and not again for that row, nor for a row taken in time', async () => {
+        const mem = memoryStore();
+        const told: string[] = [];
+        let up = false;
+        const { notes, sent, advance } = ledger(mem.store, () => up, { report: (what, info) => what === 'unacked' && told.push(info.callId) });
+        notes.record('b', 'j', call('c1'));
+        await notes.flush('j');
+        expect(told).toEqual([]);
+        advance(EVIDENCE_UNACKED_MS - 1000);
+        await notes.flush('j');
+        expect(told).toEqual([]);
+        advance(2000);
+        await notes.flush('j');
+        await notes.flush('j');
+        expect(told).toEqual(['c1']);
+        up = true;
+        await notes.flush('j');
+        expect(sent.flatMap((one) => one.rows).map((row) => row.callId)).toEqual(['c1']);
+        expect(told).toEqual(['c1']);
+    });
+
+    it('a failing report never holds or loses the evidence: the row is still made again in the store and still sent', async () => {
+        const mem = memoryStore();
+        mem.state.failSaves = 1;
+        let up = false;
+        const { notes, sent } = ledger(mem.store, () => up, { report: () => { throw new Error('Sentry down'); } });
+        notes.record('b', 'j', call('c1'));
+        await notes.flush('j');
+        expect(mem.held.has('j|c1')).toBe(true);
+        up = true;
+        expect(await notes.flush('j')).toBe(true);
+        expect(sent).toHaveLength(1);
     });
 
     it('a ledger with no store behaves as before: rows are not kept anywhere but memory, and resume is a yes', async () => {

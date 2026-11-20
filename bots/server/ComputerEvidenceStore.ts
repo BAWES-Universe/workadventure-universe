@@ -2,21 +2,24 @@
  * The rows of Orbit's fault record that Orbit has not taken yet, kept in the bot servers' shared store (Redis) so a restart or a redeploy of the bot
  * server does not lose the evidence a failed computer job's money decision rests on (ComputerRefusals sends them again, under the ids they had).
  *
- * One field per row in one hash, so two bot servers never overwrite each other: `<jobId>|<callId>` holds the bot, the job, the row and when it was
- * kept. A row holds ids, a reason, a source, a route and times: nothing anyone said, no key. A row older than a day, or one that is damaged, is not
- * brought back (and an old one is removed); a damaged entry never stops the bot server starting.
+ * One hash per job, `computer:faults:pending:<jobId>`, one field per call (the call id) holding the bot and the row. The hash lives 7 days from its
+ * last write. A row holds ids, a reason, a source, a route and times: nothing anyone said, no key. A damaged or foreign entry is skipped (and never
+ * stops the bot server starting); an entry older than the time rows are kept is removed.
  */
 import type { CallRow, EvidenceStore } from './ComputerRefusals';
 import { EVIDENCE_KEEP_MS } from './ComputerRefusals';
 
-/** The few Redis hash commands used (a node-redis client has them all). */
+/** The few Redis commands used (a node-redis v4 client has them all). */
 export interface EvidenceRedis {
     hGetAll(key: string): Promise<Record<string, string>>;
     hSet(key: string, field: string, value: string): Promise<unknown>;
     hDel(key: string, fields: string | string[]): Promise<unknown>;
+    expire(key: string, seconds: number): Promise<unknown>;
+    scan(cursor: number, options: { MATCH: string; COUNT: number }): Promise<{ cursor: number; keys: string[] }>;
 }
 
-export const EVIDENCE_KEY = 'computer:evidence';
+export const EVIDENCE_PREFIX = 'computer:faults:pending:';
+export const EVIDENCE_TTL_SECONDS = Math.round(EVIDENCE_KEEP_MS / 1000);
 
 const KINDS = new Set(['fault', 'not_ours', 'uncertain']);
 const SOURCES = new Set(['universe-ai', 'own-key']);
@@ -66,7 +69,11 @@ export class RedisEvidenceStore implements EvidenceStore {
 
     async save(botId: string, jobId: string, row: CallRow): Promise<boolean> {
         try {
-            await this.within(this.client().hSet(EVIDENCE_KEY, `${jobId}|${row.callId}`, JSON.stringify({ botId, jobId, row, at: this.now() })));
+            const client = this.client();
+            const key = EVIDENCE_PREFIX + jobId;
+            await this.within(client.hSet(key, row.callId, JSON.stringify({ botId, row })));
+            // The life of the hash starts again with each write
+            await this.within(client.expire(key, EVIDENCE_TTL_SECONDS));
             return true;
         } catch {
             return false;
@@ -76,7 +83,7 @@ export class RedisEvidenceStore implements EvidenceStore {
     async drop(jobId: string, callIds: string[]): Promise<void> {
         if (callIds.length === 0) return;
         try {
-            await this.within(this.client().hDel(EVIDENCE_KEY, callIds.map((id) => `${jobId}|${id}`)));
+            await this.within(this.client().hDel(EVIDENCE_PREFIX + jobId, callIds));
         } catch {
             /* a row left behind is only sent again, and Orbit keeps one per job and call */
         }
@@ -84,27 +91,41 @@ export class RedisEvidenceStore implements EvidenceStore {
 
     async load(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>> {
         const client = this.client();
-        const all = await this.within(client.hGetAll(EVIDENCE_KEY));
-        const byJob = new Map<string, { botId: string; jobId: string; rows: CallRow[] }>();
-        const stale: string[] = [];
-        for (const [field, value] of Object.entries(all)) {
-            let entry: { botId?: unknown; jobId?: unknown; row?: unknown; at?: unknown } | null = null;
-            try {
-                entry = JSON.parse(value) as typeof entry;
-            } catch {
-                entry = null;
+        const keys = new Set<string>();
+        let cursor = 0;
+        do {
+            const page = await this.within(client.scan(cursor, { MATCH: `${EVIDENCE_PREFIX}*`, COUNT: 100 }));
+            cursor = page.cursor;
+            for (const key of page.keys) keys.add(key);
+        } while (cursor !== 0);
+        const jobs: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
+        for (const key of keys) {
+            const jobId = key.slice(EVIDENCE_PREFIX.length);
+            if (jobId === '') continue;
+            const all = await this.within(client.hGetAll(key));
+            const rows: CallRow[] = [];
+            let botId: string | undefined;
+            const stale: string[] = [];
+            for (const [field, value] of Object.entries(all)) {
+                let entry: { botId?: unknown; row?: unknown } | null = null;
+                try {
+                    entry = JSON.parse(value) as typeof entry;
+                } catch {
+                    entry = null;
+                }
+                const row = validRow(entry?.row);
+                if (!entry || !row || !text(entry.botId) || row.callId !== field) continue;
+                const at = Date.parse(row.at);
+                if (Number.isFinite(at) && at < this.now() - EVIDENCE_KEEP_MS) {
+                    stale.push(field);
+                    continue;
+                }
+                botId = entry.botId;
+                rows.push(row);
             }
-            const row = validRow(entry?.row);
-            if (!entry || !row || !text(entry.botId) || !text(entry.jobId) || `${entry.jobId}|${row.callId}` !== field) continue;
-            if (typeof entry.at === 'number' && entry.at < this.now() - EVIDENCE_KEEP_MS) {
-                stale.push(field);
-                continue;
-            }
-            const job = byJob.get(entry.jobId) ?? { botId: entry.botId, jobId: entry.jobId, rows: [] };
-            job.rows.push(row);
-            byJob.set(entry.jobId, job);
+            if (stale.length > 0) await this.within(client.hDel(key, stale)).catch(() => undefined);
+            if (botId && rows.length > 0) jobs.push({ botId, jobId, rows });
         }
-        if (stale.length > 0) await this.within(client.hDel(EVIDENCE_KEY, stale)).catch(() => undefined);
-        return [...byJob.values()];
+        return jobs;
     }
 }

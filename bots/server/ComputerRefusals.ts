@@ -148,11 +148,18 @@ export interface RefusalOptions {
     store?: EvidenceStore;
     /** With a store: how long to wait between tries once the later ones are used up (rows are kept `EVIDENCE_KEEP_MS` in all). */
     storeLaterMs?: number;
+    /**
+     * Tells the operators (Sentry) once: `not_durable` when a row could not be kept in the store (once until a write succeeds again), `unacked` when
+     * a row has waited for Orbit longer than `EVIDENCE_UNACKED_MS` (once per row). Carries ids only. Never throws into the caller's way.
+     */
+    report?: (what: 'not_durable' | 'unacked', info: { jobId: string; callId: string }) => void;
 }
 
-/** How long a row that Orbit has not taken is kept and sent again, in the store and in memory: a day. */
-export const EVIDENCE_KEEP_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_STORE_LATER_MS = 10 * 60 * 1000;
+/** How long a row that Orbit has not taken is kept and sent again, in the store and in memory: 7 days. */
+export const EVIDENCE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+/** A row Orbit has not taken after this long is told to the operators once. */
+export const EVIDENCE_UNACKED_MS = 60 * 60 * 1000;
+const DEFAULT_STORE_LATER_MS = 5 * 60 * 1000;
 
 /** The most rows Orbit takes in one call. */
 export const FAULT_ROWS_PER_CALL = 50;
@@ -193,6 +200,27 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         unsaved: Map<string, CallRow>;
     };
     const queued = new Map<string, Queue>();
+    let notDurableTold = false;
+    const unackedTold = new Set<string>();
+    const tell = (what: 'not_durable' | 'unacked', jobId: string, callId: string) => {
+        try {
+            options.report?.(what, { jobId, callId });
+        } catch {
+            /* telling the operators never holds the evidence */
+        }
+    };
+    /** Tells the operators once of each row Orbit has not taken for an hour. */
+    const watchUnacked = (entry: Queue, jobId: string) => {
+        for (const row of entry.rows.values()) {
+            const key = `${jobId}|${row.callId}`;
+            if (unackedTold.has(key)) continue;
+            const since = Date.parse(row.at);
+            if (Number.isFinite(since) && now() - since >= EVIDENCE_UNACKED_MS) {
+                unackedTold.add(key);
+                tell('unacked', jobId, row.callId);
+            }
+        }
+    };
     const newQueue = (botId: string): Queue => ({ botId, rows: new Map(), at: now(), laterTries: 0, writes: new Map(), unsaved: new Map() });
     /** Keeps a row in the store; the write is tracked so a flush can wait for it and a removal can follow it. Never throws. */
     const keep = (entry: Queue, jobId: string, row: CallRow) => {
@@ -203,8 +231,16 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             .catch(() => false)
             .then((kept) => {
                 if (kept) {
+                    notDurableTold = false;
                     if (entry.unsaved.get(row.callId) === row) entry.unsaved.delete(row.callId);
-                } else if (entry.rows.get(row.callId) === row) entry.unsaved.set(row.callId, row);
+                } else {
+                    // The row stays in memory and goes on being sent; the operators are told once for as long as the store keeps failing
+                    if (!notDurableTold) {
+                        notDurableTold = true;
+                        tell('not_durable', jobId, row.callId);
+                    }
+                    if (entry.rows.get(row.callId) === row) entry.unsaved.set(row.callId, row);
+                }
                 return kept;
             });
         entry.writes.set(row.callId, write);
@@ -224,11 +260,12 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         for (const [jobId, seen] of last) if (seen.at < cutoff) last.delete(jobId);
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
-        // With a store, rows Orbit has not taken are kept (and sent again) for a day, as in the store
+        // With a store, rows Orbit has not taken are kept (and sent again) as long as in the store
         const queueCutoff = store ? now() - EVIDENCE_KEEP_MS : cutoff;
         for (const [jobId, entry] of queued) {
             if (entry.at >= queueCutoff || entry.sending) continue;
             if (entry.later) clearTimeout(entry.later);
+            for (const callId of entry.rows.keys()) unackedTold.delete(`${jobId}|${callId}`);
             queued.delete(jobId);
         }
     };
@@ -265,6 +302,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                         if (entry.rows.get(row.callId) !== row) continue;
                         entry.rows.delete(row.callId);
                         entry.unsaved.delete(row.callId);
+                        unackedTold.delete(`${jobId}|${row.callId}`);
                         takenIds.push(row.callId);
                     }
                     release(entry, jobId, takenIds);
@@ -278,6 +316,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     }
                     return true;
                 }
+                watchUnacked(entry, jobId);
                 if (attempt >= retryMs.length) return false;
                 await sleep(retryMs[attempt]);
             }
@@ -296,9 +335,10 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     /** After the quick tries failed (the last flush before the job ended included), one more try is set for later, a few times, never more than one waiting. */
     const later = (jobId: string) => {
         const entry = queued.get(jobId);
+        if (!entry || entry.later || entry.rows.size === 0) return;
         // With a store the tries go on, slowly, for as long as the rows are kept; without one they stop after the last of the later ones
         const delay = laterMs[entry.laterTries] ?? (store ? storeLaterMs : undefined);
-        if (!entry || entry.later || entry.rows.size === 0 || delay === undefined) return;
+        if (delay === undefined) return;
         const timer = setTimeout(() => {
             entry.later = undefined;
             entry.laterTries += 1;

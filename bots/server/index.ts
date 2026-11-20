@@ -98,6 +98,13 @@ const aiService = botManager.getAIService();
 const computerRefusals = createRefusalNotes(Date.now, {
     sink: (botId, jobId, rows) => adminApiService.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
     store: new RedisEvidenceStore(() => botRegistry.evidenceClient()),
+    // Told once: a row the shared store could not keep (it is still in memory and still sent), and a row Orbit has not taken for an hour. Ids only.
+    report: (what, info) =>
+        Sentry.captureMessage(what === 'not_durable' ? 'Fault evidence not durable' : 'Fault evidence not acknowledged by Orbit for an hour', {
+            level: 'warning',
+            tags: { area: 'computer-fault-evidence', what },
+            extra: info,
+        }),
 });
 preRouters.push(createComputerModelRelay({ orbit: relayOrbitFor(adminApiService), routeFor: (botId) => aiService.relayRoute(botId), refusals: computerRefusals }));
 // Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
@@ -209,6 +216,8 @@ const COMPUTER_REPORTS_EVERY_MS = 10 * 1000;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
 /** Real computers: Orbit's sweep, and the runner that works the jobs Orbit says are running. They need no Matrix, so they start whether or not direct messages are set up. */
+/** Replays the evidence of failed computer jobs that Orbit has not taken, kept in the shared store, every 5 minutes (and at start). */
+const EVIDENCE_REPLAY_EVERY_MS = 5 * 60 * 1000;
 /** Sends again the evidence of failed computer jobs that was kept when this server stopped. The shared store may not be up yet: it is asked again a few times. */
 function resumeEvidence(attempt = 0): void {
     const delays = [0, 2000, 10_000, 30_000, 120_000, 300_000];
@@ -224,6 +233,9 @@ function resumeEvidence(attempt = 0): void {
 
 function startComputers(): void {
     resumeEvidence();
+    // Again every 5 minutes: only evidence is sent (under the same call ids, Orbit keeps one row per job and call); nothing is ever run again
+    const evidenceReplay = setInterval(() => void computerRefusals.resume(), EVIDENCE_REPLAY_EVERY_MS);
+    evidenceReplay.unref?.();
     computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
     computerSweepInterval.unref?.();
     // A development server that pretends (COMPUTER_PRETEND_RUNNER=yes) has no runner
