@@ -562,11 +562,12 @@ export function availableLabel(microsValue: number, locale: string | undefined, 
 }
 
 /**
- * What was taken, as the page says it: "less than $0.01" for a positive amount under a cent (it is not "$0.01": that is more than
- * was taken), "$0" for a true zero, otherwise rounded up to the cent as `spentText` does.
+ * What was taken, as the page says it and as Orbit says it, so the same amount never reads two ways: thousandths under a cent
+ * ("$0.009"), `tiny` ("less than $0.001") for the smallest, "$0" for a true zero, otherwise rounded up to the cent as `spentText` does.
  */
 export function spentLabel(microsValue: number, locale: string | undefined, tiny: string): string {
-    return isUnderACent(microsValue) ? tiny : spentText(microsValue, locale);
+    if (!isUnderACent(microsValue)) return spentText(microsValue, locale);
+    return exactDollars(microsValue) ?? tiny;
 }
 
 /**

@@ -502,9 +502,13 @@ describe("dollars", () => {
         expect(availableLabel(0, "en-US", tiny)).toBe("$0");
         expect(availableLabel(10_000, "en-US", tiny)).toBe("$0.01");
         expect(availableLabel(3_209_999, "en-US", tiny)).toBe("$3.20");
-        const line = "less than $0.01";
+        // What was taken is said as Orbit says it: thousandths under a cent, "less than $0.001" for the smallest
+        const line = "less than $0.001";
         expect(spentLabel(1, "en-US", line)).toBe(line);
-        expect(spentLabel(9_999, "en-US", line)).toBe(line);
+        expect(spentLabel(499, "en-US", line)).toBe(line);
+        expect(spentLabel(500, "en-US", line)).toBe("$0.001");
+        expect(spentLabel(1_200, "en-US", line)).toBe("$0.001");
+        expect(spentLabel(9_000, "en-US", line)).toBe("$0.009");
         expect(spentLabel(0, "en-US", line)).toBe("$0");
         expect(spentLabel(10_000, "en-US", line)).toBe("$0.01");
         expect(spentLabel(10_001, "en-US", line)).toBe("$0.02");

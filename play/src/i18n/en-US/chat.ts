@@ -1709,6 +1709,9 @@ const chat: BaseTranslation = {
             // A positive amount under one cent is said so, never rounded up or down to a cent; a true zero is "$0"
             lessThanCent: "Less than $0.01",
             lessThanCentInLine: "less than $0.01",
+            // What was taken, under a tenth of a cent: Orbit says the same ("less than $0.001"); larger amounts under a cent are said in thousandths
+            lessThanTenthOfCent: "Less than $0.001",
+            lessThanTenthOfCentInLine: "less than $0.001",
             unavailable: "Usage temporarily unavailable",
             unavailableHint: "Your Bricks keep working. Try again in a moment.",
             askNoteApps:

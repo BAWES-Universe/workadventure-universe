@@ -213,7 +213,7 @@
                 : "";
         const spent =
             item.spentMicros !== null
-                ? spentLabel(item.spentMicros, locale, text.lessThanCent())
+                ? spentLabel(item.spentMicros, locale, text.lessThanTenthOfCent())
                 : priceUnknown(item)
                 ? text.amountUnavailable()
                 : "";
@@ -222,7 +222,7 @@
 
     function lineValue(line: ReceiptLine, text: Words, locale: string | undefined) {
         const { amountMicros, note } = line;
-        if (amountMicros !== null) return spentLabel(amountMicros, locale, text.lessThanCentInLine());
+        if (amountMicros !== null) return spentLabel(amountMicros, locale, text.lessThanTenthOfCentInLine());
         if (note === PRICE_NOT_KNOWN) return text.amountUnavailable();
         // A computer given back: Orbit's word for it ("Given back") and what it got back, said the way Orbit says amounts
         const back = note !== null && line.returnedMicros !== null ? exactDollars(line.returnedMicros) : null;
@@ -410,7 +410,7 @@
                             <div class="m">
                                 {bot.spentMicros > 0
                                     ? text.botSpent({
-                                          amount: spentLabel(bot.spentMicros, $locale, text.lessThanCent()),
+                                          amount: spentLabel(bot.spentMicros, $locale, text.lessThanTenthOfCent()),
                                           uses: botUses(bot, text),
                                       })
                                     : text.botNone()}
@@ -451,7 +451,13 @@
                                             <!-- Not confirmed: only Orbit's words for what was taken, never a claim of ours -->
                                             {#if action.takenText}<b class="q">{action.takenText}</b>{/if}
                                         {:else if action.amountMicros !== null}
-                                            <b>{spentLabel(action.amountMicros, $locale, text.lessThanCentInLine())}</b>
+                                            <b
+                                                >{spentLabel(
+                                                    action.amountMicros,
+                                                    $locale,
+                                                    text.lessThanTenthOfCentInLine()
+                                                )}</b
+                                            >
                                         {:else if perAction(item) && item.lines.some((line) => line.note === PRICE_NOT_KNOWN)}
                                             <!-- This step worked and its price is not known yet, as Orbit says in its lines -->
                                             <b class="q">{text.amountUnavailable()}</b>

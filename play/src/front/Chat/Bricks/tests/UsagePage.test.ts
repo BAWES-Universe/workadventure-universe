@@ -527,11 +527,13 @@ describe("the Usage page (#1999)", () => {
         );
         await open();
         expect(text()).toContain("Less than $0.01 of $5 available");
-        expect(text()).toMatch(/Today, .+ · Less than \$0\.01 · Apps/);
+        // the amount taken is said as Orbit says it: thousandths under a cent, not "less than $0.01"
+        expect(text()).toMatch(/Today, .+ · \$0\.004 · Apps/);
+        expect(text()).not.toMatch(/Today, .+ · Less than \$0\.01 · Apps/);
         target.querySelector<HTMLElement>('[data-activity="act_tiny"]')?.click();
         await settle();
         const receipt = byId("usageReceipt")?.textContent?.replace(/\s+/g, " ") ?? "";
-        expect(receipt).toContain("Search flightsless than $0.01");
+        expect(receipt).toContain("Search flights$0.004");
         expect(receipt).toContain("Read one page$0");
     });
 
@@ -637,11 +639,11 @@ describe("the Usage page (#1999)", () => {
         await settle();
     };
 
-    it("draws the amount of each worked step (Orbit's amountMicros), under a cent as less than $0.01, and zero as $0", async () => {
+    it("draws the amount of each worked step (Orbit's amountMicros), under a cent in thousandths as Orbit says it, and zero as $0", async () => {
         await openPartly({ actions: [worked(20_000), worked(4_000), worked(0), failedStep] });
         expect(stepRows()).toEqual([
             "Gmail · worked $0.02",
-            "Gmail · worked less than $0.01",
+            "Gmail · worked $0.004",
             "Gmail · worked $0",
             "Gmail · didn't work Nothing taken",
         ]);
@@ -762,7 +764,7 @@ describe("the Usage page (#1999)", () => {
             expect(byId("usageReceiptWhy")?.textContent).toBe(
                 "One step worked and one didn’t. Computer cost of $0.05 was returned. Gmail charged $0.009. You pay $0.009 in all."
             );
-            expect(receiptText()).toContain("Gmail · worked less than $0.01");
+            expect(receiptText()).toContain("Gmail · worked $0.009");
             expect(receiptText()).toContain("Computer, 5 minutes");
             // the computer's line says Given back and what came back; it is not "Nothing taken"
             expect(receiptText()).toContain("Given back $0.05");
