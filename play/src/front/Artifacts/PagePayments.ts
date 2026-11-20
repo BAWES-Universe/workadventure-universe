@@ -485,7 +485,12 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (answer.status === "cant_confirm") {
                     return finish({ problem: "cant_confirm", canCheck: true }, "cant_confirm");
                 }
-            } catch {
+            } catch (error) {
+                // Orbit answers an order as "not there" when it is not this buyer's any more (another account signed in on this device
+                // while the checkout was on its way) or its page is no longer shared. Asking again would get the same answer for twenty
+                // minutes, and the line would keep telling the one who stayed what the one who left was paying: the line is cleared, and
+                // the page hears "unavailable" under its own request and session, never "paid"
+                if (error instanceof ArtifactRequestError && error.status === 404) return finish({}, "unavailable");
                 // Try again on the next turn
             }
             if (!over && !destroyed) timer = setTimeout(() => void poll(), next);

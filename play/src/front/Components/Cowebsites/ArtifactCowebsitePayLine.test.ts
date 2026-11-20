@@ -160,12 +160,14 @@ describe("the line under a paying page in the artifact window (the approved mock
         await vi.advanceTimersByTimeAsync(3_000);
         await settle();
         expect(text()).toBe(
-            "Paid. Thank you. Save your receipt link. It brings this purchase back on any device. Copy receipt link"
+            "Paid. Thank you. A guest purchase on this browser. Save your private receipt link: it brings this purchase back on any device, so share it with no one. Copy private receipt link"
         );
         await press("copy");
         expect(written).toHaveLength(1);
         expect(written[0]).toMatch(/^https:\/\/play\.test\/a\/a1#receipt=[A-Za-z0-9_-]{43}$/);
-        expect(text()).toBe("Receipt link copied. Keep it somewhere safe, like your notes or email. Copied");
+        expect(text()).toBe(
+            "Private receipt link copied. Keep it somewhere safe, like your notes or email. Anyone who has it can bring this purchase back. Copied"
+        );
         expect((target.querySelector('[data-testid="artifactPay-copy"]') as HTMLButtonElement).disabled).toBe(true);
         view.$destroy();
     });
@@ -187,6 +189,9 @@ describe("the line under a paying page in the artifact window (the approved mock
         await press("copy");
         await settle();
         expect(target.querySelector('[data-testid="artifactPayLine"]')?.textContent).toContain("Could not copy it");
+        expect(target.querySelector('[data-testid="artifactReceiptText"]')?.getAttribute("aria-label")).toBe(
+            "Private receipt link"
+        );
         expect(target.querySelector('[data-testid="artifactReceiptText"]')?.textContent).toMatch(
             /^https:\/\/play\.test\/a\/a1#receipt=[A-Za-z0-9_-]{43}$/
         );
@@ -226,7 +231,7 @@ describe("the line under a paying page in the artifact window (the approved mock
         await vi.advanceTimersByTimeAsync(1_000);
         await settle();
         expect(text()).toContain("Checking your payment");
-        expect(text()).not.toContain("Copy receipt link");
+        expect(text()).not.toContain("Copy private receipt link");
         deny(new Error("denied"));
         await settle();
         expect(text()).not.toContain("Could not copy it");
@@ -260,12 +265,12 @@ describe("the line under a paying page in the artifact window (the approved mock
         await say({ universe: "use-app", app: "examplepay", request: "r2", session: "s1" });
         await vi.advanceTimersByTimeAsync(3_000);
         await settle();
-        expect(text()).toContain("Copy receipt link");
+        expect(text()).toContain("Copy private receipt link");
         allow();
         await settle();
         // The newer line is as it was: its own button, ready to copy its own link
         expect(text()).not.toContain("copied");
-        expect(text()).toContain("Copy receipt link");
+        expect(text()).toContain("Copy private receipt link");
         expect((target.querySelector('[data-testid="artifactPay-copy"]') as HTMLButtonElement).disabled).toBe(false);
         expect(target.querySelector('[data-testid="artifactReceiptText"]')).toBeNull();
         view.$destroy();
@@ -281,7 +286,7 @@ describe("the line under a paying page in the artifact window (the approved mock
         await vi.advanceTimersByTimeAsync(20 * 60_000);
         await settle();
         expect(text()).toBe(
-            "We haven't heard back about your payment yet. If you paid, it still counts. You can check now. Check payment"
+            "We haven't heard back about your payment yet. If you paid, it still counts. Check it here before paying again. Check payment"
         );
         api.payOnArtifact.mockResolvedValueOnce({ status: "not_paid", orderId: "o1", pollAfterMs: 3000 });
         await press("check");
@@ -290,7 +295,9 @@ describe("the line under a paying page in the artifact window (the approved mock
             intentId: expect.stringMatching(/^[A-Za-z0-9_-]{24}$/),
             recoveryCode: expect.any(String),
         });
-        expect(text()).toBe("Not paid yet. If you just paid, it can take a few minutes to show. Check payment");
+        expect(text()).toBe(
+            "Not paid yet. If you already paid, it can take a while to show. Check it here before paying again. Check payment"
+        );
         api.payOnArtifact.mockResolvedValueOnce({
             status: "paid",
             testPayment: true,
@@ -306,7 +313,7 @@ describe("the line under a paying page in the artifact window (the approved mock
         const buyer = await mount(false);
         await buyer.say({ universe: "use-app", app: "examplepay" });
         expect(buyer.text()).toBe(
-            "This page's pay button needs an update. If you already paid, you can check it here. Check payment"
+            "This page's pay button needs an update. If you already paid, check it here before paying again. Check payment"
         );
         expect(buyer.heard).toEqual([]);
         buyer.view.$destroy();
