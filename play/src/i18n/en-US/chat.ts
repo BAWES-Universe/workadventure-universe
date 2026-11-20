@@ -1741,6 +1741,9 @@ const chat: BaseTranslation = {
             activityNothingTaken: "Nothing taken",
             // A task where some steps worked and some did not (Orbit's outcome "partial"), and an amount nobody can tell yet
             activityPartly: "Partly done",
+            // Words for a task Orbit says did not finish, or could not be confirmed, when it sends none of its own
+            activityDidntFinish: "Didn't finish",
+            activityCouldntConfirm: "Couldn't confirm",
             amountUnavailable: "amount unavailable",
             paidByYou: "Paid by you",
             paidByUniverse: "Paid by Universe",

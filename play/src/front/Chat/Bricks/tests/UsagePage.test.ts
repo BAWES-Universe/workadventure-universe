@@ -710,6 +710,121 @@ describe("the Usage page (#1999)", () => {
         game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
     });
 
+    describe("a task that did not finish, or could not be confirmed (Orbit's outcome failed / unconfirmed, action unknown)", () => {
+        const unknownStep = (over: Record<string, unknown> = {}) => ({
+            label: "gmail",
+            outcome: "unknown",
+            text: "Gmail · couldn't confirm delivery",
+            takenText: "Hold being released",
+            ...over,
+        });
+        const failedTask = (over: Record<string, unknown> = {}) =>
+            task({
+                id: "act_failed",
+                title: "Email the invoices",
+                category: "computer",
+                spentMicros: 30_000,
+                outcome: "failed",
+                outcomeText: "Didn't finish",
+                outcomeNote: "The message wasn't sent. Computer time used $0.03. Gmail charged $0.",
+                actions: [failedStep],
+                lines: [{ label: "Computer time", amountMicros: 30_000 }],
+                ...over,
+            });
+        const openTask = async (item: Record<string, unknown>) => {
+            game.getMyUsage.mockResolvedValue(live({}, { activity: [item] }));
+            await open();
+            target.querySelector<HTMLElement>(`[data-activity="${item.id}"]`)?.click();
+            await settle();
+        };
+
+        it("never reads a failed task as done: Orbit's headline, each step, and Orbit's note", async () => {
+            await openTask(failedTask());
+            expect(text()).toMatch(/Today, .+ · Didn't finish · \$0\.03 · Computer/);
+            expect(stepRows()).toEqual(["Gmail · didn't work Nothing taken"]);
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "The message wasn't sent. Computer time used $0.03. Gmail charged $0."
+            );
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Didn't finish");
+            expect(byId("usageReceipt")?.textContent).not.toContain("Refunded");
+        });
+
+        it("shows an action Orbit could not confirm with its own words, and no claim of ours when it sends none", async () => {
+            await openTask(
+                failedTask({
+                    id: "act_unconfirmed",
+                    outcome: "unconfirmed",
+                    outcomeText: "Couldn't confirm",
+                    outcomeNote: "We couldn't confirm whether Exa finished. We're releasing your hold.",
+                    spentMicros: null,
+                    actions: [
+                        unknownStep(),
+                        unknownStep({ label: "exa", text: "Exa · couldn't confirm", takenText: undefined }),
+                    ],
+                    lines: [],
+                })
+            );
+            expect(text()).toMatch(/Today, .+ · Couldn't confirm · Computer/);
+            expect(stepRows()).toEqual([
+                "Gmail · couldn't confirm delivery Hold being released",
+                "Exa · couldn't confirm",
+            ]);
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "We couldn't confirm whether Exa finished. We're releasing your hold."
+            );
+            // Nothing was taken from anyone, so there is no "Paid by you" line
+            expect(byId("usageReceipt")?.textContent).not.toContain("Paid by");
+        });
+
+        it("says our own words when Orbit sends an outcome with no headline", async () => {
+            await openTask(failedTask({ outcomeText: undefined }));
+            expect(text()).toContain("Didn't finish");
+            game.getMyUsage.mockResolvedValue(
+                live({}, { activity: [failedTask({ id: "act_u", outcome: "unconfirmed", outcomeText: undefined })] })
+            );
+            page?.$destroy();
+            page = undefined;
+            target.innerHTML = "";
+            await open();
+            expect(text()).toContain("Couldn't confirm");
+        });
+
+        it("shows the note of an outcome it does not know, and reads it as done only when Orbit has nothing to say", async () => {
+            const future = task({
+                id: "act_future",
+                title: "Future task",
+                outcome: "something_new",
+                outcomeText: "Held up",
+                outcomeNote: "Orbit's note for an outcome this page does not know.",
+            });
+            const plain = task({ id: "act_plain", title: "Plain task", outcome: "something_new" });
+            game.getMyUsage.mockResolvedValue(live({}, { activity: [future, plain] }));
+            await open();
+            expect(text()).toMatch(/Future task[^]*Held up/);
+            target.querySelector<HTMLElement>('[data-activity="act_future"]')?.click();
+            await settle();
+            expect(byId("usageReceiptWhy")?.textContent).toBe("Orbit's note for an outcome this page does not know.");
+            target.querySelector<HTMLElement>('[data-activity="act_future"]')?.click();
+            await settle();
+            target.querySelector<HTMLElement>('[data-activity="act_plain"]')?.click();
+            await settle();
+            expect(byId("usageReceiptWhy")).toBeNull();
+            expect(byId("usageReceiptPartly")).toBeNull();
+            expect(byId("usageReceipt")?.textContent).toContain("Paid by you");
+        });
+
+        it("calls a task partly done when a step worked and one could not be confirmed", async () => {
+            await openPartly({
+                actions: [worked(20_000), unknownStep()],
+            });
+            expect(stepRows()).toEqual([
+                "Gmail · worked $0.02",
+                "Gmail · couldn't confirm delivery Hold being released",
+            ]);
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+        });
+    });
+
     it("says amount unavailable when nobody can tell what a task took yet, never a number and never Nothing", async () => {
         game.getMyUsage.mockResolvedValue(
             live(

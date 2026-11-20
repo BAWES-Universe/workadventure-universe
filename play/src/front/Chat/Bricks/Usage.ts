@@ -78,8 +78,11 @@ export interface BotSpend {
 }
 
 export type ActivityState = "done" | "refunded";
-/** How a task came to end: every action worked, some did (partly done), or none did. */
-export type ActivityOutcome = "done" | "partial" | "refunded";
+/**
+ * How a task came to end: every action worked ("done"), some did ("partial"), none did ("failed"), or the outcome of an action could
+ * not be confirmed ("unconfirmed"). "refunded" is the whole task given back.
+ */
+export type ActivityOutcome = "done" | "partial" | "refunded" | "failed" | "unconfirmed";
 export type ActivityPayer = "you" | "universe" | "sponsor";
 
 /** One line of a receipt: what was used and what it took ("Nothing" is a note). */
@@ -95,12 +98,15 @@ export const PRICE_NOT_KNOWN = "Price not known yet";
 /** One Instant action of a task and how it ended. Only the App and the outcome: never what was asked or answered. */
 export interface ActivityAction {
     label: string;
-    outcome: "worked" | "failed";
-    /** "Gmail · didn't work" (Orbit's words) */
+    outcome: "worked" | "failed" | "unknown";
+    /** "Gmail · didn't work" or "Gmail · couldn't confirm delivery" (Orbit's words) */
     text: string;
-    /** "Nothing taken" for an action that did not work; null for one that did */
+    /**
+     * Orbit's words for what was taken for an action that did not work ("Nothing taken", or "Hold being released" while the books have not
+     * confirmed the release); null for one that did, and when Orbit does not say
+     */
     takenText: string | null;
-    /** What this one action took, when Orbit says (a failed one took nothing); null when it does not say */
+    /** What this one action took, when Orbit says (a failed or unconfirmed one takes nothing here); null when it does not say */
     amountMicros: number | null;
 }
 
@@ -118,7 +124,9 @@ export interface ActivityItem {
     lines: ReceiptLine[];
     /** How the task came to end. `state` stays "done" for a task that partly worked, since something worked. */
     outcome: ActivityOutcome;
-    /** Orbit's sentence under a partly done receipt ("Two steps worked and one didn't. Nothing was taken for the one that didn't."); null otherwise */
+    /** Orbit's headline for the outcome ("Partly done", "Nothing taken", "Didn't finish", "Couldn't confirm"); null when it sends none */
+    outcomeText: string | null;
+    /** Orbit's sentence under a receipt that is not plain done ("Two steps worked and one didn't. Nothing was taken for the one that didn't."); null when it sends none */
     outcomeNote: string | null;
     /** Each Instant action of the task; empty for a task with none (an older Orbit, or a computer's) */
     actions: ActivityAction[];
@@ -294,14 +302,18 @@ function parseActions(value: unknown): ActivityAction[] {
         if (!isRaw(item)) continue;
         const label = short(item.label);
         const text = short(item.text);
-        if (!label || !text || (item.outcome !== "worked" && item.outcome !== "failed")) continue;
+        // An action Orbit could not confirm ("unknown") is kept: reading it as worked or dropping it would say more than anyone knows
+        if (!label || !text || (item.outcome !== "worked" && item.outcome !== "failed" && item.outcome !== "unknown")) {
+            continue;
+        }
+        const notWorked = item.outcome !== "worked";
         out.push({
             label,
             outcome: item.outcome,
             text,
-            // A failed action took nothing, whatever else it says
-            takenText: item.outcome === "failed" ? short(item.takenText) ?? null : null,
-            amountMicros: item.outcome === "failed" ? null : micros(item.amountMicros) ?? null,
+            // An action that did not work, or could not be confirmed, carries Orbit's words for what was taken, and no amount of its own
+            takenText: notWorked ? short(item.takenText) ?? null : null,
+            amountMicros: notWorked ? null : micros(item.amountMicros) ?? null,
         });
         if (out.length >= ACTIONS_MAX) break;
     }
@@ -327,19 +339,32 @@ function parseActivity(value: unknown): ActivityItem[] {
         seen.add(id);
         const state = item.state === "refunded" ? "refunded" : "done";
         const actions = parseActions(item.actions);
-        // Partly done needs a step that worked and one that did not; an older Orbit that sends neither is done or refunded as before
+        // Partly done needs a step that worked and one that did not work or could not be confirmed. "failed" and "unconfirmed" are Orbit's
+        // word that nothing finished or that an action could not be confirmed: they are never read as done. An older Orbit that sends
+        // none of these is done or refunded as before. An outcome this page does not know reads as done only when Orbit has nothing to
+        // say about it (no note); the note is shown either way
         const partly =
-            state !== "refunded" &&
             item.outcome === "partial" &&
             actions.some((action) => action.outcome === "worked") &&
-            actions.some((action) => action.outcome === "failed");
+            actions.some((action) => action.outcome !== "worked");
+        const outcome: ActivityOutcome =
+            state === "refunded"
+                ? "refunded"
+                : partly
+                ? "partial"
+                : item.outcome === "failed"
+                ? "failed"
+                : item.outcome === "unconfirmed"
+                ? "unconfirmed"
+                : "done";
         out.push({
             id,
             title,
             at,
             state,
-            outcome: state === "refunded" ? "refunded" : partly ? "partial" : "done",
-            outcomeNote: partly ? short(item.outcomeNote) ?? null : null,
+            outcome,
+            outcomeText: state === "refunded" ? null : short(item.outcomeText) ?? null,
+            outcomeNote: state === "refunded" ? null : short(item.outcomeNote) ?? null,
             actions,
             spentMicros: micros(item.spentMicros) ?? null,
             category: item.category === "apps" || item.category === "computer" ? item.category : null,

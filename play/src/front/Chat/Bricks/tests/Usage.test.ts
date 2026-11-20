@@ -268,6 +268,73 @@ describe("real numbers (credits and grants)", () => {
         expect(read?.activity.map((one) => `${one.id}:${one.title}`)).toEqual(["same:Settled"]);
     });
 
+    describe("a task that did not finish, or could not be confirmed", () => {
+        const read = (over: Record<string, unknown>) =>
+            parseUsage(
+                real({
+                    activity: [
+                        {
+                            id: "act_x",
+                            title: "Email the invoices",
+                            at: "2026-11-15T11:16:00.000Z",
+                            state: "done",
+                            spentMicros: 30_000,
+                            ...over,
+                        },
+                    ],
+                })
+            )?.activity[0];
+        const step = (outcome: string, over: Record<string, unknown> = {}) => ({
+            label: "gmail",
+            outcome,
+            text: `Gmail · ${outcome}`,
+            takenText: "Nothing taken",
+            amountMicros: 5_000,
+            ...over,
+        });
+
+        it("keeps an action whose outcome could not be confirmed, with Orbit's words and no amount", () => {
+            const item = read({ actions: [step("worked"), step("unknown", { takenText: "Hold being released" })] });
+            expect(item?.actions.map((one) => one.outcome)).toEqual(["worked", "unknown"]);
+            expect(item?.actions[1]).toMatchObject({ takenText: "Hold being released", amountMicros: null });
+            expect(item?.actions[0]).toMatchObject({ takenText: null, amountMicros: 5_000 });
+        });
+
+        it("reads Orbit's failed and unconfirmed outcomes, never as done, with Orbit's headline and note", () => {
+            expect(
+                read({ outcome: "failed", outcomeText: "Didn't finish", outcomeNote: "The message wasn't sent." })
+            ).toMatchObject({
+                outcome: "failed",
+                outcomeText: "Didn't finish",
+                outcomeNote: "The message wasn't sent.",
+            });
+            expect(read({ outcome: "unconfirmed", outcomeText: "Couldn't confirm" })).toMatchObject({
+                outcome: "unconfirmed",
+                outcomeText: "Couldn't confirm",
+                outcomeNote: null,
+            });
+        });
+
+        it("is partly done for a step that worked and one that did not work or could not be confirmed", () => {
+            expect(read({ outcome: "partial", actions: [step("worked"), step("unknown")] })?.outcome).toBe("partial");
+            expect(read({ outcome: "partial", actions: [step("worked"), step("failed")] })?.outcome).toBe("partial");
+            expect(read({ outcome: "partial", actions: [step("worked")] })?.outcome).toBe("done");
+            expect(read({ outcome: "partial", actions: [step("unknown")] })?.outcome).toBe("done");
+        });
+
+        it("keeps the note of an outcome it does not know, and reads it as done; a refunded task carries neither", () => {
+            expect(read({ outcome: "later", outcomeNote: "Held up." })).toMatchObject({
+                outcome: "done",
+                outcomeNote: "Held up.",
+            });
+            expect(read({ state: "refunded", outcome: "failed", outcomeNote: "x", outcomeText: "y" })).toMatchObject({
+                outcome: "refunded",
+                outcomeNote: null,
+                outcomeText: null,
+            });
+        });
+    });
+
     it("reads at most fifty tasks", () => {
         const many = Array.from({ length: 80 }, (_, i) => ({
             id: `a${i}`,
