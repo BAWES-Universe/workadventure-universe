@@ -793,6 +793,14 @@ describe('whoseProviderError', () => {
         expect(whoseProviderError(null, { type: 'insufficient_quota', code: 'insufficient_quota' })).toBe('ours');
         expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'billing_hard_limit_reached' })).toBe('ours');
         expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'temperature' })).toBe('request');
+        expect(whoseProviderError(null, { message: 'Incorrect API key provided' })).toBe('ours');
+        // a provider echoes the job's own values in its message, and a job can steer those: never read as ours
+        expect(whoseProviderError(400, { param: 'messages[0].role', message: "Invalid value: 'billing'. Supported values are: 'system', 'user'." })).toBe('request');
+        expect(whoseProviderError(400, { param: 'messages[0].content[1].file.file_id', message: "The file 'file-abc' does not exist" })).toBe('request');
+        expect(whoseProviderError(422, { param: 'tool_choice', message: "tool 'permission_denied' does not exist" })).toBe('request');
+        expect(whoseProviderError(400, { message: "Invalid value: 'billing'" })).toBe('request');
+        expect(whoseProviderError(null, { param: 'messages[0].role', message: "Invalid value: 'billing'. Supported values are" })).toBe('request');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'tools[0]', message: "tool 'insufficient_quota' does not exist" })).toBe('request');
         expect(whoseProviderError(null, { type: 'invalid_request_error', code: 'context_length_exceeded', param: 'messages' })).toBe('request');
         expect(whoseProviderError(400, { param: 'messages[0].content[1].image_url' })).toBe('request');
         expect(whoseProviderError(400, {})).toBe('request');

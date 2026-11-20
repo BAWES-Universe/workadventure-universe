@@ -150,8 +150,10 @@ function wordsOf(text: string): string {
 }
 
 /** A provider that says our key is wrong is our problem, not Hermes's: Hermes must not read it as its own key being refused. */
-/** What an error says when it is about our key, our credit or our model, whatever else it carries: ours. */
-const KEY_WORDS = /invalid[_ -]?api[_ -]?key|incorrect api key|model[_ -]?not[_ -]?found|does not exist|insufficient[_ -]?(quota|funds|credit)|billing|exceeded your (current )?quota|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
+/** The codes and types a provider sets when the error is about our key, our credit or our model (it never echoes what the job sent in them): ours. */
+const KEY_CODES = /invalid[_ -]?api[_ -]?key|model[_ -]?not[_ -]?found|insufficient[_ -]?(quota|funds|credit)|billing|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
+/** The same said in a message: read only when the error has no status and names no field, since a provider echoes the job's own values in a message. */
+const KEY_MESSAGE = /incorrect api key|invalid api key|model .*does not exist|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
 const CONTENT_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?(length|window)|maximum context|too many tokens|token limit|prompt (is )?too long|too large/i;
 /** The fields of a call that the relay sets itself; every other field is what the job's own machine sent, and a job's words can steer it. */
 const RELAY_FIELDS = new Set(['model', 'max_tokens', 'max_completion_tokens', 'n', 'stream', 'stream_options']);
@@ -175,8 +177,11 @@ export function whoseProviderError(status: number | null, error: unknown): 'ours
     if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
     if (numeric === 413) return 'request';
     if (CONTENT_WORDS.test(words)) return 'request';
-    // Our key, our credit or our model, named by the error itself: ours, before its shape is looked at (an error with no status says it only so)
-    if (KEY_WORDS.test(words)) return 'ours';
+    // Our key, our credit or our model, named by the error itself: ours, before its shape is looked at. Only what the provider sets (code, type) is
+    // read for that, never a message on a call that names a field: a message echoes the job's own values, and a job can steer those
+    const codes = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
+    if (KEY_CODES.test(codes)) return 'ours';
+    if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return 'ours';
     // A refusal of the shape of the call: ours only when it names a field the relay itself sets
     // (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is about our key or our model)
     const badShape = numeric === null ? record.type === 'invalid_request_error' || typeof record.param === 'string' : numeric === 400 || numeric === 422;
