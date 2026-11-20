@@ -192,7 +192,15 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     // A row that was changed while it was being sent (an upgrade) stays for the next batch
                     for (const row of batch) if (entry.rows.get(row.callId) === row) entry.rows.delete(row.callId);
                 }
-                if (entry.rows.size === 0) return true;
+                if (entry.rows.size === 0) {
+                    // Everything was taken: the budget of later tries starts again for rows that come next, and a try still waiting has nothing to send
+                    entry.laterTries = 0;
+                    if (entry.later) {
+                        clearTimeout(entry.later);
+                        entry.later = undefined;
+                    }
+                    return true;
+                }
                 if (attempt >= retryMs.length) return false;
                 await sleep(retryMs[attempt]);
             }
@@ -235,12 +243,18 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             return seen ? { turn: seen.turn, ...(seen.run ? { run: seen.run } : {}) } : { turn: 0 };
         },
         record(botId, jobId, call) {
-            if (call.kind === 'answered') return mark(jobId, 'answered');
-            if (call.kind === 'not_ours') {
-                forget();
-                last.set(jobId, { at: now(), order: ++count });
-            } else {
-                mark(jobId, 'fault', call.kind === 'fault');
+            // A call that belongs to a turn (or a run) the runner has left says nothing of the turn it is on now: its row is still sent under its own
+            // turn and run, but the notes the runner reads for the turn in progress are not changed by it
+            const active = lastTurn(jobId);
+            const stale = call.turn !== undefined && active !== undefined && (active.turn !== call.turn || active.run !== call.run);
+            if (call.kind === 'answered') return stale ? undefined : mark(jobId, 'answered');
+            if (!stale) {
+                if (call.kind === 'not_ours') {
+                    forget();
+                    last.set(jobId, { at: now(), order: ++count });
+                } else {
+                    mark(jobId, 'fault', call.kind === 'fault');
+                }
             }
             if (!options.sink) return;
             const entry = queued.get(jobId) ?? { botId, rows: new Map<string, CallRow>(), at: now(), laterTries: 0 };

@@ -239,28 +239,127 @@ describe('the durable record of how a job’s model calls ended (sent to Orbit)'
     });
 
     it('gives a flush one short time in all: it returns false at the budget while the rows go on being sent in the background', async () => {
-        const sent: string[] = [];
-        let first = true;
-        const notes = createRefusalNotes(() => 1000, {
-            retryMs: [100, 100, 100],
-            laterMs: [],
-            flushBudgetMs: 50,
-            sink: async (_bot, _job, rows) => {
-                if (first) {
-                    first = false;
-                    await new Promise((resolve) => setTimeout(resolve, 80));
-                    return false;
-                }
-                sent.push(...rows.map((row) => row.callId));
-                return true;
-            },
-        });
-        notes.record('b', 'j', call('c1'));
-        const started = Date.now();
-        expect(await notes.flush('j')).toBe(false);
-        expect(Date.now() - started).toBeLessThan(150);
-        // the flush did not stop the sender: it tries again and the row arrives
-        await vi.waitFor(() => expect(sent).toEqual(['c1']), { timeout: 2000 });
+        vi.useFakeTimers();
+        try {
+            const sent: string[] = [];
+            let first = true;
+            const notes = createRefusalNotes(() => 1000, {
+                retryMs: [100, 100, 100],
+                laterMs: [],
+                flushBudgetMs: 50,
+                sink: async (_bot, _job, rows) => {
+                    if (first) {
+                        first = false;
+                        await new Promise((resolve) => setTimeout(resolve, 80));
+                        return false;
+                    }
+                    sent.push(...rows.map((row) => row.callId));
+                    return true;
+                },
+            });
+            notes.record('b', 'j', call('c1'));
+            const flushed = notes.flush('j');
+            // the budget runs out while the first try is still waiting for Orbit: false, and the row is still pending
+            await vi.advanceTimersByTimeAsync(50);
+            expect(await flushed).toBe(false);
+            expect(sent).toEqual([]);
+            // the first try ends (false) at 80 ms, the sender waits its first retry, and then the row arrives, once
+            await vi.advanceTimersByTimeAsync(30);
+            expect(sent).toEqual([]);
+            await vi.advanceTimersByTimeAsync(100);
+            expect(sent).toEqual(['c1']);
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(sent).toEqual(['c1']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('starts the later tries again once everything was taken, and drops a try that was waiting with nothing left to send', async () => {
+        vi.useFakeTimers();
+        try {
+            const sent: string[] = [];
+            let up = false;
+            const notes = createRefusalNotes(() => 1000, {
+                retryMs: [],
+                laterMs: [1000, 1000],
+                sink: async (_bot, _job, rows) => {
+                    if (up) sent.push(...rows.map((row) => row.callId));
+                    return up;
+                },
+            });
+            // Orbit down throughout: both later tries are used up
+            notes.record('b', 'j', call('c1'));
+            await vi.advanceTimersByTimeAsync(1000);
+            await vi.advanceTimersByTimeAsync(1000);
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(vi.getTimerCount()).toBe(0);
+            // Orbit is back and takes everything
+            up = true;
+            notes.record('b', 'j', call('c2'));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(sent).toEqual(['c1', 'c2']);
+            // the next row finds the budget of later tries whole again: the first of them fails, the second takes the row
+            up = false;
+            notes.record('b', 'j', call('c3'));
+            await vi.advanceTimersByTimeAsync(1000);
+            up = true;
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(sent).toEqual(['c1', 'c2', 'c3']);
+            // a try that is waiting when the rows are taken by another send is dropped, not left to fire for nothing
+            up = false;
+            notes.record('b', 'j', call('c4'));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(vi.getTimerCount()).toBe(1);
+            up = true;
+            notes.record('b', 'j', call('c5'));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(sent).toEqual(['c1', 'c2', 'c3', 'c4', 'c5']);
+            expect(vi.getTimerCount()).toBe(0);
+            // rows still pending keep the budget they have: no reset while something waits
+            up = false;
+            notes.record('b', 'j', call('c6'));
+            await vi.advanceTimersByTimeAsync(1000);
+            await vi.advanceTimersByTimeAsync(1000);
+            await vi.advanceTimersByTimeAsync(5000);
+            up = true;
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(sent).not.toContain('c6');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('lets a call that belongs to a turn or a run the runner has left send its row, but not change what the runner reads for the turn it is on', async () => {
+        const { notes, sent } = rig();
+        notes.turn('j', 1, 'run-a');
+        notes.turn('j', 2, 'run-a');
+        // a fault of the turn in progress
+        notes.record('b', 'j', call('now', { turn: 2, run: 'run-a', kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 }));
+        expect(notes.endedOnFault('j', 0)).toBe(true);
+        // an answer that arrives from turn 1 makes nothing good in turn 2
+        notes.record('b', 'j', call('old-answer', { turn: 1, run: 'run-a', kind: 'answered', reason: 'provider_5xx' }));
+        expect(notes.endedOnFault('j', 0)).toBe(true);
+        // the same turn number in another run is another turn
+        notes.turn('j', 1, 'run-b');
+        const mark = notes.mark();
+        notes.record('b', 'j', call('old-run-fault', { turn: 1, run: 'run-a', kind: 'fault' }));
+        notes.record('b', 'j', call('old-run-refused', { turn: 1, run: 'run-a', kind: 'not_ours', reason: 'allowance', providerStatus: 429 }));
+        expect(notes.confirmedSince('j', mark)).toBe(false);
+        expect(notes.sawSince('j', mark)).toBe(false);
+        expect(notes.endedOnFault('j', mark)).toBe(false);
+        // their rows still reach Orbit under their own turn and run
+        await notes.flush('j');
+        const rows = sent.flatMap((entry) => entry.rows);
+        expect(rows.filter((row) => ['old-run-fault', 'old-run-refused'].includes(row.callId)).map((row) => [row.callId, row.turn, row.run])).toEqual([['old-run-fault', 1, 'run-a'], ['old-run-refused', 1, 'run-a']]);
+        // a call of the turn in progress (same number and run) is noted
+        notes.record('b', 'j', call('current', { turn: 1, run: 'run-b', kind: 'fault' }));
+        expect(notes.confirmedSince('j', mark)).toBe(true);
+        notes.record('b', 'j', call('current-refused', { turn: 1, run: 'run-b', kind: 'not_ours', reason: 'allowance', providerStatus: 429 }));
+        expect(notes.sawSince('j', mark)).toBe(true);
+        // and a call that carries no turn is read as before
+        notes.record('b', 'k', call('none', { kind: 'fault' }));
+        expect(notes.confirmedSince('k', 0)).toBe(true);
     });
 
     it('stamps a row with the turn the call started in when it is given, and with the turn the runner is on when it is not', async () => {
