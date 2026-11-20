@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
-import type { Server } from 'node:http';
+import { request as httpRequest, type Server } from 'node:http';
 import express from 'express';
 import { createRefusalNotes, type CallRow } from '../server/ComputerRefusals';
 import { createComputerModelRelay, estimateCallMicros, inputTokensOf, jobsOwnLimit, leadingFieldsOf, neverReached, readBoundedJson, readBoundedWithFlag, RELAY_GUARDS, ROUTING_FIELDS, outputCapOf, relayOrbitFor, readProviderError, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
@@ -886,6 +886,80 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-incomplete-tool', before)).toBe(false);
     });
 
+    it('ties a call to the turn that was current when it ARRIVED, though its body was still arriving when the runner moved on to the next turn', async () => {
+        const job = 'job-slow-body';
+        asJob(job);
+        notes.turn(job, 4, 'run-x');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'The model broke' } });
+        const marks = vi.spyOn(notes, 'mark');
+        try {
+            const payload = JSON.stringify(agent);
+            const half = Math.floor(payload.length / 2);
+            const url = new URL(`${relayBase}/v1/chat/completions`);
+            const answered = new Promise<number>((resolve, reject) => {
+                const request = httpRequest({ host: url.hostname, port: url.port, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), Authorization: `Bearer ${TOKEN}` } }, (response) => {
+                    response.resume();
+                    response.on('end', () => resolve(response.statusCode ?? 0));
+                });
+                request.on('error', reject);
+                request.write(payload.slice(0, half));
+                // the relay has seen the call arrive (its head is in), and the rest of its body is still to come
+                void vi.waitFor(() => expect(marks).toHaveBeenCalled(), { timeout: 3000 }).then(() => {
+                    // the runner moves on to turn 5 while the body is arriving
+                    notes.turn(job, 5, 'run-x');
+                    request.end(payload.slice(half));
+                });
+            });
+            expect(await answered).toBe(500);
+        } finally {
+            marks.mockRestore();
+        }
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect((await rowsSent(job)).map((row) => [row.turn, row.run])).toEqual([[4, 'run-x']]);
+        // a call that arrives after the change is turn 5's
+        await askAndSettle(agent, 2);
+        expect((await rowsSent(job, 2)).map((row) => row.turn)).toEqual([4, 5]);
+    });
+
+    it('does not let a stream that had data dropped unread clear an earlier fault: an error past the line bound may have been in it, and a whole stream with nothing dropped still does', async () => {
+        const before = since();
+        const long = 'x'.repeat(RELAY_GUARDS.maxStreamLineChars + 100);
+        const delta = `data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`;
+        const fail = (name: string, count: number) => {
+            asJob(name);
+            upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+            return askAndSettle({ ...agent, stream: true }, count);
+        };
+        // a line completed inside one chunk, over the bound, then the stream ends cleanly
+        await fail('job-skipped-inchunk', 1);
+        expect(notes.endedOnFault('job-skipped-inchunk', before)).toBe(true);
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.end(`${delta}data: ${JSON.stringify({ error: { message: 'overloaded', pad: long } })}\n\n`);
+        };
+        await askAndSettle({ ...agent, stream: true }, 2);
+        expect(notes.endedOnFault('job-skipped-inchunk', before)).toBe(true);
+        // a line that grows over the bound across chunks, whose end comes in a later chunk
+        await fail('job-skipped-chunks', 3);
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(delta);
+            res.write(`data: {"error":{"message":"overloaded","pad":"${long}`);
+            setTimeout(() => res.end(`more"}}\n\n`), 30);
+        };
+        await askAndSettle({ ...agent, stream: true }, 4);
+        expect(notes.endedOnFault('job-skipped-chunks', before)).toBe(true);
+        // and a whole stream whose lines all fit still makes it good
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.end(`${delta}data: [DONE]\n\n`);
+        };
+        await askAndSettle({ ...agent, stream: true }, 5);
+        expect(notes.endedOnFault('job-skipped-chunks', before)).toBe(false);
+        // none of the streams after the 500 wrote a row of its own: a stream with data dropped is neither a fault nor an answer
+        expect(rowsOf('job-skipped-chunks').map((row) => row.kind)).toEqual(['uncertain']);
+    });
+
     it('notes no refusal for a caller that went away while the room was being asked for, whatever Orbit then said: an allowance, a rule, or no room', async () => {
         const before = since();
         for (const [name, refusal] of [
@@ -897,15 +971,20 @@ describe('how a call ended, for the runner', () => {
             asJob(name);
             let letGo: () => void = () => undefined;
             orbit.authorize.mockImplementationOnce(() => new Promise((resolve) => { letGo = () => resolve(refusal); }));
+            // The relay's own side of the connection: when the server has seen this request's response close, the relay knows its caller went away
+            const serverSawClose = new Promise<void>((resolve) => relay.once('request', (_req, res) => void res.once('close', () => resolve())));
             const controller = new AbortController();
             const asked = fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(agent), signal: controller.signal }).catch(() => null);
             await vi.waitFor(() => expect(orbit.authorize).toHaveBeenCalled(), { timeout: 3000 });
             controller.abort();
             await asked;
-            // the close reaches the relay a moment after the abort
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            await serverSawClose;
+            // every close listener of that response has run before the next macrotask
+            await new Promise((resolve) => setImmediate(resolve));
             letGo();
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            // the handler goes on from the refusal in microtasks only: the next macrotask is after it has finished, and the sink is flushed after that
+            await new Promise((resolve) => setImmediate(resolve));
+            await notes.flush(name);
             expect(rowsOf(name)).toEqual([]);
             expect(notes.sawSince(name, before)).toBe(false);
             expect(notes.endedOnFault(name, before)).toBe(false);
@@ -931,13 +1010,14 @@ describe('how a call ended, for the runner', () => {
                 res.setHeader('Content-Length', '500');
                 res.write('{"error":{"code":"invalid_api_key","mess');
             };
-            await askAndSettle(agent, 1);
+            // the provider's headers arrived (the relay's 502 for its 401): the time ran out while its body was being read, not before it answered
+            expect((await askAndSettle(agent, 1)).answer.status).toBe(502);
             expect(notes.confirmedSince('job-partial-401', before)).toBe(false);
             expect((await rowsSent('job-partial-401'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_no_output' });
             // the same on a person's own key: the relay's cutoff, never their provider refusing
             route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
             asJob('job-partial-own');
-            await askAndSettle(agent, 2);
+            expect((await askAndSettle(agent, 2)).answer.status).toBe(502);
             expect((await rowsSent('job-partial-own'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_no_output', source: 'own-key' });
         } finally {
             (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = original;

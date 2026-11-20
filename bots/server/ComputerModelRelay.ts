@@ -498,6 +498,8 @@ interface Ended {
     bodyBroken?: boolean;
     /** The stream ended normally, but in the middle of an event: the last of what the provider sent is missing, so the call is no whole answer. */
     incomplete?: boolean;
+    /** The stream had data that was dropped unread (a line over the bound): it may have said an error, so it is not a whole answer, but it is not cut either. */
+    skippedData?: boolean;
 }
 
 /** Evidence of an answer: something the model wrote (words, thinking or a tool call), or tokens the provider says it spent. An empty 200 is no answer. */
@@ -549,12 +551,16 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         res.json({ object: 'list', data: [{ id: 'universe-ai', object: 'model', created: 0, owned_by: 'universe' }] });
     });
 
-    router.post('/v1/chat/completions', json, async (req: Request, res: Response) => {
+    // Where in the order of events this call ARRIVED: taken before its body is read (a body can be slow to arrive) and before the job is known
+    // (nothing of anyone's is read from it: it is only a point in a counter). Reading the body and asking Orbit who the caller is can each take
+    // longer than a turn change, and the call belongs to the turn that was current when it arrived
+    const arrival = (_req: Request, res: Response, next: express.NextFunction) => {
+        res.locals.arrived = deps.refusals?.mark?.();
+        next();
+    };
+    router.post('/v1/chat/completions', arrival, json, async (req: Request, res: Response) => {
         const token = bearerOf(req);
-        // Where in the order of events this call ARRIVED: taken before anything is awaited and before the job is known (nothing of anyone's is read
-        // from it: it is only a point in a counter). Asking Orbit who the caller is can take longer than a turn change, and the call belongs to the
-        // turn that was current when it arrived
-        const arrived = deps.refusals?.mark?.();
+        const arrived = res.locals.arrived as { order: number } | undefined;
         let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
         try {
             who = token ? await deps.orbit.identify(token) : null;
@@ -694,7 +700,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                             else if (reading) noteCall(reading.kind, reading.reason, status);
                             // A stream that broke after it began, or an answer that was a 5xx with nothing read from it: unresolved
                             else noteCall('uncertain', cut ? 'stream_cut' : 'provider_5xx', status);
-                        } else if (res.statusCode === 200 && !cut && !ended.notSent && answeredBy(ended)) noteCall('answered', 'provider_5xx' /* no reason is kept for an answer */);
+                        } else if (res.statusCode === 200 && !cut && !ended.skippedData && !ended.notSent && answeredBy(ended)) noteCall('answered', 'provider_5xx' /* no reason is kept for an answer */);
                     }
                 }
             } catch (error) {
@@ -896,6 +902,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             let pending = '';
             // A line that grew past the bound is dropped whole, to its end: it is passed on as it came but never read
             let skipping = false;
+            // Whether any data was dropped unread (a line over the bound, in whatever way it was met): the stream may have said something that was
+            // never read, such as an error, so it is no whole answer even when it ended cleanly
+            let skippedData = false;
             const decoder = new StringDecoder('utf8');
             let usage: CallMetadata | undefined;
             let outputChars = 0;
@@ -927,14 +936,20 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     pending += decoder.write(chunk);
                     let at: number;
                     while ((at = pending.indexOf('\n')) >= 0) {
-                        if (skipping) skipping = false;
+                        // The end of a line that was already dropped: what is left of it is dropped as well
+                        if (skipping) {
+                            skipping = false;
+                            skippedData = true;
+                        }
                         // A line that was completed in this very chunk is held to the bound too: it is passed on, never read
                         else if (at <= RELAY_GUARDS.maxStreamLineChars) read(pending.slice(0, at).replace(/\r$/, ''));
+                        else skippedData = true;
                         pending = pending.slice(at + 1);
                     }
                     if (pending.length > RELAY_GUARDS.maxStreamLineChars) {
                         pending = '';
                         skipping = true;
+                        skippedData = true;
                     }
                     if (!res.write(chunk)) await drained(res, controller.signal);
                 }
@@ -963,7 +978,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 }
                 if (!res.writableEnded) res.end();
             }
-            return { usage, outputChars, cutShort, notSent: false, ...(incomplete && !cutShort ? { incomplete } : {}), ...(reading ? { reading } : {}) };
+            return { usage, outputChars, cutShort, notSent: false, ...(incomplete && !cutShort ? { incomplete } : {}), ...(skippedData ? { skippedData } : {}), ...(reading ? { reading } : {}) };
         } finally {
             clearTimeout(timer);
             res.off('close', onClose);
