@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
 import { createRefusalNotes } from '../server/ComputerRefusals';
-import { createComputerModelRelay, estimateCallMicros, inputTokensOf, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { createComputerModelRelay, estimateCallMicros, inputTokensOf, limitIsJobs, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, whoseProviderError, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -188,7 +188,10 @@ describe('room before the call', () => {
     it('allows a reply as long as Hermes asked, up to the guard, else what the provider says', () => {
         expect(outputCapOf({ max_tokens: 500 }, config())).toBe(500);
         expect(outputCapOf({ max_completion_tokens: 900 }, config())).toBe(900);
-        expect(outputCapOf({ max_tokens: 10_000_000 }, config())).toBe(32_768);
+        expect(outputCapOf({ max_tokens: 10_000_000 }, config({ maxTokens: 0 }))).toBe(32_768);
+        // Never more than our own setting, even when the job asks for more
+        expect(outputCapOf({ max_tokens: 32_768 }, config({ maxTokens: 8192 }))).toBe(8192);
+        expect(outputCapOf({ max_completion_tokens: 2000 }, config({ maxTokens: 8192 }))).toBe(2000);
         expect(outputCapOf({}, config({ maxTokens: 1000 }))).toBe(1000);
         expect(outputCapOf({ max_tokens: -5 }, config({ maxTokens: 0 }))).toBe(4096);
     });
@@ -770,15 +773,29 @@ describe('how a call ended, for the runner', () => {
 });
 
 describe('whoseProviderError', () => {
-    it('is ours when a field only the relay sets is refused as too large, and the request’s when the provider’s code says the context is too long', () => {
-        expect(whoseProviderError(400, { param: 'max_tokens', message: 'max_tokens is too large: 100000. This model supports at most 4096' })).toBe('ours');
-        expect(whoseProviderError(400, { param: 'max_completion_tokens', message: 'max_completion_tokens is too large' })).toBe('ours');
-        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'max_tokens', message: 'token limit too large' })).toBe('ours');
-        expect(whoseProviderError(400, { param: 'messages', code: 'context_length_exceeded', message: 'maximum context length' })).toBe('request');
-        expect(whoseProviderError(400, { param: 'max_tokens', code: 'context_length_exceeded', message: 'too large' })).toBe('request');
-        expect(whoseProviderError(400, { param: 'max_tokens', message: "This model's maximum context length is 4096 tokens. However, you requested 5000 tokens (3000 in the messages, 2000 in the completion)." })).toBe('request');
-        expect(whoseProviderError(400, { param: 'max_completion_tokens', message: 'max_completion_tokens exceeds the maximum allowed for this model' })).toBe('ours');
-        expect(whoseProviderError(400, { param: 'messages[0].content', message: 'content is too large' })).toBe('request');
+    it('reads a refusal of the token limit by whose limit it was: the job’s own ask is the request’s, a limit we chose is ours unless the wording blames the input', () => {
+        // (a) OpenAI’s own body when the job asked for more than the model takes
+        expect(whoseProviderError(400, { param: 'max_tokens', code: 'invalid_value', message: 'max_tokens is too large: 32768. This model supports at most 8192 completion tokens' }, true)).toBe('request');
+        // (b) a provider that counts the input and the limit together
+        expect(whoseProviderError(400, { param: 'max_tokens', code: null, message: 'Input validation error: inputs tokens + max_new_tokens must be <= 32769' }, false)).toBe('request');
+        // (c) a context length
+        expect(whoseProviderError(400, { param: 'max_tokens', message: "This model's maximum context length is 4096 tokens. However, you requested 5000 tokens (3000 in the messages, 2000 in the completion)." }, false)).toBe('request');
+        expect(whoseProviderError(400, { param: 'max_tokens', code: 'context_length_exceeded', message: 'too large' }, false)).toBe('request');
+        // A limit we chose, refused as too large: ours
+        expect(whoseProviderError(400, { param: 'max_tokens', message: 'max_tokens is too large: 100000. This model supports at most 4096' }, false)).toBe('ours');
+        expect(whoseProviderError(400, { param: 'max_completion_tokens', message: 'max_completion_tokens exceeds the maximum allowed for this model' }, false)).toBe('ours');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'max_tokens', message: 'token limit too large' }, false)).toBe('ours');
+        // The name of the field is ours either way; model, n and stream are ours whoever asked
+        expect(whoseProviderError(400, { param: 'max_tokens', message: 'Unsupported parameter: max_tokens is not supported with this model' }, true)).toBe('ours');
+        expect(whoseProviderError(400, { param: 'model', message: 'too large' }, true)).toBe('ours');
+        expect(whoseProviderError(400, { param: 'messages', code: 'context_length_exceeded', message: 'maximum context length' }, false)).toBe('request');
+        expect(whoseProviderError(400, { param: 'messages[0].content', message: 'content is too large' }, false)).toBe('request');
+    });
+    it('knows when the token limit sent is the job’s own', () => {
+        expect(limitIsJobs({ max_tokens: 500 }, 500)).toBe(true);
+        expect(limitIsJobs({ max_tokens: 32_768 }, 8192)).toBe(false);
+        expect(limitIsJobs({}, 8192)).toBe(false);
+        expect(limitIsJobs({ max_tokens: 10_000_000 }, 32_768)).toBe(false);
     });
     it('is the request’s for moderation, a context too long, a body too large and a 400/422 about anything but the relay’s own fields; everything else is ours', () => {
         expect(whoseProviderError(500, {})).toBe('ours');
@@ -789,6 +806,7 @@ describe('whoseProviderError', () => {
         expect(whoseProviderError(403, { message: 'nope' })).toBe('ours');
         expect(whoseProviderError(404, { message: 'model not found' })).toBe('ours');
         expect(whoseProviderError(400, { message: 'Unsupported parameter', param: 'max_tokens' })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'max_tokens' }, false)).toBe('ours');
         expect(whoseProviderError(400, { param: 'stream_options.include_usage' })).toBe('ours');
         expect(whoseProviderError(422, { param: 'model' })).toBe('ours');
         expect(whoseProviderError(400, { param: 'temperature' })).toBe('request');
