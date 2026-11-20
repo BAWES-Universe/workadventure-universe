@@ -71,6 +71,8 @@
             requestKey,
             onLimit: (retryAt) => {
                 limited = true;
+                // Nothing was made under this key: the next tap, after the time named, is a fresh request with a fresh key
+                requestKey = "";
                 warningMessageStore.addWarningMessage(newBricksLimitLine(retryAt, $locale, $LL.chat.brick));
             },
         });

@@ -250,6 +250,23 @@ describe("New Brick, in the game's own dialog (#1996)", () => {
         expect(byId<HTMLButtonElement>("newBrickCreate")?.disabled).toBe(false);
     });
 
+    it("sends a fresh request key for the tap after a refusal for the hour's limit", async () => {
+        game.makeMyBrick.mockImplementation((_name, _look, options) => {
+            options?.onLimit?.(undefined);
+            return Promise.resolve(undefined);
+        });
+        await open();
+        for (let tap = 0; tap < 2; tap++) {
+            byId("newBrickDialog")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+        }
+        const keys = game.makeMyBrick.mock.calls.map((call) => call[2]?.requestKey);
+        expect(keys[0]).toBeTruthy();
+        expect(keys[1]).toBeTruthy();
+        expect(keys[1]).not.toBe(keys[0]);
+    });
+
     it("sends the same request key when the same Brick is tried again, and a new one when the name or look changed", async () => {
         game.makeMyBrick.mockResolvedValue(undefined);
         await open();
