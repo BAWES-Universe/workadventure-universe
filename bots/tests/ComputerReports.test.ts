@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ComputerReports, FILE_TRIES, computerReportOf, missedText, reportText, receiptOf, workedLine, type AttachedFile, type ComputerReport, type ComputerReportsApi, type ComputerSpeaker, type ComputerSpoke, type FilesAnswer, type UndeliverableWhy } from '../server/ComputerReports';
+import { ComputerReports, FILE_TRIES, computerReportOf, missedText, moneyText, reportText, receiptOf, workedLine, type AttachedFile, type ComputerReport, type ComputerReportsApi, type ComputerSpeaker, type ComputerSpoke, type FilesAnswer, type UndeliverableWhy } from '../server/ComputerReports';
 import axios from 'axios';
 import { AdminApiService } from '../server/AdminApiService';
 
@@ -22,6 +22,7 @@ const base: ComputerReport = {
     files: [],
     handed: [],
     givenBack: false,
+    refundPendingMicros: 0,
 };
 const report = (over: Partial<ComputerReport>): ComputerReport => ({ ...base, ...over });
 
@@ -92,6 +93,36 @@ describe('what Brick says when a computer job ends or waits', () => {
         const partway = reportText(report({ kind: 'failed', effects: [{ kind: 'send', state: 'done', where: 'the embassy desk' }] }));
         expect(partway).toContain('Sent to the embassy desk.');
         expect(partway).not.toContain('nothing was sent or paid');
+    });
+
+    it('says a refund that is pending as pending, and not that the try was given back', () => {
+        const text = reportText(report({ kind: 'failed', givenBack: true, refundPendingMicros: 50_000 }));
+        expect(text).toContain('$0.05 refund pending.');
+        expect(text).not.toContain("won't count against your month");
+        expect(text).not.toMatch(/given back|returned/i);
+        // from an older Orbit, or with nothing pending, it reads as before
+        expect(reportText(report({ kind: 'failed', givenBack: true, refundPendingMicros: 0 }))).toContain("This try won't count against your month.");
+        expect(reportText(report({ kind: 'failed', givenBack: false }))).not.toContain('refund pending');
+        // and in the other reports that carry a receipt
+        expect(reportText(report({ kind: 'done', refundPendingMicros: 9_000 }))).toContain('$0.009 refund pending.');
+        expect(reportText(report({ kind: 'rule', refundPendingMicros: 120_000 }))).toContain('$0.12 refund pending.');
+        expect(receiptOf({ effects: [], writes: true, refundPendingMicros: 50_000 })).toBe('My record shows nothing was sent or paid. $0.05 refund pending.');
+    });
+
+    it('writes money in thousandths under a cent and in cents above', () => {
+        expect(moneyText(9_000)).toBe('$0.009');
+        expect(moneyText(1_000)).toBe('$0.001');
+        expect(moneyText(100)).toBe('$0.001');
+        expect(moneyText(10_000)).toBe('$0.01');
+        expect(moneyText(50_000)).toBe('$0.05');
+        expect(moneyText(2_500_000)).toBe('$2.50');
+    });
+
+    it('reads the refund Orbit has not paid yet as whole micros, and none from an older Orbit or from nonsense', () => {
+        const raw = { key: 'k', jobId: 'j', botId: 'b', title: 'T', kind: 'failed' };
+        expect(computerReportOf({ ...raw, refundPendingMicros: 50_000.4 })?.refundPendingMicros).toBe(50_000);
+        expect(computerReportOf(raw)?.refundPendingMicros).toBe(0);
+        for (const bad of [0, -5, 'x', null, Number.NaN, Infinity]) expect(computerReportOf({ ...raw, refundPendingMicros: bad })?.refundPendingMicros).toBe(0);
     });
 
     it('says nobody came, at which step, and that it is all saved', () => {
