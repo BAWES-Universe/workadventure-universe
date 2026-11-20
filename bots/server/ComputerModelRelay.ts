@@ -186,7 +186,7 @@ export async function readBoundedReply<T>(response: globalThis.Response, max: nu
 
 /**
  * The string and number fields a provider's refusal said (`code`, `type`, `param`, `message`, `status`) in a body that was cut at the bound, so
- * it could not be parsed whole: the first of each, read where it stands, and only from the object the whole body would be read from (`error`, as the
+ * it could not be parsed whole: the first of each (none of a field that is said twice with different values), read where it stands, and only from the object the whole body would be read from (`error`, as the
  * full parse does), never from a sibling object (`meta`), a nested one, or the top level beside an `error` that may come after the cut. Where the
  * scope cannot be told, nothing is read: a field out of its object could be taken for a confirmed fault, or for the request's. A value that was cut
  * off is not there. Linear in the text.
@@ -196,12 +196,29 @@ export function leadingFieldsOf(text: string): Record<string, unknown> | null {
     type Frame = { object: boolean; expectKey: boolean; key: string | null; under: string | null };
     const stack: Frame[] = [];
     const found: Record<string, unknown> = {};
+    // A field the error object says twice with different values: a whole parse would keep the last, which a cut body may not have reached, so no
+    // value of it is read (never a confirmed fault from the first of two that disagree)
+    const conflicted = new Set<string>();
+    const take = (key: string, value: unknown) => {
+        if (conflicted.has(key)) return;
+        if (key in found) {
+            if (found[key] !== value) unreadable(key);
+            return;
+        }
+        found[key] = value;
+    };
+    const unreadable = (key: string) => {
+        conflicted.add(key);
+        delete found[key];
+    };
     // Whether the container being read is the top-level `error` object
     const inError = () => stack.length === 2 && stack[1].object && stack[1].under === 'error';
     for (let i = 0; i < text.length; ) {
         const char = text[i];
         const top = stack[stack.length - 1];
         if (char === '{' || char === '[') {
+            // A field of the error that is said again as something that is no string or number: unreadable, as a disagreement is
+            if (inError() && top?.object && top.key !== null && !top.expectKey && wanted.has(top.key)) unreadable(top.key);
             stack.push({ object: char === '{', expectKey: char === '{', key: null, under: top?.object ? top.key : null });
             i += 1;
         } else if (char === '}' || char === ']') {
@@ -226,19 +243,22 @@ export function leadingFieldsOf(text: string): Record<string, unknown> | null {
             }
             if (top?.object && top.expectKey) top.key = typeof value === 'string' ? value : null;
             else if (top?.object && top.key !== null) {
-                if (inError() && wanted.has(top.key) && !(top.key in found) && typeof value === 'string') found[top.key] = value;
+                if (inError() && wanted.has(top.key) && typeof value === 'string') take(top.key, value);
                 // `"error": "words"` is a refusal that is only words
-                else if (stack.length === 1 && top.key === 'error' && typeof value === 'string' && !('message' in found)) found.message = value;
+                else if (stack.length === 1 && top.key === 'error' && typeof value === 'string' && !('message' in found) && !conflicted.has('message')) found.message = value;
             }
             i = end + 1;
         } else if (char === '-' || (char >= '0' && char <= '9')) {
             const token = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(i, i + 40))?.[0] ?? char;
             // a number cut off by the end of the text is not a whole number
             if (i + token.length >= text.length) break;
-            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key) && !(top.key in found) && /^-?\d+$/.test(token)) found[top.key] = Number(token);
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key) && /^-?\d+$/.test(token)) take(top.key, Number(token));
             i += token.length;
+        } else if (text.startsWith('true', i) || text.startsWith('false', i)) {
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key)) unreadable(top.key);
+            i += text.startsWith('true', i) ? 4 : 5;
         } else if (text.startsWith('null', i)) {
-            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key) && !(top.key in found)) found[top.key] = null;
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key)) take(top.key, null);
             i += 4;
         } else {
             i += 1;
@@ -470,6 +490,10 @@ interface Ended {
     upstreamStatus?: number;
     /** The reading is of the relay's own cutoff (its time limit, its reply bound), not of anything the provider said: it is the same on every key. */
     local?: boolean;
+    /** The provider's error body could not be read to its end (the connection broke or the relay's time ran out while it was read): its reading is of a part. */
+    bodyBroken?: boolean;
+    /** The stream ended normally, but in the middle of an event: the last of what the provider sent is missing, so the call is no whole answer. */
+    incomplete?: boolean;
 }
 
 /** Evidence of an answer: something the model wrote (words, thinking or a tool call), or tokens the provider says it spent. An empty 200 is no answer. */
@@ -620,13 +644,15 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             }
             if (!allowed.ok) {
                 const reason = 'reason' in allowed ? allowed.reason : 'refused';
-                if (reason === 'allowance' || reason === 'rule') noteCall('not_ours', reason, 429);
+                // A caller that went away while the room was being asked for is refused to nobody: no row is written for it, whatever the refusal was
+                const nobody = gone || res.destroyed;
+                if (!nobody && (reason === 'allowance' || reason === 'rule')) noteCall('not_ours', reason, 429);
                 if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
                 if (reason === 'rule') return problem(res, 429, 'A spending rule stops this call.', 'insufficient_quota', 'insufficient_quota');
                 if (reason === 'pool') {
                     // Confirmed ours only when the pool has no room for even the smallest call: the size of a call grows with what the job sent, so a call
                     // refused for its own size is unresolved
-                    noteCall('full' in allowed && allowed.full === true ? 'fault' : 'uncertain', 'pool_busy', 503);
+                    if (!nobody) noteCall('full' in allowed && allowed.full === true ? 'fault' : 'uncertain', 'pool_busy', 503);
                     return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
                 }
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
@@ -639,7 +665,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     ended = await callProvider({ body, config, streaming, outputCap, res, timing });
                     // The relay's own time limit ran out: unresolved either way (a stream that wrote nothing in time may be a provider that hung, one that
                     // was writing proves progress only), so it is for Orbit's bounded goodwill and reconciliation, not charged or refunded blindly
-                    if (timing.timedOut && !ended.reading) ended = { ...ended, reading: OURS_UNSURE(ended.outputChars === 0 ? 'timeout_no_output' : 'timeout_after_output'), local: true };
+                    // A refusal whose body was only partly read when the time ran out is read from a part, and the relay's own cutoff stands in its place
+                    if (timing.timedOut && (!ended.reading || ended.bodyBroken)) ended = { ...ended, reading: OURS_UNSURE(ended.outputChars === 0 ? 'timeout_no_output' : 'timeout_after_output'), local: true };
                     // How the call ended, for the runner and for Orbit's fault record: a confirmed fault of ours, an unresolved one, what the person's side
                     // did (their allowance, a rule, their own provider, a request of the job's own that the provider refused) or a whole answer. What a
                     // provider answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
@@ -648,7 +675,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     if (agentCall && !gone) {
                         const reading = ended.reading;
                         const requestWrong = reading?.who === 'request';
-                        const providerSaid = !requestWrong && (reading?.who === 'ours' || res.statusCode >= 500 || ended.cutShort);
+                        const cut = ended.cutShort || ended.incomplete === true;
+                        const providerSaid = !requestWrong && (reading?.who === 'ours' || res.statusCode >= 500 || cut);
                         const status = ended.upstreamStatus ?? (res.statusCode >= 400 ? res.statusCode : null);
                         // What the provider said was wrong of the job's own request (moderation, a context too long, an invalid request) is neither a
                         // fault nor an answer, and is off our side: the runner never ends a job as ours for a turn that the job's own request failed
@@ -661,8 +689,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                             else if (source === 'own-key') noteCall('not_ours', 'own_provider', status);
                             else if (reading) noteCall(reading.kind, reading.reason, status);
                             // A stream that broke after it began, or an answer that was a 5xx with nothing read from it: unresolved
-                            else noteCall('uncertain', ended.cutShort ? 'stream_cut' : 'provider_5xx', status);
-                        } else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent && answeredBy(ended)) noteCall('answered', 'provider_5xx' /* no reason is kept for an answer */);
+                            else noteCall('uncertain', cut ? 'stream_cut' : 'provider_5xx', status);
+                        } else if (res.statusCode === 200 && !cut && !ended.notSent && answeredBy(ended)) noteCall('answered', 'provider_5xx' /* no reason is kept for an answer */);
                     }
                 }
             } catch (error) {
@@ -803,7 +831,11 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
 
             if (!upstream.ok) {
                 // What the provider said, in words fit for a log: never its key, never the conversation
-                const { text, tooLong } = await readBoundedWithFlag(upstream, RELAY_GUARDS.maxErrorBytes).catch(() => ({ text: '', tooLong: false }));
+                let bodyBroken = false;
+                const { text, tooLong } = await readBoundedWithFlag(upstream, RELAY_GUARDS.maxErrorBytes).catch(() => {
+                    bodyBroken = true;
+                    return { text: '', tooLong: false };
+                });
                 const message = providerErrorText(wordsOf(text)).split(key ?? '\u0000').join('[redacted]');
                 console.warn('[ComputerRelay] The provider refused a call:', upstream.status);
                 problem(res, statusToHermes(upstream.status), message, 'upstream_error', 'server_error');
@@ -819,7 +851,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     // job's own input may be echoing, or which sit in a sibling object a full parse would not read as the error
                     if (tooLong) said = leadingFieldsOf(text) ?? {};
                 }
-                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, upstreamStatus: upstream.status, reading: readProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, { ...jobsOwnLimit(body, config), outputCap }) };
+                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, upstreamStatus: upstream.status, ...(bodyBroken ? { bodyBroken } : {}), reading: readProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, { ...jobsOwnLimit(body, config), outputCap }) };
             }
 
             if (!streaming) {
@@ -864,6 +896,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             let usage: CallMetadata | undefined;
             let outputChars = 0;
             let reading: ProviderReading | undefined;
+            let incomplete = false;
             const read = (line: string) => {
                 if (!line.startsWith('data:')) return;
                 const data = line.slice(5).trim();
@@ -902,6 +935,20 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     if (!res.write(chunk)) await drained(res, controller.signal);
                 }
                 pending += decoder.end();
+                // The stream ended in the middle of an event (a data line cut short, or one that never ended within the bound): it is no whole answer
+                // whatever came before it, so it never makes good an earlier fault
+                const rest = pending.trim();
+                const payload = rest.startsWith('data:') ? rest.slice(5).trim() : null;
+                if (skipping) incomplete = true;
+                else if (payload !== null) {
+                    if (payload !== '[DONE]') {
+                        try {
+                            JSON.parse(payload);
+                        } catch {
+                            incomplete = true;
+                        }
+                    }
+                } else incomplete = rest.length > 0 && 'data:'.startsWith(rest);
                 if (!skipping) read(pending);
                 if (!res.writableEnded) res.end();
             } catch (error) {
@@ -912,7 +959,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 }
                 if (!res.writableEnded) res.end();
             }
-            return { usage, outputChars, cutShort, notSent: false, ...(reading ? { reading } : {}) };
+            return { usage, outputChars, cutShort, notSent: false, ...(incomplete && !cutShort ? { incomplete } : {}), ...(reading ? { reading } : {}) };
         } finally {
             clearTimeout(timer);
             res.off('close', onClose);

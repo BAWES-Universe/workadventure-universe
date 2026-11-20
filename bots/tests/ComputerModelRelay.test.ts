@@ -665,8 +665,13 @@ describe('reading a provider’s answer', () => {
         }
         // the field is read from what fit, whether the body came whole or in pieces
         expect(leadingFieldsOf(whole.text)).toEqual({ param: 'temperature' });
-        // a character cut by the bound is not half-read into more than the bound
-        expect((await readBoundedWithFlag(bodyOf('ééééé').response, 5)).text.length).toBeLessThanOrEqual(5);
+        // the bound is in bytes: five bytes of two-byte characters are two whole characters and half of a third, read as UTF-8 reads the first five bytes
+        const accents = await readBoundedWithFlag(bodyOf('ééééé').response, 5);
+        expect(accents.text).toBe(Buffer.from('ééééé').subarray(0, 5).toString('utf8'));
+        expect(accents.tooLong).toBe(true);
+        expect(Buffer.byteLength(accents.text.replace(/\uFFFD$/, ''))).toBeLessThanOrEqual(5);
+        // and the same however the chunks fell
+        expect(await readBoundedWithFlag(bodyOf('é', 'éé', 'éé').response, 5)).toEqual(accents);
         // exactly the bound is not too long
         expect(await readBoundedWithFlag(bodyOf('abcd', 'efgh', 'ij').response, 10)).toEqual({ text: 'abcdefghij', tooLong: false });
     });
@@ -826,6 +831,133 @@ describe('how a call ended, for the runner', () => {
         upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: '' } }], usage: { prompt_tokens: 10, completion_tokens: 3 } });
         await askAndSettle(agent, 5);
         expect(notes.endedOnFault('job-empty-tokens', before)).toBe(false);
+    });
+
+    it('does not let a stream that ended in the middle of an event clear an earlier fault, whatever it had written: only a whole stream is an answer', async () => {
+        const before = since();
+        asJob('job-incomplete-stream');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await askAndSettle({ ...agent, stream: true }, 1);
+        expect(notes.endedOnFault('job-incomplete-stream', before)).toBe(true);
+        // a retry writes some words, then its last event is cut in the middle and the stream closes normally
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            res.end('data: {"choices":[{"delta":{"content":"lo wor');
+        };
+        await askAndSettle({ ...agent, stream: true }, 2);
+        expect(notes.endedOnFault('job-incomplete-stream', before)).toBe(true);
+        // the cut is unresolved, written down as a stream that broke
+        expect((await rowsSent('job-incomplete-stream', 2)).map((row) => [row.kind, row.reason])).toEqual([['uncertain', 'provider_5xx'], ['uncertain', 'stream_cut']]);
+        // a data line that never ended within the bound is cut as well
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            res.end(`data: {"pad":"${'x'.repeat(RELAY_GUARDS.maxStreamLineChars + 10)}`);
+        };
+        await askAndSettle({ ...agent, stream: true }, 3);
+        expect(notes.endedOnFault('job-incomplete-stream', before)).toBe(true);
+        // only the start of a field name left
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            res.end('da');
+        };
+        await askAndSettle({ ...agent, stream: true }, 4);
+        expect(notes.endedOnFault('job-incomplete-stream', before)).toBe(true);
+        // a whole stream still makes it good: its last event may come without the blank line after it, and a [DONE] may be the last thing said
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: 'lo' } }] })}`);
+        };
+        await askAndSettle({ ...agent, stream: true }, 5);
+        expect(notes.endedOnFault('job-incomplete-stream', before)).toBe(false);
+        asJob('job-incomplete-tool');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await askAndSettle({ ...agent, stream: true }, 6);
+        expect(notes.endedOnFault('job-incomplete-tool', before)).toBe(true);
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'click', arguments: '{"x":1}' } }] } }] })}\n\n`);
+            res.end('data: [DONE]');
+        };
+        await askAndSettle({ ...agent, stream: true }, 7);
+        expect(notes.endedOnFault('job-incomplete-tool', before)).toBe(false);
+    });
+
+    it('notes no refusal for a caller that went away while the room was being asked for, whatever Orbit then said: an allowance, a rule, or no room', async () => {
+        const before = since();
+        for (const [name, refusal] of [
+            ['job-gone-allowance', { ok: false, reason: 'allowance' }],
+            ['job-gone-rule', { ok: false, reason: 'rule' }],
+            ['job-gone-pool', { ok: false, reason: 'pool', full: true }],
+            ['job-gone-pool-size', { ok: false, reason: 'pool' }],
+        ] as const) {
+            asJob(name);
+            let letGo: () => void = () => undefined;
+            orbit.authorize.mockImplementationOnce(() => new Promise((resolve) => { letGo = () => resolve(refusal); }));
+            const controller = new AbortController();
+            const asked = fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(agent), signal: controller.signal }).catch(() => null);
+            await vi.waitFor(() => expect(orbit.authorize).toHaveBeenCalled(), { timeout: 3000 });
+            controller.abort();
+            await asked;
+            // the close reaches the relay a moment after the abort
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            letGo();
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            expect(rowsOf(name)).toEqual([]);
+            expect(notes.sawSince(name, before)).toBe(false);
+            expect(notes.endedOnFault(name, before)).toBe(false);
+            orbit.authorize.mockClear();
+        }
+        // a caller that is still there is refused and noted as it always was
+        asJob('job-here-pool');
+        orbit.authorize.mockResolvedValueOnce({ ok: false, reason: 'pool', full: true });
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-here-pool'))[0]).toMatchObject({ kind: 'fault', reason: 'pool_busy' });
+    });
+
+    it('reads no refusal from an error body that was only partly read when the relay’s time ran out: its own cutoff stands, never a confirmed fault from the part', async () => {
+        const before = since();
+        const original = RELAY_GUARDS.callTimeoutMs;
+        (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = 150;
+        try {
+            asJob('job-partial-401');
+            // a 401 whose body starts and then stalls: the status alone would read as our key refused
+            upstreamHandler = (_req, res) => {
+                res.status(401);
+                res.setHeader('Content-Type', 'application/json');
+                res.setHeader('Content-Length', '500');
+                res.write('{"error":{"code":"invalid_api_key","mess');
+            };
+            await askAndSettle(agent, 1);
+            expect(notes.confirmedSince('job-partial-401', before)).toBe(false);
+            expect((await rowsSent('job-partial-401'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_no_output' });
+            // the same on a person's own key: the relay's cutoff, never their provider refusing
+            route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+            asJob('job-partial-own');
+            await askAndSettle(agent, 2);
+            expect((await rowsSent('job-partial-own'))[0]).toMatchObject({ kind: 'uncertain', reason: 'timeout_no_output', source: 'own-key' });
+        } finally {
+            (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = original;
+        }
+        // a refusal whose body came whole in time is read as it always was
+        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai' } as never;
+        asJob('job-whole-401');
+        upstreamHandler = (_req, res) => res.status(401).json({ error: { message: 'Incorrect API key' } });
+        await askAndSettle(agent, 3);
+        expect(notes.confirmedSince('job-whole-401', before)).toBe(true);
+    });
+
+    it('does not confirm a key fault from the first of two codes that disagree in a refusal cut at the bound', async () => {
+        const before = since();
+        asJob('job-cut-two-codes');
+        upstreamHandler = (_req, res) =>
+            res.status(400).type('application/json').send(`{"error":{"code":"invalid_api_key","code":"invalid_value","message":"x","pad":"${'x'.repeat(RELAY_GUARDS.maxErrorBytes * 2)}"}}`);
+        await askAndSettle(agent);
+        expect(notes.confirmedSince('job-cut-two-codes', before)).toBe(false);
+        expect((await rowsSent('job-cut-two-codes'))[0]).toMatchObject({ kind: 'uncertain', reason: 'fieldless_400' });
     });
 
     it('stamps a call with the turn it started in, when the runner has moved on by the time it fails', async () => {
@@ -1485,8 +1617,27 @@ describe('leadingFieldsOf', () => {
         });
     });
 
-    it('reads a number, a null, and the first of a field said twice, and not a value that was cut off', () => {
-        expect(leadingFieldsOf('{"error":{"code":429,"param":null,"message":"slow","message":"other","type":"inva')).toEqual({ code: 429, param: null, message: 'slow' });
+    it('reads a number, a null, and a field said twice with the same value, and not a value that was cut off', () => {
+        expect(leadingFieldsOf('{"error":{"code":429,"param":null,"message":"slow","message":"slow","type":"inva')).toEqual({ code: 429, param: null, message: 'slow' });
+    });
+
+    it('reads no value of a field that is said twice with different values (a whole parse would keep the last, which a cut body may not have reached)', () => {
+        // the duplicate message says two things: neither is read, the rest still is
+        expect(leadingFieldsOf('{"error":{"code":429,"param":null,"message":"slow","message":"other","type":"inva')).toEqual({ code: 429, param: null });
+        // a key code and then another code: never a confirmed key fault from the first of two that disagree
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":"rate_limited","message":"x","pad":"xx')).toEqual({ message: 'x' });
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":null,"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":429,"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":true,"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":{"a":1},"pad":"xx')).toBeNull();
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":["x"],"pad":"xx')).toBeNull();
+        // a third say of a value that agreed with the first stays unreadable
+        expect(leadingFieldsOf('{"error":{"code":"a","code":"b","code":"a","pad":"xx')).toBeNull();
+        // the same code said twice is the code
+        expect(leadingFieldsOf('{"error":{"code":"invalid_api_key","code":"invalid_api_key","pad":"xx')).toEqual({ code: 'invalid_api_key' });
+        // so a refusal cut after two disagreeing codes is not a confirmed fault of ours by its code
+        const said = leadingFieldsOf('{"error":{"code":"invalid_api_key","code":"rate_limited","message":"x","pad":"xx') ?? {};
+        expect(readProviderError(null, said)).toMatchObject({ kind: 'uncertain' });
     });
 
     it('reads only the error object: not a sibling object, not a nested one, not the top level beside an error that may come after the cut', () => {
