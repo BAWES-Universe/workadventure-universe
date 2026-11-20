@@ -5,7 +5,14 @@ const game = vi.hoisted(() => {
     let value: unknown = null;
     const subscribers = new Set<(value: unknown) => void>();
     return {
-        makeMyBrick: vi.fn<(name: string, look: string) => Promise<unknown>>(),
+        makeMyBrick:
+            vi.fn<
+                (
+                    name: string,
+                    look: string,
+                    options?: { requestKey?: string; onLimit?: (retryAt: string | undefined) => void }
+                ) => Promise<unknown>
+            >(),
         openBrickChat: vi.fn<(brickId: string) => Promise<unknown>>(),
         closeModal: vi.fn<() => void>(),
         warn: vi.fn<(message: string) => void>(),
@@ -185,7 +192,11 @@ describe("New Brick, in the game's own dialog (#1996)", () => {
         expect(nameBox().value).toBe("Red Brick");
         byId("newBrickDialog")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
         await settle();
-        expect(game.makeMyBrick).toHaveBeenCalledWith("Red Brick", "woka-sam");
+        expect(game.makeMyBrick).toHaveBeenCalledWith(
+            "Red Brick",
+            "woka-sam",
+            expect.objectContaining({ requestKey: expect.any(String) })
+        );
     });
 
     it("creates the Brick with the name and look, closes, and opens its chat", async () => {
@@ -195,7 +206,11 @@ describe("New Brick, in the game's own dialog (#1996)", () => {
         await type("  Recipe Brick ");
         byId("newBrickDialog")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
         await settle();
-        expect(game.makeMyBrick).toHaveBeenCalledWith("Recipe Brick", "brick-teal");
+        expect(game.makeMyBrick).toHaveBeenCalledWith(
+            "Recipe Brick",
+            "brick-teal",
+            expect.objectContaining({ requestKey: expect.any(String) })
+        );
         expect(game.closeModal).toHaveBeenCalledTimes(1);
         expect(game.openBrickChat).toHaveBeenCalledWith("new-brick");
     });
@@ -218,6 +233,38 @@ describe("New Brick, in the game's own dialog (#1996)", () => {
         expect(game.closeModal).not.toHaveBeenCalled();
         expect(game.openBrickChat).not.toHaveBeenCalled();
         expect(byId<HTMLButtonElement>("newBrickCreate")?.disabled).toBe(false);
+    });
+
+    it("says the kind line with the time, and not the general failure, when they have made too many new Bricks this hour", async () => {
+        game.makeMyBrick.mockImplementation((_name, _look, options) => {
+            options?.onLimit?.(new Date(Date.now() + 25 * 60 * 1000).toISOString());
+            return Promise.resolve(undefined);
+        });
+        await open();
+        byId("newBrickDialog")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        await settle();
+        expect(game.warn).toHaveBeenCalledTimes(1);
+        expect(game.warn.mock.calls[0][0]).toMatch(/^You've made a lot of Bricks this hour\. Try again at .+\.$/);
+        expect(game.warn).not.toHaveBeenCalledWith("Couldn't make the Brick. Try again.");
+        expect(game.closeModal).not.toHaveBeenCalled();
+        expect(byId<HTMLButtonElement>("newBrickCreate")?.disabled).toBe(false);
+    });
+
+    it("sends the same request key when the same Brick is tried again, and a new one when the name or look changed", async () => {
+        game.makeMyBrick.mockResolvedValue(undefined);
+        await open();
+        const submit = async () => {
+            byId("newBrickDialog")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+            await settle();
+        };
+        await submit();
+        await submit();
+        const keys = game.makeMyBrick.mock.calls.map((call) => call[2]?.requestKey);
+        expect(keys[0]).toBeTruthy();
+        expect(keys[1]).toBe(keys[0]);
+        await type("Another name");
+        await submit();
+        expect(game.makeMyBrick.mock.calls[2][2]?.requestKey).not.toBe(keys[0]);
     });
 
     it("closes on Cancel, on X and on Escape, and makes nothing", async () => {

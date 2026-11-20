@@ -3,7 +3,7 @@
     import type { Action } from "svelte/action";
     import { fly } from "svelte/transition";
     import { closeModal } from "svelte-modals";
-    import LL from "../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../i18n/i18n-svelte";
     import WokaImage from "../../Components/Woka/WokaImage.svelte";
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../../external-modules/bots/stores/BotWokaCatalogStore";
     import { warningMessageStore } from "../../Stores/ErrorStore";
@@ -12,7 +12,8 @@
     import { openBrickChat } from "./BrickChat";
     import { wokaTextureUrl } from "./BrickLookPicture";
     import BrickPicture from "./BrickPicture.svelte";
-    import { firstFreeLook, lookColour } from "./NewBrick";
+    import { newRequestKey } from "./Apps/AddApp";
+    import { firstFreeLook, lookColour, newBricksLimitLine } from "./NewBrick";
     import { makeMyBrick, myBricksStore } from "./MyBricksStore";
     import { openTemplateList } from "./Templates/OpenTemplates";
     import { IconCheck, IconChevronDown, IconChevronRight, IconTemplate, IconX } from "@wa-icons";
@@ -52,13 +53,31 @@
         if (nameIsOurs && isBrickLook(next)) name = suggestedName(next);
     }
 
+    // One key for one request: a tap tried again after a dropped connection gives back the first Brick, never a second. A new
+    // name or look is a new request, so it gets a new key.
+    let requestKey = "";
+    let keyFrom = "";
+
     async function submit() {
         if (!ready) return;
         busy = true;
-        const made = await makeMyBrick(name.trim(), look);
+        const wanted = JSON.stringify([name.trim(), look]);
+        if (!requestKey || keyFrom !== wanted) {
+            requestKey = newRequestKey();
+            keyFrom = wanted;
+        }
+        let limited = false;
+        const made = await makeMyBrick(name.trim(), look, {
+            requestKey,
+            onLimit: (retryAt) => {
+                limited = true;
+                warningMessageStore.addWarningMessage(newBricksLimitLine(retryAt, $locale, $LL.chat.brick));
+            },
+        });
         busy = false;
         if (!made) {
-            warningMessageStore.addWarningMessage($LL.chat.brick.makeFailed());
+            // Over the hour's limit it has already said so, with the time; any other failure is the general line
+            if (!limited) warningMessageStore.addWarningMessage($LL.chat.brick.makeFailed());
             return;
         }
         if (dismissed || !isOpen) return;
