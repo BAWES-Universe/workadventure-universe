@@ -79,8 +79,12 @@ describe('providerErrorText', () => {
         expect(providerErrorText('failed: ...https://me:hunter2@host/x')).toBe('failed: ...https://[redacted]@host/x');
         expect(providerErrorText('(https://me:hunter2@host/x)')).toBe('(https://[redacted]@host/x)');
         expect(providerErrorText('see ,ftp://u:hunter2@h/y')).toBe('see ,ftp://[redacted]@h/y');
+        // a run of scheme characters that no token pattern takes whole (a `.` breaks it), short enough that the login stays inside the 200 characters kept
+        const scheme = 'a+.-'.repeat(10);
+        expect(providerErrorText(` ...${scheme}://me:hunter2@host/x`)).toBe(`...${scheme}://[redacted]@host/x`);
         const started = Date.now();
         const run = 'a+.-'.repeat(20_000);
+        // the same run, very long: it must not hold the loop (what is kept of it is cut at 200 characters, so only the time is judged here)
         expect(providerErrorText(` ...${run}://me:hunter2@host/x`)).not.toContain('hunter2');
         // many starts in one text stay linear
         expect(providerErrorText('x://a@'.repeat(5_000))).not.toContain('a@');
