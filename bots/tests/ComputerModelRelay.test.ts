@@ -675,11 +675,14 @@ describe('how a call ended, for the runner', () => {
         await said('job-402', 402, { message: 'out of credit' });
         await said('job-403-moderation', 403, { message: 'Your request was flagged by content moderation', code: 'content_policy_violation' });
         await said('job-404', 404, { message: 'The model does not exist' });
-        await said('job-400-param', 400, { message: 'Unsupported parameter: max_tokens' });
+        await said('job-400-param', 400, { message: 'Unsupported parameter: max_tokens', param: 'max_tokens' });
+        await said('job-400-temperature', 400, { message: 'temperature must be at most 2', param: 'temperature' });
+        await said('job-400-noparam', 400, { message: 'bad request' });
+        await said('job-422-messages', 422, { message: 'invalid image url', param: 'messages[0].content' });
         await said('job-400-context', 400, { code: 'context_length_exceeded', message: 'maximum context length exceeded' });
         await said('job-413', 413, { message: 'payload' });
         for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param']) expect(notes.endedOnFault(name, before)).toBe(true);
-        for (const name of ['job-403-moderation', 'job-400-context', 'job-413']) {
+        for (const name of ['job-403-moderation', 'job-400-context', 'job-413', 'job-400-temperature', 'job-400-noparam', 'job-422-messages']) {
             expect(notes.endedOnFault(name, before)).toBe(false);
             // the request's own failure is off our side: the runner never ends the job as ours for it
             expect(notes.sawSince(name, before)).toBe(true);
@@ -701,8 +704,10 @@ describe('how a call ended, for the runner', () => {
         await inBody('job-200-500', { code: 500, message: 'internal' });
         await inBody('job-200-429', { code: '429', message: 'rate' });
         await inBody('job-200-nocode', { message: 'something broke' });
-        await inBody('job-200-param', { code: 400, message: 'invalid parameter' });
-        for (const name of ['job-200-400', 'job-200-context', 'job-200-moderation']) expect(notes.endedOnFault(name, before)).toBe(false);
+        await inBody('job-200-param', { code: 400, message: 'invalid parameter', param: 'model' });
+        await inBody('job-200-tools', { type: 'invalid_request_error', message: 'bad schema', param: 'tools[0]' });
+        await inBody('job-200-422', { code: 422, message: 'unprocessable' });
+        for (const name of ['job-200-400', 'job-200-context', 'job-200-moderation', 'job-200-tools', 'job-200-422']) expect(notes.endedOnFault(name, before)).toBe(false);
         for (const name of ['job-200-500', 'job-200-429', 'job-200-nocode', 'job-200-param']) expect(notes.endedOnFault(name, before)).toBe(true);
     });
 
@@ -749,7 +754,7 @@ describe('how a call ended, for the runner', () => {
 });
 
 describe('whoseProviderError', () => {
-    it('is the request’s only for moderation, a context too long and a body too large; everything else is ours', () => {
+    it('is the request’s for moderation, a context too long, a body too large and a 400/422 about anything but the relay’s own fields; everything else is ours', () => {
         expect(whoseProviderError(500, {})).toBe('ours');
         expect(whoseProviderError(503, { message: 'moderation backend down' })).toBe('ours');
         expect(whoseProviderError(429, {})).toBe('ours');
@@ -757,8 +762,14 @@ describe('whoseProviderError', () => {
         expect(whoseProviderError(402, {})).toBe('ours');
         expect(whoseProviderError(403, { message: 'nope' })).toBe('ours');
         expect(whoseProviderError(404, { message: 'model not found' })).toBe('ours');
-        expect(whoseProviderError(400, { message: 'Unsupported parameter' })).toBe('ours');
-        expect(whoseProviderError(422, {})).toBe('ours');
+        expect(whoseProviderError(400, { message: 'Unsupported parameter', param: 'max_tokens' })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'stream_options.include_usage' })).toBe('ours');
+        expect(whoseProviderError(422, { param: 'model' })).toBe('ours');
+        expect(whoseProviderError(400, { param: 'temperature' })).toBe('request');
+        expect(whoseProviderError(400, { param: 'messages[0].content[1].image_url' })).toBe('request');
+        expect(whoseProviderError(400, {})).toBe('request');
+        expect(whoseProviderError(422, {})).toBe('request');
+        expect(whoseProviderError(null, { type: 'invalid_request_error', param: 'tools' })).toBe('request');
         expect(whoseProviderError(403, { code: 'moderation_blocked' })).toBe('request');
         expect(whoseProviderError(400, { code: 'context_length_exceeded' })).toBe('request');
         expect(whoseProviderError(400, { message: 'Your prompt is too long' })).toBe('request');

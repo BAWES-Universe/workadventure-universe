@@ -151,12 +151,15 @@ function wordsOf(text: string): string {
 
 /** A provider that says our key is wrong is our problem, not Hermes's: Hermes must not read it as its own key being refused. */
 const CONTENT_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?(length|window)|maximum context|too many tokens|token limit|prompt (is )?too long|too large/i;
+/** The fields of a call that the relay sets itself; every other field is what the job's own machine sent, and a job's words can steer it. */
+const RELAY_FIELDS = new Set(['model', 'max_tokens', 'max_completion_tokens', 'n', 'stream', 'stream_options']);
 
 /**
  * Whose a provider's error is. `request`: what the job itself sent was refused (moderation, a content policy, a context that is too long, a
- * body too large): neither a fault of ours nor an answer. Everything else is `ours`: its own service failing (5xx), a rate limit (429), our key
- * refused or out of credit (401, 402, a 403 that is no moderation), a model or address that is gone (404), a parameter it will not take (400,
- * 422: the request is built from our own settings), and an error that says nothing of a code.
+ * body too large, a 400 or 422 about a field the job's machine sent, or about no field at all): neither a fault of ours nor an answer.
+ * Everything else is `ours`: its own service failing (5xx), a rate limit (429), our key refused or out of credit (401, 402, a 403 that is
+ * no moderation), a model or address that is gone (404), a 400 or 422 about a field only the relay sets (model, the token limit, n, stream
+ * and its options), and an error that says nothing of a code.
  */
 export function whoseProviderError(status: number | null, error: unknown): 'ours' | 'request' {
     const record = isRecord(error) ? error : {};
@@ -169,7 +172,14 @@ export function whoseProviderError(status: number | null, error: unknown): 'ours
     }
     if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
     if (numeric === 413) return 'request';
-    return CONTENT_WORDS.test(words) ? 'request' : 'ours';
+    if (CONTENT_WORDS.test(words)) return 'request';
+    // A refusal of the shape of the call: ours only when it names a field the relay itself sets
+    const badShape = numeric === 400 || numeric === 422 || record.type === 'invalid_request_error' || typeof record.param === 'string';
+    if (badShape) {
+        const param = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
+        return RELAY_FIELDS.has(param) ? 'ours' : 'request';
+    }
+    return 'ours';
 }
 
 const statusToHermes = (status: number): number => (status === 401 || status === 402 || status === 403 ? 502 : status >= 400 && status < 600 ? status : 502);
