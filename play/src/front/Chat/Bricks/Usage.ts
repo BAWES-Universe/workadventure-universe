@@ -82,7 +82,15 @@ export type ActivityState = "done" | "refunded";
  * How a task came to end: every action worked ("done"), some did ("partial"), none did ("failed"), or the outcome of an action could
  * not be confirmed ("unconfirmed"). "refunded" is the whole task given back.
  */
-export type ActivityOutcome = "done" | "partial" | "refunded" | "failed" | "unconfirmed";
+export type ActivityOutcome =
+    | "done"
+    | "partial"
+    | "refunded"
+    | "failed"
+    | "unconfirmed"
+    | "stopped"
+    | "deciding"
+    | "refund_pending";
 export type ActivityPayer = "you" | "universe" | "sponsor";
 
 /** One line of a receipt: what was used and what it took ("Nothing" is a note). */
@@ -133,6 +141,10 @@ export interface ActivityItem {
      * so Orbit's own headline for it can still be shown. False for every outcome this page knows and for none at all.
      */
     unknownOutcome: boolean;
+    /** Whole micros Orbit returned to the payer for this task (absent when none): shown with Orbit's own "Returned" note */
+    returnedMicros?: number;
+    /** Whole micros of a refund Orbit has promised and not paid yet (absent when none). `spentMicros` is null while one is pending */
+    refundPendingMicros?: number;
     /** Each Instant action of the task; empty for a task with none (an older Orbit, or a computer's) */
     actions: ActivityAction[];
 }
@@ -325,7 +337,9 @@ function parseActions(value: unknown): ActivityAction[] {
     return out;
 }
 
-const KNOWN_OUTCOMES = new Set(["done", "partial", "refunded", "failed", "unconfirmed"]);
+const KNOWN_OUTCOMES = new Set(["done", "partial", "refunded", "failed", "unconfirmed", "stopped", "deciding", "refund_pending"]);
+/** The outcomes whose state is still "done" and that are never read as done: Orbit's headline and note say what happened */
+const STATED_OUTCOMES = new Set(["stopped", "deciding", "refund_pending"]);
 /** An outcome word that says something this page has no reading for; a missing one, or one of the known words, is not. */
 const isUnknownOutcome = (outcome: unknown): boolean =>
     typeof outcome === "string" && outcome.trim() !== "" && !KNOWN_OUTCOMES.has(outcome);
@@ -349,14 +363,15 @@ function parseActivity(value: unknown): ActivityItem[] {
         seen.add(id);
         const state = item.state === "refunded" ? "refunded" : "done";
         const actions = parseActions(item.actions);
+        const returnedMicros = micros(item.returnedMicros);
+        const refundPendingMicros = micros(item.refundPendingMicros);
         // Partly done needs a step that worked and one that did not work or could not be confirmed. "failed" and "unconfirmed" are Orbit's
         // word that nothing finished or that an action could not be confirmed: they are never read as done. An older Orbit that sends
         // none of these is done or refunded as before. An outcome this page does not know reads as done only when Orbit has nothing to
         // say about it (no note); the note is shown either way
-        const partly =
-            item.outcome === "partial" &&
-            actions.some((action) => action.outcome === "worked") &&
-            actions.some((action) => action.outcome !== "worked");
+        // The step that did not work can be the computer, which is not an action (a refunded computer and a charged Gmail send): one action
+        // that worked is enough, and a non-worked action is not required
+        const partly = item.outcome === "partial" && actions.some((action) => action.outcome === "worked");
         // An unconfirmed task whose hold was released is sent as "refunded" (the money was given back), and it is still one whose delivery
         // nobody could confirm: the outcome is looked at first, so "Couldn't confirm", its note and its steps are not lost behind "Refunded".
         // The money line stays the refund's (state)
@@ -369,6 +384,8 @@ function parseActivity(value: unknown): ActivityItem[] {
                 ? "partial"
                 : item.outcome === "failed"
                 ? "failed"
+                : typeof item.outcome === "string" && STATED_OUTCOMES.has(item.outcome)
+                ? (item.outcome as ActivityOutcome)
                 : "done";
         out.push({
             id,
@@ -385,6 +402,8 @@ function parseActivity(value: unknown): ActivityItem[] {
             payer: item.payer === "universe" ? "universe" : item.payer === "sponsor" ? "sponsor" : "you",
             payerName: short(item.payerName) ?? null,
             lines: parseLines(item.lines),
+            ...(returnedMicros ? { returnedMicros } : {}),
+            ...(refundPendingMicros ? { refundPendingMicros } : {}),
         });
         if (out.length >= ACTIVITY_MAX) break;
     }

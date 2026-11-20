@@ -169,12 +169,20 @@
         if (item.outcome === "partial") return text.activityPartly();
         if (item.outcome === "failed") return item.outcomeText ?? text.activityDidntFinish();
         if (item.outcome === "unconfirmed") return item.outcomeText ?? text.activityCouldntConfirm();
+        // Stopped at a rule, still deciding, a refund pending: Orbit's own headline, never "Done"
+        if (item.outcome === "stopped" || item.outcome === "deciding" || item.outcome === "refund_pending") {
+            return item.outcomeText ?? "";
+        }
         return item.unknownOutcome && item.outcomeText ? item.outcomeText : "";
     }
 
     /** A task that did not finish and took nothing: nobody paid, so no "Paid by" line (the note says what happened) */
     const nothingPaid = (item: ActivityItem): boolean =>
-        (item.outcome === "failed" || item.outcome === "unconfirmed") &&
+        (item.outcome === "failed" ||
+            item.outcome === "unconfirmed" ||
+            item.outcome === "stopped" ||
+            item.outcome === "deciding" ||
+            item.outcome === "refund_pending") &&
         item.spentMicros === null &&
         !priceUnknown(item);
 

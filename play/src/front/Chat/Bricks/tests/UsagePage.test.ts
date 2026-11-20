@@ -749,6 +749,82 @@ describe("the Usage page (#1999)", () => {
             expect(byId("usageReceipt")?.textContent).not.toContain("Refunded");
         });
 
+        it("reads a rule stop as Orbit's headline and note, never as done, and with nothing taken no \"Paid by\" line", async () => {
+            await openTask(
+                failedTask({
+                    id: "act_rule",
+                    outcome: "stopped",
+                    outcomeText: "Stopped at your spending rule",
+                    outcomeNote: "A rule you set stopped this task before it spent more.",
+                    spentMicros: null,
+                    actions: [],
+                    lines: [],
+                })
+            );
+            expect(text()).toMatch(/Today, .+ · Stopped at your spending rule · Computer/);
+            expect(text()).not.toMatch(/· Done/);
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Stopped at your spending rule");
+            expect(byId("usageReceiptWhy")?.textContent).toBe("A rule you set stopped this task before it spent more.");
+            expect(byId("usageReceipt")?.textContent).not.toContain("Paid by");
+        });
+
+        it("shows \"$0.05 refund pending\" and a task still being decided with Orbit's words", async () => {
+            game.getMyUsage.mockResolvedValue(
+                live(
+                    {},
+                    {
+                        activity: [
+                            failedTask({
+                                id: "act_pending",
+                                outcome: "refund_pending",
+                                outcomeText: "$0.05 refund pending",
+                                outcomeNote: "We're giving this back. It will show here when it is done.",
+                                spentMicros: null,
+                                refundPendingMicros: 50_000,
+                                actions: [],
+                                lines: [],
+                            }),
+                            failedTask({
+                                id: "act_deciding",
+                                title: "Second task",
+                                outcome: "deciding",
+                                outcomeText: "Still deciding",
+                                outcomeNote: "We're still checking how this one ended.",
+                                spentMicros: null,
+                                actions: [],
+                                lines: [],
+                            }),
+                        ],
+                    }
+                )
+            );
+            await open();
+            expect(text()).toMatch(/Email the invoices[^]*\$0\.05 refund pending/);
+            expect(text()).toMatch(/Second task[^]*Still deciding/);
+            target.querySelector<HTMLElement>('[data-activity="act_pending"]')?.click();
+            await settle();
+            expect(byId("usageReceiptPartly")?.textContent).toBe("$0.05 refund pending");
+            expect(byId("usageReceiptWhy")?.textContent).toBe("We're giving this back. It will show here when it is done.");
+            expect(byId("usageReceipt")?.textContent).not.toContain("Refunded");
+        });
+
+        it("reads a task whose computer was returned and whose Gmail step was charged as Partly done, not Done", async () => {
+            await openTask(
+                failedTask({
+                    id: "act_mixed",
+                    outcome: "partial",
+                    outcomeText: "Partly done",
+                    outcomeNote: "The Gmail step worked. The computer's time was returned.",
+                    spentMicros: 5_000,
+                    returnedMicros: 30_000,
+                    actions: [{ label: "gmail", outcome: "worked", text: "Gmail · sent", takenText: null, amountMicros: 5_000 }],
+                    lines: [{ label: "Computer time", amountMicros: 30_000, note: "Returned" }],
+                })
+            );
+            expect(text()).toMatch(/Today, .+ · Partly done/);
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+        });
+
         it("shows an action Orbit could not confirm with its own words, and no claim of ours when it sends none", async () => {
             await openTask(
                 failedTask({
