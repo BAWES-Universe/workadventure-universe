@@ -330,7 +330,7 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
         // request too large (ours); when the job set the limit, or the input alone does not fit, it is the request's
         const limit = Number(/\blimit\D{0,3}(\d[\d,]*)/i.exec(words)?.[1]?.replace(/,/g, ''));
         const requested = Number(/\brequested\D{0,3}(\d[\d,]*)/i.exec(words)?.[1]?.replace(/,/g, ''));
-        if (!jobs.limit && jobs.outputCap !== undefined && limit > 0 && requested > 0 && requested - jobs.outputCap < limit) return OURS_UNSURE('provider_429');
+        if (!jobs.limit && jobs.outputCap !== undefined && limit > 0 && requested > 0 && requested - jobs.outputCap <= limit) return OURS_UNSURE('provider_429');
         return REQUESTS();
     }
     if (numeric === 429) return OURS_UNSURE('provider_429');
@@ -339,6 +339,11 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
     // A refusal of a field the relay sets (model, n, stream, its options): ours, but unresolved (a setting of ours may be wrong, or the provider may have
     // changed). The token limit is the job's own when the job asked for it and we did not lower it, and then a refusal of it is the request's; a limit we
     // chose is ours, unless the wording blames the prompt or the context (a context that is too long, N tokens in the messages, inputs tokens)
+    // Our key, our credit or our model, named by the error's own code or type: ours, before the field it names is looked at (a `model_not_found` that
+    // names `model` is a missing model of ours, not a refusal of a field). Only what the provider sets (code, type) is read for that, never a message
+    // on a call that names a field: a message echoes the job's own values, and a job can steer those
+    const codes = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
+    if (KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours');
     const paramField = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
     const refusedShape = numeric === null || numeric === 400 || numeric === 422;
     if (refusedShape && RELAY_FIELDS.has(paramField)) {
@@ -349,10 +354,6 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
         return jobs.limit || INPUT_WORDS.test(words) ? REQUESTS() : OURS_UNSURE('field_relay_set');
     }
     if (CONTENT_WORDS.test(words)) return REQUESTS();
-    // Our key, our credit or our model, named by the error itself: ours, before its shape is looked at. Only what the provider sets (code, type) is
-    // read for that, never a message on a call that names a field: a message echoes the job's own values, and a job can steer those
-    const codes = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
-    if (KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours');
     if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return OURS_FAULT('provider_key_ours');
     // A refusal of the shape of the call (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is
     // about our key or our model): the request's when it names a field the job sent, unresolved when it names no field at all (a bad payload of the job's

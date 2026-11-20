@@ -1051,6 +1051,10 @@ describe('whoseProviderError', () => {
         const message = (requested: number) => `Request too large for gpt-4o on tokens per min (TPM): Limit 30000, Requested ${requested}. The input or output tokens must be reduced in order to run successfully.`;
         // our setting 32768, a 100-token prompt: the input fits, our limit made it too large
         expect(whoseProviderError(429, { message: message(32_868) }, { limit: false, name: false, outputCap: 32_768 })).toBe('ours');
+        // a prompt of exactly the limit (30000) with our cap of 1000: the input fits, removing our cap would bring the request within the limit
+        expect(readProviderError(429, { message: message(31_000) }, { limit: false, name: false, outputCap: 1000 })).toMatchObject({ who: 'ours', kind: 'uncertain', reason: 'provider_429' });
+        // one token over the limit: the prompt alone does not fit
+        expect(whoseProviderError(429, { message: message(31_001) }, { limit: false, name: false, outputCap: 1000 })).toBe('request');
         // a 40000-token prompt with our 4096: the input alone does not fit
         expect(whoseProviderError(429, { message: message(44_096) }, { limit: false, name: false, outputCap: 4096 })).toBe('request');
         // the job set the limit
@@ -1267,6 +1271,15 @@ describe('what #2078 (bounded provider reads, per-call metering) and #2101 (whos
         const failed = settled().find((input) => input.costMicros === 0)!;
         const faulty = ['job-two-a', 'job-two-b'].filter((job) => notes.endedOnFault(job, before));
         expect(faulty).toEqual([failed.jobId]);
+    });
+});
+
+describe('a model that is missing', () => {
+    it('is confirmed ours by its structured code even when it names the model field, and a field-only model refusal stays unresolved', () => {
+        expect(readProviderError(404, { code: 'model_not_found', param: 'model', message: 'The model does not exist' })).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+        expect(readProviderError(400, { type: 'invalid_request_error', code: 'model_not_found', param: 'model', message: 'x' })).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+        expect(readProviderError(400, { param: 'model', message: 'Invalid value' })).toMatchObject({ kind: 'uncertain', reason: 'field_relay_set' });
+        expect(readProviderError(400, { code: 'invalid_value', param: 'n', message: 'Invalid value' })).toMatchObject({ kind: 'uncertain', reason: 'field_relay_set' });
     });
 });
 
