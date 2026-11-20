@@ -8,6 +8,7 @@
         fetchArtifact,
         fetchArtifactCode,
         fetchArtifactVersions,
+        publishArtifact,
         restoreArtifactVersion,
         shareArtifact,
         type ArtifactOpenScope,
@@ -89,6 +90,9 @@
     /** A choice the owner just made, showing at once while it is on its way to be saved. */
     let pendingShare: ArtifactOpenScope | undefined;
     let shareFailed = false;
+    /** The owner pressed Publish and the answer is on its way (game #2115). */
+    let publishing = false;
+    let publishFailed = false;
     let copied: "no" | "yes" | "failed" = "no";
     let copiedTimer: ReturnType<typeof setTimeout> | undefined;
     /** The device has its own share sheet (phones, and most computers): Share sits beside Copy link, like invites. */
@@ -117,6 +121,11 @@
     let renewTimer: ReturnType<typeof setTimeout> | undefined;
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
+    /**
+     * Counts the owner's own choices (who can open it, what was published) that came back. An answer to opening that was
+     * on its way when one came back may be older than it, so it does not write it over (`withNewerChoices`).
+     */
+    let choices = 0;
     /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
     let addressOver = false;
 
@@ -174,6 +183,14 @@
         : "";
     $: badge = artifactBadge(kind, $LL);
     $: openScope = pendingShare ?? opened?.artifact.openScope;
+    // What the owner published (game #2115): people who open it only by its link see this version, not the latest. Told to
+    // its owner alone, who is the only one who sees any of what follows.
+    $: published = opened?.artifact.published ?? undefined;
+    $: publishedGone = published !== undefined && published.available === false;
+    $: sharedByLink = opened?.artifact.openScope === "link" || opened?.artifact.openScope === "public";
+    // The window says so, with Publish right there, once the latest version is newer than the one people see
+    $: unpublishedChanges = published !== undefined && !publishedGone && published.version < latest;
+    $: showPublishBar = phase === "ready" && !!opened?.you.owner && sharedByLink && unpublishedChanges && !shareOpen;
     // "People in this chat" only while the owner is in the nearby chat it was made in, naming who is in it now;
     // otherwise the same choice reads "Just you", the only one who can open it then
     $: inItsChat =
@@ -212,6 +229,7 @@
 
     async function load(version: number | undefined) {
         const mine = ++request;
+        const choicesBefore = choices;
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
@@ -219,7 +237,7 @@
         try {
             const answer = await fetchArtifact(id, actualCowebsite.chat, version);
             if (destroyed || mine !== request) return;
-            opened = answer;
+            opened = withNewerChoices(answer, choicesBefore);
             shownNumber = answer.version.number;
             text = undefined;
             textFailed = false;
@@ -324,13 +342,14 @@
         renewIn(undefined);
         if (destroyed || shownNumber === undefined) return;
         const turn = ++renewal;
+        const choicesBefore = choices;
         const number = shownNumber;
         // Dropped when another version came on show meanwhile, it was put away, or it was asked for again
         const stale = () => destroyed || turn !== renewal || shownNumber !== number;
         try {
             const answer = await fetchArtifact(id, actualCowebsite.chat, number);
             if (stale()) return;
-            opened = answer;
+            opened = withNewerChoices(answer, choicesBefore);
             watchAddress(answer.version);
         } catch (error) {
             if (stale()) return;
@@ -342,6 +361,22 @@
                 putAway(why);
             }
         }
+    }
+
+    /**
+     * An answer to opening that was asked for before one of the owner's choices came back keeps that choice as it now is:
+     * the answer may have been made before it.
+     */
+    function withNewerChoices(answer: OpenedArtifact, choicesBefore: number): OpenedArtifact {
+        if (!opened || choices === choicesBefore) return answer;
+        return {
+            ...answer,
+            artifact: {
+                ...answer.artifact,
+                openScope: opened.artifact.openScope,
+                published: opened.artifact.published,
+            },
+        };
     }
 
     /** Nothing is drawn from the address in hand any more: the version on show waits for a new one. */
@@ -415,13 +450,45 @@
         roomAsked = false;
         menuRoom = undefined;
         shareFailed = false;
+        publishFailed = false;
         copied = "no";
+    }
+
+    // Publishes the latest version the owner can see, in Share or from the bar: what they were looking at, so a version a
+    // bot made at that moment is never published unseen. Only the owner has the button; Orbit checks it again.
+    function publish() {
+        if (!opened || publishing || pendingShare) return;
+        publishing = true;
+        publishFailed = false;
+        void publishArtifact(id, latest, actualCowebsite.chat).then(
+            (artifact) => {
+                if (destroyed) return;
+                publishing = false;
+                if (!opened) return;
+                choices++;
+                opened = {
+                    ...opened,
+                    artifact: {
+                        ...opened.artifact,
+                        // Only what was published: who can open it is not this answer's to say, and a choice made while
+                        // it was on its way would be written over by it
+                        published: artifact.published ? { ...artifact.published, available: true } : null,
+                    },
+                };
+            },
+            (error) => {
+                if (destroyed) return;
+                publishing = false;
+                console.warn("Could not publish an artifact", error);
+                publishFailed = true;
+            }
+        );
     }
 
     // Saved at once, one choice at a time: the list shows the choice while it is on its way, and goes back if it fails.
     // `otherwise` is the choice to save instead when "Just you" cannot be had from the artifacts' server as it is.
     function setSharing(change: ArtifactOpenScope, otherwise?: ArtifactOpenScope) {
-        if (!opened || pendingShare || change === opened.artifact.openScope) return;
+        if (!opened || pendingShare || publishing || change === opened.artifact.openScope) return;
         const before = opened.artifact.openScope;
         pendingShare = change;
         shareFailed = false;
@@ -431,6 +498,7 @@
                 if (destroyed) return;
                 pendingShare = undefined;
                 if (!opened) return;
+                choices++;
                 opened = {
                     ...opened,
                     artifact: {
@@ -460,7 +528,7 @@
     // owner, so what the link gave out stops for good, and its line says so. Where that cannot be had, it goes back to
     // its chat, as before.
     function pickJustYou() {
-        if (openScope === "link") setSharing("me", "chat");
+        if (openScope === "link" || openScope === "public") setSharing("me", "chat");
     }
 
     function copyLink() {
@@ -621,6 +689,29 @@
         </div>
     {/if}
 
+    {#if showPublishBar && published}
+        <div class="old-note" data-testid="artifactUnpublished">
+            <span>{$LL.chat.artifacts.publishBar({ version: published.version, latest })}</span>
+            <span class="old-actions">
+                <button
+                    type="button"
+                    class="go publish-pill"
+                    disabled={publishing || !!pendingShare}
+                    data-testid="artifactPublishBar"
+                    on:click={publish}
+                    >{#if publishing}<IconLoader font-size="16" class="spin" />{/if}
+                    {$LL.chat.artifacts.publish()}</button
+                >
+            </span>
+        </div>
+    {/if}
+
+    {#if publishFailed && !shareOpen}
+        <div class="old-note" role="alert" data-testid="artifactPublishFailed">
+            <span>{$LL.chat.artifacts.publishFailed()}</span>
+        </div>
+    {/if}
+
     {#if restoreFailed}
         <div class="old-note" role="alert" data-testid="artifactRestoreFailed">
             <span>{$LL.chat.artifacts.restoreFailed()}</span>
@@ -765,7 +856,7 @@
                             class="choice"
                             class:picked={openScope === "me"}
                             aria-checked={openScope === "me"}
-                            disabled={!!pendingShare}
+                            disabled={!!pendingShare || publishing}
                             data-testid="artifactOpenMe"
                             on:click={() => setSharing("me")}
                         >
@@ -781,7 +872,7 @@
                             class="choice"
                             class:picked={openScope === "chat"}
                             aria-checked={openScope === "chat"}
-                            disabled={!!pendingShare}
+                            disabled={!!pendingShare || publishing}
                             data-testid="artifactOpenChat"
                             on:click={() => setSharing("chat")}
                         >
@@ -797,9 +888,9 @@
                             type="button"
                             role="radio"
                             class="choice"
-                            class:picked={openScope !== "link"}
-                            aria-checked={openScope !== "link"}
-                            disabled={!!pendingShare}
+                            class:picked={openScope !== "link" && openScope !== "public"}
+                            aria-checked={openScope !== "link" && openScope !== "public"}
+                            disabled={!!pendingShare || publishing}
                             data-testid="artifactOpenChat"
                             on:click={pickJustYou}
                         >
@@ -817,7 +908,7 @@
                         class="choice"
                         class:picked={openScope === "link"}
                         aria-checked={openScope === "link"}
-                        disabled={!!pendingShare}
+                        disabled={!!pendingShare || publishing}
                         data-testid="artifactOpenLink"
                         on:click={() => setSharing("link")}
                     >
@@ -827,12 +918,90 @@
                         >
                         <span class="radio" />
                     </button>
+                    <button
+                        type="button"
+                        role="radio"
+                        class="choice"
+                        class:picked={openScope === "public"}
+                        aria-checked={openScope === "public"}
+                        disabled={!!pendingShare || publishing}
+                        data-testid="artifactOpenPublic"
+                        on:click={() => setSharing("public")}
+                    >
+                        <span class="menu-text"
+                            ><b>{$LL.chat.artifacts.openPublic()}</b><small>{$LL.chat.artifacts.openPublicHelp()}</small
+                            ></span
+                        >
+                        <span class="radio" />
+                    </button>
                 </div>
+                {#if openScope === "public" || openScope === "link"}
+                    {#if publishedGone}
+                        <div class="publish-box" data-testid="artifactPublishedGone">
+                            <b class="unavailable">{$LL.chat.artifacts.publicUnavailable()}</b>
+                            <small>{$LL.chat.artifacts.publicUnavailableHelp()}</small>
+                            <button
+                                type="button"
+                                class="go publish-full"
+                                disabled={publishing || !!pendingShare}
+                                data-testid="artifactPublish"
+                                on:click={publish}>{$LL.chat.artifacts.publishVersion({ version: latest })}</button
+                            >
+                        </div>
+                    {:else if published}
+                        <div class="publish-row" data-testid="artifactPublished">
+                            <span class="publish-text">
+                                <b class="published"
+                                    ><IconCheck font-size="16" />
+                                    {$LL.chat.artifacts.publishedStatus({
+                                        version: published.version,
+                                        time: whenLabel(published.at),
+                                    })}</b
+                                >
+                                {#if published.version < latest}
+                                    <small>{$LL.chat.artifacts.unpublishedChanges({ version: latest })}</small>
+                                {/if}
+                            </span>
+                            {#if published.version < latest}
+                                <button
+                                    type="button"
+                                    class="go publish-pill"
+                                    disabled={publishing || !!pendingShare}
+                                    data-testid="artifactPublish"
+                                    on:click={publish}
+                                    >{#if publishing}<IconLoader font-size="16" class="spin" />{/if}
+                                    {$LL.chat.artifacts.publish()}</button
+                                >
+                            {/if}
+                        </div>
+                    {:else if openScope === "public"}
+                        <div class="publish-box" data-testid="artifactNotPublished">
+                            <b>{$LL.chat.artifacts.notPublished()}</b>
+                            <small>{$LL.chat.artifacts.publishHelp()}</small>
+                            <button
+                                type="button"
+                                class="go publish-full"
+                                disabled={publishing || !!pendingShare}
+                                data-testid="artifactPublish"
+                                on:click={publish}>{$LL.chat.artifacts.publishVersion({ version: latest })}</button
+                            >
+                        </div>
+                    {:else}
+                        <p class="menu-note pin" data-testid="artifactLinkFollows">
+                            {$LL.chat.artifacts.linkFollows()}
+                        </p>
+                    {/if}
+                    {#if publishFailed}
+                        <p class="menu-note" role="alert" data-testid="artifactPublishFailedMenu">
+                            {$LL.chat.artifacts.publishFailed()}
+                        </p>
+                    {/if}
+                {/if}
                 {#if shareFailed}
                     <p class="menu-note" role="alert" data-testid="artifactShareFailed">
                         {$LL.chat.artifacts.shareFailed()}
                     </p>
-                {:else if openScope === "link" && link}
+                {:else if (openScope === "link" || (openScope === "public" && published && !publishedGone)) && link}
                     <div class="link-actions">
                         {#if canShare}
                             <button
@@ -1059,6 +1228,54 @@
         .quiet :global(.spin) {
             animation: none;
         }
+    }
+    .publish-box {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 12px 4px 4px;
+    }
+    .publish-box > small,
+    .publish-text > small {
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 13px;
+    }
+    .publish-box .unavailable {
+        color: #fdba74;
+        font-size: 14px;
+    }
+    .publish-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 4px 4px;
+    }
+    .publish-text {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .publish-text .published {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: #c4b5fd;
+        font-size: 14px;
+    }
+    .go.publish-full {
+        width: 100%;
+        margin-top: 8px;
+    }
+    .go.publish-pill {
+        flex: 0 0 auto;
+        width: auto;
+        min-height: 44px;
+        padding: 0 22px;
+    }
+    .menu-note.pin {
+        margin-top: 8px;
     }
     .old-note {
         display: flex;
