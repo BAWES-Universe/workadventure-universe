@@ -35,6 +35,7 @@ const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().m
 const PayBody = z
     .object({ chat: Chat.optional(), start: z.boolean().optional(), order: z.string().min(1).max(100).optional() })
     .strict();
+const PublishBody = z.object({ chat: Chat.optional(), version: z.number().int().min(1).optional() }).strict();
 const ShareBody = z
     .object({
         chat: Chat.optional(),
@@ -111,6 +112,9 @@ export class ArtifactController extends BaseHttpController {
             res.status(200).send("");
         });
         this.app.options("/artifacts/:id/share", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });
+        this.app.options("/artifacts/:id/publish", (req: Request, res: Response) => {
             res.status(200).send("");
         });
         this.app.options("/artifacts/:id/pay", (req: Request, res: Response) => {
@@ -238,8 +242,8 @@ export class ArtifactController extends BaseHttpController {
          * @openapi
          * /artifacts/{id}/share:
          *   post:
-         *     description: The owner says who can open it ("me", "chat" or "link") and who can ask for changes ("owner" or
-         *       "openers"), one or both. Answers with the artifact as it now is.
+         *     description: The owner says who can open it ("me", "chat", "link" or "public") and who can ask for changes ("owner"
+         *       or "openers"), one or both. Answers with the artifact as it now is.
          *     responses:
          *       200:
          *         description: The artifact with its new sharing
@@ -262,6 +266,37 @@ export class ArtifactController extends BaseHttpController {
                     if (!body.success) throw new ArtifactsError("invalid_request", 400);
                     const { chat, ...sharing } = body.data;
                     return artifactsService.share(id, sharing, viewer(chat));
+                });
+            }
+        );
+
+        /**
+         * @openapi
+         * /artifacts/{id}/publish:
+         *   post:
+         *     description: The owner publishes a version of an artifact shared by link or Public (game #2115): people who open
+         *       it only by its link see that version, under the title it has now, until the owner publishes another. The
+         *       body names the version the owner was looking at; the latest when it does not. Answers { artifact }.
+         *     responses:
+         *       200:
+         *         description: The artifact as it now is, with `published`
+         *       403:
+         *         description: The person may open it but is not its owner
+         *       404:
+         *         description: No such artifact or version, or the person may not open it
+         *       409:
+         *         description: It is not shared by link or Public ("not_shared")
+         *       429:
+         *         description: Too many requests; try again in a minute
+         */
+        this.app.post(
+            "/artifacts/:id/publish",
+            [authenticated],
+            async (req: Request, res: ResponseWithUserIdentifier) => {
+                await this.answer(req, res, "publish", async (viewer, id) => {
+                    const body = PublishBody.safeParse(req.body ?? {});
+                    if (!body.success) throw new ArtifactsError("invalid_request", 400);
+                    return artifactsService.publish(id, body.data.version, viewer(body.data.chat));
                 });
             }
         );

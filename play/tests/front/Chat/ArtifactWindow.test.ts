@@ -23,6 +23,7 @@ const api = vi.hoisted(() => {
         fetchArtifactCode: vi.fn(),
         restoreArtifactVersion: vi.fn(),
         shareArtifact: vi.fn(),
+        publishArtifact: vi.fn(),
         payOnArtifact: vi.fn(),
         artifactLink: (id: string) => `https://orbit.test/a/${id}`,
     };
@@ -457,6 +458,156 @@ describe("the artifact window", () => {
         expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("false");
     });
 
+    describe("Publish (game #2115)", () => {
+        const CHAT = { kind: "nearby", ref: "bubble" };
+
+        /** An artifact shared the way the test says, with what was published (none by default). */
+        function sharedAs(
+            openScope: string,
+            latest: number,
+            published?: { version: number; at?: string; available?: boolean },
+            owner = true
+        ) {
+            const base = opened(latest, latest, "app", owner);
+            return {
+                ...base,
+                artifact: {
+                    ...base.artifact,
+                    openScope,
+                    published: published ? { at: "2026-11-20T09:12:00Z", ...published } : null,
+                },
+            };
+        }
+
+        it("makes Public the choice after the link, and asks to publish before it gives a link", async () => {
+            api.fetchArtifact.mockResolvedValue(opened(3));
+            api.fetchArtifactVersions.mockResolvedValue([]);
+            let saved: (artifact: unknown) => void = () => {};
+            api.shareArtifact.mockReturnValue(
+                new Promise((resolve) => {
+                    saved = resolve;
+                })
+            );
+            api.publishArtifact.mockResolvedValue({
+                ...sharedAs("public", 3).artifact,
+                published: { version: 3, at: "2026-11-20T09:12:00Z" },
+            });
+            mountWindow(3);
+            await openShareMenu();
+            expect(byTestId("artifactNotPublished")).toBeNull();
+            expect(byTestId("artifactPublish")).toBeNull();
+
+            byTestId("artifactOpenPublic")?.click();
+            await tick();
+            expect(api.shareArtifact).toHaveBeenCalledWith(ID, { openScope: "public" }, CHAT);
+            // Nothing is published, so there is no link to give yet; and Publish waits until Public is saved
+            expect(byTestId("artifactOpenPublic")?.getAttribute("aria-checked")).toBe("true");
+            expect(byTestId("artifactNotPublished")).not.toBeNull();
+            expect(byTestId("artifactCopyLink")).toBeNull();
+            expect((byTestId("artifactPublish") as HTMLButtonElement).disabled).toBe(true);
+            saved(sharedAs("public", 3).artifact);
+            await vi.waitFor(() => expect((byTestId("artifactPublish") as HTMLButtonElement).disabled).toBe(false));
+
+            byTestId("artifactPublish")?.click();
+            await tick();
+            expect(api.publishArtifact).toHaveBeenCalledWith(ID, 3, CHAT);
+            await vi.waitFor(() => expect(byTestId("artifactPublished")).not.toBeNull());
+            expect(byTestId("artifactNotPublished")).toBeNull();
+            // Up to date: no Publish beside the status, and the link is there to copy
+            expect(byTestId("artifactPublish")).toBeNull();
+            expect(byTestId("artifactCopyLink")).not.toBeNull();
+        });
+
+        it("says a link that was never published shows the latest version, and offers no Publish", async () => {
+            api.fetchArtifact.mockResolvedValue(sharedAs("link", 3));
+            mountWindow(3);
+            await openShareMenu();
+            expect(byTestId("artifactLinkFollows")).not.toBeNull();
+            expect(byTestId("artifactPublish")).toBeNull();
+            expect(byTestId("artifactNotPublished")).toBeNull();
+            expect(byTestId("artifactCopyLink")).not.toBeNull();
+        });
+
+        it("tells the owner in the window when the latest version is newer than the published one, and publishes from there", async () => {
+            api.fetchArtifact.mockResolvedValue(sharedAs("public", 4, { version: 3 }));
+            api.publishArtifact.mockResolvedValue({
+                ...sharedAs("public", 4).artifact,
+                published: { version: 4, at: "2026-11-20T10:00:00Z" },
+            });
+            mountWindow(4);
+            await vi.waitFor(() => expect(byTestId("artifactUnpublished")).not.toBeNull());
+
+            byTestId("artifactPublishBar")?.click();
+            await tick();
+            expect(api.publishArtifact).toHaveBeenCalledWith(ID, 4, CHAT);
+            expect((byTestId("artifactPublishBar") as HTMLButtonElement).disabled).toBe(true);
+            await vi.waitFor(() => expect(byTestId("artifactUnpublished")).toBeNull());
+        });
+
+        it("keeps the bar and says so when publishing fails, and tries again on the next tap", async () => {
+            api.fetchArtifact.mockResolvedValue(sharedAs("link", 4, { version: 3 }));
+            api.publishArtifact.mockRejectedValueOnce(new api.ArtifactRequestError(0, "offline"));
+            mountWindow(4);
+            await vi.waitFor(() => expect(byTestId("artifactUnpublished")).not.toBeNull());
+            byTestId("artifactPublishBar")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactPublishFailed")).not.toBeNull());
+            expect(byTestId("artifactUnpublished")).not.toBeNull();
+
+            api.publishArtifact.mockResolvedValue({
+                ...sharedAs("link", 4).artifact,
+                published: { version: 4, at: "2026-11-20T10:00:00Z" },
+            });
+            byTestId("artifactPublishBar")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactUnpublished")).toBeNull());
+            expect(byTestId("artifactPublishFailed")).toBeNull();
+        });
+
+        it("offers Publish in Share beside the status when a newer version is there, and puts the bar away while Share is open", async () => {
+            api.fetchArtifact.mockResolvedValue(sharedAs("public", 5, { version: 3 }));
+            api.publishArtifact.mockResolvedValue({
+                ...sharedAs("public", 5).artifact,
+                published: { version: 5, at: "2026-11-20T10:00:00Z" },
+            });
+            mountWindow(5);
+            await vi.waitFor(() => expect(byTestId("artifactUnpublished")).not.toBeNull());
+            await openShareMenu();
+            expect(byTestId("artifactUnpublished")).toBeNull();
+            expect(byTestId("artifactPublished")).not.toBeNull();
+            // The link is there to copy: version 3 is what it shows
+            expect(byTestId("artifactCopyLink")).not.toBeNull();
+
+            byTestId("artifactPublish")?.click();
+            await tick();
+            expect(api.publishArtifact).toHaveBeenCalledWith(ID, 5, CHAT);
+            await vi.waitFor(() => expect(byTestId("artifactPublish")).toBeNull());
+            expect(byTestId("artifactPublished")).not.toBeNull();
+        });
+
+        it("offers one button to publish again when the published version is gone, and gives no link meanwhile", async () => {
+            api.fetchArtifact.mockResolvedValue(sharedAs("public", 5, { version: 3, available: false }));
+            mountWindow(5);
+            await openShareMenu();
+            expect(byTestId("artifactPublishedGone")).not.toBeNull();
+            expect(byTestId("artifactPublish")).not.toBeNull();
+            expect(byTestId("artifactCopyLink")).toBeNull();
+            // The bar speaks of a published version that is there: not this one
+            expect(byTestId("artifactUnpublished")).toBeNull();
+        });
+
+        it("shows no bar when it is only for its chat, or to someone who is not the owner", async () => {
+            api.fetchArtifact.mockResolvedValue(sharedAs("chat", 4, { version: 3 }));
+            mountWindow(4);
+            await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
+            expect(byTestId("artifactUnpublished")).toBeNull();
+            component?.$destroy();
+            api.fetchArtifact.mockResolvedValue(sharedAs("public", 4, { version: 3 }, false));
+            mountWindow(4);
+            await vi.waitFor(() => expect(byTestId("artifactFrame")).not.toBeNull());
+            expect(byTestId("artifactUnpublished")).toBeNull();
+            expect(byTestId("artifactShare")).toBeNull();
+        });
+    });
+
     async function openShareMenu() {
         await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
         byTestId("artifactShare")?.click();
@@ -570,6 +721,7 @@ describe("the artifact window", () => {
                 "artifactOpenMe",
                 "artifactOpenChat",
                 "artifactOpenLink",
+                "artifactOpenPublic",
             ]);
             expect(byTestId("artifactOpenMe")?.getAttribute("aria-checked")).toBe("false");
             expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
