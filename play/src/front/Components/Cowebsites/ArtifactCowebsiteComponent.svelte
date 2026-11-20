@@ -121,6 +121,11 @@
     let renewTimer: ReturnType<typeof setTimeout> | undefined;
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
+    /**
+     * Counts the owner's own choices (who can open it, what was published) that came back. An answer to opening that was
+     * on its way when one came back may be older than it, so it does not write it over (`withNewerChoices`).
+     */
+    let choices = 0;
     /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
     let addressOver = false;
 
@@ -224,6 +229,7 @@
 
     async function load(version: number | undefined) {
         const mine = ++request;
+        const choicesBefore = choices;
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
@@ -231,7 +237,7 @@
         try {
             const answer = await fetchArtifact(id, actualCowebsite.chat, version);
             if (destroyed || mine !== request) return;
-            opened = answer;
+            opened = withNewerChoices(answer, choicesBefore);
             shownNumber = answer.version.number;
             text = undefined;
             textFailed = false;
@@ -336,13 +342,14 @@
         renewIn(undefined);
         if (destroyed || shownNumber === undefined) return;
         const turn = ++renewal;
+        const choicesBefore = choices;
         const number = shownNumber;
         // Dropped when another version came on show meanwhile, it was put away, or it was asked for again
         const stale = () => destroyed || turn !== renewal || shownNumber !== number;
         try {
             const answer = await fetchArtifact(id, actualCowebsite.chat, number);
             if (stale()) return;
-            opened = answer;
+            opened = withNewerChoices(answer, choicesBefore);
             watchAddress(answer.version);
         } catch (error) {
             if (stale()) return;
@@ -354,6 +361,22 @@
                 putAway(why);
             }
         }
+    }
+
+    /**
+     * An answer to opening that was asked for before one of the owner's choices came back keeps that choice as it now is:
+     * the answer may have been made before it.
+     */
+    function withNewerChoices(answer: OpenedArtifact, choicesBefore: number): OpenedArtifact {
+        if (!opened || choices === choicesBefore) return answer;
+        return {
+            ...answer,
+            artifact: {
+                ...answer.artifact,
+                openScope: opened.artifact.openScope,
+                published: opened.artifact.published,
+            },
+        };
     }
 
     /** Nothing is drawn from the address in hand any more: the version on show waits for a new one. */
@@ -442,6 +465,7 @@
                 if (destroyed) return;
                 publishing = false;
                 if (!opened) return;
+                choices++;
                 opened = {
                     ...opened,
                     artifact: {
@@ -474,6 +498,7 @@
                 if (destroyed) return;
                 pendingShare = undefined;
                 if (!opened) return;
+                choices++;
                 opened = {
                     ...opened,
                     artifact: {

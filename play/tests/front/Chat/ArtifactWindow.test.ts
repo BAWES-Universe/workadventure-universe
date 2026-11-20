@@ -542,6 +542,36 @@ describe("the artifact window", () => {
             expect((byTestId("artifactOpenLink") as HTMLButtonElement).disabled).toBe(false);
         });
 
+        it("keeps what was published when the page was being opened again from before it, as it moves out of Just you", async () => {
+            api.fetchArtifact.mockResolvedValueOnce(sharedAs("me", 3));
+            api.shareArtifact.mockResolvedValue({ ...sharedAs("public", 3).artifact });
+            mountWindow(3);
+            await openShareMenu();
+            // Public from Just you opens the version on show again; that answer is slow and was made before the publish
+            let slowOpening: (answer: unknown) => void = () => {};
+            api.fetchArtifact.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    slowOpening = resolve;
+                })
+            );
+            api.publishArtifact.mockResolvedValue({
+                ...sharedAs("public", 3).artifact,
+                published: { version: 3, at: "2026-11-20T09:12:00Z" },
+            });
+            byTestId("artifactOpenPublic")?.click();
+            await vi.waitFor(() => expect(api.fetchArtifact).toHaveBeenCalledTimes(2));
+            await vi.waitFor(() => expect((byTestId("artifactPublish") as HTMLButtonElement).disabled).toBe(false));
+            byTestId("artifactPublish")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactPublished")).not.toBeNull());
+
+            slowOpening(sharedAs("public", 3));
+            await tick();
+            await tick();
+            // Still published: the late answer did not put it back to "Not published yet"
+            expect(byTestId("artifactPublished")).not.toBeNull();
+            expect(byTestId("artifactNotPublished")).toBeNull();
+        });
+
         it("says a link that was never published shows the latest version, and offers no Publish", async () => {
             api.fetchArtifact.mockResolvedValue(sharedAs("link", 3));
             mountWindow(3);
