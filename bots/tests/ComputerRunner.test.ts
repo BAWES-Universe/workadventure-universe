@@ -1327,6 +1327,26 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
         expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
     });
 
+    it('does not carry a silent turn from before the person had the machine into the next streak: three turns that are ours end ours', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        let generation = 1;
+        const { orbit, seen } = fakeOrbit(
+            [
+                // two silent turns (the agent's own, never ours), then a turn during which the person took the machine and gave it back
+                done(''),
+                done(''),
+                () => ((generation = 2), done('')),
+                // a new streak: three turns that failed for no reason but ours
+                failing(),
+                failing(),
+                failing(),
+            ],
+            () => ({ status: 'running', control: 'brick', generation })
+        );
+        await runJob(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [4, 5, 6] }]);
+    });
+
     it('does not carry a confirmed fault into the next streak: a good turn clears it', async () => {
         let confirmedNow = true;
         const refusals = { sawSince: () => false, confirmedSince: () => confirmedNow };

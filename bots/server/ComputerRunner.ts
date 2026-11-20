@@ -568,7 +568,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // not acted on, and the agent is told to look at where things stand
             if (generation !== undefined && after.generation !== undefined && after.generation !== generation) {
                 input = follow(RESUME_PROMPT);
+                // Every reset of the streak clears all of it: a silent or refused turn from before the person had the machine must not make
+                // the next streak "not ours"
                 bad = 0;
+                notOurs = false;
                 confirmed = false;
                 badTurns = [];
                 continue;
