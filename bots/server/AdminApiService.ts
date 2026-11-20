@@ -11,6 +11,7 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
+import { computerReportOf, type ComputerReport, type UndeliverableWhy } from './ComputerReports';
 import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
@@ -464,6 +465,11 @@ export interface OfferableApp {
     key: string;
     name: string;
     blurb: string;
+    /**
+     * Which call connects it, as Orbit says: "listed" is an App of Orbit's list, and GitHub through Universe's own GitHub App;
+     * "readyMade" is a ready-made App. An older Orbit sends none, and every App it lists is "listed".
+     */
+    kind: 'listed' | 'readyMade';
     /** The person's own connection to it, when they have one. */
     connectionId: string | null;
     /** That connection is signed in and works. */
@@ -506,6 +512,10 @@ export type GuestBrickAllowance =
     | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
 
 const BRICK_CALL_TIMEOUT_MS = 8_000;
+/** Ending a computer job: Orbit hands its files over before it answers, which can take up to about four minutes. */
+const COMPUTER_FINISH_TIMEOUT_MS = 6 * 60_000;
+/** A file a computer job made can be as big as Limits allow, so its fetch gets longer than a call for a list. */
+const COMPUTER_FILE_TIMEOUT_MS = 120_000;
 /** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
 const RUNNING_PAGES_MAX = 100;
 
@@ -1084,7 +1094,7 @@ export class AdminApiService {
         };
     }
 
-    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1093,7 +1103,7 @@ export class AdminApiService {
             ...(body === undefined ? {} : { data: body }),
             ...(params ? { params } : {}),
             headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-            timeout: BRICK_CALL_TIMEOUT_MS,
+            timeout: timeoutMs,
         });
     }
 
@@ -1126,8 +1136,8 @@ export class AdminApiService {
     }
 
     /**
-     * The Apps a Brick of this person could offer to connect (game #2001): the list a super admin keeps in Orbit, with the
-     * person's own connection to each when they have one, whether it works, and whether this Brick may already use it. Orbit
+     * The Apps a Brick of this person could offer to connect (game #2001): every App the Apps page offers under Connect another
+     * (the list a super admin keeps, ready-made Apps and GitHub), with the person's own connection to each when they have one, whether it works, and whether this Brick may already use it. Orbit
      * answers only for the Brick's owner. Throws when Orbit says no or cannot be reached: the caller offers nothing then.
      */
     async appsOfferableFor(viaBotId: string, userId: string): Promise<OfferableApp[]> {
@@ -1141,6 +1151,7 @@ export class AdminApiService {
                 key: app.key,
                 name: app.name,
                 blurb: typeof app.blurb === 'string' ? app.blurb : '',
+                kind: app.kind === 'readyMade' ? 'readyMade' : 'listed',
                 connectionId: typeof app.connectionId === 'string' && app.connectionId ? app.connectionId : null,
                 connected: app.connected === true,
                 usable: app.usable === true,
@@ -1356,6 +1367,80 @@ export class AdminApiService {
         }
     }
 
+    /**
+     * What Brick is to tell people about their computer jobs now (the report back): endings and waits not told yet, each with the facts Orbit's
+     * record proves. Throws when Orbit cannot be asked, so nothing is taken for "nothing to tell".
+     */
+    async computerReports(): Promise<ComputerReport[]> {
+        const response = await this.brickCall<{ reports?: unknown }>('get', 'api/computer/jobs/reports');
+        const reports = Array.isArray(response.data?.reports) ? response.data.reports : [];
+        return reports.map(computerReportOf).filter((report): report is ComputerReport => report !== null);
+    }
+
+    /** That a report was said, or can never be: Orbit does not offer it again. False when Orbit did not take it (it is offered again and said as the same message). Never throws. */
+    async keepComputerReportTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>): Promise<boolean> {
+        try {
+            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }) });
+            return true;
+        } catch (error) {
+            // A job that is gone has nothing left to be told: that is an answer, not a failure
+            if (axios.isAxiosError(error) && error.response?.status === 404) return true;
+            console.warn('[AdminApiService] Could not keep that a computer job was told:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /**
+     * That a report can never reach the chat, and why: Orbit does not offer it again, does NOT record it as told, and what the job made stays with the person in
+     * Files. False when Orbit did not take it (it is offered again). Never throws.
+     */
+    async keepComputerReportUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>, why: UndeliverableWhy): Promise<boolean> {
+        try {
+            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }), outcome: 'undeliverable', why });
+            return true;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return true;
+            console.warn('[AdminApiService] Could not keep that a computer report is undeliverable:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /** That one file of a finished job is in the person's chat: it is not handed over again after a restart, and Files shows it as delivered. Safe to say twice. Never throws. */
+    async keepComputerFileDelivered(jobId: string, fileId: string): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/computer/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(fileId)}`, {});
+            return true;
+        } catch (error) {
+            // A file that is not kept any more has nothing left to be marked
+            if (axios.isAxiosError(error) && error.response?.status === 404) return true;
+            console.warn('[AdminApiService] Could not keep that a computer file was delivered:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /**
+     * One file a finished computer job made, to put in the person's chat as a card (the file card). Null when Orbit no longer has it (it reached the chat,
+     * the Brick is gone, or its days passed): that is an answer. Throws when Orbit cannot be asked, so the caller tries again.
+     */
+    async computerReportFile(jobId: string, fileId: string): Promise<Buffer | null> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
+        try {
+            const response = await axios.get<ArrayBuffer>(resolveAdminApiEndpoint(this.adminApiUrl, `api/computer/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(fileId)}`), {
+                responseType: 'arraybuffer',
+                headers: { Authorization: `Bearer ${botServiceToken}`, 'Cache-Control': 'no-store' },
+                timeout: COMPUTER_FILE_TIMEOUT_MS,
+                // The size is Orbit's to limit (Limits); what the chat can carry is the chat's to refuse
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
+            });
+            return Buffer.from(response.data);
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
+        }
+    }
+
     /** Is this Brick's computer on for its owner (#2000)? Read only: it never makes or wakes anything. False when Orbit cannot be asked. */
     async computerIsOn(viaBotId: string, userId: string): Promise<boolean> {
         try {
@@ -1495,12 +1580,19 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; brief?: string; writes?: boolean; plan?: { app: string; steps?: number; appCannot?: string } }
+        ask: { title: string; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
-            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }), ...(ask.plan ? { plan: ask.plan } : {}) }
+            {
+                userId,
+                title: ask.title,
+                ...(ask.brief ? { brief: ask.brief } : {}),
+                ...(ask.writes === undefined ? {} : { writes: ask.writes }),
+                ...(ask.plan ? { plan: ask.plan } : {}),
+                ...(ask.origin ? { origin: ask.origin } : {}),
+            }
         );
         const data = response.data;
         const job = data?.job;
@@ -1536,7 +1628,8 @@ export class AdminApiService {
 
     /** What a running job tells Orbit (#2000): steps, renewing its room, handing over, finishing. Throws when Orbit says no. */
     async computerJobAction(viaBotId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
-        const response = await this.brickCall<Record<string, unknown>>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`, body);
+        // Finishing waits for Orbit to read the job's files off its computer (it is limited by time there, up to a few minutes): the other calls answer at once
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`, body, undefined, body.action === 'finish' ? COMPUTER_FINISH_TIMEOUT_MS : BRICK_CALL_TIMEOUT_MS);
         return response.data ?? {};
     }
 

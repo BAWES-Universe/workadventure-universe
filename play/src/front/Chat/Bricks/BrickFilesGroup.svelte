@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import { get } from "svelte/store";
     import LL, { locale } from "../../../i18n/i18n-svelte";
+    import type { TranslationFunctions } from "../../../i18n/i18n-types";
     import { openYourArtifacts } from "../../Artifacts/openYourArtifacts";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import PageGroup from "../../external-modules/bots/components/page/PageGroup.svelte";
@@ -13,6 +14,7 @@
         fileIconKind,
         fileSize,
         type BrickFile,
+        type BrickResult,
         type FileSection,
     } from "./BrickFiles";
     import { shortDay } from "./Brick";
@@ -102,6 +104,33 @@
         return kind === "image" ? IconPhoto : kind === "sheet" ? IconFileText : IconFile;
     }
 
+    // The words, the language and the Brick's name come in as arguments, so the row is drawn again when the language changes (a store read inside a function the template calls is not tracked)
+    function resultNote(result: BrickResult, words: TranslationFunctions, language: string, brickName: string): string {
+        const where =
+            result.delivery === "delivered"
+                ? words.chat.brick.files.resultDelivered({ name: brickName })
+                : result.delivery === "waiting"
+                ? words.chat.brick.files.resultWaiting()
+                : words.chat.brick.files.resultNotDelivered();
+        return [shortDay(result.at, language), fileSize(result.sizeBytes, language), where].join(" · ");
+    }
+
+    function downloadResult(result: BrickResult) {
+        list.downloadResult(result)
+            .then((done) => {
+                if (!done) warningMessageStore.addWarningMessage($LL.chat.brick.files.resultFailed());
+            })
+            .catch((error) => console.error(error));
+    }
+
+    function removeResult(result: BrickResult) {
+        list.deleteResult(result.id)
+            .then((gone) => {
+                if (!gone) warningMessageStore.addWarningMessage($LL.chat.brick.files.deleteFailed());
+            })
+            .catch((error) => console.error(error));
+    }
+
     function download(file: BrickFile) {
         if (!downloadFile(file)) warningMessageStore.addWarningMessage($LL.chat.brick.files.downloadFailed());
     }
@@ -114,11 +143,19 @@
             .catch((error) => console.error(error));
     }
 
+    // What goes in the zip: what its computer made first (each opened with the person's own sign-in; not while a search is shown), then every page of both lists
+    async function* everything() {
+        const results = searching ? [] : get(files).results;
+        if (results.length > 0)
+            yield results.map((result) => ({ name: result.name, load: () => list.openResult(result.id) }));
+        yield* list.everyFile();
+    }
+
     function downloadAll() {
         if (zipping) return;
         zipping = true;
         // Every page of both lists, read as the zip is put together
-        downloadEverything(list.everyFile(), `${name}-files.zip`)
+        downloadEverything(everything(), `${name}-files.zip`)
             .then((done) => {
                 if (!done) warningMessageStore.addWarningMessage($LL.chat.brick.files.everythingFailed());
                 // The list stopped coming part of the way, or some files could not be read: the person must not take
@@ -220,6 +257,27 @@
                             <span>{$LL.chat.brick.files.noneMade({ name })}</span>
                         </p>
                     {/if}
+                {/if}
+
+                {#if $files.results.length > 0 && !searching}
+                    <div class="bkg-cap gap">{$LL.chat.brick.files.fromComputer()}</div>
+                    {#each $files.results as result (result.id)}
+                        <div class="bkg-tap" data-testid="filesResultRow" data-delivery={result.delivery}>
+                            <span class="bkg-ico"><IconFile font-size="20" /></span>
+                            <span class="bkg-mtx">
+                                <span class="bkg-t">{result.name}</span>
+                                <span class="bkg-cn">{resultNote(result, $LL, $locale, name)}</span>
+                                <span class="bkg-acts">
+                                    <PageButton testId="filesResultDownload" on:click={() => downloadResult(result)}
+                                        >{$LL.chat.brick.files.download()}</PageButton
+                                    >
+                                    <PageButton testId="filesResultDelete" on:click={() => removeResult(result)}
+                                        >{$LL.chat.brick.files.delete()}</PageButton
+                                    >
+                                </span>
+                            </span>
+                        </div>
+                    {/each}
                 {/if}
 
                 {#if !searching || $files.sent.files.length > 0 || sentLeft > 0}

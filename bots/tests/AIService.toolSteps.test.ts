@@ -44,6 +44,7 @@ vi.mock("../mcp/MCPConnector", () => ({
         clearCache: vi.fn(),
     },
     toolTimeoutMs: vi.fn(() => 60_000),
+    signInRefusalOf: vi.fn(() => undefined),
 }));
 
 

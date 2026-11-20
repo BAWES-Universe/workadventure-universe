@@ -103,7 +103,7 @@ describe('every use of an App on a connection', () => {
         const check = vi.fn<AppUseCheck>(async () => ({ allowed: true }));
         const [result] = await call(service(check));
         expect(result.result).toBe('done');
-        expect(check).toHaveBeenCalledWith('b1', 's1', { botId: 'b1', callId: 'call-7', heading: 'looksUp', requesterKey: 'u-sara' });
+        expect(check).toHaveBeenCalledWith('b1', 's1', { botId: 'b1', callId: 'call-7', heading: 'looksUp', requesterKey: 'u-sara', tool: 'search', argumentNames: [] });
         expect(execute).toHaveBeenCalledTimes(1);
     });
 
@@ -157,7 +157,7 @@ describe('every use of an App on a connection', () => {
         const ai = service(check);
         const entry = LENT.get('search') as never;
         expect(await ai.runApprovedTool('b1', entry, 'search', {}, 'u-sara', 60, { heading: 'deletesOrSends', callId: 'attempt-3' })).toBe('done');
-        expect(check).toHaveBeenCalledWith('b1', 's1', { botId: 'b1', requesterKey: 'u-sara', heading: 'deletesOrSends', callId: 'attempt-3' });
+        expect(check).toHaveBeenCalledWith('b1', 's1', { botId: 'b1', requesterKey: 'u-sara', heading: 'deletesOrSends', callId: 'attempt-3', tool: 'search', argumentNames: [] });
         expect(execute).toHaveBeenCalledTimes(1);
         // With no heading and call id it cannot be asked about: not run
         execute.mockClear();
@@ -298,8 +298,9 @@ describe('a ready-made App', () => {
                     sent.push(body);
                     return { data: { status: 401, contentType: null, sessionId: null, body: '' } };
                 }) as never);
-                const result = (await callWith(ai, 'second')).result as { outcome: string };
-                expect(result.outcome).toBe('not_sent');
+                const result = (await callWith(ai, 'second')).result as { outcome: string; error: string };
+                // Its key is no longer good: nothing ran, and it is told as a sign-in that expired (#1819), not as an outage
+                expect(result).toMatchObject({ outcome: 'failed', error: 'Sign-in expired. Nothing ran' });
                 expect(sent.map((b) => b.message.method)).toEqual(['tools/list']);
             } finally {
                 vi.useRealTimers();
@@ -340,7 +341,8 @@ describe('a ready-made App', () => {
         });
         const ai = service(async () => ({ allowed: true }));
         const [result] = await ai['executeToolCalls']([{ id: 'c-401', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-401', 7);
-        expect(result.result.outcome).toBe('not_sent');
+        // Nothing ran, and it is told as a sign-in that expired (#1819), not as an outage
+        expect(result.result).toMatchObject({ outcome: 'failed', error: 'Sign-in expired. Nothing ran' });
         expect(sent.map((b) => b.message.method)).toEqual(['initialize']);
         // Nothing was kept: the next call opens a session again
         sent.length = 0;

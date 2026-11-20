@@ -41,6 +41,8 @@
     import VoiceDraftCard from "../Bots/VoiceDraftCard.svelte";
     import VoiceListeningRow from "../Bots/VoiceListeningRow.svelte";
     import BotAskCard from "../Bots/BotAskCard.svelte";
+    import BotToolSignInCard from "../Bots/BotToolSignInCard.svelte";
+    import { closeToolSignIn, isToolSignInClosed } from "../../Bots/BotToolSignIn";
     import {
         askBarFits,
         chatAsks,
@@ -97,6 +99,7 @@
         brickStartersCard,
     } from "../../Bricks/BrickHello";
     import { connectFromCard } from "../../Bricks/Apps/ChatConnect";
+    import { connectApp } from "../../Bricks/Apps/ConnectApp";
     import { openAppsPage } from "../../Bricks/Apps/OpenApps";
     import { signInInPopup } from "../../Bricks/Apps/Reconnect";
     import { loadMyApps } from "../../Bricks/Apps/AppsStore";
@@ -377,7 +380,7 @@
                   drawnMessages as (ChatMessage & { session?: ProximitySessionMarker })[],
                   $spaceJoinedAt
               )
-    ).filter((entry) => !entry.message.transcriptNotice);
+    ).filter((entry) => !entry.message.transcriptNotice && !entry.message.toolSignIn);
     function isNoticeEntry(entry: TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>): boolean {
         return (
             ((entry.role === "start" || entry.role === "resume") && entry.message.session !== undefined) ||
@@ -536,6 +539,24 @@
     // Cards the bot asks one answer with (#1657), in a direct message with a bot. The oldest waiting card is pinned above the
     // message box until it is answered, closed or runs out; the chat keeps the ones that ended, where they were asked.
     // And in nearby chat (#1658), where a bot shows the card to the person who asked and nobody else.
+    // The newest Reconnect card a bot showed this person (#1819), pinned above the message box until they close it. A
+    // direct message keeps its cards in the chat: the card checks with Orbit that the sign-in is still lost before it shows.
+    let signInClosedCount = 0;
+    // Each bot has its newest word only (an empty one is the bot taking its card back); of those, the newest one that was not closed.
+    $: dockedSignIn = (() => {
+        void signInClosedCount;
+        const newestOfBot = new Map<string, ChatMessage>();
+        for (const message of $messages ?? []) {
+            if (!message.toolSignIn) continue;
+            // Deleted first, so the map keeps the bots in the order of their newest word
+            newestOfBot.delete(message.toolSignIn.botId);
+            newestOfBot.set(message.toolSignIn.botId, message);
+        }
+        const open = [...newestOfBot.values()].filter(
+            (message) => (message.toolSignIn?.lost.length ?? 0) > 0 && !isToolSignInClosed(message.id)
+        );
+        return open.length > 0 ? open[open.length - 1] : undefined;
+    })();
     $: askStore = (partnerBotId || proximityRoom) && messages ? chatAsks(messages) : readable([]);
     let askNow = Date.now();
     let askTimer: ReturnType<typeof setTimeout> | undefined;
@@ -751,6 +772,8 @@
         return connectFromCard(offer, brickId, {
             connectListedApp: (key) => botApiService.connectListedApp(key),
             signIn: (appId) => signInInPopup(appId),
+            connectReadyMade: ({ key, name }) =>
+                connectApp({ kind: "readyMade", key, name, blurb: "", connectionId: null }),
             isConnected: async (appId) => {
                 const answer = (await botApiService.getMyApp(appId)) as { app?: { connected?: unknown } } | undefined;
                 return answer?.app?.connected === true;
@@ -763,6 +786,8 @@
                 if (result === "connected") closeBrickCard(tappedKey);
                 else if (result === "stopped")
                     warningMessageStore.addWarningMessage(text.signInStopped({ name: offer.name }));
+                else if (result === "unchecked")
+                    warningMessageStore.addWarningMessage(text.signInUnchecked({ name: offer.name }));
                 else if (result === "blocked") warningMessageStore.addWarningMessage(text.signInBlocked());
                 else warningMessageStore.addWarningMessage(text.couldNotLet({ name: offer.name }));
                 // Connected but not let: the card goes, the Apps page is where to finish
@@ -1741,6 +1766,19 @@
                         onShowQueued={() => (pagedToAskId = waitingAsks[queuedSoonIndex]?.message.id)}
                         onOpen={() => chatSheetSnapStore.set("full")}
                     />
+                {/if}
+                {#if dockedSignIn?.toolSignIn}
+                    {@const signInMessageId = dockedSignIn.id}
+                    {#key signInMessageId}
+                        <BotToolSignInCard
+                            signIn={dockedSignIn.toolSignIn}
+                            refresh={$messages?.length}
+                            onClose={() => {
+                                closeToolSignIn(signInMessageId);
+                                signInClosedCount += 1;
+                            }}
+                        />
+                    {/key}
                 {/if}
                 {#if brickCard && ownBrick}
                     <!-- The Brick's own suggestions (#1995), on the question card: ways to start, then ideas. A tap

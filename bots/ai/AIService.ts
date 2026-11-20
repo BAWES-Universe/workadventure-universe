@@ -23,12 +23,14 @@ import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { sanitizedError } from '../utils/sanitizedError';
-import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { MCPConnector, REQUEST_TIMEOUT, narrowedToInputs, signInRefusalOf, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { toolIssueNote, type ToolIssue } from '../mcp/ToolSignIn';
+import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDelivery } from '../mcp/ToolSignInCard';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
-import { appNotUsedLine, type AppUseAnswer, type AppUseCheck, type AppUseRequest } from '../mcp/AppUse';
+import { alreadyAskedLine, appNotUsedLine, narrowToReturns, SHARED_FAILED_LINE, ownerNoteText, settleOutcomeOf, type AppUseAnswer, type AppUseCheck, type AppUseContext, type AppUseRequest, type AppUseSettle, type OwnerNote, type SettleOutcome } from '../mcp/AppUse';
 import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
@@ -159,6 +161,9 @@ import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type Reply
 const INSTANT_RUN_CASE = '\u0000instant-run';
 
 /** How long after someone joins a space the game has said who they are (the cards wait as long, see NearbyAsks). */
+/** When a shared try that Orbit did not take is told to it again: three more times, then it stays as it is, counted. */
+export const SETTLE_RETRY_MS: readonly number[] = [2_000, 15_000, 60_000];
+
 const PERSON_BACK_WAIT_MS = 1500;
 
 /** What one turn did, for the "Say when nothing was saved" check (Orbit #666). */
@@ -301,6 +306,8 @@ export class AIService {
     private nearbyAsks?: BotAsksPort;
     /** Asks Orbit before every use of an App on a connection (#2001). Without it such an App is not used. */
     private appUse?: AppUseCheck;
+    private appSettle?: AppUseSettle;
+    private ownerNotes?: (botId: string, note: OwnerNote) => Promise<void>;
     /** The replies only one person saw, where other people were (#1993). */
     private readonly privateAnswers = new PrivateAnswers();
 
@@ -362,6 +369,53 @@ export class AIService {
         this.appUse = check;
     }
 
+    /** Where what a try at a shared job came to is told (#2006), and where the owner is told once that the day's uses ran out. */
+    useAppSettle(settle: AppUseSettle, tellOwner?: (botId: string, note: OwnerNote) => Promise<void>): void {
+        this.appSettle = settle;
+        this.ownerNotes = tellOwner;
+    }
+
+    /**
+     * Tells Orbit what a shared try came to. Never throws. When Orbit does not take it, only the telling is tried again, a few times a
+     * little later and with the same call id and outcome (Orbit takes a repeat of it as the same word): the App is never called again for
+     * it. A try nobody could tell Orbit about stays counted, which is the safe side.
+     */
+    private async settleShared(use: { botId: string; callId: string }, serverId: string, result: unknown): Promise<SettleOutcome> {
+        const outcome = settleOutcomeOf(result);
+        const settle = this.appSettle;
+        if (!settle) return outcome;
+        const tell = async (): Promise<boolean> => {
+            try {
+                return (await settle(use.botId, serverId, use.callId, outcome)) !== false;
+            } catch (error) {
+                console.warn('[AIService] Could not settle a shared try:', error instanceof Error ? error.message : error);
+                return false;
+            }
+        };
+        if (await tell()) return outcome;
+        const later = (index: number): void => {
+            if (index >= SETTLE_RETRY_MS.length) return;
+            setTimeout(() => {
+                void tell().then((told) => {
+                    if (!told) later(index + 1);
+                });
+            }, SETTLE_RETRY_MS[index]).unref?.();
+        };
+        later(0);
+        return outcome;
+    }
+
+    /** Who a line about a shared App is about: the App's name, and its owner when the Brick knows them. */
+    private appContextOf(entry: ToolServerEntry, botId: string): AppUseContext {
+        return { ...(entry.serverName ? { app: entry.serverName } : {}), owner: this.roomBricks.get(botId)?.ownerName ?? null };
+    }
+
+    /** The owner is told once, in their own chat with the Brick, that today's uses for other people ran out. Never throws. */
+    private tellOwner(botId: string, note: OwnerNote | undefined): void {
+        if (!note || !this.ownerNotes) return;
+        this.ownerNotes(botId, note).catch((error) => console.warn('[AIService] Could not tell the owner about the limit:', error instanceof Error ? error.message : error));
+    }
+
     /** Where an answer only one person saw in nearby chat is found again: their direct messages with the bot (#1993). */
     keepPrivateAnswersIn(copies: PrivateAnswerCopies | undefined): void {
         this.privateAnswers.keepCopiesIn(copies);
@@ -406,8 +460,18 @@ export class AIService {
         abortSignal?: AbortSignal,
         toolTimeoutSeconds?: number | null,
         /** Who is asking, which call this is and what heading the tool is under: needed when the App sits on a connection (#2001). */
-        use?: AppUseRequest & { botId: string }
+        use?: AppUseRequest & { botId: string; forOthers?: boolean }
     ): Promise<any> {
+        // Set when someone else is asking for a job its owner shared (#2006); an error then reaches them in the bot's words only
+        let shared: { returns: string[] | null } | undefined;
+        // Someone else asks for the job: what is sent to the App is held to the inputs the owner picked, here, whatever Orbit says
+        const visitor = use?.forOthers === true;
+        // The owner's note that this ask took the day's last use, held until the try is settled
+        let heldNote: OwnerNote | undefined;
+        if (visitor && entry.connectionId) {
+            if (!entry.sharedJob) return { error: appNotUsedLine('not_shared', this.appContextOf(entry, use?.botId ?? '')), outcome: 'not_sent' };
+            args = Object.fromEntries(Object.entries(args ?? {}).filter(([name]) => entry.sharedJob?.inputs.includes(name)));
+        }
         try {
             // An App with a key (#2044) is used only through Orbit, which holds the key, checks the use again and answers with the fields
             // the App lists: nothing here ever reaches the service
@@ -424,39 +488,88 @@ export class AIService {
             }
             // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
             // spent or a switch turned off stops it at once. No answer is a no.
+            // Someone else asking for a job its owner shared (#2006) is told so here: what comes back is held to what was picked, and what
+            // the try came to is told to Orbit, which only gives the use back for a failure it can be sure of
             if (entry.connectionId) {
-                const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, use) : { allowed: false, reason: 'unavailable' };
-                if (!answer.allowed) return { error: appNotUsedLine(answer.reason ?? 'gone'), outcome: 'not_sent' };
+                const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, { ...use, tool: toolName, argumentNames: Object.keys(args ?? {}) }) : { allowed: false, reason: 'unavailable' };
+                // A refused ask used nothing, so the owner is told at once. When this ask took the day's last use, the owner is told once it is known
+                // that the use stays taken: a use given back because the job never ran leaves the day open, and nothing is said then
+                if (!answer.allowed) this.tellOwner(use?.botId ?? '', answer.ownerNote);
+                else if (answer.shared && use) heldNote = answer.ownerNote;
+                else if (!visitor) this.tellOwner(use?.botId ?? '', answer.ownerNote);
+                if (!answer.allowed) {
+                    const context = this.appContextOf(entry, use?.botId ?? '');
+                    const reason = answer.reason ?? 'gone';
+                    // A refusal only someone asking for a shared job can meet names the App; the owner's own refusals read as before
+                    const sharedReason = reason === 'not_shared' || reason === 'busy' || reason === 'already_asked' || (reason === 'limit_reached' && use?.requesterKey && !use.forOwner && answer.resetsAt);
+                    return {
+                        error: reason === 'already_asked' ? alreadyAskedLine(answer.earlier, context) : appNotUsedLine(reason, sharedReason ? context : {}),
+                        outcome: 'not_sent',
+                    };
+                }
+                shared = answer.shared;
+                // Someone else's try runs only when Orbit said what may come back, even if that is the whole answer: no word, no run. Nothing was
+                // sent, so the use is given back.
+                if (visitor && !shared && use) {
+                    const refused = { error: appNotUsedLine('unavailable'), outcome: 'not_sent' };
+                    await this.settleShared(use, entry.serverId, refused);
+                    return refused;
+                }
             }
-            const rawResult = await MCPConnector.executeToolCall(
-                entry.serverId,
-                entry.serverUrl,
-                toolName,
-                args,
-                entry.authType,
-                entry.authConfig,
-                entry.headers,
-                playerUuid,
-                abortSignal,
-                toolTimeoutMs(toolTimeoutSeconds),
-                // A ready-made App is reached only through Orbit, which holds the key its link needs
-                entry.readyMade && entry.orbitUrl && use
-                    ? { orbitUrl: entry.orbitUrl, botId: use.botId, serverId: entry.serverId, callId: use.callId, ...(use.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use.forOwner ? { forOwner: true } : {}) }
-                    : undefined
-            );
-            // Process MCP resource blobs (base64 binary data) by uploading to CDN
-            // and returning CDN URLs so the AI can use send_image/send_audio/etc.
-            if (Array.isArray(rawResult)) {
-                const processed = await this.processMcpResourceContent(rawResult);
-                return processed.content;
+            let sharedTry = !!shared && !!use;
+            try {
+                const rawResult = await MCPConnector.executeToolCall(
+                    entry.serverId,
+                    entry.serverUrl,
+                    toolName,
+                    args,
+                    entry.authType,
+                    entry.authConfig,
+                    entry.headers,
+                    playerUuid,
+                    abortSignal,
+                    toolTimeoutMs(toolTimeoutSeconds),
+                    // A ready-made App is reached only through Orbit, which holds the key its link needs
+                    entry.readyMade && entry.orbitUrl && use
+                        ? { orbitUrl: entry.orbitUrl, botId: use.botId, serverId: entry.serverId, callId: use.callId, ...(use.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use.forOwner ? { forOwner: true } : {}) }
+                        : undefined
+                );
+                // The tool server turned the sign-in away: Orbit is told, and the bot stops calling it (#1819)
+                const refused = signInRefusalOf(rawResult);
+                if (refused !== undefined) {
+                    const adminApiToken = this.adminApiService?.['adminApiToken'];
+                    if (adminApiToken) MCPConnector.noteRefused(entry, { adminApiUrl: this.adminApiUrl, adminApiToken }, refused);
+                }
+                // What the try came to is told to Orbit before anything else is done with it: a use is given back only for a failure that is sure
+                if (sharedTry && use) {
+                    sharedTry = false;
+                    const settled = await this.settleShared(use, entry.serverId, rawResult);
+                    if (settled !== 'failed') this.tellOwner(use.botId, heldNote);
+                }
+                // Process MCP resource blobs (base64 binary data) by uploading to CDN
+                // and returning CDN URLs so the AI can use send_image/send_audio/etc.
+                const narrowed = shared ? narrowToReturns(rawResult, shared.returns) : rawResult;
+                if (Array.isArray(narrowed)) {
+                    const processed = await this.processMcpResourceContent(narrowed);
+                    return processed.content;
+                }
+                return narrowed;
+            } catch (afterSend) {
+                // Something broke after the use was taken and before Orbit was told what it came to: it may have run, so the try stays counted
+                if (sharedTry && use) {
+                    await this.settleShared(use, entry.serverId, { error: 'unknown' });
+                    this.tellOwner(use.botId, heldNote);
+                }
+                throw afterSend;
             }
-            return rawResult;
         } catch (mcpError: any) {
             // The error's words can quote what was passed to the tool or what came back (an email, a file), and logs and
             // Sentry keep what they are given: only the tool's name and the kind of error leave this function
             const kind = mcpError instanceof Error ? mcpError.name : 'Error';
             console.error(`[AIService] Error executing MCP tool ${toolName}: ${kind}`);
             Sentry.captureException(sanitizedError(mcpError, `MCP tool ${toolName} failed (${kind})`), { tags: { area: 'bot-tools' } });
+            // It may have run (the use stays counted): never run again
+            if (shared) return { error: SHARED_FAILED_LINE, outcome: 'uncertain', hint: 'It may have run, so do not call it again.' };
             return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
         }
     }
@@ -1206,6 +1319,8 @@ export class AIService {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
+            memory?.sharedUncertain?.clear();
+            memory?.sharedInFlight?.clear();
             memory?.sentAgain?.clear();
             memory?.cardsAgain?.clear();
         }
@@ -1481,8 +1596,8 @@ export class AIService {
 
             // Define tools for function calling
             // An answer for one person alone has none (#1993): a tool's steps, cards and files are shown to the whole space
-            const { tools, toolServerMap } = options?.onlyForThem
-                ? { tools: [] as any[], toolServerMap: new Map<string, ToolServerEntry>() }
+            const { tools, toolServerMap, issues: toolIssues } = options?.onlyForThem
+                ? { tools: [] as any[], toolServerMap: new Map<string, ToolServerEntry>(), issues: undefined as ToolIssue[] | undefined }
                 : await this.buildTools(
                       botId,
                       botClient,
@@ -1493,21 +1608,41 @@ export class AIService {
                       computerOn,
                       instantListing
                   );
-            // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
+            // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005), except a job from an App
+            // its owner shared (#2006): only the jobs they picked, with only the inputs they picked. The rest of the App is not even listed.
             if (forOthers) {
+                // Another App's tool of the same name came first for its owner; the job that was shared is what someone else is offered instead
+                for (const [name, first] of [...toolServerMap]) {
+                    const alt = first.sharedAlt;
+                    if (first.sharedJob || !alt || !botId) continue;
+                    if (!(await this.toolGate.offers(this.gateCallFor(botId, name, alt.entry, this.gatePerson(botId, playerId, botClient, spaceName), botClient)))) continue;
+                    const at = tools.findIndex((tool) => tool?.function?.name === name);
+                    if (at >= 0) tools[at] = alt.tool;
+                    else tools.push(alt.tool);
+                    toolServerMap.set(name, alt.entry);
+                }
                 for (let at = tools.length - 1; at >= 0; at--) {
                     const name: string = tools[at]?.function?.name ?? '';
+                    const sharedJob = toolServerMap.get(name)?.sharedJob;
+                    if (sharedJob && toolServerMap.get(name)?.connectionId) {
+                        tools[at] = narrowedToInputs(tools[at], sharedJob.inputs);
+                        continue;
+                    }
                     if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
                 }
-                toolServerMap.clear();
+                for (const [name, entry] of [...toolServerMap]) if (!entry.sharedJob || !entry.connectionId) toolServerMap.delete(name);
             }
             if (taskSettings && !forOthers) this.offerTaskTools(tools, toolServerMap);
+            // A tool whose sign-in expired, or that did not answer: the bot is told which, and the people who manage it get the card (#1819).
+            // Never for an answer for one person alone or for a Brick standing in for others: they use none of the owner's apps (#1993, #2005)
+            const toolSignIn = options?.onlyForThem || forOthers ? undefined : await this.toolSignInFor(botId, toolIssues, channel, botClient, spaceName, playerId);
+            if (toolSignIn) yield { content: '', done: false, toolSignIn: toolSignIn.card, toolSignInDelivery: toolSignIn.delivery };
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, forOthers || options?.onlyForThem ? '' : toolIssueNote(toolIssues ?? []), visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers, forOthers && tools.some((tool) => !!toolServerMap.get(tool?.function?.name ?? '')?.sharedJob)) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -3305,9 +3440,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false, instant: InstantListing | null = null): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false, instant: InstantListing | null = null): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry>; issues: ToolIssue[] | undefined }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
+        // Undefined when the tool servers could not be asked: nothing is known then
+        let issues: ToolIssue[] | undefined = [];
 
         if (botClient) {
             // Tool: Get people on the map
@@ -3532,6 +3669,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // offered and the one run, so the definition the model reads and the call that runs always belong together
                 const instantNames = new Set(tools.filter((tool) => isInstantTool(tool.function?.name ?? '')).map((tool) => tool.function.name));
                 const mcpTools = (mcpResult.tools as any[]).filter((tool) => !instantNames.has(tool.function?.name));
+                issues = mcpResult.issues;
 
                 // Transfer tool→server mapping to the outer-scope map
                 for (const [key, value] of mcpResult.toolServerMap) {
@@ -3570,11 +3708,97 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             } catch (e) {
                 console.warn('[AIService] Failed to discover MCP tools:', e);
+                issues = undefined;
                 Sentry.captureException(e instanceof Error ? e : new Error(String(e)));
             }
         }
 
-        return { tools, toolServerMap };
+        return { tools, toolServerMap, issues };
+    }
+
+    /** Who was shown a Reconnect card for which outage (#1819). */
+    private readonly signInShown = new ToolSignInShown();
+
+    /**
+     * The Reconnect card for the people who manage this bot when a tool server turned its sign-in away (#1819). In a
+     * bubble it goes to that person alone, as a private event, and is taken back once the sign-in is back. In a direct
+     * message the card is returned for the reply to send as a notice. Nobody else sees it; no one is shown a card on a
+     * guess about who manages the bot.
+     */
+    private async toolSignInFor(
+        botId: string | undefined,
+        issues: readonly ToolIssue[] | undefined,
+        channel: 'world' | 'dm',
+        botClient: BotClient | undefined,
+        spaceName: string | undefined,
+        playerId: number | undefined
+    ): Promise<{ card: ToolSignInCard; delivery: ToolSignInDelivery } | undefined> {
+        // The tool servers could not be asked: a card shown before stays as it is
+        if (!botId || !issues) return undefined;
+        try {
+            const person = this.gatePerson(botId, playerId, botClient, spaceName);
+            const key = `${botId}|${channel}|${spaceName ?? ''}|${channel === 'world' ? playerId : person.signedIn ? person.identifier : ''}`;
+            const nearby = channel === 'world' && !!botClient && !!spaceName && playerId !== undefined;
+            // No sign-in is lost any more (a server that only does not answer has no card): a card shown before is taken back once
+            if (!toolSignInCard(issues)) {
+                if (nearby && this.signInShown.isShown(key)) {
+                    const sent = botClient!.sendAskEvent(spaceName!, playerId!, {
+                        kind: 'signin',
+                        id: `signin-${botId}`,
+                        revision: Math.floor(Date.now() / 1000),
+                        body: JSON.stringify({ lost: [] }),
+                    });
+                    // Taken back only once it went out: a person who was not there is sent it at a later reply
+                    if (sent) this.signInShown.cleared(key);
+                } else if (channel === 'dm' && this.signInShown.isShown(key)) {
+                    // A direct message takes its card back the same way, with a notice whose list is empty: the reply sends it
+                    // and says how it went, and it is taken back here only once it got out
+                    return {
+                        card: { lost: [] },
+                        delivery: (delivered) => {
+                            if (delivered) this.signInShown.cleared(key);
+                        },
+                    };
+                } else {
+                    this.signInShown.cleared(key);
+                }
+                return undefined;
+            }
+            if (!person.signedIn || !person.identifier) return undefined;
+            if (!(await this.toolGate.canManage(botId, person.identifier))) return undefined;
+            // The card goes once Orbit has the state it shows: the page checks with Orbit as the card opens. Only a manager's
+            // reply waits for this, and only while a report is still on its way.
+            await MCPConnector.health.settled(botId);
+            // Read again after the wait: a sign-in that came back, or failed again, while it ran is not shown as it was
+            const fresh = MCPConnector.health.issuesFor(botId, new Set(issues.map((issue) => issue.serverId)));
+            const card = toolSignInCard(fresh.filter((issue) => MCPConnector.health.isReported(botId, issue.serverId)));
+            if (!card) return undefined;
+            const delivery = this.signInShown.claim(key, card);
+            if (!delivery) return undefined;
+            // The card names Apps and connections only a manager may see: asked of Orbit now, not taken from a few moments ago
+            if (!(await this.toolGate.canManage(botId, person.identifier, { fresh: true }))) {
+                delivery(false);
+                return undefined;
+            }
+            if (nearby) {
+                const sent = botClient!.sendAskEvent(spaceName!, playerId!, {
+                    kind: 'signin',
+                    id: `signin-${botId}`,
+                    revision: Math.floor(Date.now() / 1000),
+                    body: JSON.stringify(card),
+                });
+                // The person is not in the space (any more), or the connection dropped it: they are shown the card at a later reply
+                delivery(sent);
+                return undefined;
+            }
+            // A direct message: the reply sends it, and says how it went
+            if (channel === 'dm') return { card, delivery };
+            delivery(false);
+            return undefined;
+        } catch (error) {
+            console.warn('[AIService] Could not show the Reconnect card:', error instanceof Error ? error.message : error);
+            return undefined;
+        }
     }
 
     /**
@@ -3800,13 +4024,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
     private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; apps?: string[]; reviewed?: ReadonlySet<string> }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
-        const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        const userId = memory?.userUuid;
         if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
         const botId = where.botId;
         const result = await runComputerTool(args, {
             admin,
             botId,
             userId,
+            // The direct chat this was asked in: the result goes back to it, never to another chat
+            ...(memory?.dmRoomId ? { origin: { kind: 'dm' as const, ref: memory.dmRoomId } } : {}),
             apps: where.apps,
             reviewed: where.reviewed,
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
@@ -4844,7 +5071,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     default: {
                         // Check if this is an MCP tool (not a hardcoded one)
                         // (a visitor's turn has no Apps: its list is empty, and a name from it is refused here as well)
-                        const mcpServerConfig = forOthers ? undefined : toolServerMap?.get(toolCall.name);
+                        // Someone else is offered only what its owner shared (#2006); the check with Orbit at the call holds it again
+                        const found = toolServerMap?.get(toolCall.name);
+                        const mcpServerConfig = forOthers ? (found?.sharedJob && found.connectionId ? found : undefined) : found;
                         if (mcpServerConfig) {
                             // One check right before the call starts (#1656): the model's list is only a convenience
                             const verdict = botId
@@ -4859,7 +5088,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 result = this.toolNotRun(verdict);
                                 break;
                             }
-                            if (verdict.kind === 'ask') {
+                            // Picking the job to share is the owner's OK: someone else is not asked for it on a card (#2006). But a job that was never
+                            // reviewed, or has changed since, was not what the owner picked: nobody is asked about it and it is not run
+                            if (verdict.kind === 'ask' && forOthers && verdict.notReviewed) {
+                                result = { error: appNotUsedLine('not_shared', this.appContextOf(mcpServerConfig, botId ?? '')), outcome: 'not_sent' };
+                                break;
+                            }
+                            if (verdict.kind === 'ask' && !forOthers) {
                                 // A card in a direct message asks for the OK; the call waits there, not here (#1657)
                                 const asked = await this.askForOk(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
                                 if (asked.kind === 'result') {
@@ -4868,7 +5103,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 }
                             }
                             let release: (() => void) | undefined;
-                            if (verdict.kind === 'run' && verdict.heading === 'makesNew') {
+                            if (verdict.kind === 'run' && verdict.heading === 'makesNew' && !forOthers) {
                                 // Runs right away, until a request would make more than the bot's limit (#1662)
                                 const counted = await this.checkHowMany(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
                                 if (counted.kind === 'result') {
@@ -4878,12 +5113,49 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 release = counted.release;
                             }
                             const asker = this.gatePerson(botId, playerId, botClient, spaceName);
-                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
+                            // A job that may have run for someone else is not sent again in this reply, whatever the model asks (#2006): the same job with the
+                            // same inputs gets the answer of the first try. Orbit never runs the same call twice either, but each ask here is a new call
+                            const memory = forOthers && botId && playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : undefined;
+                            // The key is of what would be sent, not of what the model wrote: an extra input nobody picked is dropped before the App is
+                            // called, so a repeat that differs only by it is the same job
+                            const sentArgs: Record<string, unknown> =
+                                forOthers && mcpServerConfig.sharedJob
+                                    ? Object.fromEntries(Object.entries(parsedArgs ?? {}).filter(([name]) => mcpServerConfig.sharedJob?.inputs.includes(name)))
+                                    : (parsedArgs ?? {});
+                            const repeatKey = `${toolCall.name}:${stableJson(sentArgs)}`;
+                            if (memory?.sharedUncertain?.has(repeatKey)) {
+                                result = { error: alreadyAskedLine('unknown', this.appContextOf(mcpServerConfig, botId ?? '')), outcome: 'uncertain' };
+                                break;
+                            }
+                            // The same job with the same inputs asked twice in one round (the calls of a round start together) is one try: the second
+                            // waits for the first and is given its answer, so it is neither counted nor sent a second time
+                            const alongside = memory?.sharedInFlight?.get(repeatKey);
+                            if (alongside) {
+                                result = await alongside;
+                                break;
+                            }
+                            const running = this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
                                 botId: botId!,
                                 callId: toolCall.id,
                                 ...(verdict.heading ? { heading: verdict.heading } : {}),
-                                ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
+                                ...(forOthers ? { forOthers: true } : {}),
+                                // Someone else is counted by who they are. A guest is counted by the id their browser keeps, under one name whether or not the
+                                // game knows them, so each has a day of their own and a reload gives no new one; the session only when there is no such id
+                                ...(asker.signedIn && asker.identifier
+                                    ? { requesterKey: asker.identifier }
+                                    : forOthers && playerId !== undefined
+                                      ? { requesterKey: `guest:${this.chatCallFor(botId!, playerId, botClient, spaceName)?.person.identifier || (playerUuid && !playerUuid.startsWith('temp-') ? playerUuid : playerId)}` }
+                                      : {}),
                             });
+                            if (memory) (memory.sharedInFlight ??= new Map()).set(repeatKey, running);
+                            try {
+                                result = await running;
+                            } finally {
+                                if (memory?.sharedInFlight?.get(repeatKey) === running) memory.sharedInFlight.delete(repeatKey);
+                            }
+                            if (memory && result && typeof result === 'object' && !Array.isArray(result) && (result as { outcome?: unknown }).outcome === 'uncertain') {
+                                (memory.sharedUncertain ??= new Set()).add(repeatKey);
+                            }
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
                         } else {

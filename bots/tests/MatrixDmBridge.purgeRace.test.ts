@@ -1,0 +1,479 @@
+/**
+ * What a Brick's own chat code may still do once its purge has begun (register R29): nothing is written for it, and a chat closed because the
+ * Brick is gone is cleared by the purge like any other. Each case starts a purge while an ordinary path is in the middle of its work.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
+import type { MatrixEvent } from '../matrix/MatrixAppServiceRouter';
+
+const config = { homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as-secret', hsToken: 'hs-secret' };
+const BOT = '0b7c1d2e-1111-4222-8333-944455556666';
+const BOT_USER = `@bot_${BOT}:matrix.test`;
+const ALICE = '@alice:matrix.test';
+const ROOM = '!dm:matrix.test';
+
+const message = (id: string, ts = 1): MatrixEvent => ({
+    type: 'm.room.message', room_id: ROOM, sender: ALICE, event_id: id, origin_server_ts: ts, content: { msgtype: 'm.text', body: `from ${id}` },
+});
+
+function makeClient(): any {
+    const sent: MatrixEvent[] = [];
+    return {
+        sent,
+        ensureRegistered: vi.fn(async () => undefined),
+        setDisplayName: vi.fn(async () => undefined),
+        getDisplayName: vi.fn(async () => 'Guide'),
+        leaveRoom: vi.fn(async () => undefined),
+        forgetRoom: vi.fn(async () => undefined),
+        sendText: vi.fn(async () => '$evt'),
+        sendMessage: vi.fn(async (_u: string, room: string, content: any) => {
+            sent.push({ type: 'm.room.message', room_id: room, sender: BOT_USER, event_id: `$note${sent.length}`, content });
+            return `$note${sent.length}`;
+        }),
+        setTyping: vi.fn(async () => undefined),
+        getJoinedMembers: vi.fn(async () => [ALICE, BOT_USER]),
+        getRecentMessages: vi.fn(async (): Promise<MatrixEvent[]> => []),
+        getJoinedRooms: vi.fn(async () => [ROOM]),
+        clearProfile: vi.fn(async () => undefined),
+        getProfile: vi.fn(async () => ({ displayName: null, avatarUrl: null })),
+        getMessagesPage: vi.fn(async () => ({ events: sent.filter((event) => !redacted.has(event.event_id)), end: undefined })),
+        redactEvent: vi.fn(async (_u: string, _room: string, eventId: string) => void redacted.add(eventId)),
+    };
+}
+let redacted: Set<string>;
+
+function makeDeps(): any {
+    const rooms = new Map<string, string>([[ROOM, BOT]]);
+    return {
+        getBotConfig: vi.fn(async () => ({ botId: BOT, name: 'Guide', enabled: true, aiProviderRef: 'p' }) as never),
+        checkAccess: vi.fn(async () => ({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } })),
+        reply: vi.fn(async () => ({ text: 'Hello Alice!', media: [] })),
+        rooms: {
+            rememberDmRoom: vi.fn(async () => undefined),
+            getDmRoomBot: vi.fn(async (r: string) => rooms.get(r) ?? null),
+            forgetDmRoom: vi.fn(async (r: string) => void rooms.delete(r)),
+            forgetDmRoomOf: vi.fn(async () => undefined),
+            // The owed-forget record the purge writes before it leaves a room (R29): an in-memory copy of the shared store's
+            ...(() => {
+                const owed = new Set<string>();
+                return {
+                    rememberPendingForget: vi.fn(async (u: string, r: string) => void owed.add(`${u}|${r}`)),
+                    pendingForgetsOf: vi.fn(async (u: string) => [...owed].filter((k) => k.startsWith(`${u}|`)).map((k) => k.slice(u.length + 1))),
+                    allPendingForgets: vi.fn(async () => [...owed].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) }))),
+                    clearPendingForget: vi.fn(async (u: string, r: string) => void owed.delete(`${u}|${r}`)),
+                };
+            })(),
+        },
+        waiting: {
+            hasSharedStore: () => true,
+            rememberWaitingDm: vi.fn(async () => undefined),
+            waitingDmBots: vi.fn(async () => []),
+            hasWaitingDms: vi.fn(async () => false),
+            takeWaitingDms: vi.fn(async () => []),
+        },
+    };
+}
+
+describe('MatrixDmBridge: a purge that begins in the middle of ordinary work (R29)', () => {
+    let client: any;
+    let deps: any;
+    let bridge: any;
+
+    beforeEach(() => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        redacted = new Set();
+        client = makeClient();
+        deps = makeDeps();
+        bridge = new MatrixDmBridge(config, client as never, deps) as any;
+        bridge.roomBots.set(ROOM, BOT);
+        bridge.roomMembers.set(ROOM, new Set([ALICE, BOT_USER]));
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it('does not put the picture back when a message already in flight reaches it after the purge began', async () => {
+        const update = vi.fn(async () => undefined);
+        bridge.avatars = { update };
+        // The purge begins while the person's card approvals are being closed, which is just before the picture is refreshed
+        deps.approvals = { newRequest: vi.fn(), onPersonMessage: vi.fn(() => { bridge.purgedBots.add(BOT); return Promise.resolve(); }) };
+        await bridge.onEvent(message('$m1'));
+        expect(update).not.toHaveBeenCalled();
+        expect(deps.reply).not.toHaveBeenCalled();
+        // And for a Brick not being purged, the picture is still refreshed
+        bridge.purgedBots.delete(BOT);
+        deps.approvals = undefined;
+        await bridge.onEvent(message('$m2'));
+        expect(update).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends no Reconnect card once the purge began while the reply was being made, and says it did not get out', async () => {
+        const delivery = vi.fn();
+        const toolSignIn = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
+        deps.reply.mockImplementationOnce(async () => {
+            bridge.purgedBots.add(BOT);
+            return { text: 'Hello Alice!', media: [], toolSignIn, toolSignInDelivery: delivery };
+        });
+        await bridge.onEvent(message('$m1'));
+        expect(client.sendMessage.mock.calls.filter((call: any[]) => call[2]?.['universe.tool_signin'])).toHaveLength(0);
+        expect(delivery).not.toHaveBeenCalledWith(true);
+    });
+
+    it('answers nothing for a Brick whose purge began while its configuration was loading', async () => {
+        deps.getBotConfig.mockImplementation(async () => {
+            bridge.purgedBots.add(BOT);
+            return { botId: BOT, name: 'Guide', enabled: true, aiProviderRef: 'p' };
+        });
+        await bridge.onEvent(message('$m1'));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(client.sendMessage).not.toHaveBeenCalled();
+    });
+
+    const personLeaves = (): MatrixEvent => ({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
+
+    it('does not leave on its own when the person leaves while the room is being cleared: it waits for that run', async () => {
+        let finish!: () => void;
+        bridge.roomPurges.set(ROOM, new Promise<void>((resolve) => { finish = resolve; }));
+        const handled = bridge.onEvent(personLeaves());
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        finish();
+        await handled;
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+    });
+
+    it('does not ask the shared store anything for a Brick that never had a chat account', async () => {
+        client.getJoinedRooms.mockResolvedValue(null);
+        deps.rooms.pendingForgetsOf.mockRejectedValue(new Error('The shared store is down'));
+        deps.rooms.forgetDmRoomsOfBot = vi.fn(async () => { throw new Error('The shared store is down'); });
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(deps.rooms.pendingForgetsOf).not.toHaveBeenCalled();
+        expect(deps.rooms.forgetDmRoomsOfBot).not.toHaveBeenCalled();
+    });
+
+    it('still clears the profile and the rooms while the shared store is down, and says the try is not done', async () => {
+        deps.rooms.pendingForgetsOf.mockRejectedValue(new Error('The shared store is down'));
+        deps.rooms.forgetDmRoomsOfBot = vi.fn(async () => { throw new Error('The shared store is down'); });
+        client.sent.push({ type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$said', content: { msgtype: 'm.text', body: 'hi' } });
+        // The room cannot be left without the owed record, which needs the store too: the room stays joined for the next try
+        deps.rooms.rememberPendingForget.mockRejectedValue(new Error('The shared store is down'));
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(client.clearProfile).toHaveBeenCalledTimes(1);
+        expect(client.redactEvent).toHaveBeenCalledTimes(1);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+    });
+
+    it('drops every link the shared store keeps for the Brick, found from the Brick and not from the people still in a room', async () => {
+        deps.rooms.forgetDmRoomsOfBot = vi.fn(async () => undefined);
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(deps.rooms.forgetDmRoomsOfBot).toHaveBeenCalledWith(BOT);
+    });
+
+    it('clears the room (redact, then leave) when the person leaves and the Brick is being purged', async () => {
+        bridge.purgedBots.add(BOT);
+        client.sent.push({ type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$said', content: { msgtype: 'm.text', body: 'hi' } });
+        const order: string[] = [];
+        client.redactEvent.mockImplementation(async (_u: string, _r: string, id: string) => void (redacted.add(id), order.push(`redact ${id}`)));
+        client.leaveRoom.mockImplementation(async () => void order.push('leave'));
+        await bridge.onEvent(personLeaves());
+        expect(order).toEqual(['redact $said', 'leave']);
+    });
+
+    it('a person leaving a Brick that is not being purged closes the chat for them, and the Brick stays in the room so its purge can still redact there', async () => {
+        await bridge.onEvent(personLeaves());
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(client.redactEvent).not.toHaveBeenCalled();
+        expect(deps.rooms.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+        // The Brick is deleted later: its purge finds the room still joined, redacts what the Brick said there (only it was left), then leaves and forgets
+        client.sent.push({ type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$old', content: { msgtype: 'm.text', body: 'hello' } });
+        client.getJoinedMembers.mockResolvedValue([BOT_USER]);
+        const order: string[] = [];
+        client.redactEvent.mockImplementation(async (_u: string, _r: string, id: string) => void (redacted.add(id), order.push(`redact ${id}`)));
+        client.leaveRoom.mockImplementation(async () => void order.push('leave'));
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(order).toEqual(['redact $old', 'leave']);
+        expect(client.forgetRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+    });
+
+    it('sweeps every room of a deleted Brick in one run, the rooms people left included, and one room that fails does not stop the others', async () => {
+        const rooms = ['!a:matrix.test', '!b:matrix.test', '!c:matrix.test'];
+        client.getJoinedRooms.mockResolvedValue(rooms);
+        client.getJoinedMembers.mockResolvedValue([BOT_USER]);
+        client.getMessagesPage.mockImplementation(async (_u: string, room: string) => {
+            if (room === '!b:matrix.test') throw new Error('homeserver hiccup');
+            return { events: [], end: undefined };
+        });
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        const left = client.leaveRoom.mock.calls.map((call: any[]) => call[1]).sort();
+        expect(left).toEqual(['!a:matrix.test', '!c:matrix.test']);
+    });
+
+    it('does not leave a room, and does not report a purge done, unless the record of owed forgets is complete (all four calls)', async () => {
+        for (const missing of ['rooms', 'rememberPendingForget', 'pendingForgetsOf', 'allPendingForgets', 'clearPendingForget'] as const) {
+            const bare = makeDeps();
+            if (missing === 'rooms') delete bare.rooms;
+            else delete bare.rooms[missing];
+            const bareBridge = new MatrixDmBridge(config, client as never, bare) as any;
+            // A restart after a leave whose forget failed: the next purge must fail, never report success without retrying the forget
+            expect(await bareBridge.purgeChats(BOT)).toBe(false);
+            await expect(bareBridge.purgeRoom(BOT, BOT_USER, ROOM)).rejects.toThrow('Nowhere to write down');
+        }
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+    });
+
+    it('every way into a room\'s clearing waits for a send under way: a person leaving a Brick being purged, and a chat closed for a gone bot', async () => {
+        for (const entry of ['person leaves', 'closeChat'] as const) {
+            client.getMessagesPage.mockClear();
+            client.leaveRoom.mockClear();
+            let release!: () => void;
+            const sending = bridge.sendAsBrick(BOT, () => new Promise<string>((resolve) => { release = () => resolve('$late'); }));
+            const clearing = entry === 'closeChat' ? bridge.closeChat(BOT, ROOM, 'en') : (bridge.purgedBots.add(BOT), bridge.onEvent(personLeaves()));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            // The history is not read, and the Brick has not left, until the send is done
+            expect(client.getMessagesPage).not.toHaveBeenCalled();
+            expect(client.leaveRoom).not.toHaveBeenCalled();
+            release();
+            await sending;
+            await clearing;
+            expect(client.getMessagesPage).toHaveBeenCalled();
+            expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+            bridge.purgedBots.delete(BOT);
+            bridge.roomMembers.set(ROOM, new Set([ALICE, BOT_USER]));
+        }
+    });
+
+    it('records a file that got through even when the purge began while it was on its way, and records none that was never sent', async () => {
+        const song = { url: 'https://tools.example.com/song.mp3', mediaType: 'audio', mimeType: '', createdAt: 0, retryCount: 0 };
+        const mediaSent = vi.fn();
+        let finish!: () => void;
+        // The file is mid-send when the purge begins
+        vi.spyOn(bridge as any, 'sendMedia').mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+        deps.reply.mockResolvedValueOnce({ text: 'Here it is.', media: [song], mediaSent });
+        const handled = bridge.onEvent(message('$m1'));
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+        bridge.purgedBots.add(BOT);
+        finish();
+        await handled;
+        expect(mediaSent).toHaveBeenCalledWith(song);
+        // A file whose send never began (the Brick was already silenced) is not recorded
+        mediaSent.mockClear();
+        deps.reply.mockResolvedValueOnce({ text: 'Again.', media: [song], mediaSent });
+        await bridge.onEvent(message('$m2'));
+        expect(mediaSent).not.toHaveBeenCalled();
+    });
+
+    it('a chat closed for a Brick that is no longer in the room drops what is kept for the room, and does not fail', async () => {
+        client.getJoinedMembers.mockRejectedValue(new Error('403 M_FORBIDDEN: not in the room'));
+        client.getJoinedRooms.mockResolvedValue([]);
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(deps.rooms.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+        expect(bridge.roomBots.has(ROOM)).toBe(false);
+        expect(client.redactEvent).not.toHaveBeenCalled();
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(client.forgetRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+    });
+
+    it('a Brick still in the room whose members cannot be read keeps the room for the next try (nothing dropped, nothing left)', async () => {
+        client.getJoinedMembers.mockRejectedValue(new Error('502'));
+        client.getJoinedRooms.mockResolvedValue([ROOM]);
+        await expect(bridge.purgeRoom(BOT, BOT_USER, ROOM)).rejects.toThrow('502');
+        // The room list cannot be read either: the same
+        client.getJoinedRooms.mockRejectedValue(new Error('502'));
+        await expect(bridge.purgeRoom(BOT, BOT_USER, ROOM)).rejects.toThrow('502');
+        expect(deps.rooms.forgetDmRoom).not.toHaveBeenCalled();
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+    });
+
+    it('a chat closed for a gone Brick (its purge not begun) takes no new send from the Brick once the clearing has begun', async () => {
+        expect(bridge.purgedBots.has(BOT)).toBe(false);
+        let lateSend: Promise<unknown> | undefined;
+        const send = vi.fn(async () => '$late');
+        // A send that starts after the history was read, while the room is still being cleared
+        client.getMessagesPage.mockImplementation(async () => {
+            lateSend = bridge.sendAsBrick(BOT, send).catch((error: Error) => error);
+            return { events: [], end: undefined };
+        });
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(send).not.toHaveBeenCalled();
+        expect(((await lateSend) as Error).message).toContain('being deleted');
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+        // Once the run is over (a room that failed to clear stays joined) the Brick is not muted for ever
+        expect(bridge.clearingRooms.has(BOT)).toBe(false);
+        expect(await bridge.sendAsBrick(BOT, send)).toBe('$late');
+    });
+
+    it('says no goodbye and leaves no room for a Brick being purged: closeChat and checkWaiting both stand aside', async () => {
+        bridge.purgedBots.add(BOT);
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(client.sendMessage).not.toHaveBeenCalled();
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        // A message that was waiting is neither kept again nor answered
+        bridge.localWaiting.set(BOT, new Map([[ROOM, { message: JSON.stringify(message('$w1')), at: Date.now() }]]));
+        await bridge.checkWaiting();
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(client.sendMessage).not.toHaveBeenCalled();
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(deps.waiting.rememberWaitingDm).not.toHaveBeenCalled();
+    });
+
+    it('a Brick deleted before this change, whose chat closes on a message, has everything it said redacted (its earlier messages and the note) and leaves', async () => {
+        // What it said earlier in the room, newest first
+        const said = [
+            { type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$b2', content: { msgtype: 'm.text', body: 'a goodbye from an older version' } },
+            message('$a1'),
+            { type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$b1', content: { msgtype: 'm.text', body: 'hello' } },
+        ] as MatrixEvent[];
+        client.getMessagesPage.mockImplementation(async () => ({ events: said.filter((event) => !redacted.has(event.event_id)), end: undefined }));
+        await bridge.closeChat(BOT, ROOM, 'en');
+        // Only what the Brick said, and before it leaves; no new note is written
+        expect([...redacted].sort()).toEqual(['$b1', '$b2']);
+        expect(client.sendMessage).not.toHaveBeenCalled();
+        expect(client.redactEvent.mock.invocationCallOrder.at(-1)).toBeLessThan(client.leaveRoom.mock.invocationCallOrder[0]);
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM, 'Brick deleted');
+        expect(client.forgetRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(deps.rooms.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+    });
+
+    it('a chat that cannot be cleared when it closes stays joined and is tried again, and a purge reaching the same room shares the one run', async () => {
+        client.redactEvent.mockRejectedValueOnce(new Error('Matrix redact failed: 500'));
+        client.getMessagesPage.mockResolvedValue({ events: [{ type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$b1', content: {} } as MatrixEvent], end: undefined });
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        await bridge.closeChat(BOT, ROOM, 'en');
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+        // A purge and a closing chat on one room at once clear it once
+        client.leaveRoom.mockClear();
+        client.redactEvent.mockClear();
+        let release!: () => void;
+        client.getJoinedMembers.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve([ALICE, BOT_USER]))));
+        const closing = bridge.closeChat(BOT, ROOM, 'en');
+        const purging = bridge.purgeChats(BOT);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        release();
+        await Promise.all([closing, purging]);
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops answering waiting messages the moment a purge begins, and drops the rest of the queue', async () => {
+        const now = Date.now();
+        // Only the newest message of a room is answered, so each waits in a room of its own
+        const waiting = [1, 2, 3].map((n) => ({ ...message(`$w${n}`, now - (4 - n) * 1000), room_id: `!r${n}:matrix.test` }));
+        for (const event of waiting) bridge.roomBots.set(event.room_id, BOT);
+        deps.waiting.takeWaitingDms.mockResolvedValue(waiting.map((event) => JSON.stringify(event)));
+        const answered: string[] = [];
+        vi.spyOn(bridge, 'handleMessage').mockImplementation(async (event: any) => {
+            answered.push(event.event_id);
+            // The purge begins while the first one is being answered
+            bridge.purgedBots.add(BOT);
+        });
+        await bridge.runDrain(BOT);
+        expect(answered).toEqual(['$w1']);
+        expect(bridge.drainQueues.has(BOT)).toBe(false);
+    });
+
+    it('goes on past an empty page of history when the homeserver gives a token that moves on, and finishes at the end', async () => {
+        const note = { type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$old', content: { msgtype: 'm.text', body: 'old' } } as MatrixEvent;
+        client.getMessagesPage.mockImplementation(async (_u: string, _room: string, from?: string) => {
+            if (!from) return { events: [], end: 't1' };
+            if (from === 't1') return { events: [note], end: 't2' };
+            return { events: [], end: undefined };
+        });
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(client.getMessagesPage.mock.calls.map((call: any[]) => call[2])).toEqual([undefined, 't1', 't2']);
+        expect([...redacted]).toEqual(['$old']);
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+    });
+
+    it('writes a room down as owed before it leaves, and clears the record once the forget went through', async () => {
+        const order: string[] = [];
+        deps.rooms.rememberPendingForget = vi.fn(async () => void order.push('remember'));
+        deps.rooms.clearPendingForget = vi.fn(async () => void order.push('clear'));
+        deps.rooms.pendingForgetsOf = vi.fn(async () => []);
+        client.leaveRoom.mockImplementation(async () => void order.push('leave'));
+        client.forgetRoom.mockImplementation(async () => void order.push('forget'));
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(order).toEqual(['remember', 'leave', 'forget', 'clear']);
+    });
+
+    it('does not leave a room it could not write down as owed, so the next try finds it still joined', async () => {
+        deps.rooms.rememberPendingForget = vi.fn(async () => { throw new Error('The shared store is down'); });
+        deps.rooms.pendingForgetsOf = vi.fn(async () => []);
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+    });
+
+    it('finishes a forget the shared store says is owed after a restart, though the room is no longer joined, then clears it', async () => {
+        const store = new Set<string>([`${BOT_USER}|!old:matrix.test`]);
+        deps.rooms.rememberPendingForget = vi.fn(async (u: string, r: string) => void store.add(`${u}|${r}`));
+        deps.rooms.pendingForgetsOf = vi.fn(async (u: string) => [...store].filter((k) => k.startsWith(`${u}|`)).map((k) => k.slice(u.length + 1)));
+        deps.rooms.clearPendingForget = vi.fn(async (u: string, r: string) => void store.delete(`${u}|${r}`));
+        client.getJoinedRooms.mockResolvedValue([]);
+        // A forget that fails keeps the record and says not done
+        client.forgetRoom.mockRejectedValueOnce(new Error('Matrix forget: 502'));
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(store.size).toBe(1);
+        // A fresh process reads it and finishes
+        const restarted = new MatrixDmBridge(config, client as never, deps) as any;
+        expect(await restarted.purgeChats(BOT)).toBe(true);
+        expect(client.forgetRoom).toHaveBeenLastCalledWith(BOT_USER, '!old:matrix.test');
+        expect(store.size).toBe(0);
+    });
+
+    it('retries a forget that failed after a closing chat left the room, on the next check, with no purge asked for', async () => {
+        const store = new Set<string>();
+        deps.rooms.rememberPendingForget = vi.fn(async (u: string, r: string) => void store.add(`${u}|${r}`));
+        deps.rooms.pendingForgetsOf = vi.fn(async () => []);
+        deps.rooms.allPendingForgets = vi.fn(async () => [...store].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) })));
+        deps.rooms.clearPendingForget = vi.fn(async (u: string, r: string) => void store.delete(`${u}|${r}`));
+        client.forgetRoom.mockRejectedValueOnce(new Error('Matrix forget: 502'));
+        await bridge.closeChat(BOT, ROOM, 'en');
+        // Left: the homeserver no longer lists the room for the Brick
+        client.getJoinedRooms.mockResolvedValue([]);
+        expect(client.leaveRoom).toHaveBeenCalledTimes(1);
+        expect(store.size).toBe(1);
+        // A fresh process, as after a restart: the record is in the shared store
+        const restarted = new MatrixDmBridge(config, client as never, deps) as any;
+        await restarted.checkWaiting();
+        expect(client.forgetRoom).toHaveBeenLastCalledWith(BOT_USER, ROOM);
+        expect(store.size).toBe(0);
+        // Nothing owed, nothing tried
+        client.forgetRoom.mockClear();
+        await restarted.checkWaiting();
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+    });
+
+    it('keeps a forget that still fails, and does not touch a room being cleared right now', async () => {
+        client.getJoinedRooms.mockResolvedValue([]);
+        bridge.pendingForgets.add(`${BOT_USER}|${ROOM}`);
+        bridge.roomPurges.set(ROOM, new Promise(() => undefined));
+        await bridge.checkWaiting();
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+        bridge.roomPurges.clear();
+        client.forgetRoom.mockRejectedValueOnce(new Error('Matrix forget: 502'));
+        await bridge.checkWaiting();
+        expect(bridge.pendingForgets.size).toBe(1);
+        await bridge.checkWaiting();
+        expect(bridge.pendingForgets.size).toBe(0);
+    });
+
+    it('does not try to forget a room it is still in because the leave failed: nothing is logged, the record waits, and the next clearing leaves and forgets it', async () => {
+        const store = new Set<string>();
+        deps.rooms.rememberPendingForget = vi.fn(async (u: string, r: string) => void store.add(`${u}|${r}`));
+        deps.rooms.pendingForgetsOf = vi.fn(async (u: string) => [...store].filter((k) => k.startsWith(`${u}|`)).map((k) => k.slice(u.length + 1)));
+        deps.rooms.allPendingForgets = vi.fn(async () => [...store].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) })));
+        deps.rooms.clearPendingForget = vi.fn(async (u: string, r: string) => void store.delete(`${u}|${r}`));
+        client.leaveRoom.mockRejectedValueOnce(new Error('Matrix leave: 502'));
+        expect(await bridge.purgeChats(BOT)).toBe(false);
+        expect(store.size).toBe(1);
+        // The Brick is still in the room: the periodic retry leaves it alone
+        client.forgetRoom.mockClear();
+        await bridge.checkWaiting();
+        expect(client.forgetRoom).not.toHaveBeenCalled();
+        expect(store.size).toBe(1);
+        // The next purge leaves it, forgets it, and clears the record
+        expect(await bridge.purgeChats(BOT)).toBe(true);
+        expect(client.leaveRoom).toHaveBeenCalledTimes(2);
+        expect(client.forgetRoom).toHaveBeenCalledTimes(1);
+        expect(store.size).toBe(0);
+    });
+});

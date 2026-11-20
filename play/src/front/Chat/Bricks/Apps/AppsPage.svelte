@@ -11,6 +11,7 @@
     import AppRow from "./AppRow.svelte";
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
+    import { appPageStart, takeAppPageStart } from "./AppLink";
     import { appsSearchStart } from "./AppsSearch";
     import { loadMyApps, myAppsFailed, myAppsSettled, myAppsStore } from "./AppsStore";
     import { connectApp } from "./ConnectApp";
@@ -60,6 +61,11 @@
     $: if ($appsSearchStart !== undefined) {
         query = $appsSearchStart;
         appsSearchStart.set(undefined);
+    }
+    // "Change the limit" in a Brick's note to the owner: that App's page opens, taken once
+    $: if ($appPageStart !== undefined) {
+        openAppId = $appPageStart;
+        takeAppPageStart();
     }
     $: mine = apps ?? [];
     $: connectedApps = mine.filter(isConnectedApp);

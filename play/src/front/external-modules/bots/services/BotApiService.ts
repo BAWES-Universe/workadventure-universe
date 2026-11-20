@@ -513,6 +513,10 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing adminUrl.");
         }
 
+        // Which Orbit and account this request started with: when the game moves to another one while it is on its way, a 401 is not
+        // answered by asking the new one for a session and sending the same request there (#2006)
+        const startedWith = this.timeZoneGeneration;
+
         // Try to get Admin API session token first (async - may fetch new one if missing/expired). A keepalive
         // request goes out while the page closes, when renewing first would be cut off: it takes the session as it
         // is while that still works.
@@ -548,11 +552,13 @@ export class BotApiService {
                 sessionStorage.removeItem(SESSION_KEY);
                 sessionStorage.removeItem(SESSION_EXPIRES_KEY);
 
-                // If we have accessToken, try to fetch a new session token and retry
-                if (this.accessToken) {
+                // If we have accessToken, try to fetch a new session token and retry (only for the Orbit and account the request started with)
+                if (this.accessToken && startedWith === this.timeZoneGeneration) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
-                    if (newToken) {
-                        const retryUrl = `${this.adminUrl}${endpoint}`;
+                    // Asking for the session took time too: the game may have moved on meanwhile, and the request goes back only to the Orbit it
+                    // started with (the url it was first sent to), never to the one the game is on now
+                    if (newToken && startedWith === this.timeZoneGeneration) {
+                        const retryUrl = url;
                         const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
 
                         const retryResponse = await fetch(retryUrl, {
@@ -597,7 +603,8 @@ export class BotApiService {
 
     /**
      * Counts the times `initialize()` moved to another Orbit or account: an answer that belongs to an older count says
-     * nothing about the current one. A token renewed in the middle of a send does not change it.
+     * nothing about the current one. A token renewed in the middle of a send does not change it. A request that was on its way when
+     * the count changed is not sent again to the new Orbit with the new session.
      */
     private timeZoneGeneration = 0;
 
@@ -1565,6 +1572,41 @@ export class BotApiService {
         });
     }
 
+    /**
+     * "Other people" on an app's page for one Brick of the person's (game #2006): whether others can ask it for jobs from this app,
+     * which jobs, and the two limits. Never the app's link, key or account.
+     */
+    async getAppShare(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId));
+    }
+
+    /** "Let others use it": starts with the jobs picked (none picked is the one job there is). Answers what is shared. */
+    async startAppShare(
+        appId: string,
+        botId: string,
+        start: { jobs?: unknown[]; usesPerDayEveryone?: number; usesPerDayPerson?: number } = {}
+    ): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "POST", body: JSON.stringify(start) });
+    }
+
+    /** "Change": the whole list of jobs people can ask for (one left out stops at once) and the two limits. */
+    async changeAppShare(
+        appId: string,
+        botId: string,
+        change: { jobs?: unknown[]; usesPerDayEveryone?: number; usesPerDayPerson?: number }
+    ): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "PATCH", body: JSON.stringify(change) });
+    }
+
+    /** "Stop letting others use it": every later ask is refused at once, in a chat that is already open too. */
+    async stopAppShare(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "DELETE" });
+    }
+
+    private shareUrl(appId: string, botId: string): string {
+        return `/api/me/apps/${encodeURIComponent(appId)}/bricks/${encodeURIComponent(botId)}/share`;
+    }
+
     /** Disconnects one of the person's apps: every Brick and bot stops using it at once. */
     async disconnectMyApp(appId: string): Promise<unknown> {
         return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`, { method: "DELETE" });
@@ -1773,6 +1815,44 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files/${encodeURIComponent(fileId)}`, {
             method: "DELETE",
         });
+    }
+
+    /**
+     * One file a Brick's computer made for its owner, as bytes. Opened with the owner's own sign-in (the file is theirs alone), so it is read here and
+     * saved from the page rather than followed as a link. Throws when Orbit refuses or has no such file.
+     */
+    async getBrickResult(brickId: string, fileId: string): Promise<Blob> {
+        const response = await this.fetch(
+            `/api/bricks/${encodeURIComponent(brickId)}/files/results/${encodeURIComponent(fileId)}`
+        );
+        return await response.blob();
+    }
+
+    /** Deletes a file a Brick's computer made for its owner: the kept copy goes. */
+    async deleteBrickResult(brickId: string, fileId: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/files/results/${encodeURIComponent(fileId)}`,
+            { method: "DELETE" }
+        );
+    }
+
+    /** What a person's Bricks' computers made, whose Brick is gone: theirs, with "A deleted Brick" on them. */
+    async getDeletedBrickResults(cursor?: string | null): Promise<unknown> {
+        return await this.brickWrite(
+            cursor ? `/api/bricks/results?cursor=${encodeURIComponent(cursor)}` : "/api/bricks/results",
+            {}
+        );
+    }
+
+    /** One of the person's own results, whichever Brick made it (it may be gone), as bytes. Throws when Orbit refuses or has no such file. */
+    async getOwnBrickResult(fileId: string): Promise<Blob> {
+        const response = await this.fetch(`/api/bricks/results/${encodeURIComponent(fileId)}`);
+        return await response.blob();
+    }
+
+    /** Deletes one of the person's own results: the kept copy goes. */
+    async deleteOwnBrickResult(fileId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/results/${encodeURIComponent(fileId)}`, { method: "DELETE" });
     }
 
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
@@ -2997,6 +3077,11 @@ export interface McpServer {
     /** An old server whose tools nobody has checked yet: it works in text as it did (Orbit #738) */
     notCheckedYet?: boolean;
     lastTestedAt?: string | null;
+    /** When the bot server saw this server refuse the bot's sign-in, or not answer (Orbit #821, game #1819); null when not */
+    signInLostAt?: string | null;
+    noAnswerAt?: string | null;
+    /** When a lost sign-in was made again (a Reconnect or a new key) */
+    reconnectedAt?: string | null;
     lastTestResult?: {
         success: boolean;
         toolCount: number;

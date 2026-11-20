@@ -120,6 +120,15 @@ export function groupFriends(placed: readonly PlacedFriend[]): Record<FriendGrou
 }
 
 /**
+ * How many friends are online right now, for the Friends chip: here, in this world, in another world, or online with
+ * their place hidden. Offline friends are not counted, nor are the ones whose presence cannot be checked and who are
+ * not in this world. It follows placeFriends, so it moves as friends come and go.
+ */
+export function onlineFriendsCount(placed: readonly PlacedFriend[]): number {
+    return placed.filter((entry) => entry.group !== "offline").length;
+}
+
+/**
  * Friends online in other worlds, for the Everyone view's faces row: the most available first, then by name. A friend
  * who hides where they are is in it too, as just online.
  */

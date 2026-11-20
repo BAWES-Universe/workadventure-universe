@@ -11,12 +11,18 @@ const orbit = vi.hoisted(() => ({
             ) => Promise<unknown>
         >(),
     deleteBrickFile: vi.fn<(brickId: string, fileId: string) => Promise<unknown>>(),
+    getBrickResult: vi.fn<(brickId: string, fileId: string) => Promise<Blob>>(),
+    deleteBrickResult: vi.fn<(brickId: string, fileId: string) => Promise<unknown>>(),
+    getDeletedBrickResults: vi.fn<(cursor?: string | null) => Promise<unknown>>(),
+    getOwnBrickResult: vi.fn<(fileId: string) => Promise<Blob>>(),
+    deleteOwnBrickResult: vi.fn<(fileId: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: orbit }));
 vi.mock("../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "http://uploader.test/" }));
 
 import {
     brickFilesList,
+    deletedBrickFilesList,
     downloadEverything,
     downloadFile,
     fileIconKind,
@@ -24,6 +30,7 @@ import {
     fileSize,
     parseBrickFiles,
     parseBrickFilesPage,
+    parseDeletedBrickResults,
     zipNames,
 } from "../BrickFiles";
 
@@ -44,6 +51,16 @@ const answer = (over: Record<string, unknown> = {}) => ({
     computer: null,
     count: 3,
     bytes: 1000,
+    ...over,
+});
+
+const result = (over: Record<string, unknown> = {}) => ({
+    id: "r1",
+    name: "visa-receipt.pdf",
+    sizeBytes: 5000,
+    job: "Visa form",
+    at: "2026-11-12T08:00:00.000Z",
+    delivery: "not_delivered",
     ...over,
 });
 
@@ -805,6 +822,194 @@ describe("a Brick's files (#2003)", () => {
                 expect(get(list.search)).toBe("idle");
                 expect(get(list.files).sent.files).toHaveLength(2);
             });
+        });
+    });
+
+    describe("what its computer made (A41 to A43)", () => {
+        it("reads each result with whether the chat took it, and never shows a state it does not know as delivered", () => {
+            const read = parseBrickFiles(
+                answer({
+                    results: [
+                        result({ id: "r1", delivery: "delivered" }),
+                        result({ id: "r2", delivery: "waiting" }),
+                        result({ id: "r3", delivery: "not_delivered" }),
+                        result({ id: "r4", delivery: "who knows" }),
+                        result({ id: "", name: "no-id.pdf" }),
+                        result({ id: "r6", at: "nope" }),
+                        null,
+                    ],
+                })
+            );
+            expect(read.results.map((one) => [one.id, one.delivery])).toEqual([
+                ["r1", "delivered"],
+                ["r2", "waiting"],
+                ["r3", "not_delivered"],
+                ["r4", "not_delivered"],
+            ]);
+            expect(read.results[0]).toMatchObject({ name: "visa-receipt.pdf", sizeBytes: 5000, job: "Visa form" });
+            // An answer from before results existed has none
+            expect(parseBrickFiles(answer()).results).toEqual([]);
+        });
+
+        it("reads a result with the person's own sign-in, and says false when it cannot be read", async () => {
+            orbit.getBrickFiles.mockResolvedValue(answer({ results: [result()] }));
+            orbit.getBrickResult.mockRejectedValueOnce(new Error("offline"));
+            const list = brickFilesList(BRICK);
+            await list.load();
+            expect(await list.downloadResult({ id: "r1", name: "visa-receipt.pdf" })).toBe(false);
+            expect(orbit.getBrickResult).toHaveBeenCalledWith(BRICK, "r1");
+            orbit.getBrickResult.mockResolvedValueOnce(new Blob(["%PDF"]));
+            await expect(list.openResult("r1")).resolves.toBeInstanceOf(Blob);
+        });
+
+        it("deletes a result at once, with the count and size going down, and brings it back when Orbit refuses", async () => {
+            orbit.getBrickFiles.mockResolvedValue(
+                answer({ results: [result({ id: "r1", sizeBytes: 5000 })], count: 4, bytes: 6000 })
+            );
+            orbit.deleteBrickResult.mockResolvedValueOnce({ deleted: true });
+            const list = brickFilesList(BRICK);
+            await list.load();
+            const done = list.deleteResult("r1");
+            expect(get(list.files).results).toEqual([]);
+            expect(get(list.files)).toMatchObject({ count: 3, bytes: 1000 });
+            expect(await done).toBe(true);
+            expect(orbit.deleteBrickResult).toHaveBeenCalledWith(BRICK, "r1");
+
+            await list.load();
+            orbit.deleteBrickResult.mockRejectedValueOnce(new Error("offline"));
+            expect(await list.deleteResult("r1")).toBe(false);
+            expect(get(list.files).results.map((one) => one.id)).toEqual(["r1"]);
+            expect(get(list.files)).toMatchObject({ count: 4, bytes: 6000 });
+        });
+
+        it("puts a result in the zip from its own read, not from a link, and counts one it could not read as missed", async () => {
+            const fetcher = vi.fn();
+            const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+            vi.stubGlobal("URL", { createObjectURL: () => "blob:zip", revokeObjectURL: vi.fn() });
+            try {
+                const done = await downloadEverything(
+                    [
+                        { name: "a.pdf", load: () => Promise.resolve(new Blob(["a"])) },
+                        {
+                            name: "b.pdf",
+                            load: () => Promise.reject(new Error("offline")),
+                        },
+                    ],
+                    "files.zip",
+                    fetcher as never
+                );
+                expect(done).toEqual({ added: 1, missed: 1, complete: true });
+                expect(fetcher).not.toHaveBeenCalled();
+            } finally {
+                click.mockRestore();
+                vi.unstubAllGlobals();
+            }
+        });
+    });
+
+    describe("what a deleted Brick's computer made (A43)", () => {
+        const gone = (over: Record<string, unknown> = {}) => result({ brick: "A deleted Brick", ...over });
+
+        it("reads them with the Brick's label, and leaves out what is not whole", () => {
+            const read = parseDeletedBrickResults({ results: [gone({ id: "g1" }), gone({ id: "", name: "x" }), null] });
+            expect(read.map((one) => [one.id, one.brick])).toEqual([["g1", "A deleted Brick"]]);
+            expect(parseDeletedBrickResults(null)).toEqual([]);
+            expect(parseDeletedBrickResults({ results: "nope" })).toEqual([]);
+        });
+
+        it("lists them, opens one with the person's own sign-in, and says false when it cannot be read", async () => {
+            orbit.getDeletedBrickResults.mockResolvedValue({ results: [gone({ id: "g1" })] });
+            const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+            vi.stubGlobal("URL", { createObjectURL: () => "blob:file", revokeObjectURL: vi.fn() });
+            try {
+                const list = deletedBrickFilesList();
+                await list.load();
+                expect(get(list.results).map((one) => one.id)).toEqual(["g1"]);
+                orbit.getOwnBrickResult.mockResolvedValueOnce(new Blob(["%PDF"]));
+                expect(await list.downloadResult({ id: "g1", name: "visa-receipt.pdf" })).toBe(true);
+                expect(orbit.getOwnBrickResult).toHaveBeenCalledWith("g1");
+                orbit.getOwnBrickResult.mockRejectedValueOnce(new Error("offline"));
+                expect(await list.downloadResult({ id: "g1", name: "visa-receipt.pdf" })).toBe(false);
+            } finally {
+                click.mockRestore();
+                vi.unstubAllGlobals();
+            }
+        });
+
+        it("reads every page of them, a page at a time, and never lists one twice", async () => {
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults
+                .mockResolvedValueOnce({ results: [gone({ id: "g1" }), gone({ id: "g2" })], next: "p2" })
+                .mockResolvedValueOnce({ results: [gone({ id: "g2" }), gone({ id: "g3" })], next: "p3" })
+                .mockResolvedValueOnce({ results: [gone({ id: "g4" })], next: null });
+            const list = deletedBrickFilesList();
+            await list.load();
+            expect(get(list.results).map((one) => one.id)).toEqual(["g1", "g2", "g3", "g4"]);
+            expect(orbit.getDeletedBrickResults.mock.calls.map((call) => call[0] ?? null)).toEqual([null, "p2", "p3"]);
+        });
+
+        it("stops asking for pages when Orbit never says it is the last", async () => {
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults.mockResolvedValue({ results: [], next: "again" });
+            const list = deletedBrickFilesList();
+            await list.load();
+            expect(orbit.getDeletedBrickResults.mock.calls.length).toBeLessThanOrEqual(50);
+        });
+
+        it("deletes one at once, and brings it back when Orbit refuses", async () => {
+            orbit.getDeletedBrickResults.mockResolvedValue({ results: [gone({ id: "g1" }), gone({ id: "g2" })] });
+            const list = deletedBrickFilesList();
+            await list.load();
+            orbit.deleteOwnBrickResult.mockResolvedValueOnce({ deleted: true });
+            const done = list.deleteResult("g1");
+            expect(get(list.results).map((one) => one.id)).toEqual(["g2"]);
+            expect(await done).toBe(true);
+            expect(orbit.deleteOwnBrickResult).toHaveBeenCalledWith("g1");
+            orbit.deleteOwnBrickResult.mockRejectedValueOnce(new Error("offline"));
+            expect(await list.deleteResult("g2")).toBe(false);
+            expect(get(list.results).map((one) => one.id)).toEqual(["g2"]);
+        });
+
+        it("shows nothing it did not read when Orbit cannot be asked, and says it failed rather than that there is nothing, until a read works", async () => {
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults.mockRejectedValue(new Error("offline"));
+            const list = deletedBrickFilesList();
+            expect(get(list.failed)).toBe(false);
+            await list.load();
+            expect(get(list.results)).toEqual([]);
+            expect(get(list.failed)).toBe(true);
+            // Read again: nothing to show is not a failure
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults.mockResolvedValue({ results: [] });
+            await list.load();
+            expect(get(list.failed)).toBe(false);
+            expect(get(list.results)).toEqual([]);
+        });
+
+        it("forgets what it showed when the account changes, and never shows a read that was started for the one before", async () => {
+            orbit.getDeletedBrickResults.mockReset();
+            orbit.getDeletedBrickResults.mockResolvedValueOnce({ results: [gone({ id: "mine" })] });
+            const list = deletedBrickFilesList();
+            await list.load();
+            expect(get(list.results).map((one) => one.id)).toEqual(["mine"]);
+            // A read is on its way for the old account when the account changes
+            let release: (answer: unknown) => void = () => undefined;
+            orbit.getDeletedBrickResults.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+            );
+            const slow = list.load();
+            list.reset();
+            expect(get(list.results)).toEqual([]);
+            orbit.getDeletedBrickResults.mockResolvedValueOnce({ results: [gone({ id: "theirs" })] });
+            await list.load();
+            expect(get(list.results).map((one) => one.id)).toEqual(["theirs"]);
+            // The slow answer for the account before arrives last: it shows nothing, and does not mark a failure
+            release({ results: [gone({ id: "old" })] });
+            await slow;
+            expect(get(list.results).map((one) => one.id)).toEqual(["theirs"]);
+            expect(get(list.failed)).toBe(false);
         });
     });
 });

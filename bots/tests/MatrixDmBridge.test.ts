@@ -27,6 +27,9 @@ function makeClient(): any {
         setTyping: vi.fn(async () => undefined),
         getJoinedMembers: vi.fn(async () => [ALICE, BOT_USER]),
         getRecentMessages: vi.fn(async (): Promise<MatrixEvent[]> => []),
+        getMessagesPage: vi.fn(async (): Promise<{ events: MatrixEvent[]; end?: string }> => ({ events: [], end: undefined })),
+        redactEvent: vi.fn(async () => undefined),
+        forgetRoom: vi.fn(async () => undefined),
         uploadMedia: vi.fn(async () => 'mxc://matrix.test/abc'),
         downloadMedia: vi.fn(async () => ({ data: Buffer.from('hi'), contentType: 'text/plain' })),
     };
@@ -43,6 +46,16 @@ function makeDeps(): any {
             rememberDmRoom: vi.fn(async (r: string, b: string) => void rooms.set(r, b)),
             getDmRoomBot: vi.fn(async (r: string) => rooms.get(r) ?? null),
             forgetDmRoom: vi.fn(async (r: string) => void rooms.delete(r)),
+            // The owed-forget record the purge writes before it leaves a room (R29): an in-memory copy of the shared store's
+            ...(() => {
+                const owed = new Set<string>();
+                return {
+                    rememberPendingForget: vi.fn(async (u: string, r: string) => void owed.add(`${u}|${r}`)),
+                    pendingForgetsOf: vi.fn(async (u: string) => [...owed].filter((k) => k.startsWith(`${u}|`)).map((k) => k.slice(u.length + 1))),
+                    allPendingForgets: vi.fn(async () => [...owed].map((k) => ({ matrixUserId: k.slice(0, k.indexOf('|')), roomId: k.slice(k.indexOf('|') + 1) }))),
+                    clearPendingForget: vi.fn(async (u: string, r: string) => void owed.delete(`${u}|${r}`)),
+                };
+            })(),
         },
     };
 }
@@ -356,6 +369,81 @@ describe('MatrixDmBridge', () => {
             'universe.room_link': roomLink,
         });
         expect(client.sendText).not.toHaveBeenCalled();
+    });
+
+    it('sends the Reconnect card after the reply, for the game to pin above the message box (#1819)', async () => {
+        await bridge.onEvent(invite());
+        const toolSignIn = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
+        deps.reply.mockResolvedValueOnce({ text: 'I can\'t search right now.', media: [], toolSignIn });
+        await bridge.onEvent(message('news?'));
+        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'I can\'t search right now.');
+        const card = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => content?.['universe.tool_signin']);
+        // After the reply, not before it
+        const textAt = client.sendText.mock.invocationCallOrder[0];
+        const cardAt = client.sendMessage.mock.invocationCallOrder[client.sendMessage.mock.calls.findIndex((call: any[]) => call[2]?.['universe.tool_signin'])];
+        expect(textAt).toBeLessThan(cardAt);
+        expect(card).toEqual({
+            msgtype: 'm.notice',
+            body: 'Tavily needs signing in again. Guide answers without it until it is reconnected.',
+            'universe.tool_signin': toolSignIn,
+        });
+    });
+
+    it('sends an empty Reconnect notice to take the card back, so the game drops it (#1819)', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValueOnce({ text: 'Back to normal.', media: [], toolSignIn: { lost: [] } });
+        await bridge.onEvent(message('news?'));
+        const notice = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => content?.['universe.tool_signin']);
+        expect(notice).toEqual({
+            msgtype: 'm.notice',
+            body: 'Guide can use its Apps again.',
+            'universe.tool_signin': { lost: [] },
+        });
+    });
+
+    describe('the Reconnect card (#1819)', () => {
+        const toolSignIn = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
+        const cardsSent = () => client.sendMessage.mock.calls.filter((call: any[]) => call[2]?.['universe.tool_signin']);
+
+        it('tells how the send went: delivered when it got out', async () => {
+            await bridge.onEvent(invite());
+            const delivery = vi.fn();
+            deps.reply.mockResolvedValueOnce({ text: 'Not right now.', media: [], toolSignIn, toolSignInDelivery: delivery });
+            await bridge.onEvent(message('news?'));
+            expect(delivery).toHaveBeenCalledExactlyOnceWith(true);
+        });
+
+        it('tells it did not get out when Matrix refused it, so the next reply carries it again', async () => {
+            await bridge.onEvent(invite());
+            const delivery = vi.fn();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            client.sendMessage.mockRejectedValueOnce(new Error('M_UNKNOWN'));
+            deps.reply.mockResolvedValueOnce({ text: 'Not right now.', media: [], toolSignIn, toolSignInDelivery: delivery });
+            await bridge.onEvent(message('news?'));
+            expect(delivery).toHaveBeenCalledExactlyOnceWith(false);
+        });
+
+        it('is still sent when the model\'s reply is empty, after the fixed note', async () => {
+            await bridge.onEvent(invite());
+            const delivery = vi.fn();
+            deps.reply.mockResolvedValueOnce({ text: '', media: [], toolSignIn, toolSignInDelivery: delivery });
+            await bridge.onEvent(message('news?'));
+            expect(cardsSent()).toHaveLength(1);
+            expect(delivery).toHaveBeenCalledExactlyOnceWith(true);
+        });
+
+        it('is not sent into a room a third person joined meanwhile, and is shown again later', async () => {
+            await bridge.onEvent(invite());
+            const delivery = vi.fn();
+            deps.reply.mockImplementationOnce(async () => {
+                // Someone else joins while the reply is being made
+                await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: '@carol:matrix.test', state_key: '@carol:matrix.test', content: { membership: 'join' } } as any);
+                return { text: 'Not right now.', media: [], toolSignIn, toolSignInDelivery: delivery };
+            });
+            await bridge.onEvent(message('news?'));
+            expect(cardsSent()).toHaveLength(0);
+            expect(delivery).toHaveBeenCalledExactlyOnceWith(false);
+        });
     });
 
     it('shows typing while a slow reply is on its way, then clears it', async () => {
@@ -677,16 +765,17 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledTimes(1);
     });
 
-    it('leaves and forgets the room when the person leaves', async () => {
+    it('closes the chat for the person when they leave, and stays in the room until the bot is deleted', async () => {
         await bridge.onEvent(invite());
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        // The chat is closed for the person, but the bot stays in the room: a bot that has left cannot redact what it said, so it leaves only when deleted (R29)
+        expect(client.leaveRoom).not.toHaveBeenCalled();
         expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         await bridge.onEvent(message('hello?'));
         expect(deps.reply).not.toHaveBeenCalled();
     });
 
-    it('stays when someone other than the person leaves, then leaves with the person', async () => {
+    it('stays when someone other than the person leaves, then closes the chat with the person', async () => {
         await bridge.onEvent(invite());
         await bridge.onEvent(message('hi'));
         const carol = '@carol:matrix.test';
@@ -699,10 +788,12 @@ describe('MatrixDmBridge', () => {
         await bridge.onEvent(message('still here'));
         expect(deps.reply).toHaveBeenCalledTimes(2);
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        // The person leaving closes the chat for them (the bot stays in the room until it is deleted)
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
     });
 
-    it('after a restart, reads who is left before leaving', async () => {
+    it('after a restart, reads who is left before closing the chat', async () => {
         await bridge.onEvent(invite());
         const restarted = new MatrixDmBridge(config, client as never, deps);
         const carol = '@carol:matrix.test';
@@ -711,7 +802,8 @@ describe('MatrixDmBridge', () => {
         client.getJoinedMembers.mockRejectedValueOnce(new Error('down'));
         const again = new MatrixDmBridge(config, client as never, deps);
         await again.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
     });
 
     const noteStates = () =>
@@ -1133,12 +1225,12 @@ describe('MatrixDmBridge', () => {
         expect(noteStates()).toEqual(['resting']);
     });
 
-    it('leaves with the person even when the bot is resting, and drops what was waiting', async () => {
+    it('closes the chat with the person even when the bot is resting, and drops what was waiting', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue(resting as never);
         await bridge.onEvent(message('left while resting'));
         await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(client.leaveRoom).not.toHaveBeenCalled();
         deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
         await bridge.checkWaiting();
         expect(deps.reply).not.toHaveBeenCalled();
@@ -1535,7 +1627,7 @@ describe('MatrixDmBridge', () => {
         }
     });
 
-    it('a deleted bot says goodbye once Orbit has said so three times a minute apart, then leaves and forgets the chat', async () => {
+    it('a deleted bot chat is cleared once Orbit has said so three times a minute apart: what it said is redacted, then it leaves and forgets the room', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         try {
             await bridge.onEvent(invite());
@@ -1549,11 +1641,10 @@ describe('MatrixDmBridge', () => {
             expect(client.leaveRoom).not.toHaveBeenCalled();
             aMinuteLater();
             await bridge.onEvent(message('Anyone?'));
-            expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble', 'gone']);
-            expect(client.sendMessage.mock.calls.at(-1)[2].body).toBe(
-                "Guide isn't around anymore. The bot was removed, so this chat is closed."
-            );
-            expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+            // No goodbye note: it would carry the Brick's name, and everything the Brick said in the room is redacted before it leaves (R29)
+            expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble']);
+            expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM, 'Brick deleted');
+            expect(client.forgetRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
             expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         } finally {
             vi.useRealTimers();
@@ -1581,7 +1672,7 @@ describe('MatrixDmBridge', () => {
         }
     });
 
-    it('a bot deleted while someone waits says goodbye to them and leaves, without waiting for another message', async () => {
+    it('a bot deleted while someone waits has its chat cleared and left, without waiting for another message', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false } as never);
         await bridge.onEvent(message('Hola, ¿estás ahí?'));
@@ -1599,9 +1690,8 @@ describe('MatrixDmBridge', () => {
         } finally {
             vi.useRealTimers();
         }
-        expect(noteStates()).toEqual(['resting', 'gone']);
-        expect(client.sendMessage.mock.calls.at(-1)[2][BOT_STATUS_KEY].lang).toBe('es');
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(noteStates()).toEqual(['resting']);
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM, 'Brick deleted');
         expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         expect(deps.reply).not.toHaveBeenCalled();
     });
@@ -2024,6 +2114,32 @@ describe('DmReplyService history', () => {
         });
         const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
         expect(await (service as any).replyNow(BOT, person, 'one more', [], {})).toEqual({ text: '', media: [], replyLimit: limit });
+    });
+
+    it('hands back the Reconnect card the stream carried, with the reply (#1819)', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const card = { lost: [{ serverId: 'srv-1', name: 'Tavily', since: '2026-11-05T09:54:00.000Z', kind: 'oauth' }] };
+        const answering = vi.fn(async function* () {
+            yield { content: '', done: false, toolSignIn: card };
+            yield { content: 'Not right now.', done: false };
+            yield { content: '', done: true, metadata: { tokensUsed: 1 } };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: answering },
+            conversationMemory: new ConversationMemory(),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const reply = await (service as any).replyNow(BOT, person, 'news?', [], {});
+        expect(reply.toolSignIn).toEqual(card);
+        expect(reply.text).toBe('Not right now.');
     });
 
     it("names a first-time person by their uuid before the model or its tools see them", async () => {

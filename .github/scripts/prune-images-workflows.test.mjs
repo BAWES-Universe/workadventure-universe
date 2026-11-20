@@ -24,4 +24,11 @@ describe('prune workflows', () => {
     assert.doesNotMatch(live, /ref: \$\{\{[^}]*head\.(ref|sha)/);
     assert.match(live, /--closed-pr "\$CLOSED_PR"/);
   });
+
+  it('opens an issue only when a delete is refused for lack of the Admin role', () => {
+    assert.match(live, /^ {6}issues: write$/m);
+    assert.match(live, /^ {8}id: prune$/m);
+    assert.match(live, /^ {8}if: failure\(\) && steps\.prune\.outputs\.needs_admin == 'true'$/m);
+    assert.match(live, /gh issue create/);
+  });
 });
