@@ -128,6 +128,11 @@ export interface ActivityItem {
     outcomeText: string | null;
     /** Orbit's sentence under a receipt that is not plain done ("Two steps worked and one didn't. Nothing was taken for the one that didn't."); null when it sends none */
     outcomeNote: string | null;
+    /**
+     * Orbit sent an outcome this page does not know (a newer Orbit): it reads as "done" above, but is told apart from a genuine done task,
+     * so Orbit's own headline for it can still be shown. False for every outcome this page knows and for none at all.
+     */
+    unknownOutcome: boolean;
     /** Each Instant action of the task; empty for a task with none (an older Orbit, or a computer's) */
     actions: ActivityAction[];
 }
@@ -320,6 +325,11 @@ function parseActions(value: unknown): ActivityAction[] {
     return out;
 }
 
+const KNOWN_OUTCOMES = new Set(["done", "partial", "refunded", "failed", "unconfirmed"]);
+/** An outcome word that says something this page has no reading for; a missing one, or one of the known words, is not. */
+const isUnknownOutcome = (outcome: unknown): boolean =>
+    typeof outcome === "string" && outcome.trim() !== "" && !KNOWN_OUTCOMES.has(outcome);
+
 function parseActivity(value: unknown): ActivityItem[] {
     if (!Array.isArray(value)) return [];
     const out: ActivityItem[] = [];
@@ -368,6 +378,7 @@ function parseActivity(value: unknown): ActivityItem[] {
             outcome,
             outcomeText: state === "refunded" && outcome !== "unconfirmed" ? null : short(item.outcomeText) ?? null,
             outcomeNote: state === "refunded" && outcome !== "unconfirmed" ? null : short(item.outcomeNote) ?? null,
+            unknownOutcome: state !== "refunded" && outcome === "done" && isUnknownOutcome(item.outcome),
             actions,
             spentMicros: micros(item.spentMicros) ?? null,
             category: item.category === "apps" || item.category === "computer" ? item.category : null,

@@ -776,6 +776,43 @@ describe("the Usage page (#1999)", () => {
             expect(byId("usageReceipt")?.textContent).not.toContain("Paid by");
         });
 
+        it("shows the headline of an outcome it does not know when Orbit sends no note, and none for a genuine done task", async () => {
+            const future = task({
+                id: "act_future",
+                title: "Future task",
+                outcome: "something_new",
+                outcomeText: "Held up",
+            });
+            // Orbit gives a genuine done task the word "Done" too: that is no headline
+            const genuine = task({ id: "act_done", title: "Done task", outcome: "done", outcomeText: "Done" });
+            // A known outcome with no evidence for it ("partial" with no step that worked) stays done, whatever its word
+            const unproven = task({
+                id: "act_unproven",
+                title: "Unproven task",
+                outcome: "partial",
+                outcomeText: "Partly done",
+            });
+            game.getMyUsage.mockResolvedValue(live({}, { activity: [future, genuine, unproven] }));
+            await open();
+            expect(text()).toMatch(/Future task[^]*Held up/);
+            expect(text()).not.toMatch(/Done task[^]*(Today|Yesterday),[^]*· Done/);
+            expect(text()).not.toContain("Partly done");
+            target.querySelector<HTMLElement>('[data-activity="act_future"]')?.click();
+            await settle();
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Held up");
+            target.querySelector<HTMLElement>('[data-activity="act_future"]')?.click();
+            await settle();
+            for (const id of ["act_done", "act_unproven"]) {
+                target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+                // eslint-disable-next-line no-await-in-loop
+                await settle();
+                expect(byId("usageReceiptPartly")).toBeNull();
+                target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+                // eslint-disable-next-line no-await-in-loop
+                await settle();
+            }
+        });
+
         it("says a refunded task nobody could confirm as both: couldn't confirm, its steps and Orbit's note, and the refund", async () => {
             await openTask(
                 failedTask({
