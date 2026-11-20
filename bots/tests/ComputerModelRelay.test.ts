@@ -678,10 +678,12 @@ describe('how a call ended, for the runner', () => {
         await said('job-400-param', 400, { message: 'Unsupported parameter: max_tokens', param: 'max_tokens' });
         await said('job-400-temperature', 400, { message: 'temperature must be at most 2', param: 'temperature' });
         await said('job-400-noparam', 400, { message: 'bad request' });
+        await said('job-401-invalid-request', 401, { type: 'invalid_request_error', code: 'invalid_api_key', message: 'Incorrect API key' });
+        await said('job-404-invalid-request', 404, { type: 'invalid_request_error', code: 'model_not_found', message: 'The model does not exist' });
         await said('job-422-messages', 422, { message: 'invalid image url', param: 'messages[0].content' });
         await said('job-400-context', 400, { code: 'context_length_exceeded', message: 'maximum context length exceeded' });
         await said('job-413', 413, { message: 'payload' });
-        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param', 'job-401-invalid-request', 'job-404-invalid-request']) expect(notes.endedOnFault(name, before)).toBe(true);
         for (const name of ['job-403-moderation', 'job-400-context', 'job-413', 'job-400-temperature', 'job-400-noparam', 'job-422-messages']) {
             expect(notes.endedOnFault(name, before)).toBe(false);
             // the request's own failure is off our side: the runner never ends the job as ours for it
@@ -766,6 +768,11 @@ describe('whoseProviderError', () => {
         expect(whoseProviderError(400, { param: 'stream_options.include_usage' })).toBe('ours');
         expect(whoseProviderError(422, { param: 'model' })).toBe('ours');
         expect(whoseProviderError(400, { param: 'temperature' })).toBe('request');
+        // OpenAI says invalid_request_error on a revoked key, no credit and a model that is gone: those are ours
+        expect(whoseProviderError(401, { type: 'invalid_request_error', code: 'invalid_api_key' })).toBe('ours');
+        expect(whoseProviderError(402, { type: 'invalid_request_error' })).toBe('ours');
+        expect(whoseProviderError(404, { type: 'invalid_request_error', code: 'model_not_found', param: 'messages' })).toBe('ours');
+        expect(whoseProviderError(403, { type: 'invalid_request_error', param: 'tools' })).toBe('ours');
         expect(whoseProviderError(400, { param: 'messages[0].content[1].image_url' })).toBe('request');
         expect(whoseProviderError(400, {})).toBe('request');
         expect(whoseProviderError(422, {})).toBe('request');

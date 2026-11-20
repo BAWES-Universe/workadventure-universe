@@ -174,7 +174,8 @@ export function whoseProviderError(status: number | null, error: unknown): 'ours
     if (numeric === 413) return 'request';
     if (CONTENT_WORDS.test(words)) return 'request';
     // A refusal of the shape of the call: ours only when it names a field the relay itself sets
-    const badShape = numeric === 400 || numeric === 422 || record.type === 'invalid_request_error' || typeof record.param === 'string';
+    // (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is about our key or our model)
+    const badShape = numeric === null ? record.type === 'invalid_request_error' || typeof record.param === 'string' : numeric === 400 || numeric === 422;
     if (badShape) {
         const param = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
         return RELAY_FIELDS.has(param) ? 'ours' : 'request';
