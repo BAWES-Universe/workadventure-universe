@@ -262,6 +262,70 @@ describe('a job that runs', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
     });
 
+    describe('a fault of ours that Hermes hands back as a finished turn', () => {
+        const rig = (scripts: Array<(input: string) => RunnerEvent[]>) => {
+            let t = 0;
+            const clock = () => ++t;
+            const notes = createRefusalNotes(clock);
+            const { orbit, seen } = fakeOrbit(scripts.map((script) => (input: string) => script(input)));
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+            orbit.running = async () => [JOB];
+            return { notes, seen, run: async () => { await runner.tick(); await runner.idle(); } };
+        };
+
+        it('ends the job as failed and ours when every turn completed with the relay’s error as its words', async () => {
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.fault(JOB.jobId), done('Error: the service is busy (503)'))));
+            await run();
+            expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        });
+
+        it('ends the job as failed and ours when every turn completed with no words after a provider 500', async () => {
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.fault(JOB.jobId), done(''))));
+            await run();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        });
+
+        it('does not charge the person for a turn that did its work: a fault a later call made good is a good turn', async () => {
+            const { notes, seen, run } = rig([
+                () => (notes.fault(JOB.jobId), notes.answered(JOB.jobId), done('Filled the form after a retry')),
+                () => (notes.fault(JOB.jobId), notes.answered(JOB.jobId), done('[[done]]')),
+            ]);
+            await run();
+            expect(seen.turns).toHaveLength(2);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('keeps a silent turn the agent’s own when no fault of ours came in during it', async () => {
+            const { seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => done('')));
+            await run();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        });
+
+        it('does not read a fault from an earlier turn into the turn that followed it', async () => {
+            const { notes, seen, run } = rig([
+                () => (notes.fault(JOB.jobId), done('Error: busy')),
+                () => done('Carrying on with the form'),
+                () => done('[[done]]'),
+            ]);
+            await run();
+            expect(seen.turns).toHaveLength(3);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('leaves it to the person’s allowance when a refusal of theirs came in during the same turn', async () => {
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.note(JOB.jobId), notes.fault(JOB.jobId), done('Error'))));
+            await run();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        });
+
+        it('still takes the agent’s own ending from a turn, and a turn that completed ahead of a done marker is done', async () => {
+            const { notes, seen, run } = rig([() => (notes.fault(JOB.jobId), notes.answered(JOB.jobId), done('Finished [[done]]'))]);
+            await run();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
     it('reads a turn that is gone on its first open as a failed turn, not as the agent saying nothing', async () => {
         const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => ({ ok: false as const, reason: 'no_turn' })));
         await runJob(orbit);

@@ -467,3 +467,91 @@ describe('the Orbit calls', () => {
         await expect(relayOrbitFor(admin(502, {})).settle(input)).rejects.toThrow();
     });
 });
+
+describe('how a call ended, for the runner', () => {
+    const since = () => Date.now() - 1;
+    const asJob = (jobId: string) => orbit.identify.mockResolvedValue({ ok: true, jobId, botId: BOT });
+
+    it('notes a provider that answered with an error of its own, or could not be reached, as a fault of ours', async () => {
+        asJob('job-fault-500');
+        const before = since();
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'The model broke' } });
+        await askAndSettle({ messages });
+        expect(notes.endedOnFault('job-fault-500', before)).toBe(true);
+
+        asJob('job-fault-unreachable');
+        route = { config: config({ endpoint: 'http://127.0.0.1:1/v1' }), source: 'universe-ai', keyOwnerId: null };
+        await askAndSettle({ messages }, 2);
+        expect(notes.endedOnFault('job-fault-unreachable', before)).toBe(true);
+    });
+
+    it('notes Orbit that cannot be asked, a Brick with no AI, and computers all busy as faults of ours', async () => {
+        const before = since();
+        asJob('job-busy');
+        orbit.authorize.mockRejectedValue(new Error('down'));
+        expect((await ask({ messages })).status).toBe(503);
+        expect(notes.endedOnFault('job-busy', before)).toBe(true);
+
+        asJob('job-resting');
+        route = null as never;
+        expect((await ask({ messages })).status).toBe(503);
+        expect(notes.endedOnFault('job-resting', before)).toBe(true);
+
+        asJob('job-pool');
+        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool' });
+        expect((await ask({ messages })).status).toBe(503);
+        expect(notes.endedOnFault('job-pool', before)).toBe(true);
+    });
+
+    it('does not note a refusal for the person’s allowance or rule, or a call the provider found wrong, as a fault of ours', async () => {
+        const before = since();
+        asJob('job-allowance');
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
+        await ask({ messages });
+        expect(notes.endedOnFault('job-allowance', before)).toBe(false);
+
+        asJob('job-wrong');
+        orbit.authorize.mockResolvedValue({ ok: true });
+        upstreamHandler = (_req, res) => res.status(400).json({ error: { message: 'bad request' } });
+        await askAndSettle({ messages });
+        expect(notes.endedOnFault('job-wrong', before)).toBe(false);
+    });
+
+    it('does not note a fault that a later call made good, and notes one that came after an answer', async () => {
+        asJob('job-retry');
+        const before = since();
+        upstreamHandler = (_req, res) => res.status(503).json({ error: { message: 'busy' } });
+        await askAndSettle({ messages });
+        expect(notes.endedOnFault('job-retry', before)).toBe(true);
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+        await askAndSettle({ messages }, 2);
+        expect(notes.endedOnFault('job-retry', before)).toBe(false);
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'broke' } });
+        await askAndSettle({ messages }, 3);
+        expect(notes.endedOnFault('job-retry', before)).toBe(true);
+    });
+
+    it('notes a streamed answer that the provider cut off as a fault of ours, and a whole one as an answer', async () => {
+        const before = since();
+        asJob('job-cut');
+        upstreamHandler = (req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hel' } }] })}\n\n`);
+            setTimeout(() => req.socket.destroy(), 10);
+        };
+        const cut = await ask({ messages, stream: true });
+        await cut.text().catch(() => '');
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect(notes.endedOnFault('job-cut', before)).toBe(true);
+
+        asJob('job-whole');
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hello' } }] })}\n\ndata: [DONE]\n\n`);
+            res.end();
+        };
+        await askAndSettle({ messages, stream: true }, 2);
+        expect(notes.endedOnFault('job-whole', before)).toBe(false);
+    });
+});

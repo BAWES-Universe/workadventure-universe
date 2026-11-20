@@ -168,7 +168,7 @@ export interface RunnerDeps {
     now?: () => number;
     log?: Pick<Console, 'warn' | 'error' | 'info'>;
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
-    refusals?: Pick<RefusalNotes, 'sawSince'>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault'>>;
 }
 
 const realSleep = (ms: number, signal: AbortSignal) =>
@@ -535,16 +535,19 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             // No ending said: carry on, but not for ever when turns keep going wrong
-            // A bad turn is one that failed or said nothing. It is Universe's failure only when the turn really failed (a model or transport
-            // error, a stream that broke) and nothing of the person's (their allowance, a rule of theirs) stopped it: a turn with no words
-            // at all can be what the job asked for ("never reply in text"), so it is the agent's, and the streak is ours only when every
-            // turn of it was ours. A refusal only decides whose a bad turn is: a turn that went on and said something after one call was
-            // refused is no bad turn (the agent got round it), so a job is never ended for refusals it recovered from
+            // A bad turn is one that failed, said nothing, or ended on a fault of ours. It is Universe's failure only when the turn really failed
+            // (a model or transport error, a stream that broke) and nothing of the person's (their allowance, a rule of theirs) stopped it: a
+            // turn with no words at all can be what the job asked for ("never reply in text"), so it is the agent's, and the streak is ours
+            // only when every turn of it was ours. A refusal only decides whose a bad turn is: a turn that went on and said something after one
+            // call was refused is no bad turn (the agent got round it), so a job is never ended for refusals it recovered from.
+            // Hermes can hand an error of ours back as a finished turn, with the error as its words or with none: the relay says whether the
+            // turn's last call failed for a fault of ours (nothing answered after it), and then the turn is a bad one that is ours, words or not
             const silent = !result.failed && result.words.trim() === '';
-            if (result.failed || silent) {
+            const ourFault = (!result.failed && readFrom !== null && deps.refusals?.endedOnFault?.(job.jobId, readFrom)) || false;
+            if (result.failed || silent || ourFault) {
                 const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
                 bad += 1;
-                if (silent || refused) notOurs = true;
+                if (refused || (silent && !ourFault)) notOurs = true;
             } else {
                 bad = 0;
                 notOurs = false;

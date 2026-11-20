@@ -25,3 +25,32 @@ describe('what the relay refused for a person’s allowance or rules', () => {
         expect(notes.sawSince('new', 0)).toBe(true);
     });
 });
+
+describe('how a job’s model calls fared on Universe’s side', () => {
+    it('says a turn ended on a fault of ours only while no call after the fault was answered', () => {
+        // every event lands in the same millisecond: the order they came in decides
+        const notes = createRefusalNotes(() => 1000);
+        expect(notes.endedOnFault('a', 0)).toBe(false);
+        notes.fault('a');
+        expect(notes.endedOnFault('a', 1000)).toBe(true);
+        notes.answered('a');
+        expect(notes.endedOnFault('a', 1000)).toBe(false);
+        notes.fault('a');
+        expect(notes.endedOnFault('a', 1000)).toBe(true);
+        expect(notes.endedOnFault('b', 0)).toBe(false);
+    });
+
+    it('does not count a fault from before the turn began, or a person’s refusal, and forgets old ones', () => {
+        let at = 1000;
+        const notes = createRefusalNotes(() => at);
+        notes.fault('a');
+        expect(notes.endedOnFault('a', 1001)).toBe(false);
+        notes.note('b');
+        expect(notes.endedOnFault('b', 0)).toBe(false);
+        at = REFUSAL_NOTE_KEEP_MS + 2000;
+        notes.fault('new');
+        expect(notes.endedOnFault('a', 0)).toBe(false);
+        expect(notes.endedOnFault('new', 0)).toBe(true);
+    });
+});
+

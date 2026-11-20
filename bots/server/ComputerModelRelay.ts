@@ -263,6 +263,11 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
         if (!token || !who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         const { jobId, botId } = who as { ok: true; jobId: string; botId: string };
+        // A call that failed for a fault of ours is noted for the runner (see ComputerRefusals): Hermes may hand its error back as a finished turn
+        const fault = (status: number, message: string, code: string, type = 'server_error') => {
+            deps.refusals?.fault(jobId);
+            return problem(res, status, message, code, type);
+        };
 
         const body = req.body;
         if (!isRecord(body) || !Array.isArray(body.messages) || body.messages.length === 0) {
@@ -274,12 +279,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         try {
             route = await deps.routeFor(botId);
         } catch {
-            return problem(res, 503, 'The AI could not be reached. Try again in a moment.', 'service_unavailable', 'server_error');
+            return fault(503, 'The AI could not be reached. Try again in a moment.', 'service_unavailable');
         }
-        if (!route) return problem(res, 503, 'This Brick’s AI is not answering right now.', 'ai_resting', 'server_error');
+        if (!route) return fault(503, 'This Brick’s AI is not answering right now.', 'ai_resting');
         const { config, source } = route;
         // Only OpenAI-format providers are reached directly here; others come with their own translation
-        if (config.type !== 'openai') return problem(res, 501, 'This Brick’s AI cannot be used from a computer yet.', 'provider_not_supported', 'server_error');
+        if (config.type !== 'openai') return fault(501, 'This Brick’s AI cannot be used from a computer yet.', 'provider_not_supported');
 
         // Check and take the place in one step, before anything is awaited: calls arriving together cannot all read the same count
         const running = inFlight.get(jobId) ?? 0;
@@ -310,24 +315,32 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             try {
                 allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer });
             } catch {
-                return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+                return fault(503, 'The service is busy. Try again in a moment.', 'service_unavailable');
             }
             if (!allowed.ok) {
                 const reason = 'reason' in allowed ? allowed.reason : 'refused';
                 if (reason === 'allowance' || reason === 'rule') deps.refusals?.note(jobId);
                 if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
                 if (reason === 'rule') return problem(res, 429, 'A spending rule stops this call.', 'insufficient_quota', 'insufficient_quota');
-                if (reason === 'pool') return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
+                if (reason === 'pool') return fault(503, 'Computers are busy right now. Try again in a moment.', 'overloaded');
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
             }
 
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
-                else ended = await callProvider({ body, config, streaming, outputCap, res });
+                else {
+                    ended = await callProvider({ body, config, streaming, outputCap, res });
+                    // How the call ended, for the runner: an error answer, or an answer cut off from our side, is a fault of ours; a whole answer is not
+                    if (res.statusCode >= 500 || (ended.cutShort && !gone)) deps.refusals?.fault(jobId);
+                    else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
+                }
             } catch (error) {
                 console.error('[ComputerRelay] A call failed:', providerErrorText(error));
-                if (!res.headersSent) problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
-                else res.end();
+                if (!res.headersSent) fault(502, 'The AI did not answer.', 'upstream_error');
+                else {
+                    deps.refusals?.fault(jobId);
+                    res.end();
+                }
                 ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
             }
         } finally {
