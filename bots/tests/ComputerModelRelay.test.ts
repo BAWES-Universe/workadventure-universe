@@ -828,6 +828,17 @@ describe('how a call ended, for the runner', () => {
 });
 
 describe('whoseProviderError', () => {
+    it('reads a 429 “Requested” as the input plus our limit: ours when the input alone fits, the request’s when it does not or when the job set the limit', () => {
+        const message = (requested: number) => `Request too large for gpt-4o on tokens per min (TPM): Limit 30000, Requested ${requested}. The input or output tokens must be reduced in order to run successfully.`;
+        // our setting 32768, a 100-token prompt: the input fits, our limit made it too large
+        expect(whoseProviderError(429, { message: message(32_868) }, { limit: false, name: false, outputCap: 32_768 })).toBe('ours');
+        // a 40000-token prompt with our 4096: the input alone does not fit
+        expect(whoseProviderError(429, { message: message(44_096) }, { limit: false, name: false, outputCap: 4096 })).toBe('request');
+        // the job set the limit
+        expect(whoseProviderError(429, { message: message(32_868) }, { limit: true, name: false, outputCap: 32_768 })).toBe('request');
+        // no numbers to read: the request's
+        expect(whoseProviderError(429, { message: 'Request too large for this model' }, { limit: false, name: false, outputCap: 4096 })).toBe('request');
+    });
     it('reads a 429 that says this one request is too large as the request’s, and a plain rate limit as ours', () => {
         expect(whoseProviderError(429, { message: 'Request too large for gpt-4o in organization org-x on tokens per min (TPM): Limit 30000, Requested 45000. The input or output tokens must be reduced in order to run successfully.' })).toBe('request');
         expect(whoseProviderError(429, { message: 'Limit 30000, Requested 45000' })).toBe('request');
@@ -867,7 +878,8 @@ describe('whoseProviderError', () => {
         // the name: OpenAI's host gets max_completion_tokens whatever the job wrote; elsewhere the job's own name is kept
         expect(jobsOwnLimit({ max_completion_tokens: 500 }, config({ endpoint: 'https://api.openai.com/v1' })).name).toBe(false);
         expect(jobsOwnLimit({ max_completion_tokens: 500 }, config({ endpoint: 'https://api.together.xyz/v1' })).name).toBe(true);
-        expect(jobsOwnLimit({ max_tokens: 500 }, config({ endpoint: 'https://api.together.xyz/v1' })).name).toBe(true);
+        // max_tokens is the name the relay sends there anyway (an Azure o-series deployment rejects it whoever wrote it): ours
+        expect(jobsOwnLimit({ max_tokens: 500 }, config({ endpoint: 'https://my.openai.azure.com/v1' })).name).toBe(false);
         expect(jobsOwnLimit({}, config({ endpoint: 'https://api.together.xyz/v1' })).name).toBe(false);
     });
     it('reads a refused field name as ours only when the relay picked it', () => {

@@ -171,7 +171,7 @@ const RELAY_FIELDS = new Set(['model', 'max_tokens', 'max_completion_tokens', 'n
  * no moderation), a model or address that is gone (404), a 400 or 422 about a field only the relay sets (model, the token limit, n, stream
  * and its options), and an error that says nothing of a code.
  */
-export function whoseProviderError(status: number | null, error: unknown, jobs: { limit: boolean; name: boolean } = { limit: true, name: true }): 'ours' | 'request' {
+export function whoseProviderError(status: number | null, error: unknown, jobs: { limit: boolean; name: boolean; outputCap?: number } = { limit: true, name: true }): 'ours' | 'request' {
     const record = isRecord(error) ? error : {};
     const words = ['code', 'type', 'message', 'status'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
     let numeric = status;
@@ -180,7 +180,14 @@ export function whoseProviderError(status: number | null, error: unknown, jobs: 
         const asNumber = typeof code === 'number' ? code : typeof code === 'string' && /^\d{3}$/.test(code) ? Number(code) : null;
         numeric = asNumber !== null && asNumber >= 100 && asNumber < 600 ? asNumber : null;
     }
-    if (numeric === 429 && REQUEST_TOO_LARGE.test(words)) return 'request';
+    if (numeric === 429 && REQUEST_TOO_LARGE.test(words)) {
+        // "Requested" is the input and the limit we set together: when the input alone fits under the provider's limit, it was our limit that made the
+        // request too large (ours); when the job set the limit, or the input alone does not fit, it is the request's
+        const limit = Number(/\blimit\D{0,3}(\d[\d,]*)/i.exec(words)?.[1]?.replace(/,/g, ''));
+        const requested = Number(/\brequested\D{0,3}(\d[\d,]*)/i.exec(words)?.[1]?.replace(/,/g, ''));
+        if (!jobs.limit && jobs.outputCap !== undefined && limit > 0 && requested > 0 && requested - jobs.outputCap < limit) return 'ours';
+        return 'request';
+    }
     if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
     if (numeric === 413) return 'request';
     // A refusal of a field the relay sets (model, n, stream, its options): ours. The token limit is the job's own when the job asked for it and we did not
@@ -233,13 +240,13 @@ const askedLimitOf = (body: Record<string, unknown>): number | undefined =>
 /**
  * What of the token limit the job chose, for reading a provider's refusal of it. The value is the job's own when it asked for one and we set no
  * limit of our own (with a setting, a value the provider refuses is our setting's mistake; with none, any ask is the job's, including one the
- * guard lowered). The field name is the job's own when the host is not OpenAI's (the relay keeps the name the job used there); on OpenAI's it is ours.
+ * guard lowered). The field name is the job's own only when the host is not OpenAI's and the job itself sent max_completion_tokens (the relay keeps that name there); max_tokens is the name the relay sends anyway, so a refusal of it is ours.
  */
 export function jobsOwnLimit(body: Record<string, unknown>, config: AIProviderConfig): { limit: boolean; name: boolean } {
     const asked = askedLimitOf(body);
     return {
         limit: asked !== undefined && !(config.maxTokens > 0),
-        name: !isOpenAIHost(config.endpoint) && (typeof body.max_completion_tokens === 'number' || typeof body.max_tokens === 'number'),
+        name: !isOpenAIHost(config.endpoint) && typeof body.max_completion_tokens === 'number',
     };
 }
 
@@ -582,7 +589,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 } catch {
                     /* a body that is not JSON says nothing more than its status */
                 }
-                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, providerSays: whoseProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, jobsOwnLimit(body, config)) };
+                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, providerSays: whoseProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, { ...jobsOwnLimit(body, config), outputCap }) };
             }
 
             if (!streaming) {
@@ -592,7 +599,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
                 }
                 res.status(200).json(data);
-                const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? whoseProviderError(null, (data as { error?: unknown }).error, jobsOwnLimit(body, config)) : null;
+                const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? whoseProviderError(null, (data as { error?: unknown }).error, { ...jobsOwnLimit(body, config), outputCap }) : null;
                 const usage = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
                 const message = data.choices?.[0]?.message;
                 // What the model wrote counts whether it was words, thinking or a tool call
@@ -628,7 +635,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     const chunk = JSON.parse(data) as { error?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
                     // A provider can answer 200 and put its error in the stream: that is no answer
                     if (chunk.error !== undefined && chunk.error !== null) {
-                        const kind = whoseProviderError(null, chunk.error, jobsOwnLimit(body, config));
+                        const kind = whoseProviderError(null, chunk.error, { ...jobsOwnLimit(body, config), outputCap });
                         providerSays = providerSays === 'ours' || kind === 'ours' ? 'ours' : 'request';
                     }
                     if (chunk.usage) usage = { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, ...readUsageDetail(chunk.usage) };
