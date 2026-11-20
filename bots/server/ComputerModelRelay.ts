@@ -264,8 +264,11 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         if (!token || !who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         const { jobId, botId } = who as { ok: true; jobId: string; botId: string };
         // A call that failed for a fault of ours is noted for the runner (see ComputerRefusals): Hermes may hand its error back as a finished turn
+        // Only the agent's own calls (they carry its tools) count: a side call Hermes makes with the same key (a summary, a title) that fails
+        // after the turn was answered is no failure of the turn. Set once the body is read.
+        let agentCall = true;
         const fault = (status: number, message: string, code: string, type = 'server_error') => {
-            deps.refusals?.fault(jobId);
+            if (agentCall) deps.refusals?.fault(jobId);
             return problem(res, status, message, code, type);
         };
 
@@ -274,6 +277,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             return problem(res, 400, 'A request needs a list of messages.', 'invalid_request');
         }
         const streaming = body.stream === true;
+        agentCall = Array.isArray(body.tools) && body.tools.length > 0;
 
         let route: RelayRoute | null;
         try {
@@ -331,14 +335,16 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 else {
                     ended = await callProvider({ body, config, streaming, outputCap, res });
                     // How the call ended, for the runner: an error answer, or an answer cut off from our side, is a fault of ours; a whole answer is not
-                    if (res.statusCode >= 500 || (ended.cutShort && !gone)) deps.refusals?.fault(jobId);
-                    else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
+                    if (agentCall) {
+                        if (res.statusCode >= 500 || (ended.cutShort && !gone)) deps.refusals?.fault(jobId);
+                        else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
+                    }
                 }
             } catch (error) {
                 console.error('[ComputerRelay] A call failed:', providerErrorText(error));
                 if (!res.headersSent) fault(502, 'The AI did not answer.', 'upstream_error');
                 else {
-                    deps.refusals?.fault(jobId);
+                    if (agentCall) deps.refusals?.fault(jobId);
                     res.end();
                 }
                 ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
