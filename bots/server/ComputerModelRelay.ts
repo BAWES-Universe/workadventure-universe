@@ -30,7 +30,7 @@ import type { CallKind, FaultReason, RefusalNotes } from './ComputerRefusals';
 /** What the relay needs of Orbit: the three calls of /api/computer/llm. */
 export interface RelayOrbit {
     identify(token: string): Promise<{ ok: true; jobId: string; botId: string } | { ok: false }>;
-    authorize(input: { token: string; callId: string; estimateMicros: number; payer: 'universe' | 'own-key'; route: string }): Promise<{ ok: true } | { ok: false; reason: 'refused' | 'allowance' | 'pool' | 'rule' }>;
+    authorize(input: { token: string; callId: string; estimateMicros: number; payer: 'universe' | 'own-key'; route: string }): Promise<{ ok: true } | { ok: false; reason: 'refused' | 'allowance' | 'pool' | 'rule'; full?: boolean }>;
     settle(input: SettleInput): Promise<{ ok: boolean }>;
 }
 
@@ -47,7 +47,9 @@ export function relayOrbitFor(admin: { computerRelayCall(step: 'identify' | 'aut
             const { status, data } = await admin.computerRelayCall('authorize', input);
             if (status !== 200) throw unexpected('authorize', status);
             if (data.ok === true) return { ok: true };
-            return { ok: false, reason: data.reason === 'allowance' || data.reason === 'pool' || data.reason === 'rule' ? data.reason : 'refused' };
+            const reason = data.reason === 'allowance' || data.reason === 'pool' || data.reason === 'rule' ? data.reason : 'refused';
+            // `full`: the pool has no room for even the smallest call (a fault of ours); without it the call was refused for its own size, which the job decides
+            return reason === 'pool' ? { ok: false, reason, full: data.full === true } : { ok: false, reason };
         },
         async settle(input) {
             const { status } = await admin.computerRelayCall('settle', { ...input });
@@ -229,6 +231,10 @@ function wordsOf(text: string): string {
 const KEY_CODES = /invalid[_ -]?api[_ -]?key|model[_ -]?not[_ -]?found|insufficient[_ -]?(quota|funds|credit)|billing|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
 /** The same said in a message: read only when the error has no status and names no field, since a provider echoes the job's own values in a message. */
 const KEY_MESSAGE = /incorrect api key|invalid api key|model .*does not exist|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
+/** A 404 that says the model we named is missing (the relay chooses the model; the job cannot). */
+const MODEL_MISSING = /\bmodel\b[^.]{0,120}\b(does not exist|not found|is not available|has been (deprecated|decommissioned|removed))|no endpoints found for\b/i;
+/** A 404 that says the request needs something the model lacks (image input, tool use...): the job's own request, not a missing model. */
+const NEEDS_FEATURE = /that support|support(s|ed)? (image|tool|function|vision|json|structured|reasoning|streaming|input)|(image|tool|vision|function)[ _-](input|use|calling)/i;
 /** A 429 that is about this one request being larger than the limit (OpenAI: "Request too large ... Limit 30000, Requested 45000 ... must be reduced"), not a rate limit: a rate limit names what was used too (Limit 30000, Used 28000, Requested 5000). */
 const REQUEST_TOO_LARGE = /request too large|too large for|must be reduced|reduce (the length|the size|your (prompt|input|request))|limit \d+,? requested \d+/i;
 const CONTENT_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?(length|window)|maximum context|too many tokens|token limit|prompt (is )?too long|too large/i;
@@ -248,7 +254,7 @@ export interface JobsOwn {
 
 /**
  * What a provider's error says, in the three classes Orbit judges refunds by:
- *  - `fault`: a confirmed fault of Universe's (our key or model refused: 401, 402, 403, 404, a key code), which no job's words can cause.
+ *  - `fault`: a confirmed fault of Universe's (our key or credit refused: 401, 402, a key code; our model said to be missing), which no job's words can cause.
  *  - `not_ours`: what the job itself sent was refused (moderation, a content policy, a context that is too long, a body too large, a 400 or 422 about
  *    a field the job's machine sent, a token limit the job asked for): neither a fault of ours nor an answer.
  *  - `uncertain`: unresolved, for bounded goodwill and reconciliation: the provider's own service failing (5xx), a rate limit (429), a refusal of a
@@ -308,7 +314,10 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
     // or a forwarding or serialization error of ours cannot be told apart)
     const badShape = numeric === null ? record.type === 'invalid_request_error' || typeof record.param === 'string' : numeric === 400 || numeric === 422;
     if (badShape) return paramField ? REQUESTS() : OURS_UNSURE('fieldless_400');
-    if (numeric === 401 || numeric === 402 || numeric === 403 || numeric === 404) return OURS_FAULT('provider_key_ours');
+    if (numeric === 401 || numeric === 402) return OURS_FAULT('provider_key_ours');
+    // A 404 is ours only when it says OUR model is missing: a provider also answers 404 when the request needs something the model lacks ("No endpoints
+    // found that support image input", "... tool use"), and the job decides what it sends. A plain 403 is not enough either (a key code was read above)
+    if (numeric === 404 && typeof record.message === 'string' && MODEL_MISSING.test(record.message) && !NEEDS_FEATURE.test(record.message)) return OURS_FAULT('provider_key_ours');
     // Any other status, or an error that says nothing of a code: unresolved
     return OURS_UNSURE(numeric === null ? 'provider_5xx' : 'fieldless_400');
 }
@@ -545,7 +554,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 if (reason === 'allowance' || reason === 'rule') noteCall('not_ours', reason, 429);
                 if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
                 if (reason === 'rule') return problem(res, 429, 'A spending rule stops this call.', 'insufficient_quota', 'insufficient_quota');
-                if (reason === 'pool') return fault('pool_busy', 503, 'Computers are busy right now. Try again in a moment.', 'overloaded');
+                if (reason === 'pool') {
+                    // Confirmed ours only when the pool has no room for even the smallest call: the size of a call grows with what the job sent, so a call
+                    // refused for its own size is unresolved
+                    noteCall(allowed.full === true ? 'fault' : 'uncertain', 'pool_busy', 503);
+                    return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
+                }
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
             }
 
