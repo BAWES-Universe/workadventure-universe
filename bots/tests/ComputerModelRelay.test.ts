@@ -176,7 +176,7 @@ describe('room before the call', () => {
     });
 
     it('names the route on the room request, the same string as in its fault rows (universe-ai:<providerId>), so Orbit can count failures and pause a route', async () => {
-        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai' };
+        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
         await askAndSettle({ messages });
         expect(orbit.authorize).toHaveBeenCalledWith(expect.objectContaining({ payer: 'universe', route: `universe-ai:${config().providerId}` }));
     });

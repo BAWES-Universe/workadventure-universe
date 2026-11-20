@@ -218,7 +218,7 @@ describe('a job that runs', () => {
         expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
 
         // a refusal noted before the turn began belongs to an earlier turn: it is asked from the turn's own start
-        const since: number[] = [];
+        const since: unknown[] = [];
         const c = fakeOrbit([failing(), failing(), failing()]);
         await runJob(c.orbit, JOB, RELAY, { sawSince: (_job, at) => (since.push(at), false) });
         expect(since).toHaveLength(RUNNER_GUARDS.maxBadTurns);

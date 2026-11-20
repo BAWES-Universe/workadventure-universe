@@ -615,7 +615,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 if (reason === 'pool') {
                     // Confirmed ours only when the pool has no room for even the smallest call: the size of a call grows with what the job sent, so a call
                     // refused for its own size is unresolved
-                    noteCall(allowed.full === true ? 'fault' : 'uncertain', 'pool_busy', 503);
+                    noteCall('full' in allowed && allowed.full === true ? 'fault' : 'uncertain', 'pool_busy', 503);
                     return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
                 }
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
