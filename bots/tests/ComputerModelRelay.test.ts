@@ -695,6 +695,86 @@ describe('how a call ended, for the runner', () => {
         expect((await rowsSent('job-too-long')).map((row) => [row.kind, row.reason, row.providerStatus])).toEqual([['uncertain', 'provider_5xx', 502]]);
     });
 
+    it('keeps the relay’s own cutoff unresolved on a person’s own key too: a reply cut at the bound and a time limit are no refusal by their provider', async () => {
+        const before = since();
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        asJob('job-own-too-long');
+        const huge = JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'x'.repeat(17 * 1024 * 1024) } }] });
+        upstreamHandler = (_req, res) => res.status(200).type('application/json').send(huge);
+        await askAndSettle(agent);
+        expect(notes.confirmedSince('job-own-too-long', before)).toBe(false);
+        expect((await rowsSent('job-own-too-long')).map((row) => [row.kind, row.reason, row.source])).toEqual([['uncertain', 'provider_5xx', 'own-key']]);
+
+        const original = RELAY_GUARDS.callTimeoutMs;
+        (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = 150;
+        try {
+            asJob('job-own-timeout');
+            upstreamHandler = () => undefined;
+            await askAndSettle(agent, 2);
+            expect((await rowsSent('job-own-timeout')).map((row) => [row.kind, row.reason, row.source])).toEqual([['uncertain', 'timeout_no_output', 'own-key']]);
+        } finally {
+            (RELAY_GUARDS as { callTimeoutMs: number }).callTimeoutMs = original;
+        }
+        // their own provider refusing is still theirs
+        asJob('job-own-refused');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await askAndSettle(agent, 3);
+        expect((await rowsSent('job-own-refused'))[0]).toMatchObject({ kind: 'not_ours', reason: 'own_provider' });
+    });
+
+    it('does not let an empty 200 clear an earlier fault of the same job: only something the model wrote, or tokens it spent, is an answer', async () => {
+        const before = since();
+        asJob('job-empty-answer');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await askAndSettle({ ...agent, stream: true }, 1);
+        expect(notes.endedOnFault('job-empty-answer', before)).toBe(true);
+        // a retry answers 200 with a stream that closes with nothing in it
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.end('data: [DONE]\n\n');
+        };
+        await askAndSettle({ ...agent, stream: true }, 2);
+        expect(notes.endedOnFault('job-empty-answer', before)).toBe(true);
+        // a retry that wrote something does clear it
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Done' } }] })}\n\n`);
+            res.end('data: [DONE]\n\n');
+        };
+        await askAndSettle({ ...agent, stream: true }, 3);
+        expect(notes.endedOnFault('job-empty-answer', before)).toBe(false);
+        // and so does a tool call, or tokens the provider says it spent
+        asJob('job-empty-tokens');
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'boom' } });
+        await askAndSettle(agent, 4);
+        expect(notes.endedOnFault('job-empty-tokens', before)).toBe(true);
+        upstreamHandler = (_req, res) => res.json({ choices: [{ message: { role: 'assistant', content: '' } }], usage: { prompt_tokens: 10, completion_tokens: 3 } });
+        await askAndSettle(agent, 5);
+        expect(notes.endedOnFault('job-empty-tokens', before)).toBe(false);
+    });
+
+    it('writes nothing for a caller that went away while Orbit was being asked for room, and Orbit then failed; a caller that is still there gets the fault', async () => {
+        const before = since();
+        asJob('job-gone-authorize');
+        let fail: () => void = () => undefined;
+        orbit.authorize.mockImplementation(() => new Promise((_resolve, reject) => { fail = () => reject(new Error('down')); }));
+        const controller = new AbortController();
+        const asked = fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(agent), signal: controller.signal }).catch(() => null);
+        await vi.waitFor(() => expect(orbit.authorize).toHaveBeenCalled(), { timeout: 3000 });
+        controller.abort();
+        await asked;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        fail();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(notes.endedOnFault('job-gone-authorize', before)).toBe(false);
+        expect(rowsOf('job-gone-authorize')).toHaveLength(0);
+
+        asJob('job-here-authorize');
+        orbit.authorize.mockRejectedValue(new Error('down'));
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-here-authorize'))[0]).toMatchObject({ kind: 'fault', reason: 'relay_down' });
+    });
+
     it('notes Orbit that cannot be asked, a Brick with no AI, and computers all busy as faults of ours', async () => {
         const before = since();
         asJob('job-busy');

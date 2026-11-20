@@ -462,7 +462,12 @@ interface Ended {
     reading?: ProviderReading;
     /** The status the provider answered with, when it answered an error. */
     upstreamStatus?: number;
+    /** The reading is of the relay's own cutoff (its time limit, its reply bound), not of anything the provider said: it is the same on every key. */
+    local?: boolean;
 }
+
+/** Evidence of an answer: something the model wrote (words, thinking or a tool call), or tokens the provider says it spent. An empty 200 is no answer. */
+const answeredBy = (ended: Ended): boolean => ended.outputChars > 0 || (ended.usage?.completionTokens ?? 0) > 0;
 
 /** Of two readings of the same call the stronger counts: a confirmed fault, then an unresolved one, then the request's. */
 const strongerReading = (one: ProviderReading | undefined, two: ProviderReading): ProviderReading => {
@@ -593,6 +598,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             try {
                 allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer, route: routeName });
             } catch {
+                // A caller that went away while the room was being asked for is no fault of anyone's: nothing is written for it
+                if (gone || res.destroyed) return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
                 return fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
             }
             if (!allowed.ok) {
@@ -616,7 +623,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     ended = await callProvider({ body, config, streaming, outputCap, res, timing });
                     // The relay's own time limit ran out: unresolved either way (a stream that wrote nothing in time may be a provider that hung, one that
                     // was writing proves progress only), so it is for Orbit's bounded goodwill and reconciliation, not charged or refunded blindly
-                    if (timing.timedOut && !ended.reading) ended = { ...ended, reading: OURS_UNSURE(ended.outputChars === 0 ? 'timeout_no_output' : 'timeout_after_output') };
+                    if (timing.timedOut && !ended.reading) ended = { ...ended, reading: OURS_UNSURE(ended.outputChars === 0 ? 'timeout_no_output' : 'timeout_after_output'), local: true };
                     // How the call ended, for the runner and for Orbit's fault record: a confirmed fault of ours, an unresolved one, what the person's side
                     // did (their allowance, a rule, their own provider, a request of the job's own that the provider refused) or a whole answer. What a
                     // provider answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
@@ -632,12 +639,14 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                         if (requestWrong) noteCall('not_ours', 'field_job_set', status);
                         else if (providerSaid) {
                             if (ended.relaySide) noteCall('fault', 'relay_down', status);
+                            // The relay's own cutoff (its time limit, its reply bound) is the same on every key: unresolved, never the person's side
+                            else if (ended.local && reading) noteCall(reading.kind, reading.reason, status);
                             // A person's own provider failing is not ours: it is on the person's side, so the runner never ends the job as ours for it
                             else if (source === 'own-key') noteCall('not_ours', 'own_provider', status);
                             else if (reading) noteCall(reading.kind, reading.reason, status);
                             // A stream that broke after it began, or an answer that was a 5xx with nothing read from it: unresolved
                             else noteCall('uncertain', ended.cutShort ? 'stream_cut' : 'provider_5xx', status);
-                        } else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) noteCall('answered', 'provider_5xx' /* no reason is kept for an answer */);
+                        } else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent && answeredBy(ended)) noteCall('answered', 'provider_5xx' /* no reason is kept for an answer */);
                     }
                 }
             } catch (error) {
@@ -799,7 +808,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     // as the person's): only the job's own settings (logprobs on every token) can make a reply that long, so it is not confirmed
                     // ours, but nothing proves whose it is either. It is written down explicitly (reason provider_5xx: the 502 the agent gets and
                     // one of the 15 reasons Orbit takes) so it can never become a confirmed fault. A reply that is not JSON is unresolved too
-                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: false, ...(tooLong ? { reading: OURS_UNSURE('provider_5xx') } : {}) };
+                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: false, ...(tooLong ? { reading: OURS_UNSURE('provider_5xx'), local: true } : {}) };
                 }
                 res.status(200).json(data);
                 const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? readProviderError(null, (data as { error?: unknown }).error, { ...jobsOwnLimit(body, config), outputCap }) : null;
