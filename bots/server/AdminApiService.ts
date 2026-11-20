@@ -1698,6 +1698,21 @@ export class AdminApiService {
     }
 
     /**
+     * The model relay's durable record of how a job's model calls ended (the fault record Orbit judges a failed job's refund by): one row per job and
+     * call, idempotent. True when Orbit took the rows, or has no such record yet (an older Orbit answers 404 or 405: nothing to keep trying for); false
+     * when it could not be reached or failed, so the rows are kept and sent again.
+     */
+    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean> {
+        try {
+            const response = await this.brickCall<{ ok?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
+            return response.status === 200 && response.data?.ok !== false;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response && (error.response.status === 404 || error.response.status === 405)) return true;
+            return false;
+        }
+    }
+
+    /**
      * The three calls the model relay makes of Orbit about a computer's model call (identify the key, take room, settle). The relay
      * says what to do with each answer, so a status Orbit gives is passed on (a refused key is a 200 with ok: false). Throws when
      * Orbit cannot be reached or fails.

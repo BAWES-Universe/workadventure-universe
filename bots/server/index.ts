@@ -91,7 +91,8 @@ let dmCards: CardSurface | undefined;
 const aiService = botManager.getAIService();
 // The address a Brick's computer calls for its AI (OpenAI format, /v1): Orbit checks the key and the room, the provider's key stays here
 // The relay notes what it refused for a person's allowance or rules, and the runner of the same job reads it to tell whose failure a turn was
-const computerRefusals = createRefusalNotes();
+// and records how each model call ended in Orbit's durable fault record, which Orbit judges a failed job's refund by (never held up for it)
+const computerRefusals = createRefusalNotes(Date.now, { sink: (botId, jobId, rows) => adminApiService.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>) });
 preRouters.push(createComputerModelRelay({ orbit: relayOrbitFor(adminApiService), routeFor: (botId) => aiService.relayRoute(botId), refusals: computerRefusals }));
 // Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
 // replies before it is heard, and what the hearing provider still holds is deleted until it confirms

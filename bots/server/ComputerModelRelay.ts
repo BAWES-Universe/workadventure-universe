@@ -25,7 +25,7 @@ import { isOpenAIHost, readUsageDetail, refusesStreamOptions } from '../ai/provi
 import { priceCall } from '../ai/pricing/costing';
 import { priceMetadata, type CallMetadata } from '../ai/pricing/ledger';
 import type { CallCost } from '../ai/pricing/types';
-import type { RefusalNotes } from './ComputerRefusals';
+import type { CallKind, FaultReason, RefusalNotes } from './ComputerRefusals';
 
 /** What the relay needs of Orbit: the three calls of /api/computer/llm. */
 export interface RelayOrbit {
@@ -229,14 +229,33 @@ const TOKEN_LIMIT_FIELDS = new Set(['max_tokens', 'max_completion_tokens']);
 /** The fields of a call that the relay sets itself; every other field is what the job's own machine sent, and a job's words can steer it. */
 const RELAY_FIELDS = new Set(['model', 'max_tokens', 'max_completion_tokens', 'n', 'stream', 'stream_options']);
 
+/** How the fields of a call were chosen, for reading a provider's refusal of them (see jobsOwnLimit), and the limit the relay sent. */
+export interface JobsOwn {
+    limit: boolean;
+    name: boolean;
+    outputCap?: number;
+}
+
 /**
- * Whose a provider's error is. `request`: what the job itself sent was refused (moderation, a content policy, a context that is too long, a
- * body too large, a 400 or 422 about a field the job's machine sent, or about no field at all): neither a fault of ours nor an answer.
- * Everything else is `ours`: its own service failing (5xx), a rate limit (429), our key refused or out of credit (401, 402, a 403 that is
- * no moderation), a model or address that is gone (404), a 400 or 422 about a field only the relay sets (model, the token limit, n, stream
- * and its options), and an error that says nothing of a code.
+ * What a provider's error says, in the three classes Orbit judges refunds by:
+ *  - `fault`: a confirmed fault of Universe's (our key or model refused: 401, 402, 403, 404, a key code), which no job's words can cause.
+ *  - `not_ours`: what the job itself sent was refused (moderation, a content policy, a context that is too long, a body too large, a 400 or 422 about
+ *    a field the job's machine sent, a token limit the job asked for): neither a fault of ours nor an answer.
+ *  - `uncertain`: unresolved, for bounded goodwill and reconciliation: the provider's own service failing (5xx), a rate limit (429), a refusal of a
+ *    field only the relay sets (model, a token limit we chose, n, stream), a 400 or 422 that names no field at all, and an error that says nothing.
+ * `who` is `ours` for `fault` and `uncertain`, `request` for `not_ours`.
  */
-export function whoseProviderError(status: number | null, error: unknown, jobs: { limit: boolean; name: boolean; outputCap?: number } = { limit: true, name: true }): 'ours' | 'request' {
+export interface ProviderReading {
+    who: 'ours' | 'request';
+    kind: 'fault' | 'uncertain' | 'not_ours';
+    reason: FaultReason;
+}
+
+const OURS_FAULT = (reason: FaultReason): ProviderReading => ({ who: 'ours', kind: 'fault', reason });
+const OURS_UNSURE = (reason: FaultReason): ProviderReading => ({ who: 'ours', kind: 'uncertain', reason });
+const REQUESTS = (): ProviderReading => ({ who: 'request', kind: 'not_ours', reason: 'field_job_set' });
+
+export function readProviderError(status: number | null, error: unknown, jobs: JobsOwn = { limit: true, name: true }): ProviderReading {
     const record = isRecord(error) ? error : {};
     const words = ['code', 'type', 'message', 'status'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
     let numeric = status;
@@ -250,37 +269,43 @@ export function whoseProviderError(status: number | null, error: unknown, jobs: 
         // request too large (ours); when the job set the limit, or the input alone does not fit, it is the request's
         const limit = Number(/\blimit\D{0,3}(\d[\d,]*)/i.exec(words)?.[1]?.replace(/,/g, ''));
         const requested = Number(/\brequested\D{0,3}(\d[\d,]*)/i.exec(words)?.[1]?.replace(/,/g, ''));
-        if (!jobs.limit && jobs.outputCap !== undefined && limit > 0 && requested > 0 && requested - jobs.outputCap < limit) return 'ours';
-        return 'request';
+        if (!jobs.limit && jobs.outputCap !== undefined && limit > 0 && requested > 0 && requested - jobs.outputCap < limit) return OURS_UNSURE('provider_429');
+        return REQUESTS();
     }
-    if (numeric !== null && (numeric >= 500 || numeric === 429)) return 'ours';
-    if (numeric === 413) return 'request';
-    // A refusal of a field the relay sets (model, n, stream, its options): ours. The token limit is the job's own when the job asked for it and we did not
-    // lower it, and then a refusal of it is the request's; a limit we chose ours, unless the wording blames the prompt or the context (a context that is
-    // too long, N tokens in the messages, inputs tokens): the job's own input
+    if (numeric === 429) return OURS_UNSURE('provider_429');
+    if (numeric !== null && numeric >= 500) return OURS_UNSURE('provider_5xx');
+    if (numeric === 413) return REQUESTS();
+    // A refusal of a field the relay sets (model, n, stream, its options): ours, but unresolved (a setting of ours may be wrong, or the provider may have
+    // changed). The token limit is the job's own when the job asked for it and we did not lower it, and then a refusal of it is the request's; a limit we
+    // chose is ours, unless the wording blames the prompt or the context (a context that is too long, N tokens in the messages, inputs tokens)
     const paramField = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
     const refusedShape = numeric === null || numeric === 400 || numeric === 422;
     if (refusedShape && RELAY_FIELDS.has(paramField)) {
-        if (!TOKEN_LIMIT_FIELDS.has(paramField)) return 'ours';
+        if (!TOKEN_LIMIT_FIELDS.has(paramField)) return OURS_UNSURE('field_relay_set');
         // The name of the field is the relay's choice on OpenAI's host (max_completion_tokens) and the job's own elsewhere, where the relay keeps the name the job
         // used: a refusal of the name is ours only when the relay picked it
-        if (/unsupported[_ ]parameter/i.test(`${typeof record.code === 'string' ? record.code : ''} ${typeof record.message === 'string' ? record.message.slice(0, 40) : ''}`)) return jobs.name ? 'request' : 'ours';
-        return jobs.limit || INPUT_WORDS.test(words) ? 'request' : 'ours';
+        if (/unsupported[_ ]parameter/i.test(`${typeof record.code === 'string' ? record.code : ''} ${typeof record.message === 'string' ? record.message.slice(0, 40) : ''}`)) return jobs.name ? REQUESTS() : OURS_UNSURE('field_relay_set');
+        return jobs.limit || INPUT_WORDS.test(words) ? REQUESTS() : OURS_UNSURE('field_relay_set');
     }
-    if (CONTENT_WORDS.test(words)) return 'request';
+    if (CONTENT_WORDS.test(words)) return REQUESTS();
     // Our key, our credit or our model, named by the error itself: ours, before its shape is looked at. Only what the provider sets (code, type) is
     // read for that, never a message on a call that names a field: a message echoes the job's own values, and a job can steer those
     const codes = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
-    if (KEY_CODES.test(codes)) return 'ours';
-    if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return 'ours';
-    // A refusal of the shape of the call: ours only when it names a field the relay itself sets
-    // (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is about our key or our model)
+    if (KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours');
+    if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return OURS_FAULT('provider_key_ours');
+    // A refusal of the shape of the call (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is
+    // about our key or our model): the request's when it names a field the job sent, unresolved when it names no field at all (a bad payload of the job's
+    // or a forwarding or serialization error of ours cannot be told apart)
     const badShape = numeric === null ? record.type === 'invalid_request_error' || typeof record.param === 'string' : numeric === 400 || numeric === 422;
-    if (badShape) {
-        const param = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
-        return RELAY_FIELDS.has(param) ? 'ours' : 'request';
-    }
-    return 'ours';
+    if (badShape) return paramField ? REQUESTS() : OURS_UNSURE('fieldless_400');
+    if (numeric === 401 || numeric === 402 || numeric === 403 || numeric === 404) return OURS_FAULT('provider_key_ours');
+    // Any other status, or an error that says nothing of a code: unresolved
+    return OURS_UNSURE(numeric === null ? 'provider_5xx' : 'fieldless_400');
+}
+
+/** Whose a provider's error is, read as `readProviderError` does: `request` when what the job itself sent was refused, else `ours`. */
+export function whoseProviderError(status: number | null, error: unknown, jobs: JobsOwn = { limit: true, name: true }): 'ours' | 'request' {
+    return readProviderError(status, error, jobs).who;
 }
 
 const statusToHermes = (status: number): number => (status === 401 || status === 402 || status === 403 ? 502 : status >= 400 && status < 600 ? status : 502);
@@ -369,8 +394,17 @@ interface Ended {
     /** The call failed on our side before the provider was asked (its stored key could not be read): ours whoever's key it is. */
     relaySide?: boolean;
     /** What the provider said was wrong, when it said so (an error answer, or an error object inside a 200 answer): whose it is. Neither is an answer. */
-    providerSays?: 'ours' | 'request';
+    reading?: ProviderReading;
+    /** The status the provider answered with, when it answered an error. */
+    upstreamStatus?: number;
 }
+
+/** Of two readings of the same call the stronger counts: a confirmed fault, then an unresolved one, then the request's. */
+const strongerReading = (one: ProviderReading | undefined, two: ProviderReading): ProviderReading => {
+    if (!one) return two;
+    const rank = (reading: ProviderReading) => (reading.kind === 'fault' ? 2 : reading.kind === 'uncertain' ? 1 : 0);
+    return rank(two) > rank(one) ? two : one;
+};
 
 export function createComputerModelRelay(deps: RelayDeps): Router {
     const router = express.Router();
@@ -425,8 +459,16 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // Only the agent's own calls (they carry its tools) count: a side call Hermes makes with the same key (a summary, a title) that fails
         // after the turn was answered is no failure of the turn. Set once the body is read.
         let agentCall = true;
-        const fault = (status: number, message: string, code: string, type = 'server_error') => {
-            if (agentCall) deps.refusals?.fault(jobId);
+        // The call's own id: Orbit's fault record keeps one row per job and call, so the same id is sent when a row is sent again
+        const callId = randomUUID();
+        let routeName = 'unknown';
+        let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
+        // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
+        const noteCall = (kind: CallKind, reason: FaultReason, providerStatus: number | null = null) => {
+            if (agentCall) deps.refusals?.record(botId, jobId, { callId, kind, reason, source: rowSource, route: routeName, providerStatus });
+        };
+        const fault = (reason: FaultReason, status: number, message: string, code: string, type = 'server_error') => {
+            noteCall('fault', reason, status);
             return problem(res, status, message, code, type);
         };
 
@@ -441,18 +483,22 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         try {
             asked = await deps.routeFor(botId);
         } catch {
-            return fault(503, 'The AI could not be reached. Try again in a moment.', 'service_unavailable');
+            return fault('relay_down', 503, 'The AI could not be reached. Try again in a moment.', 'service_unavailable');
         }
         // The Brick's own key is down and its owner chose to stop: that is the person's, never ours. Universe's AI resting, or a route nobody can tell, is ours
         if (asked && 'restingOwnKey' in asked) {
-            if (agentCall) deps.refusals?.note(jobId);
+            rowSource = 'own-key';
+            routeName = 'own-key';
+            noteCall('not_ours', 'own_provider', 503);
             return problem(res, 503, 'This Brick’s AI is not answering right now.', 'ai_resting', 'server_error');
         }
-        if (!asked) return fault(503, 'This Brick’s AI is not answering right now.', 'ai_resting');
+        if (!asked) return fault('route_unknown', 503, 'This Brick’s AI is not answering right now.', 'ai_resting');
         const route = asked as RelayRoute;
         const { config, source } = route;
+        rowSource = source === 'own-key' ? 'own-key' : 'universe-ai';
+        routeName = source === 'own-key' ? 'own-key' : `${source}:${config.providerId}`;
         // Only OpenAI-format providers are reached directly here; others come with their own translation
-        if (config.type !== 'openai') return fault(501, 'This Brick’s AI cannot be used from a computer yet.', 'provider_not_supported');
+        if (config.type !== 'openai') return fault('route_unknown', 501, 'This Brick’s AI cannot be used from a computer yet.', 'provider_not_supported');
 
         // Check and take the place in one step, before anything is awaited: calls arriving together cannot all read the same count
         const running = inFlight.get(jobId) ?? 0;
@@ -475,7 +521,6 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
 
         const now = new Date();
         const outputCap = outputCapOf(body, config);
-        const callId = randomUUID();
         const payer = source === 'own-key' ? 'own-key' : 'universe';
         let ended: Ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
         try {
@@ -483,14 +528,14 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             try {
                 allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer });
             } catch {
-                return fault(503, 'The service is busy. Try again in a moment.', 'service_unavailable');
+                return fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
             }
             if (!allowed.ok) {
                 const reason = 'reason' in allowed ? allowed.reason : 'refused';
-                if ((reason === 'allowance' || reason === 'rule') && agentCall) deps.refusals?.note(jobId);
+                if (reason === 'allowance' || reason === 'rule') noteCall('not_ours', reason, 429);
                 if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
                 if (reason === 'rule') return problem(res, 429, 'A spending rule stops this call.', 'insufficient_quota', 'insufficient_quota');
-                if (reason === 'pool') return fault(503, 'Computers are busy right now. Try again in a moment.', 'overloaded');
+                if (reason === 'pool') return fault('pool_busy', 503, 'Computers are busy right now. Try again in a moment.', 'overloaded');
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
             }
 
@@ -499,40 +544,47 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 else {
                     const timing = { timedOut: false };
                     ended = await callProvider({ body, config, streaming, outputCap, res, timing });
-                    // The relay's own time limit ran out. Ours when the provider gave nothing in time (a stream that wrote nothing) or, for an answer that is
-                    // not streamed, when the relay chose the limit that made it long; a long answer the job asked for, or a stream that was writing when the
-                    // time ran out, is the job's own
-                    if (timing.timedOut && !ended.providerSays) ended = { ...ended, providerSays: (streaming ? ended.outputChars === 0 : !jobsOwnLimit(body, config).limit) ? 'ours' : 'request' };
-                    // How the call ended, for the runner: a failure of ours is noted as a fault, a whole answer as an answer. What a provider
-                    // answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
+                    // The relay's own time limit ran out: unresolved either way (a stream that wrote nothing in time may be a provider that hung, one that
+                    // was writing proves progress only), so it is for Orbit's bounded goodwill and reconciliation, not charged or refunded blindly
+                    if (timing.timedOut && !ended.reading) ended = { ...ended, reading: OURS_UNSURE(ended.outputChars === 0 ? 'timeout_no_output' : 'timeout_after_output') };
+                    // How the call ended, for the runner and for Orbit's fault record: a confirmed fault of ours, an unresolved one, what the person's side
+                    // did (their allowance, a rule, their own provider, a request of the job's own that the provider refused) or a whole answer. What a
+                    // provider answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
                     // person's own key the provider, the key and the endpoint are theirs (their credit ran out, their key was revoked)
-                    if (agentCall) {
-                        // A caller that went away is no fault of anyone's (the 504 written for a cut-off wait goes to nobody). What the provider said
-                        // was wrong of the job's own request (moderation, a context too long, an invalid request) is neither a fault nor an answer
-                        const requestWrong = ended.providerSays === 'request';
-                        // Not ours, so noted off our side: the runner never ends a job as ours for a turn that the job's own request failed
-                        if (requestWrong && !gone) deps.refusals?.note(jobId);
-                        const providerSaid = !gone && !requestWrong && (ended.providerSays === 'ours' || res.statusCode >= 500 || ended.cutShort);
-                        if (providerSaid) {
-                            if (source !== 'own-key' || ended.relaySide) deps.refusals?.fault(jobId);
-                            // A person's own provider failing is not ours: it is noted on the person's side, so the runner never ends the job as ours for it
-                            else deps.refusals?.note(jobId);
-                        } else if (!requestWrong && res.statusCode === 200 && !ended.cutShort && !ended.notSent) deps.refusals?.answered(jobId);
+                    // A caller that went away is no fault of anyone's (the 504 written for a cut-off wait goes to nobody)
+                    if (agentCall && !gone) {
+                        const reading = ended.reading;
+                        const requestWrong = reading?.who === 'request';
+                        const providerSaid = !requestWrong && (reading?.who === 'ours' || res.statusCode >= 500 || ended.cutShort);
+                        const status = ended.upstreamStatus ?? (res.statusCode >= 400 ? res.statusCode : null);
+                        // What the provider said was wrong of the job's own request (moderation, a context too long, an invalid request) is neither a
+                        // fault nor an answer, and is off our side: the runner never ends a job as ours for a turn that the job's own request failed
+                        if (requestWrong) noteCall('not_ours', 'field_job_set', status);
+                        else if (providerSaid) {
+                            if (ended.relaySide) noteCall('fault', 'relay_down', status);
+                            // A person's own provider failing is not ours: it is on the person's side, so the runner never ends the job as ours for it
+                            else if (source === 'own-key') noteCall('not_ours', 'own_provider', status);
+                            else if (reading) noteCall(reading.kind, reading.reason, status);
+                            // A stream that broke after it began, or an answer that was a 5xx with nothing read from it: unresolved
+                            else noteCall('uncertain', ended.cutShort ? 'stream_cut' : 'provider_5xx', status);
+                        } else if (res.statusCode === 200 && !ended.cutShort && !ended.notSent) noteCall('answered', 'provider_5xx' /* no reason is kept for an answer */);
                     }
                 }
             } catch (error) {
                 console.error('[ComputerRelay] A call failed:', providerErrorText(error));
-                // An error nobody expected, while the provider was being called: ours only when the provider is ours
+                // An error nobody expected, while the provider was being called: ours (unresolved) only when the provider is ours
                 if (!res.headersSent) {
-                    if (source !== 'own-key' && !gone) fault(502, 'The AI did not answer.', 'upstream_error');
-                    else {
-                        if (agentCall && !gone) deps.refusals?.note(jobId);
+                    if (source !== 'own-key' && !gone) {
+                        noteCall('uncertain', 'provider_5xx', 502);
+                        problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
+                    } else {
+                        if (!gone) noteCall('not_ours', 'own_provider', 502);
                         problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
                     }
                 } else {
-                    if (agentCall && !gone) {
-                        if (source !== 'own-key') deps.refusals?.fault(jobId);
-                        else deps.refusals?.note(jobId);
+                    if (!gone) {
+                        if (source !== 'own-key') noteCall('uncertain', 'stream_cut');
+                        else noteCall('not_ours', 'own_provider');
                     }
                     res.end();
                 }
@@ -666,7 +718,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     // fields the provider put before the cut (its code, type, param and message) still say whose the refusal is
                     if (tooLong) said = leadingFieldsOf(text);
                 }
-                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, providerSays: whoseProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, { ...jobsOwnLimit(body, config), outputCap }) };
+                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, upstreamStatus: upstream.status, reading: readProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, { ...jobsOwnLimit(body, config), outputCap }) };
             }
 
             if (!streaming) {
@@ -676,7 +728,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
                 }
                 res.status(200).json(data);
-                const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? whoseProviderError(null, (data as { error?: unknown }).error, { ...jobsOwnLimit(body, config), outputCap }) : null;
+                const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? readProviderError(null, (data as { error?: unknown }).error, { ...jobsOwnLimit(body, config), outputCap }) : null;
                 const usage = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
                 const message = data.choices?.[0]?.message;
                 // What the model wrote counts whether it was words, thinking or a tool call
@@ -686,7 +738,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     outputChars: written,
                     cutShort,
                     notSent: false,
-                    ...(answerError ? { providerSays: answerError } : {}),
+                    ...(answerError ? { reading: answerError } : {}),
                 };
             }
 
@@ -706,7 +758,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             const decoder = new StringDecoder('utf8');
             let usage: CallMetadata | undefined;
             let outputChars = 0;
-            let providerSays: 'ours' | 'request' | undefined;
+            let reading: ProviderReading | undefined;
             const read = (line: string) => {
                 if (!line.startsWith('data:')) return;
                 const data = line.slice(5).trim();
@@ -715,8 +767,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     const chunk = JSON.parse(data) as { error?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
                     // A provider can answer 200 and put its error in the stream: that is no answer
                     if (chunk.error !== undefined && chunk.error !== null) {
-                        const kind = whoseProviderError(null, chunk.error, { ...jobsOwnLimit(body, config), outputCap });
-                        providerSays = providerSays === 'ours' || kind === 'ours' ? 'ours' : 'request';
+                        reading = strongerReading(reading, readProviderError(null, chunk.error, { ...jobsOwnLimit(body, config), outputCap }));
                     }
                     if (chunk.usage) usage = { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, ...readUsageDetail(chunk.usage) };
                     for (const choice of chunk.choices ?? []) {
@@ -756,7 +807,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 }
                 if (!res.writableEnded) res.end();
             }
-            return { usage, outputChars, cutShort, notSent: false, ...(providerSays ? { providerSays } : {}) };
+            return { usage, outputChars, cutShort, notSent: false, ...(reading ? { reading } : {}) };
         } finally {
             clearTimeout(timer);
             res.off('close', onClose);
