@@ -175,6 +175,18 @@ describe('room before the call', () => {
         expect(upstreamRequests).toHaveLength(0);
     });
 
+    it('names the route on the room request, the same string as in its fault rows (universe-ai:<providerId>), so Orbit can count failures and pause a route', async () => {
+        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai' };
+        await askAndSettle({ messages });
+        expect(orbit.authorize).toHaveBeenCalledWith(expect.objectContaining({ payer: 'universe', route: `universe-ai:${config().providerId}` }));
+    });
+
+    it('names the route on the room request for a call on the owner’s own key as own-key', async () => {
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        await askAndSettle({ messages });
+        expect(orbit.authorize).toHaveBeenCalledWith(expect.objectContaining({ payer: 'own-key', route: 'own-key' }));
+    });
+
     it('holds room for a call on the owner’s own key as theirs, with none taken from the pool', async () => {
         route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
         await askAndSettle({ messages });
@@ -587,10 +599,12 @@ describe('the Orbit calls', () => {
     });
 
     it('reads room answers, and takes any odd reason as a refusal', async () => {
-        const input = { token: 't', callId: 'c', estimateMicros: 1, payer: 'universe' as const };
+        const input = { token: 't', callId: 'c', estimateMicros: 1, payer: 'universe' as const, route: 'universe-ai:p' };
         expect(await relayOrbitFor(admin(200, { ok: true })).authorize(input)).toEqual({ ok: true });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'allowance' })).authorize(input)).toEqual({ ok: false, reason: 'allowance' });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'rule' })).authorize(input)).toEqual({ ok: false, reason: 'rule' });
+        expect(await relayOrbitFor(admin(200, { ok: false, reason: 'pool', full: true })).authorize(input)).toEqual({ ok: false, reason: 'pool', full: true });
+        expect(await relayOrbitFor(admin(200, { ok: false, reason: 'pool' })).authorize(input)).toEqual({ ok: false, reason: 'pool', full: false });
         expect(await relayOrbitFor(admin(200, { ok: false, reason: 'something new' })).authorize(input)).toEqual({ ok: false, reason: 'refused' });
         await expect(relayOrbitFor(admin(500, {})).authorize(input)).rejects.toThrow();
     });
@@ -695,7 +709,7 @@ describe('how a call ended, for the runner', () => {
 
         asJob('job-pool');
         route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
-        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool' });
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool', full: true });
         expect((await ask(agent)).status).toBe(503);
         expect(notes.endedOnFault('job-pool', before)).toBe(true);
     });
@@ -905,7 +919,7 @@ describe('how a call ended, for the runner', () => {
         expect(notes.endedOnFault('job-unknown-route', before)).toBe(true);
     });
 
-    it('reads what the provider said: 401, 402, 403, 404 and a parameter 400 are our key or our settings (ours); moderation, a context too long and a body too large are the request’s (not ours, not an answer)', async () => {
+    it('reads what the provider said: 401, 402, a key code and a 404 naming our model are our key or our settings (ours), a plain 403 or a 404 about image input or tool use is unresolved; moderation, a context too long and a body too large are the request’s (not ours, not an answer)', async () => {
         const before = since();
         let count = 0;
         const said = async (name: string, status: number, error: Record<string, unknown>) => {
@@ -927,10 +941,19 @@ describe('how a call ended, for the runner', () => {
         await said('job-422-messages', 422, { message: 'invalid image url', param: 'messages[0].content' });
         await said('job-400-context', 400, { code: 'context_length_exceeded', message: 'maximum context length exceeded' });
         await said('job-413', 413, { message: 'payload' });
+        await said('job-404-image', 404, { message: 'No endpoints found that support image input', code: 404 });
+        await said('job-404-tools', 404, { message: 'No endpoints found that support tool use. To learn more about provider routing, visit: https://openrouter.ai/docs', code: 404 });
+        await said('job-404-our-model', 404, { message: 'No endpoints found for vendor/our-model.', code: 404 });
+        await said('job-404-plain', 404, { message: 'Not found' });
+        await said('job-404-model-image', 404, { message: 'No endpoints found for vendor/our-model that support image input.', code: 404 });
         // A fieldless 400 (a bad payload of the job's, or a serialization error of ours, cannot be told apart) is unresolved: a fault of the turn, never confirmed
-        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param', 'job-400-noparam', 'job-401-invalid-request', 'job-404-invalid-request']) expect(notes.endedOnFault(name, before)).toBe(true);
-        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-401-invalid-request', 'job-404-invalid-request']) expect(notes.confirmedSince(name, before)).toBe(true);
-        for (const name of ['job-400-param', 'job-400-noparam']) expect(notes.confirmedSince(name, before)).toBe(false);
+        for (const name of ['job-403-plain', 'job-401', 'job-402', 'job-404', 'job-400-param', 'job-400-noparam', 'job-401-invalid-request', 'job-404-invalid-request', 'job-404-image', 'job-404-tools', 'job-404-our-model', 'job-404-plain', 'job-404-model-image']) expect(notes.endedOnFault(name, before)).toBe(true);
+        for (const name of ['job-401', 'job-402', 'job-404', 'job-401-invalid-request', 'job-404-invalid-request', 'job-404-our-model']) expect(notes.confirmedSince(name, before)).toBe(true);
+        // A 404 that says the request needs something the model lacks (the job sends the image, the tools), a plain 404 and a plain 403 are not confirmed: unresolved
+        for (const name of ['job-400-param', 'job-400-noparam', 'job-403-plain', 'job-404-image', 'job-404-tools', 'job-404-plain', 'job-404-model-image']) expect(notes.confirmedSince(name, before)).toBe(false);
+        for (const name of ['job-404-image', 'job-404-tools', 'job-404-plain', 'job-404-model-image']) expect((await rowsSent(name))[0]).toMatchObject({ kind: 'uncertain', reason: 'fieldless_400', providerStatus: 404 });
+        expect((await rowsSent('job-403-plain'))[0]).toMatchObject({ kind: 'uncertain', providerStatus: 403 });
+        expect((await rowsSent('job-404-our-model'))[0]).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
         expect((await rowsSent('job-400-noparam'))[0]).toMatchObject({ kind: 'uncertain', reason: 'fieldless_400', providerStatus: 400 });
         expect((await rowsSent('job-400-param'))[0]).toMatchObject({ kind: 'uncertain', reason: 'field_relay_set' });
         expect((await rowsSent('job-401'))[0]).toMatchObject({ kind: 'fault', reason: 'provider_key_ours', providerStatus: 401, source: 'universe-ai' });
@@ -1321,9 +1344,19 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
         expect((await rowsSent('job-r-authorize'))[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
 
         asJob('job-r-pool');
-        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool' });
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool', full: true });
         expect((await ask(agent)).status).toBe(503);
         expect((await rowsSent('job-r-pool'))[0]).toMatchObject({ kind: 'fault', reason: 'pool_busy' });
+
+        // A call refused for its own size (the pool had room for a smaller one, and a call grows with what the job sent) is unresolved, never confirmed
+        asJob('job-r-pool-size');
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool', full: false });
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-r-pool-size'))[0]).toMatchObject({ kind: 'uncertain', reason: 'pool_busy' });
+        asJob('job-r-pool-nofield');
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool' });
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rowsSent('job-r-pool-nofield'))[0]).toMatchObject({ kind: 'uncertain', reason: 'pool_busy' });
 
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
         asJob('job-r-allowance');
