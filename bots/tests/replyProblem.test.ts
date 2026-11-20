@@ -69,8 +69,22 @@ describe('providerErrorText', () => {
         expect(Date.now() - started).toBeLessThan(1000);
         expect(text).toContain('[redacted]');
         expect(text).not.toContain('hunter2');
+        // the long run of x is itself taken for a key, so the key must be shown gone on its own
+        expect(text).not.toContain('sk-proj-abcDEF1234567890xyz');
         expect(providerErrorText(`${'x'.repeat(50_000)} see https://me:hunter2@llm.example.com/v1`)).not.toContain('hunter2');
         expect(providerErrorText('abc https://me:hunter2@host/x and ftp://u:p@h/y')).toBe('abc https://[redacted]@host/x and ftp://[redacted]@h/y');
+    });
+
+    it('drops a login after punctuation, and in a long run of scheme characters, without trying every character of the run', () => {
+        expect(providerErrorText('failed: ...https://me:hunter2@host/x')).toBe('failed: ...https://[redacted]@host/x');
+        expect(providerErrorText('(https://me:hunter2@host/x)')).toBe('(https://[redacted]@host/x)');
+        expect(providerErrorText('see ,ftp://u:hunter2@h/y')).toBe('see ,ftp://[redacted]@h/y');
+        const started = Date.now();
+        const run = 'a+.-'.repeat(20_000);
+        expect(providerErrorText(` ...${run}://me:hunter2@host/x`)).not.toContain('hunter2');
+        // many starts in one text stay linear
+        expect(providerErrorText('x://a@'.repeat(5_000))).not.toContain('a@');
+        expect(Date.now() - started).toBeLessThan(2000);
     });
 
     it('reads a plain string and an empty error', () => {
