@@ -1598,7 +1598,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
                 })
                 .mockResolvedValueOnce({ status: "checking", orderId: "o1", longWait: true, pollAfterMs: 3000 })
                 .mockResolvedValue({ status: "checking", orderId: "o1", longWait: true });
-            const payments = make(pay, () => null);
+            const payments = make(pay);
             ask(payments);
             await flush();
             await vi.advanceTimersByTimeAsync(3_000);
@@ -1624,7 +1624,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
                     app: "Example",
                 })
                 .mockResolvedValue({ status: "checking", pollAfterMs: 30_000 });
-            const payments = make(pay, () => null);
+            const payments = make(pay);
             ask(payments);
             await flush();
             await vi.advanceTimersByTimeAsync(20 * 60_000);
@@ -1668,7 +1668,7 @@ describe("buying, checking and getting a purchase back, in the game's window (th
                         ...(longWait === undefined ? {} : { longWait }),
                         pollAfterMs: 30_000,
                     });
-                const payments = make(pay, () => null);
+                const payments = make(pay);
                 ask(payments);
                 await flush();
                 await vi.advanceTimersByTimeAsync(5 * 60_000);

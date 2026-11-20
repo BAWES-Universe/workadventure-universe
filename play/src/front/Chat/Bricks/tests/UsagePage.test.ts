@@ -713,6 +713,204 @@ describe("the Usage page (#1999)", () => {
         game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
     });
 
+    describe("how a computer task ended, as Orbit reads it (stopped, still deciding, refund pending, a computer given back beside an App that worked)", () => {
+        const gmail = {
+            label: "gmail",
+            outcome: "worked",
+            text: "Gmail · worked",
+            takenText: null,
+            amountMicros: 9_000,
+        };
+        const rowsOf = (id: string) => {
+            target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+            return {
+                hint:
+                    target.querySelector(`[data-activity="${id}"] .m`)?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+            };
+        };
+        const receiptText = () => byId("usageReceipt")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+        const show = async (item: Record<string, unknown>) => {
+            game.getMyUsage.mockResolvedValue(live({}, { activity: [item] }));
+            await open();
+            const { hint } = rowsOf(String(item.id));
+            await settle();
+            return hint;
+        };
+
+        it("reads a computer given back beside a Gmail that was charged as Partly done, with Orbit's note, the Given back line, and never Done or Refunded", async () => {
+            const hint = await show(
+                task({
+                    id: "act_mixed",
+                    title: "Send the report",
+                    category: "computer",
+                    spentMicros: 9_000,
+                    returnedMicros: 50_000,
+                    outcome: "partial",
+                    outcomeText: "Partly done",
+                    outcomeNote:
+                        "One step worked and one didn’t. Computer cost of $0.05 was returned. Gmail charged $0.009. You pay $0.009 in all.",
+                    actions: [gmail],
+                    lines: [
+                        { label: "Instant gmail, 1 use", amountMicros: 9_000 },
+                        { label: "Computer, 5 minutes", note: "Given back", returnedMicros: 50_000 },
+                    ],
+                })
+            );
+            expect(hint).toContain("Partly done");
+            expect(hint).not.toContain("Refunded");
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "One step worked and one didn’t. Computer cost of $0.05 was returned. Gmail charged $0.009. You pay $0.009 in all."
+            );
+            expect(receiptText()).toContain("Gmail · worked less than $0.01");
+            expect(receiptText()).toContain("Computer, 5 minutes");
+            // the computer's line says Given back and what came back; it is not "Nothing taken"
+            expect(receiptText()).toContain("Given back $0.05");
+            expect(receiptText()).not.toContain("Nothing taken");
+        });
+
+        it("shows Orbit's headline and note for a refund that is pending, never Done, never Refunded, and no Paid by line", async () => {
+            const hint = await show(
+                task({
+                    id: "act_pending",
+                    title: "Weekly report",
+                    category: "computer",
+                    spentMicros: null,
+                    refundPendingMicros: 50_000,
+                    outcome: "refund_pending",
+                    outcomeText: "$0.05 refund pending",
+                    outcomeNote:
+                        "We’re giving back the computer cost. It shows in your credit as soon as it’s confirmed.",
+                    actions: [],
+                    lines: [{ label: "Computer, 5 minutes", note: "Refund pending" }],
+                })
+            );
+            expect(hint).toContain("$0.05 refund pending");
+            expect(hint).not.toMatch(/Refunded|Done/);
+            expect(byId("usageReceiptPartly")?.textContent).toBe("$0.05 refund pending");
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "We’re giving back the computer cost. It shows in your credit as soon as it’s confirmed."
+            );
+            expect(receiptText()).toContain("Refund pending");
+            expect(receiptText()).not.toContain("Paid by");
+            expect(receiptText()).not.toContain("nothing taken");
+        });
+
+        it("says the pending amount itself, the way Orbit does, when Orbit sends no headline (thousandths under a cent)", async () => {
+            const hint = await show(
+                task({
+                    id: "act_pending2",
+                    title: "Tiny report",
+                    category: "computer",
+                    spentMicros: null,
+                    refundPendingMicros: 9_000,
+                    outcome: "refund_pending",
+                    lines: [],
+                })
+            );
+            expect(hint).toContain("$0.009 refund pending");
+            expect(byId("usageReceiptPartly")?.textContent).toBe("$0.009 refund pending");
+        });
+
+        it("reads a job stopped at the person's spending rule as Stopped at your spending rule, never Done", async () => {
+            const hint = await show(
+                task({
+                    id: "act_rule",
+                    title: "Book the table",
+                    category: "computer",
+                    spentMicros: 30_000,
+                    outcome: "stopped",
+                    outcomeText: "Stopped at your spending rule",
+                    outcomeNote:
+                        "It stopped before it finished, and nothing was confirmed as done. Computer time used $0.03.",
+                    actions: [],
+                    lines: [{ label: "Computer, 5 minutes", amountMicros: 30_000 }],
+                })
+            );
+            expect(hint).toContain("Stopped at your spending rule");
+            expect(hint).not.toContain("Done");
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Stopped at your spending rule");
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "It stopped before it finished, and nothing was confirmed as done. Computer time used $0.03."
+            );
+            // what it used is still said, and who paid
+            expect(receiptText()).toContain("Computer, 5 minutes$0.03");
+            expect(receiptText()).toMatch(/Paid by you$/);
+        });
+
+        it("reads a stop by the person, a stop with nothing charged, and a stop that sends no words", async () => {
+            const hint = await show(
+                task({
+                    id: "act_stop",
+                    title: "Look it up",
+                    category: "computer",
+                    spentMicros: null,
+                    outcome: "stopped",
+                    outcomeText: "Stopped",
+                    lines: [],
+                })
+            );
+            expect(hint).toContain("Stopped");
+            expect(receiptText()).not.toContain("Paid by");
+            const plain = await show(
+                task({
+                    id: "act_stop2",
+                    title: "Look it up",
+                    category: "computer",
+                    spentMicros: null,
+                    outcome: "stopped",
+                    lines: [],
+                })
+            );
+            expect(plain).toContain("Stopped");
+            expect(plain).not.toContain("Done");
+        });
+
+        it("shows Still checking with Orbit's note: computer time is charged for now, never Done or Refunded", async () => {
+            const hint = await show(
+                task({
+                    id: "act_deciding",
+                    title: "Fill the form",
+                    category: "computer",
+                    spentMicros: 30_000,
+                    outcome: "deciding",
+                    outcomeText: "Still checking",
+                    outcomeNote:
+                        "We’re still deciding whether to give back the computer cost. Computer time $0.03 is charged for now.",
+                    lines: [{ label: "Computer, 5 minutes", amountMicros: 30_000 }],
+                })
+            );
+            expect(hint).toContain("Still checking");
+            expect(hint).not.toMatch(/Refunded|Done/);
+            expect(byId("usageReceiptWhy")?.textContent).toContain("charged for now");
+        });
+
+        it("shows the headline Orbit sends for a partly done task, and ours only when Orbit sends none", async () => {
+            const orbit = await show(
+                task({
+                    id: "act_w1",
+                    title: "Words",
+                    outcome: "partial",
+                    outcomeText: "Partly done, one step open",
+                    actions: [gmail],
+                    lines: [],
+                })
+            );
+            expect(orbit).toContain("Partly done, one step open");
+            const none = await show(
+                task({ id: "act_w2", title: "No words", outcome: "partial", actions: [gmail], lines: [] })
+            );
+            expect(none).toContain("Partly done");
+            expect(none).not.toContain("one step open");
+        });
+
+        it("a task Orbit calls done is still plain done: no headline, no note", async () => {
+            const hint = await show(task({ id: "act_done", title: "Plain", outcome: "done" }));
+            expect(hint).not.toMatch(/Partly|Stopped|deciding|pending/);
+            expect(byId("usageReceiptPartly")).toBeNull();
+        });
+    });
+
     describe("a task that did not finish, or could not be confirmed (Orbit's outcome failed / unconfirmed, action unknown)", () => {
         const unknownStep = (over: Record<string, unknown> = {}) => ({
             label: "gmail",
@@ -752,7 +950,7 @@ describe("the Usage page (#1999)", () => {
             expect(byId("usageReceipt")?.textContent).not.toContain("Refunded");
         });
 
-        it("reads a rule stop as Orbit's headline and note, never as done, and with nothing taken no \"Paid by\" line", async () => {
+        it('reads a rule stop as Orbit\'s headline and note, never as done, and with nothing taken no "Paid by" line', async () => {
             await openTask(
                 failedTask({
                     id: "act_rule",
@@ -771,7 +969,7 @@ describe("the Usage page (#1999)", () => {
             expect(byId("usageReceipt")?.textContent).not.toContain("Paid by");
         });
 
-        it("shows \"$0.05 refund pending\" and a task still being decided with Orbit's words", async () => {
+        it('shows "$0.05 refund pending" and a task still being decided with Orbit\'s words', async () => {
             game.getMyUsage.mockResolvedValue(
                 live(
                     {},
@@ -807,7 +1005,9 @@ describe("the Usage page (#1999)", () => {
             target.querySelector<HTMLElement>('[data-activity="act_pending"]')?.click();
             await settle();
             expect(byId("usageReceiptPartly")?.textContent).toBe("$0.05 refund pending");
-            expect(byId("usageReceiptWhy")?.textContent).toBe("We're giving this back. It will show here when it is done.");
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "We're giving this back. It will show here when it is done."
+            );
             expect(byId("usageReceipt")?.textContent).not.toContain("Refunded");
         });
 
@@ -820,7 +1020,15 @@ describe("the Usage page (#1999)", () => {
                     outcomeNote: "The Gmail step worked. The computer's time was returned.",
                     spentMicros: 5_000,
                     returnedMicros: 30_000,
-                    actions: [{ label: "gmail", outcome: "worked", text: "Gmail · sent", takenText: null, amountMicros: 5_000 }],
+                    actions: [
+                        {
+                            label: "gmail",
+                            outcome: "worked",
+                            text: "Gmail · sent",
+                            takenText: null,
+                            amountMicros: 5_000,
+                        },
+                    ],
                     lines: [{ label: "Computer time", amountMicros: 30_000, note: "Returned" }],
                 })
             );

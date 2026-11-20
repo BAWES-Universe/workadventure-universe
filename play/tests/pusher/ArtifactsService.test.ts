@@ -121,9 +121,14 @@ describe("ArtifactsService", () => {
             longWait: true,
             pollAfterMs: 3000,
         });
-        for (const odd of [false, "true", 1, null, { a: 1 }]) {
+        const odds = [false, "true", 1, null, { a: 1 }];
+        for (const odd of odds) {
             http.post.mockResolvedValueOnce({ data: { status: "checking", orderId: "o1", longWait: odd } });
-            const answer = await service.pay(ID, { check: true, orderId: "o1" } as never, viewer);
+        }
+        const answers = await Promise.all(
+            odds.map(() => service.pay(ID, { check: true, orderId: "o1" } as never, viewer))
+        );
+        for (const answer of answers) {
             expect(answer).toMatchObject({ status: "checking", orderId: "o1" });
             expect(answer.longWait).toBeUndefined();
         }

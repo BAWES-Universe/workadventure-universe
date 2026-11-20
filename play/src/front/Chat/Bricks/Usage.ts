@@ -98,7 +98,12 @@ export interface ReceiptLine {
     label: string;
     amountMicros: number | null;
     note: string | null;
+    /** What a line that says "Returned" got back (a computer given back), when Orbit says; null otherwise */
+    returnedMicros: number | null;
 }
+
+/** What Orbit's computer line says while the refund of it is not acknowledged yet (the contract of its receipts: "Refund pending"). */
+export const REFUND_PENDING_NOTE = "Refund pending";
 
 /** What Orbit says of a line whose price is not known yet. The page says it as "amount unavailable", never as a number or as "Nothing". */
 export const PRICE_NOT_KNOWN = "Price not known yet";
@@ -136,15 +141,15 @@ export interface ActivityItem {
     outcomeText: string | null;
     /** Orbit's sentence under a receipt that is not plain done ("Two steps worked and one didn't. Nothing was taken for the one that didn't."); null when it sends none */
     outcomeNote: string | null;
+    /** What was given back of a computer's cost (acknowledged by the books), whole micros; absent when none */
+    returnedMicros?: number;
+    /** What is still owed back of a computer's cost and not yet acknowledged ("$0.05 refund pending"), whole micros; absent when none. `spentMicros` is null while one is pending */
+    refundPendingMicros?: number;
     /**
      * Orbit sent an outcome this page does not know (a newer Orbit): it reads as "done" above, but is told apart from a genuine done task,
      * so Orbit's own headline for it can still be shown. False for every outcome this page knows and for none at all.
      */
     unknownOutcome: boolean;
-    /** Whole micros Orbit returned to the payer for this task (absent when none): shown with Orbit's own "Returned" note */
-    returnedMicros?: number;
-    /** Whole micros of a refund Orbit has promised and not paid yet (absent when none). `spentMicros` is null while one is pending */
-    refundPendingMicros?: number;
     /** Each Instant action of the task; empty for a task with none (an older Orbit, or a computer's) */
     actions: ActivityAction[];
 }
@@ -304,7 +309,12 @@ function parseLines(value: unknown): ReceiptLine[] {
         if (!isRaw(item)) continue;
         const label = short(item.label);
         if (!label) continue;
-        out.push({ label, amountMicros: micros(item.amountMicros) ?? null, note: short(item.note) ?? null });
+        out.push({
+            label,
+            amountMicros: micros(item.amountMicros) ?? null,
+            note: short(item.note) ?? null,
+            returnedMicros: micros(item.returnedMicros) ?? null,
+        });
         if (out.length >= LINES_MAX) break;
     }
     return out;
@@ -337,9 +347,16 @@ function parseActions(value: unknown): ActivityAction[] {
     return out;
 }
 
-const KNOWN_OUTCOMES = new Set(["done", "partial", "refunded", "failed", "unconfirmed", "stopped", "deciding", "refund_pending"]);
-/** The outcomes whose state is still "done" and that are never read as done: Orbit's headline and note say what happened */
-const STATED_OUTCOMES = new Set(["stopped", "deciding", "refund_pending"]);
+const KNOWN_OUTCOMES = new Set([
+    "done",
+    "partial",
+    "refunded",
+    "failed",
+    "unconfirmed",
+    "stopped",
+    "deciding",
+    "refund_pending",
+]);
 /** An outcome word that says something this page has no reading for; a missing one, or one of the known words, is not. */
 const isUnknownOutcome = (outcome: unknown): boolean =>
     typeof outcome === "string" && outcome.trim() !== "" && !KNOWN_OUTCOMES.has(outcome);
@@ -365,12 +382,10 @@ function parseActivity(value: unknown): ActivityItem[] {
         const actions = parseActions(item.actions);
         const returnedMicros = micros(item.returnedMicros);
         const refundPendingMicros = micros(item.refundPendingMicros);
-        // Partly done needs a step that worked and one that did not work or could not be confirmed. "failed" and "unconfirmed" are Orbit's
-        // word that nothing finished or that an action could not be confirmed: they are never read as done. An older Orbit that sends
-        // none of these is done or refunded as before. An outcome this page does not know reads as done only when Orbit has nothing to
-        // say about it (no note); the note is shown either way
-        // The step that did not work can be the computer, which is not an action (a refunded computer and a charged Gmail send): one action
-        // that worked is enough, and a non-worked action is not required
+        // Partly done needs a step that worked: the other step may be the computer (given back, stopped), which is no action of its own, so a
+        // non-worked action is not required. "failed", "unconfirmed", "stopped", "deciding" and "refund_pending" are Orbit's words for how
+        // the task came to end: they are never read as done. An older Orbit that sends none of these is done or refunded as before. An
+        // outcome this page does not know reads as done only when Orbit has nothing to say about it (no note); the note is shown either way
         const partly = item.outcome === "partial" && actions.some((action) => action.outcome === "worked");
         // An unconfirmed task whose hold was released is sent as "refunded" (the money was given back), and it is still one whose delivery
         // nobody could confirm: the outcome is looked at first, so "Couldn't confirm", its note and its steps are not lost behind "Refunded".
@@ -384,8 +399,8 @@ function parseActivity(value: unknown): ActivityItem[] {
                 ? "partial"
                 : item.outcome === "failed"
                 ? "failed"
-                : typeof item.outcome === "string" && STATED_OUTCOMES.has(item.outcome)
-                ? (item.outcome as ActivityOutcome)
+                : item.outcome === "stopped" || item.outcome === "deciding" || item.outcome === "refund_pending"
+                ? item.outcome
                 : "done";
         out.push({
             id,
@@ -395,6 +410,8 @@ function parseActivity(value: unknown): ActivityItem[] {
             outcome,
             outcomeText: state === "refunded" && outcome !== "unconfirmed" ? null : short(item.outcomeText) ?? null,
             outcomeNote: state === "refunded" && outcome !== "unconfirmed" ? null : short(item.outcomeNote) ?? null,
+            ...(returnedMicros ? { returnedMicros } : {}),
+            ...(refundPendingMicros ? { refundPendingMicros } : {}),
             unknownOutcome: state !== "refunded" && outcome === "done" && isUnknownOutcome(item.outcome),
             actions,
             spentMicros: micros(item.spentMicros) ?? null,
@@ -402,8 +419,6 @@ function parseActivity(value: unknown): ActivityItem[] {
             payer: item.payer === "universe" ? "universe" : item.payer === "sponsor" ? "sponsor" : "you",
             payerName: short(item.payerName) ?? null,
             lines: parseLines(item.lines),
-            ...(returnedMicros ? { returnedMicros } : {}),
-            ...(refundPendingMicros ? { refundPendingMicros } : {}),
         });
         if (out.length >= ACTIVITY_MAX) break;
     }
@@ -524,6 +539,15 @@ export function availableText(microsValue: number, locale: string | undefined): 
 /** What was taken, rounded up to the cent so it never understates: "$0.06", "$0.92". Something taken is never "$0.00". */
 export function spentText(microsValue: number, locale: string | undefined): string {
     return dollarText(Math.ceil(Math.max(0, microsValue) / CENT), locale);
+}
+
+/**
+ * An amount said as Orbit says it in its own sentences: thousandths of a dollar under a cent ("$0.009"), cents above ("$0.05"); null for
+ * less than a tenth of a cent (Orbit says "less than $0.001": the caller has the words for that) and for nothing.
+ */
+export function exactDollars(microsValue: number): string | null {
+    if (!(microsValue >= 500)) return null;
+    return `$${(microsValue / 1_000_000).toFixed(microsValue < 10_000 ? 3 : 2)}`;
 }
 
 /** More than nothing and less than one cent: said as that, never as "$0" or "$0.01". */

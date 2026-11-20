@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    exactDollars,
     availableLabel,
     availableText,
     fullAgainWhen,
@@ -320,6 +321,7 @@ describe("real numbers (credits and grants)", () => {
             expect(read({ outcome: "partial", actions: [step("worked"), step("failed")] })?.outcome).toBe("partial");
             expect(read({ outcome: "partial", actions: [step("unknown")] })?.outcome).toBe("done");
             expect(read({ outcome: "partial", actions: [] })?.outcome).toBe("done");
+            expect(read({ actions: [step("worked"), step("failed")] })?.outcome).toBe("done");
         });
 
         it("is partly done for one step that worked even when the other step is the computer, which is not an action", () => {
@@ -371,15 +373,47 @@ describe("real numbers (credits and grants)", () => {
                 spentMicros: null,
             });
             // a refunded task is the refund, whatever else it says
-            expect(read({ state: "refunded", outcome: "stopped", outcomeText: "x" })).toMatchObject({ outcome: "refunded", outcomeText: null });
+            expect(read({ state: "refunded", outcome: "stopped", outcomeText: "x" })).toMatchObject({
+                outcome: "refunded",
+                outcomeText: null,
+            });
         });
 
         it("keeps the amounts Orbit returned or still owes as whole micros, and none when it sends none or nonsense", () => {
-            expect(read({ returnedMicros: 12_000.4, refundPendingMicros: 50_000 })).toMatchObject({ returnedMicros: 12_000, refundPendingMicros: 50_000 });
+            expect(read({ returnedMicros: 12_000.4, refundPendingMicros: 50_000 })).toMatchObject({
+                returnedMicros: 12_000,
+                refundPendingMicros: 50_000,
+            });
             const none = read({ returnedMicros: 0, refundPendingMicros: -5 });
             expect(none).not.toHaveProperty("returnedMicros");
             expect(none).not.toHaveProperty("refundPendingMicros");
             expect(read({ returnedMicros: "5", refundPendingMicros: null })).not.toHaveProperty("returnedMicros");
+        });
+
+        it("reads what a line that says Given back got back", () => {
+            const item = read({
+                outcome: "partial",
+                actions: [step("worked")],
+                lines: [
+                    { label: "Computer, 5 minutes", note: "Given back", returnedMicros: 30_000 },
+                    { label: "Computer, 2 minutes", note: "Refund pending" },
+                ],
+            });
+            expect(item?.lines).toEqual([
+                { label: "Computer, 5 minutes", amountMicros: null, note: "Given back", returnedMicros: 30_000 },
+                { label: "Computer, 2 minutes", amountMicros: null, note: "Refund pending", returnedMicros: null },
+            ]);
+        });
+
+        it("says an amount as Orbit says it: thousandths under a cent, cents above, nothing for less than a tenth of a cent", () => {
+            expect(exactDollars(9_000)).toBe("$0.009");
+            expect(exactDollars(1_200)).toBe("$0.001");
+            expect(exactDollars(50_000)).toBe("$0.05");
+            expect(exactDollars(10_000)).toBe("$0.01");
+            expect(exactDollars(1_250_000)).toBe("$1.25");
+            expect(exactDollars(300)).toBeNull();
+            expect(exactDollars(0)).toBeNull();
+            expect(exactDollars(Number.NaN)).toBeNull();
         });
 
         it("keeps the note of an outcome it does not know, and reads it as done; a refunded task carries neither", () => {
@@ -400,7 +434,18 @@ describe("real numbers (credits and grants)", () => {
                 unknownOutcome: true,
                 outcomeText: "Held up",
             });
-            for (const outcome of ["done", "partial", "failed", "unconfirmed", "stopped", "deciding", "refund_pending", undefined, "", 7]) {
+            for (const outcome of [
+                "done",
+                "partial",
+                "failed",
+                "unconfirmed",
+                "stopped",
+                "deciding",
+                "refund_pending",
+                undefined,
+                "",
+                7,
+            ]) {
                 expect(read({ outcome, outcomeText: "x" })?.unknownOutcome).toBe(false);
             }
             // A refunded task is the refund, whatever else it says

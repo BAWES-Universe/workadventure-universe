@@ -1743,6 +1743,10 @@ const chat: BaseTranslation = {
             activityPartly: "Partly done",
             // Words for a task Orbit says did not finish, or could not be confirmed, when it sends none of its own
             activityDidntFinish: "Didn't finish",
+            activityStopped: "Stopped",
+            activityDeciding: "Still checking",
+            activityRefundPending: "{amount:string} refund pending",
+            activityRefundPendingNoAmount: "Refund pending",
             activityCouldntConfirm: "Couldn't confirm",
             amountUnavailable: "amount unavailable",
             paidByYou: "Paid by you",
