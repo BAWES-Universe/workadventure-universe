@@ -712,6 +712,30 @@ describe('how a call ended, for the runner', () => {
         expect((await rowsSent('job-run')).map((row) => [row.turn, row.run])).toEqual([[3, 'run-before']]);
     });
 
+    it('ties a call to the turn that was current when it ARRIVED, though asking Orbit who the caller is took until the runner was on the next turn', async () => {
+        const job = 'job-late-identify';
+        notes.turn(job, 4, 'run-x');
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        // Orbit is slow to say who this caller is
+        orbit.identify.mockReset().mockImplementationOnce(async () => {
+            await gate;
+            return { ok: true, jobId: job, botId: BOT };
+        });
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'The model broke' } });
+        const asked = askAndSettle(agent);
+        await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        // the runner moves on to turn 5 (and the job is not known to the relay yet: nothing in the call has named it)
+        notes.turn(job, 5, 'run-x');
+        release();
+        await asked;
+        expect((await rowsSent(job)).map((row) => [row.turn, row.run])).toEqual([[4, 'run-x']]);
+        // a call that arrives after the change is turn 5's
+        orbit.identify.mockReset().mockResolvedValue({ ok: true, jobId: job, botId: BOT });
+        await askAndSettle(agent, 2);
+        expect((await rowsSent(job, 2)).map((row) => row.turn)).toEqual([4, 5]);
+    });
+
     it('never forwards the routing fields of a job to the provider: it cannot choose another model or provider for a call paid on our key', async () => {
         asJob('job-routing');
         await askAndSettle({

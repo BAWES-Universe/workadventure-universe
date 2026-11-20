@@ -293,6 +293,40 @@ describe('the durable record of how a job’s model calls ended (sent to Orbit)'
         expect(rows).toEqual([['c1', 1, 'run-a'], ['c2', 1, 'run-b']]);
     });
 
+    it('tells the turn that was current at a point in the order of events, though the runner has moved on since', () => {
+        const { notes } = rig();
+        expect(notes.turnAt('j', notes.mark())).toEqual({ turn: 0 });
+        notes.turn('j', 3, 'run-a');
+        const arrived = notes.mark();
+        notes.turn('j', 4, 'run-a');
+        const later = notes.mark();
+        notes.turn('j', 1, 'run-b');
+        expect(notes.turnAt('j', arrived)).toEqual({ turn: 3, run: 'run-a' });
+        expect(notes.turnAt('j', later)).toEqual({ turn: 4, run: 'run-a' });
+        expect(notes.turnAt('j', notes.mark())).toEqual({ turn: 1, run: 'run-b' });
+        // the current turn is still the newest one, and another job knows nothing of these
+        expect(notes.turnOf('j')).toBe(1);
+        expect(notes.runOf('j')).toBe('run-b');
+        expect(notes.turnAt('other', arrived)).toEqual({ turn: 0 });
+        // a point before the first turn it was told is no turn
+        const first = rig().notes;
+        const before = first.mark();
+        first.turn('k', 1);
+        expect(first.turnAt('k', before)).toEqual({ turn: 0 });
+    });
+
+    it('keeps only a short history of turns, and never loses the newest', () => {
+        const { notes } = rig();
+        const points: Array<{ order: number }> = [];
+        for (let turn = 1; turn <= 40; turn++) {
+            notes.turn('j', turn, 'run-a');
+            points.push(notes.mark());
+        }
+        expect(notes.turnAt('j', points[39])).toEqual({ turn: 40, run: 'run-a' });
+        expect(notes.turnAt('j', points[30])).toEqual({ turn: 31, run: 'run-a' });
+        expect(notes.turnOf('j')).toBe(40);
+    });
+
     it('sends no run for a runner that names none', async () => {
         const { notes, sent } = rig();
         notes.turn('j', 2);

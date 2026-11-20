@@ -78,6 +78,12 @@ export interface RefusalNotes {
     turn(jobId: string, turn: number, run?: string): void;
     /** The run the runner says this job's turns are in now (undefined when none is known): read when a call starts, like `turnOf`. */
     runOf(jobId: string): string | undefined;
+    /**
+     * The turn (and its run) that was current at a point in the order of events (from `mark`), for a call that arrived at that point and was
+     * only tied to its job later (the relay knows the job after it has identified the caller, which can take longer than a turn change). Nothing
+     * known of the job's turns before that point reads as turn 0, with no run.
+     */
+    turnAt(jobId: string, at: { order: number }): { turn: number; run?: string };
     /** The turn the runner says this job is on now (0 when none is known): read when a call starts, so its row names the turn it began in. */
     turnOf(jobId: string): number;
     /**
@@ -138,14 +144,18 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: { at: number; order: number }; answered?: { at: number; order: number } }>();
     /** Whether an event is inside a window that begins at `since`. */
     const within = (event: { at: number; order: number }, since: Since) => (typeof since === 'number' ? event.at >= since : event.order > since.order);
-    const turns = new Map<string, { turn: number; run?: string; at: number }>();
+    // The turns the runner said it was on, newest last, each with its place in the order of events: a short history, so a call can be tied to the
+    // turn that was current when it ARRIVED. It is kept short: a call only ever asks about a turn that has just changed
+    const turns = new Map<string, Array<{ turn: number; run?: string; at: number; order: number }>>();
+    const TURN_HISTORY = 16;
+    const lastTurn = (jobId: string) => turns.get(jobId)?.at(-1);
     // Rows not yet taken by Orbit, per job. A row is sent again until Orbit takes it (Orbit keeps one per job and call).
     const queued = new Map<string, { botId: string; rows: Map<string, CallRow>; sending?: Promise<boolean>; at: number; later?: ReturnType<typeof setTimeout>; laterTries: number }>();
     const forget = () => {
         const cutoff = now() - REFUSAL_NOTE_KEEP_MS;
         for (const [jobId, seen] of last) if (seen.at < cutoff) last.delete(jobId);
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0) < cutoff) calls.delete(jobId);
-        for (const [jobId, seen] of turns) if (seen.at < cutoff) turns.delete(jobId);
+        for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
         for (const [jobId, entry] of queued) {
             if (entry.at >= cutoff || entry.sending) continue;
             if (entry.later) clearTimeout(entry.later);
@@ -212,10 +222,18 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     return {
         turn(jobId, turn, run) {
             forget();
-            turns.set(jobId, { turn, ...(run ? { run } : {}), at: now() });
+            const history = turns.get(jobId) ?? [];
+            history.push({ turn, ...(run ? { run } : {}), at: now(), order: ++count });
+            if (history.length > TURN_HISTORY) history.shift();
+            turns.set(jobId, history);
         },
-        turnOf: (jobId) => turns.get(jobId)?.turn ?? 0,
-        runOf: (jobId) => turns.get(jobId)?.run,
+        turnOf: (jobId) => lastTurn(jobId)?.turn ?? 0,
+        runOf: (jobId) => lastTurn(jobId)?.run,
+        turnAt(jobId, at) {
+            // The last turn said at or before that point (a turn said after it is a later one)
+            const seen = [...(turns.get(jobId) ?? [])].reverse().find((one) => one.order <= at.order);
+            return seen ? { turn: seen.turn, ...(seen.run ? { run: seen.run } : {}) } : { turn: 0 };
+        },
         record(botId, jobId, call) {
             if (call.kind === 'answered') return mark(jobId, 'answered');
             if (call.kind === 'not_ours') {
@@ -230,9 +248,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             // Orbit keeps ids up to 120 characters: the row is kept under the id it is sent with
             const callId = call.callId.slice(0, 120);
             // A call that carries its turn carries that turn's run, and one that does not takes both from where the runner is now: never one of each
-            const runOfRow = call.turn !== undefined ? call.run : turns.get(jobId)?.run;
+            const runOfRow = call.turn !== undefined ? call.run : lastTurn(jobId)?.run;
             entry.rows.set(callId, {
-                turn: call.turn ?? turns.get(jobId)?.turn ?? 0,
+                turn: call.turn ?? lastTurn(jobId)?.turn ?? 0,
                 ...(runOfRow ? { run: runOfRow } : {}),
                 callId,
                 kind: call.kind,

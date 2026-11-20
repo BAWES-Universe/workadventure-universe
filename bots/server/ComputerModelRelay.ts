@@ -523,6 +523,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
 
     router.post('/v1/chat/completions', json, async (req: Request, res: Response) => {
         const token = bearerOf(req);
+        // Where in the order of events this call ARRIVED: taken before anything is awaited and before the job is known (nothing of anyone's is read
+        // from it: it is only a point in a counter). Asking Orbit who the caller is can take longer than a turn change, and the call belongs to the
+        // turn that was current when it arrived
+        const arrived = deps.refusals?.mark?.();
         let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
         try {
             who = token ? await deps.orbit.identify(token) : null;
@@ -538,9 +542,11 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // The call's own id: Orbit's fault record keeps one row per job and call, so the same id is sent when a row is sent again
         const callId = randomUUID();
         // The turn the call starts in: its row names that turn even when the runner has moved on by the time the call ends
-        const startedTurn = deps.refusals?.turnOf?.(jobId) ?? 0;
-        // ...and the run of the runner that turn was in: turn numbers start again from 1 after a restart, so the number alone is not the turn
-        const startedRun = deps.refusals?.runOf?.(jobId);
+        // (the turn current when it ARRIVED, not when its caller was identified), and the run of the runner that turn was in: turn numbers start
+        // again from 1 after a restart, so the number alone is not the turn
+        const at = arrived !== undefined && deps.refusals?.turnAt ? deps.refusals.turnAt(jobId, arrived) : undefined;
+        const startedTurn = at ? at.turn : deps.refusals?.turnOf?.(jobId) ?? 0;
+        const startedRun = at ? at.run : deps.refusals?.runOf?.(jobId);
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
