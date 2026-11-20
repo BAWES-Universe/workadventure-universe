@@ -2232,6 +2232,8 @@ const chat: BaseTranslation = {
             "Keep it somewhere safe, like your notes or email. Anyone who has it can bring this purchase back.",
         payNotHeard: "We haven't heard back about your payment yet.",
         payNotHeardSub: "If you paid, it still counts. Check it here before paying again.",
+        payStillChecking: "We're still checking your earlier payment.",
+        payStillCheckingSub: "If you paid, it will show up here when your payment service confirms it.",
         payNotPaid: "Not paid yet.",
         payNotPaidSub: "If you already paid, it can take a while to show. Check it here before paying again.",
         payNeedsUpdate: "This page's pay button needs an update.",

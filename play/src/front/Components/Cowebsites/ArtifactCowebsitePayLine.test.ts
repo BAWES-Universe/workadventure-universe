@@ -276,6 +276,25 @@ describe("the line under a paying page in the artifact window (the approved mock
         view.$destroy();
     });
 
+    it("says an earlier payment is still being checked, with Check payment, when the order is a long wait, and does not watch it for twenty minutes", async () => {
+        api.payOnArtifact
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValue({ status: "checking", orderId: "o1", longWait: true, pollAfterMs: 3000 });
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const { say, text, view } = await mount();
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await vi.advanceTimersByTimeAsync(3_000);
+        await settle();
+        expect(text()).toBe(
+            "We're still checking your earlier payment. If you paid, it will show up here when your payment service confirms it. Check payment"
+        );
+        const calls = api.payOnArtifact.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(25 * 60_000);
+        await settle();
+        expect(api.payOnArtifact).toHaveBeenCalledTimes(calls);
+        view.$destroy();
+    });
+
     it("g1, g4: a payment not heard back about says so and offers Check payment, which asks the server and says what it says", async () => {
         api.payOnArtifact
             .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })

@@ -34,6 +34,22 @@ describe("the line under a paying page says what the approved mock says", () => 
         }
     });
 
+    it("still checking an earlier payment, with Check payment (and Restore purchase when it is owed)", () => {
+        const over = { problem: "still_checking", canCheck: true } as Partial<PayLine>;
+        expect(view(over)).toMatchObject({
+            title: "We're still checking your earlier payment.",
+            sub: "If you paid, it will show up here when your payment service confirms it.",
+            closable: false,
+        });
+        expect(labels(over)).toEqual(["check:Check payment:primary"]);
+        expect(labels({ ...over, offerRestore: true })).toEqual([
+            "check:Check payment:primary",
+            "restore:Restore purchase:secondary",
+        ]);
+        // never the words of a payment not heard back about, or not paid
+        expect(JSON.stringify(view(over))).not.toMatch(/haven't heard back|Not paid yet|No purchase found/);
+    });
+
     it("g2: checking, and the longer wait", () => {
         expect(view({ checking: true })).toMatchObject({
             title: "Checking your payment…",
