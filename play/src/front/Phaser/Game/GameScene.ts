@@ -180,6 +180,7 @@ import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectC
 import { statusChanger } from "../../Components/ActionBar/AvailabilityStatus/statusChanger";
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { closeCoWebsite, getCoWebSite, openCoWebSite, openCoWebSiteWithoutSource } from "../../Chat/Utils";
+import { studentHubLauncher } from "../../StudentHub/StudentHub";
 import { inviteCardRequestStore, navChat } from "../../Chat/Stores/ChatStore";
 import { ProximityChatRoom } from "../../Chat/Connection/Proximity/ProximityChatRoom";
 import { keepNearbyShared } from "../../Chat/Components/Room/Details/NearbySavedStore";
@@ -1405,6 +1406,8 @@ export class GameScene extends DirtyScene {
         // make sure we restart own medias
         mediaManager.disableMyCamera();
         mediaManager.disableMyMicrophone();
+        // StudentHub closes on a reconnect or a room change, whoever opened it (E3).
+        studentHubLauncher.close("reconnect");
         // stop playing audio, close any open website, unsubscribe
         coWebsiteManager.cleanup(reconnecting);
         // What was closed belongs to this map: Undo is not offered in the next one.
@@ -2409,6 +2412,8 @@ export class GameScene extends DirtyScene {
                 // The serverDisconnected stream is completed in the RoomConnection. No need to unsubscribe.
                 //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
                 this.connection.serverDisconnected.subscribe(() => {
+                    // StudentHub was opened for the player of this connection: it closes on a reconnect (E3).
+                    studentHubLauncher.close("reconnect");
                     // If getting back in stalls anywhere, the page refreshes itself (as a manual refresh would).
                     reconnectWatchdog.arm();
                     console.info("Player disconnected from server. Reloading scene.");

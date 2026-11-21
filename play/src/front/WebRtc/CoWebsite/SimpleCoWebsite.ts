@@ -69,6 +69,12 @@ export class SimpleCoWebsite implements CoWebsite {
         return this.hideUrl;
     }
 
+    /** Called when the page's iframe is put on the page. Nothing by default. */
+    iframeMounted(iframe: HTMLIFrameElement): void {}
+
+    /** Called when the page's iframe is taken off the page. Nothing by default. */
+    iframeUnmounted(iframe: HTMLIFrameElement): void {}
+
     /** "Hide title bar": the row above the page is left out while the page is the only thing open. */
     getHideTitleBar(): boolean {
         return this.hideTitleBar;

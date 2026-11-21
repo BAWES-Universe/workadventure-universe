@@ -25,6 +25,10 @@ export interface FrontConfigurationInterface {
     POSTHOG_URL: string | undefined;
     DISABLE_ANONYMOUS: boolean;
     ENABLE_OPENID: boolean;
+    /** StudentHub's main URL: the menu offers StudentHub (a new tab unless the embed is on). */
+    STUDENTHUB_URL: string | undefined;
+    /** StudentHub's embed origin: set only when StudentHub opens inside Universe (E3). */
+    STUDENTHUB_EMBED_ORIGIN: string | undefined;
     OPID_PROFILE_SCREEN_PROVIDER: string | undefined;
     ENABLE_CHAT_UPLOAD: boolean;
     FALLBACK_LOCALE: string | undefined;

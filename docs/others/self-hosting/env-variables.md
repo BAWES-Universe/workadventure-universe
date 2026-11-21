@@ -120,6 +120,13 @@ Environment variables for the Play service (frontend and pusher).
 | `MATRIX_ADMIN_TOKEN` | No | Matrix administrator access token made without a device (Synapse admin API, login as a user). When set it is used instead of signing in with the password; the password is kept as the fallback |
 | `MATRIX_DOMAIN` | No | Matrix server domain |
 | `EMBEDLY_KEY` | No | Embedly API key for rich link previews |
+| `STUDENTHUB_URL` | No | StudentHub's main https URL. When set, the menu offers StudentHub; it opens in a new tab unless STUDENTHUB_EMBED_ORIGIN is set |
+| `STUDENTHUB_EMBED_ORIGIN` | No | Exact https origin of StudentHub's embed host (same site as the play URL). When set, StudentHub opens inside Universe and every STUDENTHUB_EMBED_* variable below is required, or the pusher does not start |
+| `STUDENTHUB_EMBED_ATTESTATION_ISSUER` | No | Issuer of the pusher's StudentHub attestations, universe-pusher@<environment> (StudentHub: UNIVERSE_EMBED_PUSHER_ISSUER) |
+| `STUDENTHUB_EMBED_ATTESTATION_AUDIENCE` | No | Audience of the attestations, studenthub-embed/identity@<environment> (StudentHub: UNIVERSE_EMBED_IDENTITY_AUDIENCE) |
+| `STUDENTHUB_EMBED_ATTESTATION_KEY_ID` | No | Key id of the signing key, as listed in StudentHub's UNIVERSE_EMBED_PUSHER_KEYS |
+| `STUDENTHUB_EMBED_ATTESTATION_PRIVATE_KEY` | No | The pusher's own Ed25519 private key (PKCS#8 PEM) that signs StudentHub attestations. A secret |
+| `STUDENTHUB_EMBED_SUBJECT_FORMAT` | No | Shape of the provider subject StudentHub expects: user_email or hashed_user_id (StudentHub: UNIVERSE_EMBED_HOST_SUBJECT_FORMAT) |
 | `GRPC_MAX_MESSAGE_SIZE` | Yes | The maximum size of a gRPC message. Defaults to 20 MB. |
 
 ## Back Service

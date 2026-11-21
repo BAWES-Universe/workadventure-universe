@@ -15,6 +15,7 @@ const actionbar: BaseTranslation = {
     todoList: "Todo list",
     woka: "Customize your avatar",
     companion: "Add companion",
+    studentHub: "Your StudentHub profile",
     //megaphone: "Use megaphone",
     test: "Test my settings",
     editCamMic: "Edit cam / mic",

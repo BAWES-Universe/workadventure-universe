@@ -1,4 +1,5 @@
 import type { FrontConfigurationInterface } from "../../common/FrontConfigurationInterface";
+import { parseStudentHubConfig } from "../services/StudentHubAttestation";
 import { EnvironmentVariables } from "./EnvironmentVariableValidator";
 
 const envChecking = EnvironmentVariables.safeParse(process.env);
@@ -140,6 +141,8 @@ export const ERASER_ENABLED = env.ERASER_ENABLED;
 export const EXCALIDRAW_ENABLED = env.EXCALIDRAW_ENABLED;
 export const EXCALIDRAW_DOMAINS = env.EXCALIDRAW_DOMAINS;
 export const EMBEDDED_DOMAINS_WHITELIST = env.EMBEDDED_DOMAINS_WHITELIST;
+// StudentHub (E3): refuses to start on a partial or invalid embed configuration.
+export const STUDENTHUB = parseStudentHubConfig(env, !!OPID_CLIENT_ID);
 export const CARDS_ENABLED = env.CARDS_ENABLED;
 export const TLDRAW_ENABLED = env.TLDRAW_ENABLED;
 
@@ -183,6 +186,8 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     POSTHOG_URL: env.POSTHOG_URL,
     DISABLE_ANONYMOUS,
     ENABLE_OPENID: !!env.OPENID_CLIENT_ID || !!env.OPID_CLIENT_ID,
+    STUDENTHUB_URL: STUDENTHUB.url,
+    STUDENTHUB_EMBED_ORIGIN: STUDENTHUB.embedOrigin,
     OPID_PROFILE_SCREEN_PROVIDER: env.OPENID_PROFILE_SCREEN_PROVIDER || env.OPID_PROFILE_SCREEN_PROVIDER,
     OPID_WOKA_NAME_POLICY,
     ENABLE_CHAT_UPLOAD,

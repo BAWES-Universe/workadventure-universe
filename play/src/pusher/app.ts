@@ -20,6 +20,7 @@ import {
     ENABLE_OPENAPI_ENDPOINT,
     PROMETHEUS_PORT,
     GRPC_MAX_MESSAGE_SIZE,
+    STUDENTHUB,
 } from "./enums/EnvironmentVariable";
 import { PingController } from "./controllers/PingController";
 import { CompanionListController } from "./controllers/CompanionListController";
@@ -35,6 +36,7 @@ import { LocalScriptController } from "./controllers/LocalScriptController";
 import { BanController } from "./controllers/BanController";
 import { LinkPreviewController } from "./controllers/LinkPreviewController";
 import { ArtifactController } from "./controllers/ArtifactController";
+import { StudentHubEmbedController } from "./controllers/StudentHubEmbedController";
 
 class App {
     private readonly app: Application;
@@ -116,6 +118,7 @@ class App {
         new MatrixRoomAreaController(this.app);
         new LinkPreviewController(this.app);
         new ArtifactController(this.app);
+        new StudentHubEmbedController(this.app, STUDENTHUB);
 
         const staticOptions = {
             extensions: [

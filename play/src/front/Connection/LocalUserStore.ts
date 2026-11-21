@@ -478,6 +478,15 @@ class LocalUserStore {
         } else {
             localStorage.removeItem(authToken);
         }
+        for (const listener of this.authTokenListeners) listener(value);
+    }
+
+    private readonly authTokenListeners = new Set<(token: string | null) => void>();
+
+    /** Told each time the game token is set or removed (sign-in, renewal, sign-out). Returns the unsubscribe. */
+    onAuthTokenChange(listener: (token: string | null) => void): () => void {
+        this.authTokenListeners.add(listener);
+        return () => this.authTokenListeners.delete(listener);
     }
 
     getAuthToken(): string | null {

@@ -49,6 +49,7 @@
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { installApp } from "../../../Install/InstallWiring";
+    import { studentHubLauncher } from "../../../StudentHub/StudentHub";
     import {
         pushAvailability,
         thisDeviceStateStore,
@@ -57,7 +58,7 @@
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconBell, IconBug, IconDownload, IconLogout } from "@wa-icons";
+    import { IconBell, IconBug, IconDownload, IconExternalLink, IconLogout } from "@wa-icons";
 
     // The ActionBarButton component is displayed differently in the profile menu.
     // We use the context to decide how to render it.
@@ -447,6 +448,17 @@
                         height="32px"
                     />
                 </ActionBarButton>
+                {#if studentHubLauncher.isAvailable()}
+                    <ActionBarButton
+                        label={$LL.actionbar.studentHub()}
+                        on:click={() => {
+                            openedMenuStore.close("profileMenu");
+                            studentHubLauncher.launch();
+                        }}
+                    >
+                        <IconExternalLink font-size="22" />
+                    </ActionBarButton>
+                {/if}
                 {#if hasPersonalDesk}
                     <ActionBarButton
                         label={$LL.actionbar.personalDesk.label()}

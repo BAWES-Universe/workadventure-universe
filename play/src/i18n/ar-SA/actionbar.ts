@@ -16,6 +16,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     todoList: "قائمة المهام",
     woka: "تخصيص صورتك الرمزية",
     companion: "إضافة رفيق",
+    studentHub: "ملفك في StudentHub",
     test: "اختبر إعداداتي",
     editCamMic: "تحرير الكاميرا / الميكروفون",
     allSettings: "جميع الإعدادات",

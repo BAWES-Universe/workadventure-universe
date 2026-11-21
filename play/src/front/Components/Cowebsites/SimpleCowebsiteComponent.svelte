@@ -31,12 +31,14 @@
         if (allowApi) {
             iframeListener.registerIframe(iframeSimpleCowebsite);
         }
+        actualCowebsite.iframeMounted(iframeSimpleCowebsite);
     });
 
     onDestroy(() => {
         if (allowApi) {
             iframeListener.unregisterIframe(iframeSimpleCowebsite);
         }
+        actualCowebsite.iframeUnmounted(iframeSimpleCowebsite);
     });
 </script>
 
