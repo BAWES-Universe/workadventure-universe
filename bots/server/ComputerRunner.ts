@@ -196,7 +196,7 @@ export interface RunnerDeps {
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
     /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
     runId?: () => string;
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'turnPublished' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince' | 'closeTurn' | 'reopenTurn'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'turnPublished' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince' | 'closeTurn' | 'reopenTurn' | 'commitTurn' | 'releaseTurn'>>;
     /**
      * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
      * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
@@ -340,7 +340,7 @@ type TurnResult =
      */
     | { kind: 'look'; cancelled?: true }
     /** Every call of the turn was refused for want of room in the shared pool for as long as the runner waits: the turn was stopped here and the machine is given up. */
-    | { kind: 'poolBusy' }
+    | { kind: 'poolBusy'; attempt?: CloseAttempt }
     /** Stopped (a restart): nothing more is done, and the turn goes on on the machine. */
     | { kind: 'stopped' };
 
@@ -382,9 +382,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         job: RunnableJob,
         outcome: 'done' | 'failed',
         options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[]; run?: string; signal?: AbortSignal } = {}
-    ): Promise<'ended' | 'stale' | 'stopped'> {
+    ): Promise<'ended' | 'stale' | 'stopped' | 'unsent'> {
         const { cause, generation, why, turns, run, signal } = options;
         let stale = false;
+        let unsent = false;
         // Orbit judges a failure from the call rows it holds, so what the relay recorded for this job reaches it BEFORE the finish does (a moment of
         // retry at most: a record that cannot be sent never keeps a job from ending, and Orbit then has the cause below as its only hint)
         if (outcome === 'failed') await deps.refusals?.flush?.(job.jobId)?.catch(() => false);
@@ -403,9 +404,12 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         };
         await orbit.action(job.botId, job.jobId, fenced(body, generation)).catch((error) => {
             if (staleForOrbit(error)) stale = true;
-            else say('Could not end a job:', error);
+            else {
+                unsent = true;
+                say('Could not end a job:', error);
+            }
         });
-        return stale ? 'stale' : 'ended';
+        return stale ? 'stale' : unsent ? 'unsent' : 'ended';
     }
 
     /** Waits while the person has the machine or the job waits for them. 'back' when it is Brick's again, 'over' when it is not coming back. */
@@ -490,6 +494,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let poolTimer: ReturnType<typeof setTimeout> | undefined;
         let poolWatch: ReturnType<typeof setTimeout> | undefined;
         let gaveUp = false;
+        // The close the give-up went on with, so its fence can be taken back once Orbit has accepted the finish
+        let gaveUpOn: CloseAttempt | undefined;
         // The give-up that is writing to the shared store right now (the close of the turn, or the taking of it back): the end of the turn waits for it, bounded
         let watchdog: Promise<void> | undefined;
         // The turn's own end was read (a terminal event that needs no reconnection): nothing is given up on after it, whatever the pool answers
@@ -499,6 +505,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const poolBusy = () => since !== null && seenFromStart() && deps.refusals?.onlyPoolBusySince?.(job.jobId, since) === true;
         // Looked at again at the end of the wait: a call taken up meanwhile means the pool has room again, and that includes a call taken up by the relay of
         // ANOTHER bot server (the machine's calls reach whichever one the load balancer picks, and this server's own notes know only its own)
+        const poolBusyResult = (): TurnResult => ({ kind: 'poolBusy', ...(gaveUpOn ? { attempt: gaveUpOn } : {}) });
         const giveUpIfStill = async () => {
             if (turnOver || turnController.signal.aborted || !poolBusy()) return;
             if (since !== null && deps.refusals?.closeTurn) {
@@ -526,6 +533,33 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     }
                     return;
                 }
+                // The runner goes on with the give-up: the fence of THIS close is committed, so it holds for as long as the cancel and the finish take (a close that was only
+                // tentative lives FENCE_LIFE_MS). A fence that is no longer the one this close wrote (taken back, expired) is no give-up: the turn goes on
+                let committed = true;
+                try {
+                    committed = deps.refusals.commitTurn ? await deps.refusals.commitTurn(job.jobId, attempt) : true;
+                } catch {
+                    committed = true;
+                }
+                if (!committed) {
+                    try {
+                        await deps.refusals.reopenTurn(job.jobId, attempt);
+                    } catch {
+                        /* the fence expires on its own */
+                    }
+                    return;
+                }
+                // The turn ended, or was found to be no pool-only turn after all, while the commit was written: the give-up is not gone on with, and the fence that was just
+                // committed is taken back, the one time a committed fence is (the turn must not go on with every call of it refused)
+                if (turnOver || turnController.signal.aborted || !poolBusy()) {
+                    try {
+                        await deps.refusals.releaseTurn?.(job.jobId, attempt);
+                    } catch {
+                        /* the fence ends with the job's evidence */
+                    }
+                    return;
+                }
+                gaveUpOn = attempt;
             }
             gaveUp = true;
             turnController.abort();
@@ -627,7 +661,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     throw error;
                 }
             };
-            const stoppedHere = (): TurnResult => (signal.aborted ? { kind: 'stopped' } : gaveUp ? { kind: 'poolBusy' } : { kind: 'look', cancelled: true });
+            const stoppedHere = (): TurnResult => (signal.aborted ? { kind: 'stopped' } : gaveUp ? poolBusyResult() : { kind: 'look', cancelled: true });
             // A turn taken up with no input is one that was already going: this process has not seen its beginning
             if (input === null) accepted.joined = true;
             const first = await opening(() => (input === null ? orbit.stream(job.jobId, turnController.signal) : orbit.turn(job.jobId, input, turnController.signal)));
@@ -675,13 +709,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     terminal = terminal ?? { failed: true, fenced: false, code: 'stream_broke' };
                 }
                 if (signal.aborted) return { kind: 'stopped' };
-                if (gaveUp) return { kind: 'poolBusy' };
+                if (gaveUp) return poolBusyResult();
                 if (lost) return { kind: 'look', cancelled: true };
                 await report(true);
                 // The last report can be the first one the job answers as stale: the turn is lost then, and is not read as ended. It can also be a long one: a stop, or the
                 // pool's watchdog giving the turn up (a broken stream on the last reconnect leaves it armed), can come while it is pending, and is read as what it is
                 if (signal.aborted) return { kind: 'stopped' };
-                if (gaveUp) return { kind: 'poolBusy' };
+                if (gaveUp) return poolBusyResult();
                 if (lost) return { kind: 'look', cancelled: true };
                 if (terminal && terminal.code !== 'stream_broke' && terminal.code !== 'stream_ended') return { kind: 'ended', words, failed: terminal.failed, fenced: terminal.fenced };
                 // The connection ended before the turn did: reconnect to it, a few times, then let the next look decide
@@ -891,7 +925,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 turnStartedAt = null;
                 say('A job ended: every model call of its turn was refused for want of room in the shared pool.');
                 notePoolBusy(job, turnNo, run);
-                if ((await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, why: POOL_BUSY_WHY })) === 'stale') {
+                const finished = await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, why: POOL_BUSY_WHY });
+                // Orbit has ACCEPTED the finish: the give-up is over, and its committed fence is taken back. A finish that was refused as stale, not sent or not answered leaves it
+                // where it is (the next turn has a number of its own, and a job that is still going is not given calls of the turn it gave up)
+                if (finished === 'ended' && result.attempt) await deps.refusals?.releaseTurn?.(job.jobId, result.attempt).catch(() => undefined);
+                if (finished === 'stale') {
                     input = follow(RESUME_PROMPT);
                     await sleep(timing.waitMs, signal);
                     continue;

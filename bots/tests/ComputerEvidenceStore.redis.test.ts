@@ -130,4 +130,122 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
         await a.retractFence(l, { turn: 2 }, 500);
         expect(await b.noteAccepted(l, 600, { turn: 2 })).toBe(true);
     });
+    describe('the committed fence of a give-up (GPT round 3, finding 4)', () => {
+        const T = { turn: 6, run: 'r' };
+        const servers = () => ({ a: new RedisSharedCalls(() => client as never, 'A'), b: new RedisSharedCalls(() => client as never, 'B') });
+        const LATE = FENCE_LIFE_MS * 20;
+
+        it('refuses every call of the turn and run once the give-up is committed, however long after the close it comes; a close that was not committed clears itself after FENCE_LIFE_MS', async () => {
+            const { a, b } = servers();
+            const tentative = job('tentative');
+            const committed = job('committed');
+            expect(await a.closeTurn(tentative, T, 0, 5000)).toBe(true);
+            expect(await a.closeTurn(committed, T, 0, 5000)).toBe(true);
+            expect(await a.commitFence(committed, T, 5000)).toBe(true);
+            // delayed finalization: well beyond the life of a fence
+            expect(await b.noteAccepted(tentative, 5000 + FENCE_LIFE_MS + 1, T)).toBe(true);
+            for (const after of [1, FENCE_LIFE_MS, FENCE_LIFE_MS + 1, 2 * FENCE_LIFE_MS, LATE]) expect(await b.noteAccepted(committed, 5000 + after, T), String(after)).toBe(false);
+            // and the other server's call, taken up before the commit's moment, is no matter: the field is what counts
+            expect(await a.noteAccepted(committed, 5000 + LATE, T)).toBe(false);
+        });
+
+        it('leaves an unrelated new turn, another run and another job alone, and keeps the short life for a call whose turn is not known', async () => {
+            const { a, b } = servers();
+            const j = job('committed-others');
+            expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
+            expect(await a.commitFence(j, T, 5000)).toBe(true);
+            // the next turn of the same run, and the same turn of another run: eligible
+            expect(await b.noteAccepted(j, 5100, { turn: 7, run: 'r' })).toBe(true);
+            expect(await b.noteAccepted(j, 5100, { turn: 6, run: 'other' })).toBe(true);
+            // a call whose turn is not known reads the fence as any other: refused within FENCE_LIFE_MS, taken up after (as ruled)
+            expect(await b.noteAccepted(j, 5000 + FENCE_LIFE_MS, undefined)).toBe(false);
+            expect(await b.noteAccepted(j, 5000 + FENCE_LIFE_MS + 1, undefined)).toBe(true);
+            // a job that was not given up takes its call
+            expect(await b.noteAccepted(job('committed-other-job'), 5100, T)).toBe(true);
+        });
+
+        it('commits the fence of exactly the close that wrote it, and says no to a field that holds another moment or none (taken back, expired, a later close)', async () => {
+            const { a } = servers();
+            const j = job('commit-moment');
+            expect(await a.commitFence(j, T, 5000)).toBe(false);
+            expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
+            // a later close of the turn wrote its own moment over it: the first close's commit is no commit of that fence
+            expect(await a.closeTurn(j, T, 0, 5001)).toBe(true);
+            expect(await a.commitFence(j, T, 5000)).toBe(false);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5001');
+            expect(await a.commitFence(j, T, 5001)).toBe(true);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5001c');
+            // the same answer to say twice
+            expect(await a.commitFence(j, T, 5001)).toBe(true);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5001c');
+            // a fence that was taken back is no fence to commit
+            const taken = job('commit-taken');
+            expect(await a.closeTurn(taken, T, 0, 7000)).toBe(true);
+            await a.retractFence(taken, T, 7000);
+            expect(await a.commitFence(taken, T, 7000)).toBe(false);
+            expect(await client.hExists(CALLED_PREFIX + taken, 'fence:6|r')).toBe(false);
+        });
+
+        it('renews the hash for its full keep when it commits', async () => {
+            const { a } = servers();
+            const j = job('commit-ttl');
+            expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
+            await client.expire(CALLED_PREFIX + j, 5);
+            expect(await client.ttl(CALLED_PREFIX + j)).toBeLessThanOrEqual(5);
+            expect(await a.commitFence(j, T, 5000)).toBe(true);
+            expect(await client.ttl(CALLED_PREFIX + j)).toBeGreaterThan(3000);
+        });
+
+        it('is never retracted: a retraction of the moment the close wrote leaves a committed fence, and a close that comes later never writes a tentative one over it', async () => {
+            const { a, b } = servers();
+            const j = job('commit-no-retract');
+            expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
+            expect(await a.commitFence(j, T, 5000)).toBe(true);
+            await a.retractFence(j, T, 5000);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000c');
+            expect(await b.noteAccepted(j, 5000 + LATE, T)).toBe(false);
+            // another close of the same turn and run (it is already given up): stands as it is
+            expect(await a.closeTurn(j, T, 0, 9000)).toBe(true);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000c');
+            await a.retractFence(j, T, 9000);
+            expect(await b.noteAccepted(j, 9000 + LATE, T)).toBe(false);
+        });
+
+        it('is taken back once the finish is accepted, and only the committed fence of that moment: the turn takes calls again, a fence of a later moment or another turn stays, and it is safe to say twice', async () => {
+            const { a, b } = servers();
+            const j = job('release');
+            expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
+            // not committed yet: nothing to release
+            await a.releaseFence(j, T, 5000);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000');
+            expect(await a.commitFence(j, T, 5000)).toBe(true);
+            // another moment, another turn, another run: nothing goes
+            await a.releaseFence(j, T, 4999);
+            await a.releaseFence(j, { turn: 7, run: 'r' }, 5000);
+            await a.releaseFence(j, { turn: 6, run: 'other' }, 5000);
+            expect(await b.noteAccepted(j, 5000 + LATE, T)).toBe(false);
+            await a.releaseFence(j, T, 5000);
+            await a.releaseFence(j, T, 5000);
+            expect(await client.hExists(CALLED_PREFIX + j, 'fence:6|r')).toBe(false);
+            expect(await b.noteAccepted(j, 5000 + LATE, T)).toBe(true);
+        });
+
+        it('keeps the fence of a close of a turn that was not known to its short life: it is not committed, and a call after FENCE_LIFE_MS is taken up', async () => {
+            const { a, b } = servers();
+            const j = job('commit-unknown');
+            expect(await a.closeTurn(j, undefined, 0, 5000)).toBe(true);
+            expect(await b.noteAccepted(j, 5000 + FENCE_LIFE_MS + 1, T)).toBe(true);
+        });
+
+        it('shows the old reading for a call that arrives before the commit: an acceptance first makes the close say no, a commit first makes the acceptance say no (both orderings)', async () => {
+            const { a, b } = servers();
+            const first = job('order-accept-first');
+            expect(await b.noteAccepted(first, 4000, T)).toBe(true);
+            expect(await a.closeTurn(first, T, 3000, 5000)).toBe(false);
+            const second = job('order-close-first');
+            expect(await a.closeTurn(second, T, 3000, 5000)).toBe(true);
+            expect(await a.commitFence(second, T, 5000)).toBe(true);
+            expect(await b.noteAccepted(second, 5001, T)).toBe(false);
+        });
+    });
 });

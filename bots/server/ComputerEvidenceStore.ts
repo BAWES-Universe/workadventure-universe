@@ -262,6 +262,13 @@ export const FENCE_FIELD = 'fence:';
 export const FENCE_LIFE_MS = 30_000;
 /** The fence field of a turn (and run). */
 export const fenceFieldOf = (turn: CallTurn): string => `${FENCE_FIELD}${turn.turn}|${turn.run ?? ''}`;
+/**
+ * What a COMMITTED fence's value ends with. A fence is written as the moment of its close (digits); when the runner goes on with the give-up (the close is no longer one that can
+ * be taken back), `COMMIT_FENCE` writes the same moment followed by this. A committed fence of a turn (and run) refuses every call of that turn and run for as long as the hash
+ * lives (a give-up whose cancel or finish takes longer than `FENCE_LIFE_MS` leaves no hole), is never retracted (`RETRACT_FENCE` compares the exact moment), and is taken back
+ * by `RELEASE_FENCE` once Orbit has accepted the finish. A fence that is not committed (an abandoned close, a close of a turn that was not known) keeps `FENCE_LIFE_MS`.
+ */
+export const COMMITTED_MARK = 'c';
 
 /**
  * The runner's server gives a turn up (a turn that was refused for want of room the whole time): as ONE step, with no acceptance written for the turn (and run) by
@@ -289,6 +296,11 @@ for i = 1, #all, 2 do
     end
   end
 end
+local standing = redis.call('HGET', KEYS[1], ARGV[5])
+if standing and string.sub(standing, -1) == 'c' then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]))
+  return 1
+end
 redis.call('HSET', KEYS[1], ARGV[5], ARGV[6])
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]))
 return 1
@@ -308,19 +320,54 @@ return 0
 `;
 
 /**
+ * COMMITS the fence this close wrote, as ONE step, when the runner goes on with the give-up: the field ARGV[1] holds exactly the moment ARGV[2] (or already holds it committed:
+ * the same answer to say twice), and becomes that moment followed by `COMMITTED_MARK`, and the hash lives ARGV[3] seconds from now (the full keep, so the fence is there for
+ * as long as the rest of the job's evidence). Answers 1 when the fence is committed, 0 when the field holds something else (it was taken back, it expired, a later close of
+ * the turn wrote another moment): nothing is written, and the turn is not given up on this fence.
+ */
+export const COMMIT_FENCE = `
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+if current == ARGV[2] or current == ARGV[2] .. 'c' then
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2] .. 'c')
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+  return 1
+end
+return 0
+`;
+
+/**
+ * Takes a COMMITTED fence back once Orbit has accepted the finish of the job: deletes the field ARGV[1] only while it holds exactly the moment ARGV[2] committed, so a fence
+ * of a later close is never touched. Answers 1 when it deleted it and 0 when there was nothing of that moment to delete (the same answer to say twice).
+ */
+export const RELEASE_FENCE = `
+if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] .. 'c' then
+  redis.call('HDEL', KEYS[1], ARGV[1])
+  return 1
+end
+return 0
+`;
+
+/**
  * A server took up a call of the job (the same write as `KEEP_LATER`: the field ARGV[1] keeps the later moment ARGV[2], the hash lives ARGV[3] seconds) UNLESS
  * the turn it belongs to was given up: ARGV[4] is the fence field of the call's turn and run ('' when the turn is not known), and ARGV[5] the earliest moment of a
  * fence that counts (the call's moment minus FENCE_LIFE_MS: an older fence has cleared itself, known turn or not). A fence whose moment cannot be read counts, in
  * every branch. A call of a KNOWN turn is refused by the fence of its own turn and run, and by the fence of a close made when the runner's turn was not known
  * (`fence:|`, written by `closeTurn` with no turn: it may be a fence of any turn); a fence of a DIFFERENT known turn leaves it eligible. A call whose turn is not known is
- * refused by any fence. Answers 1 when it was written, 0 when it was refused (nothing written).
+ * refused by any fence. A fence COMMITTED for the call's own turn and run (`COMMIT_FENCE`) refuses the call whenever it arrives, for as long as the hash lives; a call whose turn is
+ * not known, and a call of another turn, read it as any other fence (its moment, and ARGV[5]). Answers 1 when it was written, 0 when it was refused (nothing written).
  */
 export const NOTE_ACCEPTED_UNLESS_CLOSED = `
 if ARGV[4] ~= '' then
   for _, field in ipairs({ ARGV[4], 'fence:|' }) do
     local fenced = redis.call('HGET', KEYS[1], field)
     if fenced then
-      local at = tonumber(fenced)
+      local text = fenced
+      local committed = string.sub(text, -1) == 'c'
+      if committed then text = string.sub(text, 1, -2) end
+      -- A fence COMMITTED for the call's own turn and run refuses it whenever it arrives (the give-up is going on, however long its cancel and its finish take). Only the
+      -- fence of a known turn is ever committed, so the fence of an unknown turn is read by its moment alone
+      if committed then return 0 end
+      local at = tonumber(text)
       if at == nil or at >= tonumber(ARGV[5]) then return 0 end
     end
   end
@@ -328,7 +375,10 @@ else
   local all = redis.call('HGETALL', KEYS[1])
   for i = 1, #all, 2 do
     if string.sub(all[i], 1, 6) == 'fence:' then
-      local at = tonumber(all[i + 1])
+      -- A call whose turn is not known keeps the life of a fence, committed or not
+      local text = all[i + 1]
+      if string.sub(text, -1) == 'c' then text = string.sub(text, 1, -2) end
+      local at = tonumber(text)
       if at == nil or at >= tonumber(ARGV[5]) then return 0 end
     end
   end
@@ -446,6 +496,15 @@ export class RedisSharedCalls implements SharedCalls {
                 arguments: [turn ? fenceFieldOf(turn) : FENCE_FIELD + '|', String(at)],
             })
         );
+    }
+
+    async commitFence(jobId: string, turn: CallTurn, at: number): Promise<boolean> {
+        const answer = await this.within(this.client().eval(COMMIT_FENCE, { keys: [CALLED_PREFIX + jobId], arguments: [fenceFieldOf(turn), String(at), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000))] }));
+        return Number(answer) === 1;
+    }
+
+    async releaseFence(jobId: string, turn: CallTurn, at: number): Promise<void> {
+        await this.within(this.client().eval(RELEASE_FENCE, { keys: [CALLED_PREFIX + jobId], arguments: [fenceFieldOf(turn), String(at)] }));
     }
 
     async lastAcceptedByOthers(jobId: string, turn?: CallTurn): Promise<number | null> {

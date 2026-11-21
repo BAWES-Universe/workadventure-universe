@@ -1179,13 +1179,13 @@ describe('whether any call of a job reached the relay', () => {
 /** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
 const sharedStore = () => {
     const seen = new Map<string, Map<string, number>>();
-    const state = { moments: [] as Array<[string, number]>, down: false, failCalled: 0, failTurns: 0, failAccepted: 0, failClose: 0, lostAfterClose: 0, failRetract: 0, retracted: 0, holdClose: undefined as Promise<void> | undefined, betweenTries: undefined as (() => Promise<unknown>) | undefined, holdRetract: undefined as Promise<void> | undefined, retractWaiting: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
+    const state = { moments: [] as Array<[string, number]>, down: false, failCalled: 0, failTurns: 0, failAccepted: 0, failClose: 0, lostAfterClose: 0, failRetract: 0, retracted: 0, failCommit: 0, commitAsked: 0, commitLostAfter: 0, released: 0, failRelease: 0, holdClose: undefined as Promise<void> | undefined, betweenTries: undefined as (() => Promise<unknown>) | undefined, holdRetract: undefined as Promise<void> | undefined, retractWaiting: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
     /** The turns each server's runner said, per job: the field `turn:<server>` of the shared record. */
     const turns = new Map<string, Map<string, SharedTurnList>>();
     /** The acceptances each server noted, per job: its moment and the turn (and run) the call began in (`undefined`: not known). */
     const accepted: Array<{ server: string; jobId: string; at: number; turn?: CallTurn }> = [];
     /** The turns the runner gave up (fenced), per job. */
-    const fences = new Map<string, Array<{ key: string; at: number }>>();
+    const fences = new Map<string, Array<{ key: string; at: number; committed?: boolean }>>();
     const put = (jobId: string, field: string, at: number) => {
         const byServer = seen.get(jobId) ?? new Map<string, number>();
         byServer.set(field, Math.max(at, byServer.get(field) ?? 0));
@@ -1232,7 +1232,8 @@ const sharedStore = () => {
             // as the store does it, in one step: a turn that was given up takes no acceptance (a turn that is not known: none lately given up)
             const shut = fences.get(jobId) ?? [];
             // a fence counts for FENCE_LIFE_MS from its moment, a known turn or not
-            if (shut.some((one) => (!turn || one.key === '' || one.key === `${turn.turn}|${turn.run ?? ''}`) && one.at >= at - FENCE_LIFE_MS)) return false;
+            // (a fence COMMITTED for the call's own turn and run refuses it whenever it arrives)
+            if (shut.some((one) => (!turn || one.key === '' || one.key === `${turn.turn}|${turn.run ?? ''}`) && (one.at >= at - FENCE_LIFE_MS || (one.committed && turn !== undefined && one.key === `${turn.turn}|${turn.run ?? ''}`)))) return false;
             accepted.push({ server: id, jobId, at, ...(turn ? { turn } : {}) });
             return true;
         },
@@ -1270,7 +1271,35 @@ const sharedStore = () => {
             state.retracted += 1;
             // as the store does it, in one step: only the fence of that very moment goes
             const key = turn ? `${turn.turn}|${turn.run ?? ''}` : '';
-            fences.set(jobId, (fences.get(jobId) ?? []).filter((one) => !(one.key === key && one.at === at)));
+            fences.set(jobId, (fences.get(jobId) ?? []).filter((one) => !(one.key === key && one.at === at && !one.committed)));
+        },
+        commitFence: async (jobId, turn, at) => {
+            state.commitAsked += 1;
+            if (state.down || state.failCommit > 0) {
+                if (state.failCommit > 0) state.failCommit -= 1;
+                throw new Error('shared store down');
+            }
+            // as the store does it, in one step: only the fence that holds exactly that moment becomes committed
+            const key = `${turn.turn}|${turn.run ?? ''}`;
+            const standing = (fences.get(jobId) ?? []).find((one) => one.key === key && one.at === at);
+            if (!standing) return false;
+            standing.committed = true;
+            // the script RAN and the fence is committed, but its answer never comes back
+            if (state.commitLostAfter > 0) {
+                state.commitLostAfter -= 1;
+                throw new Error('the answer was lost after the script ran');
+            }
+            return true;
+        },
+        releaseFence: async (jobId, turn, at) => {
+            if (state.down || state.failRelease > 0) {
+                if (state.failRelease > 0) state.failRelease -= 1;
+                throw new Error('shared store down');
+            }
+            state.released += 1;
+            // as the store does it: only the COMMITTED fence of that very moment goes
+            const key = `${turn.turn}|${turn.run ?? ''}`;
+            fences.set(jobId, (fences.get(jobId) ?? []).filter((one) => !(one.key === key && one.at === at && one.committed)));
         },
         lastAcceptedByOthers: async (jobId, turn) => {
             if (state.down) throw new Error('shared store down');
@@ -2451,6 +2480,127 @@ describe('calls of a job that arrive at another bot server', () => {
                     await a.reopenTurn('cr2', attempt);
                     expect(a.confirmedSince('cr2', since)).toBe(true);
                     expect(a.endedOnFault('cr2', since)).toBe(true);
+                });
+
+                describe('a give-up that is gone on with is COMMITTED (GPT round 3, finding 4)', () => {
+                    const closeFor = async (job: string, advanceMs = 10) => {
+                        const rig = rigTurns();
+                        await begin(rig.a, job, 1, 'run-1');
+                        const since = rig.a.mark();
+                        rig.advance(advanceMs);
+                        const attempt: CloseAttempt = {};
+                        expect(await rig.a.closeTurn(job, since, attempt)).toBe(true);
+                        return { ...rig, since, attempt };
+                    };
+
+                    it('commits the fence of the close, so a call of the turn that another server takes up refuses for as long as the job lives: not only FENCE_LIFE_MS, and not after the turn after it is over either', async () => {
+                        const { a, b, store, attempt, advance } = await closeFor('cm');
+                        expect(await a.commitTurn!('cm', attempt)).toBe(true);
+                        expect(attempt.committed).toBe(true);
+                        // delayed finalization: the cancel and the finish take well over a fence's life
+                        advance(FENCE_LIFE_MS * 4);
+                        expect(await b.accepted('cm', { turn: 1, run: 'run-1' })).toBe(false);
+                        expect(a.accepted('cm', { turn: 1, run: 'run-1' })).toBe(false);
+                        // an unrelated new turn (the next of the run) and another run are not touched
+                        expect(await b.accepted('cm', { turn: 2, run: 'run-1' })).toBe(true);
+                        expect(await b.accepted('cm', { turn: 1, run: 'run-2' })).toBe(true);
+                        expect(store.state.commitAsked).toBe(1);
+                    });
+
+                    it('keeps the short life when it is not committed: an abandoned close (the runner took it back and the retraction did not answer) clears itself', async () => {
+                        const { b, store, attempt, a, advance } = await closeFor('ab');
+                        store.state.failRetract = 3;
+                        await a.reopenTurn('ab', attempt);
+                        expect(attempt.committed).toBeUndefined();
+                        expect(await b.accepted('ab', { turn: 1, run: 'run-1' })).toBe(false);
+                        advance(FENCE_LIFE_MS + 5);
+                        expect(await b.accepted('ab', { turn: 1, run: 'run-1' })).toBe(true);
+                    });
+
+                    it('never takes a committed close back with reopenTurn: not here and not in the store', async () => {
+                        const { a, b, store, attempt, advance } = await closeFor('nr');
+                        expect(await a.commitTurn!('nr', attempt)).toBe(true);
+                        await a.reopenTurn('nr', attempt);
+                        expect(store.state.retracted).toBe(0);
+                        advance(FENCE_LIFE_MS * 2);
+                        expect(a.accepted('nr', { turn: 1, run: 'run-1' })).toBe(false);
+                        expect(await b.accepted('nr', { turn: 1, run: 'run-1' })).toBe(false);
+                    });
+
+                    it('says no, and commits nothing, for a close that no longer stands (another close of the turn took its place, or the fence is gone from the store): the turn is not given up on it', async () => {
+                        const first = await closeFor('gone');
+                        // the fence of that close leaves the store (taken back by someone, or it expired)
+                        first.attempt.at = (first.attempt.at ?? 0) + 1;
+                        expect(await first.a.commitTurn!('gone', first.attempt)).toBe(false);
+                        expect(first.attempt.committed).toBeUndefined();
+                        const gone = await closeFor('gone2');
+                        await gone.a.reopenTurn('gone2', gone.attempt);
+                        expect(await gone.a.commitTurn!('gone2', gone.attempt)).toBe(false);
+                        // a close taken back HERE (its retraction in the store did not answer: the tentative fence is still there) is no close to commit: the turn goes on, and the
+                        // store is not asked to commit a fence the runner no longer stands behind
+                        const taken = await closeFor('gone-local');
+                        taken.store.state.failRetract = 3;
+                        await taken.a.reopenTurn('gone-local', taken.attempt);
+                        const asked = taken.store.state.commitAsked;
+                        expect(await taken.a.commitTurn!('gone-local', taken.attempt)).toBe(false);
+                        expect(taken.store.state.commitAsked).toBe(asked);
+                        expect(taken.attempt.committed).toBeUndefined();
+                        // the store has no fence of that moment either: the close stands here no more, so it is false at once
+                        const store = await closeFor('gone3');
+                        store.store.state.failRetract = 0;
+                        const shared = (store.store.forServer('A')) as { retractFence: (job: string, turn: unknown, at: number) => Promise<void> };
+                        await shared.retractFence('gone3', store.attempt.turn, store.attempt.at as number);
+                        expect(await store.a.commitTurn!('gone3', store.attempt)).toBe(false);
+                    });
+
+                    it('goes on with the give-up when the store cannot say (every try fails): the fence is in the store, committed or not, and the turn is never left alive under a committed fence', async () => {
+                        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+                        const down = await closeFor('lost');
+                        down.store.state.failCommit = 3;
+                        expect(await down.a.commitTurn!('lost', down.attempt)).toBe(true);
+                        expect(down.store.state.commitAsked).toBe(3);
+                        expect(down.attempt.committed).toBe(true);
+                        warn.mockRestore();
+                        // an answer lost after the script ran: the second try finds the fence committed (the same answer to say twice)
+                        const late = await closeFor('lost-after');
+                        late.store.state.commitLostAfter = 1;
+                        expect(await late.a.commitTurn!('lost-after', late.attempt)).toBe(true);
+                        expect(late.store.state.commitAsked).toBe(2);
+                    });
+
+                    it('does not commit a close of a turn whose number is not known (its fence keeps FENCE_LIFE_MS), and without a shared store the close stands here alone', async () => {
+                        const noTurn = rigTurns();
+                        const attempt: CloseAttempt = {};
+                        expect(await noTurn.a.closeTurn('unk', noTurn.a.mark(), attempt)).toBe(true);
+                        expect(attempt.turn).toBeUndefined();
+                        expect(await noTurn.a.commitTurn!('unk', attempt)).toBe(true);
+                        expect(noTurn.store.state.commitAsked).toBe(0);
+                        const alone = createRefusalNotes(() => 1000);
+                        const own: CloseAttempt = {};
+                        alone.turn('solo', 1, 'run-1');
+                        expect(await alone.closeTurn('solo', alone.mark(), own)).toBe(true);
+                        expect(await alone.commitTurn!('solo', own)).toBe(true);
+                        expect(own.committed).toBe(true);
+                    });
+
+                    it('takes the committed fence back once the finish is accepted (the turn takes calls again, here and in the store), tolerates a store that fails, and a stale or later close of another moment stays', async () => {
+                        const done = await closeFor('rel');
+                        expect(await done.a.commitTurn!('rel', done.attempt)).toBe(true);
+                        done.store.state.failRelease = 1;
+                        await done.a.releaseTurn!('rel', done.attempt);
+                        expect(done.store.state.released).toBe(1);
+                        done.advance(FENCE_LIFE_MS * 2);
+                        expect(await done.b.accepted('rel', { turn: 1, run: 'run-1' })).toBe(true);
+                        // and here: the turn takes calls again on the runner's own server
+                        expect(done.a.accepted('rel', { turn: 1, run: 'run-1' })).not.toBe(false);
+                        // a store that does not answer: never throws, the fence ends with the job's evidence
+                        const stuck = await closeFor('rel2');
+                        expect(await stuck.a.commitTurn!('rel2', stuck.attempt)).toBe(true);
+                        stuck.store.state.down = true;
+                        await expect(stuck.a.releaseTurn!('rel2', stuck.attempt)).resolves.toBeUndefined();
+                        // a release with nothing named does nothing
+                        await expect(stuck.a.releaseTurn!('rel2', {})).resolves.toBeUndefined();
+                    });
                 });
 
                 it('a call that arrived in a turn change (its turn could not be told) is sent with no turn and changes none of the active turn’s notes: no confirmed fault, no answer, no refusal for the runner to read', async () => {

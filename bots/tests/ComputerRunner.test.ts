@@ -2271,9 +2271,14 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
         /** The moments of the fences written and not taken back. */
         const fences: number[] = [];
         // The store takes its time to get a command (latency) and then does it as one step: `began` says a close of the turn was sent
-        const latency = { ms: 0, retractMs: 0, began: undefined as (() => void) | undefined };
+        const latency = { ms: 0, retractMs: 0, commitMs: 0, began: undefined as (() => void) | undefined, commitBegan: undefined as (() => void) | undefined };
         /** How many closes were committed and how many fences were taken back. */
-        const counts = { commits: 0, retracts: 0 };
+        const counts = { commits: 0, retracts: 0, commitFences: 0, releases: 0 };
+        /** The fences that were committed (their moments), and what the store was asked in order (close, commit, retract, release). */
+        const committed: number[] = [];
+        const log: string[] = [];
+        /** Whether the next commit finds the fence gone (it was taken back or expired). */
+        const commitSays = { gone: false };
         const forServer = (id: string) => ({
             noteCalled: async (_jobId: string, at: number) => void called.set(id, Math.max(at, called.get(id) ?? 0)),
             noteUnrecorded: async () => undefined,
@@ -2289,6 +2294,7 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             },
             closeTurn: async (_jobId: string, _turn: unknown, from: number, at?: number) => {
                 latency.began?.();
+                log.push('close');
                 if (latency.ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.ms));
                 const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
                 if (others.length > 0 && Math.max(...others) >= from - 2000) return false;
@@ -2299,18 +2305,40 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             },
             // as the store does it: only the fence that holds exactly that moment goes
             retractFence: async (_jobId: string, _turn: unknown, at: number) => {
+                log.push('retract');
                 if (latency.retractMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.retractMs));
                 const index = fences.indexOf(at);
-                if (index >= 0) fences.splice(index, 1);
+                if (index >= 0 && !committed.includes(at)) fences.splice(index, 1);
                 fenced = fences.length > 0;
                 counts.retracts += 1;
+            },
+            // as the store does it, in one step: only the fence that holds exactly that moment becomes committed
+            commitFence: async (_jobId: string, _turn: unknown, at: number) => {
+                latency.commitBegan?.();
+                log.push('commit');
+                if (latency.commitMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.commitMs));
+                counts.commitFences += 1;
+                if (commitSays.gone || !fences.includes(at)) return false;
+                if (!committed.includes(at)) committed.push(at);
+                return true;
+            },
+            // as the store does it: only the COMMITTED fence of that moment goes
+            releaseFence: async (_jobId: string, _turn: unknown, at: number) => {
+                log.push('release');
+                counts.releases += 1;
+                const index = committed.indexOf(at);
+                if (index < 0) return;
+                committed.splice(index, 1);
+                const at2 = fences.indexOf(at);
+                if (at2 >= 0) fences.splice(at2, 1);
+                fenced = fences.length > 0;
             },
             lastAcceptedByOthers: async () => {
                 const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
                 return others.length > 0 ? Math.max(...others) : null;
             },
         });
-        return { forServer, accepted, latency, fences, counts };
+        return { forServer, accepted, latency, fences, counts, committed, log, commitSays };
     };
 
     it('does not give up on a turn when the pool took up a call of the job on ANOTHER bot server: only a call taken up nowhere is a pool with no room', async () => {
@@ -2364,6 +2392,12 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
             const other = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('B') });
             const { orbit, seen } = fakeOrbit([]);
+            // Orbit takes the finish after the other server's call has come (the give-up is going on while the machine is cancelled and the job ended)
+            const action = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'finish') await new Promise<void>((resolve) => setTimeout(resolve, 5000));
+                return action(botId, jobId, body);
+            };
             record.latency.ms = 1000;
             let accepting: Promise<unknown> | undefined;
             let taken: unknown = 'not asked';
@@ -2378,8 +2412,136 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             expect(taken).toBe(false);
             expect(seen.cancels).toBe(1);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
-            // the runner goes on with the give-up: the fence of the close stays
-            expect(record.fences).toHaveLength(1);
+            // the runner went on with the give-up (its fence was committed while the machine was cancelled and the job ended), and took the fence back when Orbit accepted the finish
+            expect(record.counts.commitFences).toBe(1);
+            expect(record.fences).toEqual([]);
+        });
+    });
+
+    describe('the give-up is COMMITTED before the machine is cancelled, and the fence is taken back once Orbit has accepted the finish (GPT round 3, finding 4)', () => {
+        const stale = () => Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true, response: { status: 409, data: { ok: false, reason: 'stale', generation: 2 } } });
+        const rigGiveUp = () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            // the store's own order of events, with what Orbit was asked in between
+            const cancel = orbit.cancel;
+            orbit.cancel = async (jobId) => {
+                record.log.push('cancel');
+                return cancel(jobId);
+            };
+            const action = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'finish') record.log.push('finish');
+                return action(botId, jobId, body);
+            };
+            return { record, notes, orbit, seen, action };
+        };
+
+        it('commits the fence of the close first, then cancels and finishes, then takes the committed fence back: the give-up never rests on a fence that clears itself', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen } = rigGiveUp();
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(130_000);
+                await running;
+                expect(record.log).toEqual(['close', 'commit', 'cancel', 'finish', 'release']);
+                expect(seen.cancels).toBe(1);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+                // the committed fence was taken back after Orbit accepted the finish
+                expect(record.counts.commitFences).toBe(1);
+                expect(record.committed).toEqual([]);
+                expect(record.fences).toEqual([]);
+            });
+        });
+
+        it('holds the committed fence for as long as the cancel and the finish take (well beyond a fence\'s own life): it is still there while Orbit is slow, and only goes when it answers', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen, action } = rigGiveUp();
+                let answered = false;
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish') {
+                        record.log.push('finish');
+                        // Orbit takes two minutes to take the finish
+                        await new Promise<void>((resolve) => setTimeout(resolve, 120_000));
+                        answered = true;
+                    }
+                    return action(botId, jobId, body);
+                };
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(130_000);
+                // the finish is on its way: the fence is committed, and well past its life of 30 seconds it is still the fence of the turn
+                expect(answered).toBe(false);
+                expect(record.committed).toHaveLength(1);
+                expect(record.counts.releases).toBe(0);
+                await vi.advanceTimersByTimeAsync(130_000);
+                await running;
+                expect(answered).toBe(true);
+                expect(record.counts.releases).toBe(1);
+                expect(record.committed).toEqual([]);
+                expect(seen.cancels).toBe(1);
+            });
+        });
+
+        it('leaves the committed fence where it is when the finish was refused as stale or could not be sent: only an accepted finish takes it back (the next turn has a number of its own)', async () => {
+            await withFakeClock(async () => {
+                for (const failure of [stale, () => new Error('Orbit could not be reached')]) {
+                    const { record, notes, orbit, action } = rigGiveUp();
+                    let finishes = 0;
+                    orbit.action = async (botId, jobId, body) => {
+                        if (body.action === 'finish' && ++finishes === 1) {
+                            record.log.push('finish');
+                            throw failure();
+                        }
+                        return action(botId, jobId, body);
+                    };
+                    let first = true;
+                    retryingTurn(orbit, (at) => {
+                        if (!first) return;
+                        first = false;
+                        at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal));
+                    }, 200_000);
+                    const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                    await vi.advanceTimersByTimeAsync(400_000);
+                    await running;
+                    expect(record.counts.releases).toBe(0);
+                    expect(record.committed).toHaveLength(1);
+                }
+            });
+        });
+
+        it('takes the commit back (the one time it does) when the turn is found to be no pool-only turn while it is written: nothing is cancelled and the turn goes on without a fence', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen } = rigGiveUp();
+                record.latency.commitMs = 1000;
+                // 500 ms after the commit was sent, a call of the turn fails some other way of ours
+                record.latency.commitBegan = () => void setTimeout(() => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'other-kind', reason: 'provider_5xx', providerStatus: 502 }), 500);
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(210_000);
+                await running;
+                expect(record.log).toEqual(['close', 'commit', 'release', 'finish']);
+                expect(seen.cancels).toBe(0);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+                expect(record.committed).toEqual([]);
+                expect(record.fences).toEqual([]);
+                expect(await record.forServer('B').noteAccepted!(JOB.jobId, Date.now(), { turn: 1, run: 'run1' })).toBe(true);
+            });
+        });
+
+        it('does not give the turn up on a fence the store says is no longer the one the close wrote: the close is taken back and the turn goes on', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen } = rigGiveUp();
+                record.commitSays.gone = true;
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(210_000);
+                await running;
+                expect(record.log.slice(0, 3)).toEqual(['close', 'commit', 'retract']);
+                expect(seen.cancels).toBe(0);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            });
         });
     });
 
@@ -2423,7 +2585,9 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             expect(refused).toBe(false);
             expect(seen.cancels).toBe(1);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
-            expect(record.fences).toHaveLength(1);
+            // the give-up went on: its fence was committed, and taken back when Orbit accepted the finish
+            expect(record.counts.commitFences).toBe(1);
+            expect(record.fences).toEqual([]);
         });
     });
 
