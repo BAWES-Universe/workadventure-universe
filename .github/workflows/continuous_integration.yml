@@ -35,10 +35,7 @@ jobs:
           cache: "npm"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install dependencies"
         run: npm ci --workspace=workadventure-play
@@ -118,10 +115,7 @@ jobs:
 
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install dependencies"
         run: npm ci --workspace=workadventureback
@@ -193,10 +187,7 @@ jobs:
           cache: "npm"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install dependencies"
         run: npm ci --workspace=@workadventure/map-editor
@@ -249,10 +240,7 @@ jobs:
           cache: "npm"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install dependencies"
         run: npm ci --workspace=@workadventure/store-utils
@@ -293,10 +281,7 @@ jobs:
           cache: "npm"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install dependencies"
         run: npm ci --workspace=@workadventure/shared-utils
@@ -342,10 +327,7 @@ jobs:
 
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install dependencies"
         run: npm ci --workspace=map-storage
@@ -390,10 +372,7 @@ jobs:
           cache: "npm"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install messages dependencies"
         run: npm ci
@@ -425,10 +404,7 @@ jobs:
           cache: "npm"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install ESLint config dependencies"
         run: npm ci --workspace=@workadventure/eslint-config
@@ -550,10 +526,7 @@ jobs:
           cache: "npm"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install dependencies"
         run: npm ci --workspace=@workadventure/bots
