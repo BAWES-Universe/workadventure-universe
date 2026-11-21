@@ -590,6 +590,90 @@ describe('the evidence kept before the money decision is final, and delivered af
         expect(mem.held.size).toBe(0);
     });
 
+    describe('the arrival of a call at the relay (GPT round 3, finding 5): one neutral row per job, run and turn, to Orbit only', () => {
+        it('queues ONE row for the first call of a turn and none for the next calls of it, a new row for the next turn or run, and names an unknown turn with a bare id', async () => {
+            const { notes, sent } = ledger(memoryStore().store, () => true);
+            notes.arrived('b', 'j', { turn: 3, run: 'run-a' });
+            notes.arrived('b', 'j', { turn: 3, run: 'run-a' });
+            notes.arrived('b', 'j', { turn: 4, run: 'run-a' });
+            notes.arrived('b', 'j', { turn: 3, run: 'run-b' });
+            notes.arrived('b', 'j', { turn: null, run: 'run-a' });
+            notes.arrived('b', 'j', { turn: null, run: 'run-a' });
+            notes.arrived('b', 'j', { turn: 0 });
+            notes.arrived('b', 'other-job', { turn: 3, run: 'run-a' });
+            await notes.flush('j');
+            await notes.flush('other-job');
+            const rows = sent.filter((one) => one.jobId === 'j').flatMap((one) => one.rows);
+            expect(rows.map((row) => row.callId).sort()).toEqual(['arrival_run-a_', 'arrival_run-a_3', 'arrival_run-a_4', 'arrival_run-b_3', 'arrival__0'].sort());
+            expect(sent.filter((one) => one.jobId === 'other-job').flatMap((one) => one.rows.map((row) => row.callId))).toEqual(['arrival_run-a_3']);
+            expect(rows.find((row) => row.callId === 'arrival_run-a_3')).toEqual({ turn: 3, run: 'run-a', callId: 'arrival_run-a_3', kind: 'answered', reason: 'relay_reached', source: 'universe-ai', route: null, providerStatus: null, at: expect.any(String) });
+            expect(rows.find((row) => row.callId === 'arrival_run-a_')).toMatchObject({ turn: null, run: 'run-a' });
+            // no run known: the key is left out, not sent empty
+            expect(rows.find((row) => row.callId === 'arrival__0')).not.toHaveProperty('run');
+        });
+
+        it('changes nothing the runner reads: no answer clears a fault, no fault, no refusal, no call noted, no acceptance', async () => {
+            const { notes } = ledger(memoryStore().store, () => true);
+            notes.turn('j', 2, 'run-a');
+            const since = notes.mark();
+            notes.record('b', 'j', call('c-fault', { turn: 2, run: 'run-a' }));
+            expect(notes.endedOnFault('j', since)).toBe(true);
+            expect(notes.confirmedSince('j', since)).toBe(true);
+            notes.arrived('b', 'j', { turn: 2, run: 'run-a' });
+            notes.arrived('b', 'j', { turn: null, run: 'run-a' });
+            // an answer would have cleared the fault: an arrival is not one
+            expect(notes.endedOnFault('j', since)).toBe(true);
+            expect(notes.confirmedSince('j', since)).toBe(true);
+            // and on a job that had nothing: an arrival makes none of these
+            const fresh = notes.mark();
+            notes.arrived('b', 'quiet', { turn: 1, run: 'run-a' });
+            expect(notes.endedOnFault('quiet', fresh)).toBe(false);
+            expect(notes.confirmedSince('quiet', fresh)).toBe(false);
+            expect(notes.sawSince('quiet', fresh)).toBe(false);
+            expect(notes.calledSince('quiet', fresh)).toBe(false);
+            expect(notes.acceptedSince('quiet', fresh)).toBe(false);
+            expect(notes.onlyPoolBusySince('quiet', fresh)).toBe(false);
+            expect(await notes.calledAnywhereSince('quiet', fresh)).toBe(false);
+        });
+
+        it('is kept where a restart does not lose it and delivered when Orbit is back, once; the same row after a restart is the same row (the id is the turn)', async () => {
+            const mem = memoryStore();
+            const first = ledger(mem.store, () => false);
+            first.notes.arrived('bot-9', 'j', { turn: 2, run: 'run-z' });
+            first.notes.arrived('bot-9', 'j', { turn: 2, run: 'run-z' });
+            await vi.waitFor(() => expect(mem.held.size).toBe(1));
+            expect(mem.held.get('j|arrival_run-z_2')?.row).toMatchObject({ kind: 'answered', reason: 'relay_reached', route: null, providerStatus: null, turn: 2, run: 'run-z' });
+            // the process is gone, a new one starts, Orbit is up
+            const second = ledger(mem.store, () => true);
+            expect(await second.notes.resume()).toBe(true);
+            await vi.waitFor(() => expect(second.sent.flatMap((one) => one.rows.map((row) => row.callId))).toEqual(['arrival_run-z_2']));
+            await vi.waitFor(() => expect(mem.held.size).toBe(0));
+            // and an arrival of that turn that this new process sees queues the one row again under the same id (Orbit keeps one row per job and call id)
+            second.notes.arrived('bot-9', 'j', { turn: 2, run: 'run-z' });
+            await second.notes.flush('j');
+            expect(second.sent.flatMap((one) => one.rows.map((row) => row.callId))).toEqual(['arrival_run-z_2', 'arrival_run-z_2']);
+        });
+
+        it('is no row at all with neither Orbit nor a store to give it to, and never throws', () => {
+            const none = createRefusalNotes(() => 1000);
+            expect(() => none.arrived('b', 'j', { turn: 1, run: 'r' })).not.toThrow();
+            const broken = createRefusalNotes(() => 1000, { sink: async () => { throw new Error('down'); }, retryMs: [] });
+            expect(() => broken.arrived('b', 'j', { turn: 1, run: 'r' })).not.toThrow();
+        });
+
+        it('is forgotten with the job after its keep: a later arrival of a turn it remembers no more queues the row again', async () => {
+            let at = 1000;
+            const sent: string[] = [];
+            const notes = createRefusalNotes(() => at, { retryMs: [0], laterMs: [], sink: async (_b, _j, rows) => (sent.push(...rows.map((row) => row.callId)), true) });
+            notes.arrived('b', 'j', { turn: 1, run: 'r' });
+            await notes.flush('j');
+            at += REFUSAL_NOTE_KEEP_MS + 10;
+            notes.arrived('b', 'j', { turn: 1, run: 'r' });
+            await notes.flush('j');
+            expect(sent).toEqual(['arrival_r_1', 'arrival_r_1']);
+        });
+    });
+
     it('flush waits for the write to the store, and a write that failed is made again before the flush ends', async () => {
         const mem = memoryStore();
         mem.state.failSaves = 1;

@@ -111,6 +111,22 @@ describe('the evidence kept for Orbit in the shared store', () => {
         await store.drop('bot-1', 'job-1', []);
     });
 
+    it('brings the arrival row back (`answered` / `relay_reached`, no route, a turn or none) and no other row of that kind, nor a route that is missing on any other row', async () => {
+        const redis = fakeRedis();
+        const store = new RedisEvidenceStore(() => redis.client, () => NOW);
+        const arrival = (callId: string, over: Record<string, unknown> = {}): CallRow => ({ ...row(callId), kind: 'answered' as const, reason: 'relay_reached' as const, route: null, providerStatus: null, ...over }) as CallRow;
+        expect(await store.save('bot-1', 'job-1', arrival('arrival_run-a_2', { turn: 2, run: 'run-a' }))).toBe(true);
+        expect(await store.save('bot-1', 'job-1', arrival('arrival_run-a_', { turn: null, run: 'run-a' }))).toBe(true);
+        // an `answered` row that is no arrival, and a missing route on a row that is no arrival, are not rows of ours
+        redis.raw('job-1', 'bad-answered', JSON.stringify({ botId: 'bot-1', row: { ...row('bad-answered'), kind: 'answered' } }));
+        redis.raw('job-1', 'bad-route', JSON.stringify({ botId: 'bot-1', row: { ...row('bad-route'), route: null } }));
+        redis.raw('job-1', 'bad-arrival-route', JSON.stringify({ botId: 'bot-1', row: { ...arrival('bad-arrival-route'), route: 5 } }));
+        const loaded = await store.load();
+        expect(loaded).toHaveLength(1);
+        expect(loaded[0].rows.map((one) => one.callId).sort()).toEqual(['arrival_run-a_', 'arrival_run-a_2']);
+        expect(loaded[0].rows.find((one) => one.callId === 'arrival_run-a_2')).toEqual(arrival('arrival_run-a_2', { turn: 2, run: 'run-a' }));
+    });
+
     it('finds every job’s hash whatever the page size of the scan', async () => {
         const redis = fakeRedis();
         const store = new RedisEvidenceStore(() => redis.client, () => NOW);

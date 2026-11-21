@@ -64,7 +64,11 @@ const notes = createRefusalNotes(Date.now, {
     },
     retryMs: [0, 0],
 });
-const rowsOf = (jobId: string): CallRow[] => sunk.filter((entry) => entry.jobId === jobId).flatMap((entry) => entry.rows);
+const allRowsOf = (jobId: string): CallRow[] => sunk.filter((entry) => entry.jobId === jobId).flatMap((entry) => entry.rows);
+/** The rows of the calls themselves: the neutral arrival rows (`answered` / `relay_reached`, see `arrivalsOf`) are no row of a call. */
+const rowsOf = (jobId: string): CallRow[] => allRowsOf(jobId).filter((row) => row.reason !== 'relay_reached');
+/** The neutral rows that say the relay was reached in a turn. */
+const arrivalsOf = (jobId: string): CallRow[] => allRowsOf(jobId).filter((row) => row.reason === 'relay_reached');
 /** Waits for the rows of a job to reach Orbit's record. */
 const rowsSent = async (jobId: string, count = 1): Promise<CallRow[]> => {
     await vi.waitFor(() => expect(rowsOf(jobId).length).toBeGreaterThanOrEqual(count), { timeout: 3000 });
@@ -2299,6 +2303,7 @@ describe('the shared record of a call, before the call goes on', () => {
     const written: string[] = [];
     const state = { clock: undefined as number | undefined, hold: undefined as Promise<void> | undefined, failWrites: 0, failAccept: 0, fenced: false, holdClose: undefined as Promise<void> | undefined, lostAfterClose: 0, retracted: 0, began: undefined as (() => void) | undefined, turns: [] as Array<{ turn: number; run?: string; at: number }>, turnsDown: false };
     const rowsB: Array<{ jobId: string; rows: CallRow[] }> = [];
+    const arrivalsB: Array<{ jobId: string; rows: CallRow[] }> = [];
     let own!: ReturnType<typeof createRefusalNotes>;
     /** The jobs whose runner is working on this server this moment. */
     const here = new Set<string>();
@@ -2359,7 +2364,10 @@ describe('the shared record of a call, before the call goes on', () => {
             runsHere: (jobId) => here.has(jobId),
             retryMs: [0],
             sink: async (_bot, jobId, rows) => {
-                rowsB.push({ jobId, rows });
+                // the neutral arrival rows (the relay was reached) are kept apart from the rows of the calls themselves
+                const own = rows.filter((row) => row.reason !== 'relay_reached');
+                if (own.length > 0) rowsB.push({ jobId, rows: own });
+                if (own.length < rows.length) arrivalsB.push({ jobId, rows: rows.filter((row) => row.reason === 'relay_reached') });
                 return true;
             },
         });
@@ -2378,6 +2386,7 @@ describe('the shared record of a call, before the call goes on', () => {
         reports.length = 0;
         written.length = 0;
         rowsB.length = 0;
+        arrivalsB.length = 0;
         here.clear();
         state.clock = undefined;
         state.hold = undefined;
@@ -2494,6 +2503,11 @@ describe('the shared record of a call, before the call goes on', () => {
             expect(rowsB[0].rows).toHaveLength(1);
             expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: 503 });
             expect(written).toEqual([]);
+            // the call reached the relay with a key Orbit knows, whatever became of it: its arrival goes to Orbit's record through the sink too, once for the turn
+            await vi.waitFor(() => expect(arrivalsB).toHaveLength(1));
+            expect(arrivalsB[0].jobId).toBe(OTHER);
+            expect(arrivalsB[0].rows).toHaveLength(1);
+            expect(arrivalsB[0].rows[0]).toMatchObject({ kind: 'answered', reason: 'relay_reached', route: null, providerStatus: null });
             // the retry: told once for the job, refused again the same way, and goes through once the record can be written
             expect((await askHere(withTools)).status).toBe(503);
             expect(reports).toEqual([['called_unrecorded', OTHER]]);
@@ -2748,5 +2762,126 @@ describe('the shared record of a call, before the call goes on', () => {
     it('records the model list asked with the job’s key too', async () => {
         expect((await fetch(`${base2}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status).toBe(200);
         expect(written).toEqual([`called:${JOB}`]);
+    });
+});
+
+describe('the relay was reached (GPT round 3, finding 5): one neutral row per job, run and turn, for a key Orbit knows', () => {
+    const agent = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
+    const asJob = (jobId: string) => orbit.identify.mockResolvedValue({ ok: true, jobId, botId: BOT });
+    const rawAsk = (body: string, token: string | null = TOKEN) =>
+        fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body });
+    const oversized = () => JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(RELAY_GUARDS.maxBodyBytes + 1024) }], tools: [{ type: 'function', function: { name: 'x' } }] });
+    const arrivalIds = async (jobId: string) => {
+        await notes.flush(jobId);
+        return arrivalsOf(jobId).map((row) => row.callId);
+    };
+
+    it('writes one row for the first call of a turn, none for the next calls of it, and one for the next turn', async () => {
+        const job = 'job-arrival-agent';
+        asJob(job);
+        notes.turn(job, 3, 'run-a');
+        await askAndSettle(agent);
+        await askAndSettle(agent, 2);
+        expect(await arrivalIds(job)).toEqual(['arrival_run-a_3']);
+        expect(arrivalsOf(job)[0]).toMatchObject({ kind: 'answered', reason: 'relay_reached', source: 'universe-ai', route: null, providerStatus: null, turn: 3, run: 'run-a' });
+        notes.turn(job, 4, 'run-a');
+        await askAndSettle(agent, 3);
+        expect(await arrivalIds(job)).toEqual(['arrival_run-a_3', 'arrival_run-a_4']);
+        // the call's own result is no arrival's business: no fault row came from these
+        expect(rowsOf(job)).toEqual([]);
+    });
+
+    it('writes it for a side call too (a summary, a title: no tools), which is no call of the agent but is still the machine reaching the relay', async () => {
+        const job = 'job-arrival-side';
+        asJob(job);
+        notes.turn(job, 2, 'run-s');
+        await askAndSettle({ messages });
+        expect(await arrivalIds(job)).toEqual(['arrival_run-s_2']);
+    });
+
+    it('writes it for a body the relay cannot read (413, not JSON) once the key is known, and still answers as before', async () => {
+        const job = 'job-arrival-body';
+        asJob(job);
+        notes.turn(job, 5, 'run-b');
+        const huge = await rawAsk(oversized());
+        expect(huge.status).toBe(413);
+        expect(await arrivalIds(job)).toEqual(['arrival_run-b_5']);
+        const broken = await rawAsk('{"messages": [');
+        expect(broken.status).toBe(400);
+        // the same turn: still the one row
+        expect(await arrivalIds(job)).toEqual(['arrival_run-b_5']);
+        expect(rowsOf(job)).toEqual([]);
+    });
+
+    it('writes it for a look at the models', async () => {
+        const job = 'job-arrival-models';
+        asJob(job);
+        notes.turn(job, 1, 'run-m');
+        expect((await fetch(`${relayBase}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status).toBe(200);
+        expect(await arrivalIds(job)).toEqual(['arrival_run-m_1']);
+    });
+
+    it('writes nothing for a key Orbit does not know, an Orbit that cannot be asked, and no key at all', async () => {
+        const job = 'job-arrival-none';
+        notes.turn(job, 1, 'run-n');
+        orbit.identify.mockResolvedValue({ ok: false });
+        expect((await ask(agent)).status).toBe(401);
+        expect((await rawAsk(oversized())).status).toBe(413);
+        expect((await fetch(`${relayBase}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status).toBe(401);
+        orbit.identify.mockRejectedValue(new Error('down'));
+        expect((await ask(agent)).status).toBe(503);
+        expect((await rawAsk('{"messages": [')).status).toBe(400);
+        expect((await rawAsk(oversized(), null)).status).toBe(413);
+        await notes.flush(job);
+        expect(allRowsOf(job)).toEqual([]);
+        expect(sunk).toEqual([]);
+    });
+
+    it('leaves the runner\'s notes as they are: a fault noted before it still ends the turn on a fault after the machine reaches the relay again', async () => {
+        const job = 'job-arrival-notes';
+        asJob(job);
+        notes.turn(job, 2, 'run-k');
+        const before = notes.mark();
+        notes.record(BOT, job, { callId: 'earlier-fault', kind: 'fault', reason: 'relay_down', source: 'universe-ai', route: 'unknown', providerStatus: 503, turn: 2, run: 'run-k' });
+        expect(notes.endedOnFault(job, before)).toBe(true);
+        // a look at the models reaches the relay and is no call that was answered
+        expect((await fetch(`${relayBase}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status).toBe(200);
+        expect(await arrivalIds(job)).toEqual(['arrival_run-k_2']);
+        expect(notes.endedOnFault(job, before)).toBe(true);
+        expect(notes.confirmedSince(job, before)).toBe(true);
+    });
+
+    it('never holds or fails a call for the neutral fact: a notes object whose arrival throws still has the call served', async () => {
+        const job = 'job-arrival-throws';
+        asJob(job);
+        const throwing = express();
+        throwing.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], refusals: { ...notes, arrived: () => { throw new Error('boom'); } } }));
+        const server = await listen(throwing);
+        try {
+            const answer = await fetch(`${urlOf(server)}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(agent) });
+            expect(answer.status).toBe(200);
+            const models = await fetch(`${urlOf(server)}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+            expect(models.status).toBe(200);
+        } finally {
+            server.closeAllConnections?.();
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
+    it('names the turn the call ARRIVED in, not the one the runner is on when Orbit has answered who the caller is', async () => {
+        const job = 'job-arrival-late';
+        notes.turn(job, 4, 'run-l');
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        orbit.identify.mockReset().mockImplementationOnce(async () => {
+            await gate;
+            return { ok: true, jobId: job, botId: BOT };
+        });
+        const asked = askAndSettle(agent);
+        await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        notes.turn(job, 5, 'run-l');
+        release();
+        await asked;
+        expect(await arrivalIds(job)).toEqual(['arrival_run-l_4']);
     });
 });

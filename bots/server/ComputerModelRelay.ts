@@ -576,7 +576,28 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         return 'forward';
     }
 
-    router.get('/v1/models', async (req: Request, res: Response) => {
+    // Where in the order of events this call ARRIVED: taken before its body is read (a body can be slow to arrive) and before the job is known
+    // (nothing of anyone's is read from it: it is only a point in a counter). Reading the body and asking Orbit who the caller is can each take
+    // longer than a turn change, and the call belongs to the turn that was current when it arrived
+    const arrival = (_req: Request, res: Response, next: express.NextFunction) => {
+        res.locals.arrived = deps.refusals?.mark?.();
+        next();
+    };
+
+    /**
+     * A call with a key Orbit knows reached the relay (whatever it was, and whether or not it could be read or served): ONE neutral row per job, run and turn goes to Orbit's
+     * durable record, so Orbit knows the relay was reached in that turn. Orbit only. It never touches the notes the runner reads (see `RefusalNotes.arrived`), and nothing
+     * is written for a key Orbit does not know. Never throws and never holds the call.
+     */
+    function noteArrival(botId: string, jobId: string, at: { turn: number | null; run?: string }): void {
+        try {
+            deps.refusals?.arrived?.(botId, jobId, at);
+        } catch {
+            /* the neutral fact is never worth a call */
+        }
+    }
+
+    router.get('/v1/models', arrival, async (req: Request, res: Response) => {
         const token = bearerOf(req);
         let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
         try {
@@ -586,6 +607,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
         }
         if (!who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
+        // The key is Orbit's: the relay was reached in the turn this arrived in
+        noteArrival(who.botId, who.jobId, await startOf(who.jobId, res.locals.arrived as { order: number; at: number } | undefined));
         // The machine of this job reached the relay (the runner reads that: a turn that failed with no call at all never got here)
         if ((await reachedRelay(who.jobId)) === 'unservable') return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
         // One name: Hermes never chooses the model, the Brick's own AI does
@@ -612,13 +635,6 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         return problem(res, status, status === 413 ? 'The request is too large.' : 'The request could not be read.', status === 413 ? 'request_too_large' : 'invalid_request');
     };
 
-    // Where in the order of events this call ARRIVED: taken before its body is read (a body can be slow to arrive) and before the job is known
-    // (nothing of anyone's is read from it: it is only a point in a counter). Reading the body and asking Orbit who the caller is can each take
-    // longer than a turn change, and the call belongs to the turn that was current when it arrived
-    const arrival = (_req: Request, res: Response, next: express.NextFunction) => {
-        res.locals.arrived = deps.refusals?.mark?.();
-        next();
-    };
     // A body that is too big or cannot be read is a call that REACHED the relay all the same: the parser rejects it before the handler, so the error is kept
     // here and the handler answers it after it has noted the arrival (see `bodyProblem` below, which says what clients read)
     const readBody = (req: Request, res: Response, next: express.NextFunction) => {
@@ -662,6 +678,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         const started = await startOf(jobId, arrived);
         const startedTurn = started.turn;
         const startedRun = started.run;
+        // The key is Orbit's: the relay was reached in this turn, whatever the call is and whatever becomes of it (a body it cannot read, a refusal, a side call)
+        noteArrival(botId, jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
         // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
         // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
         const reachedAnswer = await reachedRelay(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) }, arrived?.at);

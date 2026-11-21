@@ -39,7 +39,9 @@ export type FaultReason =
     | 'provider_403'
     | 'allowance'
     | 'rule'
-    | 'own_provider';
+    | 'own_provider'
+    // not a failure of any kind: the neutral fact that a call of a job reached the relay with a key Orbit knows (see `RefusalNotes.arrived`)
+    | 'relay_reached';
 
 /** One call's row for Orbit: ids, the reason, where the money came from and when. Nothing anyone said. */
 export interface CallRow {
@@ -55,11 +57,12 @@ export interface CallRow {
      */
     run?: string;
     callId: string;
-    kind: Exclude<CallKind, 'answered'>;
+    /** `answered` only for the neutral arrival row (`arrived`): a call of the job reached the relay. It is no fault, no spend and no answer of a call. */
+    kind: CallKind;
     reason: FaultReason;
     source: 'universe-ai' | 'own-key';
-    /** `universe-ai:<providerId>`, or `own-key`; at most 80 characters. */
-    route: string;
+    /** `universe-ai:<providerId>`, or `own-key`; at most 80 characters. `null` for the arrival row (no route was looked at). */
+    route: string | null;
     providerStatus: number | null;
     /** ISO time. */
     at: string;
@@ -96,8 +99,9 @@ export const DEAD_LETTER_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 /** Orbit has proved it takes rows when it took one within this long: a row refused alone then is the row's own fault, not Orbit's. */
 export const ORBIT_TAKING_ROWS_MS = 10 * 60 * 1000;
 
-export type CallInput = Omit<CallRow, 'turn' | 'run' | 'at' | 'kind'> & {
+export type CallInput = Omit<CallRow, 'turn' | 'run' | 'at' | 'kind' | 'route'> & {
     kind: CallKind;
+    route: string;
     /** The turn the call STARTED in (see `turnOf`): a call that ends after the runner moved on still belongs to the turn it began in. `null`: not known (see `CallRow`). */
     turn?: number | null;
     /** The run that turn was in (see `runOf`), read when the call started. */
@@ -194,6 +198,9 @@ export const SHARED_TURN_RENEW_MS = 2000;
 /** How long the relay waits for the shared record of a call before it forwards the call anyway (each of its two tries). */
 export const SHARED_WRITE_BOUND_MS = 1000;
 
+/** How many turns' arrivals one server remembers having queued per job: a run has at most 60 turns, so this is never reached by a job that works. */
+const ARRIVALS_PER_JOB = 1000;
+
 /** The bot servers' clocks can differ a little: a call of another server counts for a turn that began up to this long after it. */
 export const SHARED_CALL_SKEW_MS = 2000;
 
@@ -233,6 +240,13 @@ export interface RefusalNotes {
      * retry): `fault` and `uncertain` count as a fault of Universe's for the runner, `not_ours` as the person's side, `answered` as an answer.
      */
     record(botId: string, jobId: string, call: CallInput): void;
+    /**
+     * A call of this job reached the relay with a key Orbit knows (whatever the call was: the agent's own, a side call, a body the relay could not read, a look at the models):
+     * ONE neutral row per job, run and turn (the first one this server sees) is queued for Orbit's durable record, so Orbit knows the relay was reached and never reads a
+     * turn it was reached in as "the machine could not reach the relay". `turn` is null when it could not be told (`arrival_<run>_`). It goes to Orbit only: it never touches
+     * the notes the runner reads (no answer, no fault, no refusal, no call noted), and it is no fault, no spend and no answer of a call.
+     */
+    arrived(botId: string, jobId: string, at: { turn: number | null; run?: string }): void;
     /**
      * Sends what is queued for this job to Orbit, trying again for a moment, for at most one short time in all (`flushBudgetMs`); true when nothing is
      * left unsent. Called before a job is ended. Rows left over go on being sent in the background (later, a few times).
@@ -518,6 +532,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
         for (const [jobId, at] of unrecordedTold) if (at < cutoff) unrecordedTold.delete(jobId);
         for (const [jobId, one] of closed) if (one.at < cutoff) closed.delete(jobId);
+        for (const [jobId, one] of arrivals) if (one.at < cutoff) arrivals.delete(jobId);
         for (const [jobId, one] of closeRefused) if (one.at < cutoff) closeRefused.delete(jobId);
         // What the runner told of its turns is only read while a promise could still be read as covering: a promise that has lapsed says nothing (`turn()` copies
         // `before` by value, so dropping a lapsed one is safe), and a publication is kept while a `turnPublished` wait could still read it (its write is going, or
@@ -661,6 +676,19 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     };
 
     /** Sends the job's queued rows, a batch at a time; a batch Orbit did not take waits for the next try. One sender per job at a time. */
+    /** The turns (as row ids) whose arrival this server has already queued, by job. */
+    const arrivals = new Map<string, { ids: Set<string>; at: number }>();
+    /** Queues a row for Orbit: kept where a restart does not lose it, and sent without waiting (the call that made the row is not held for either). */
+    const queueRow = (botId: string, jobId: string, row: CallRow) => {
+        const entry = queued.get(jobId) ?? newQueue(botId);
+        entry.at = now();
+        entry.rows.set(row.callId, row);
+        // An older row of this call that the store could not keep is no longer the one to keep: it is saved again only if the new one fails to be
+        entry.unsaved.delete(row.callId);
+        queued.set(jobId, entry);
+        keep(entry, jobId, row);
+        void send(jobId);
+    };
     const send = (jobId: string): Promise<boolean> => {
         const entry = queued.get(jobId);
         if (!entry || entry.rows.size === 0) return Promise.resolve(true);
@@ -979,13 +1007,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 }
             }
             if (!options.sink && !store) return;
-            const entry = queued.get(jobId) ?? newQueue(botId);
-            entry.at = now();
             // Orbit keeps ids up to 120 characters: the row is kept under the id it is sent with
             const callId = call.callId.slice(0, 120);
             // A call that carries its turn carries that turn's run, and one that does not takes both from where the runner is now: never one of each
             const runOfRow = call.turn === undefined ? lastTurn(jobId)?.run : call.turn === null ? undefined : call.run;
-            const row: CallRow = {
+            queueRow(botId, jobId, {
                 turn: call.turn === null ? null : call.turn ?? lastTurn(jobId)?.turn ?? 0,
                 ...(runOfRow ? { run: runOfRow } : {}),
                 callId,
@@ -995,14 +1021,30 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 route: call.route.slice(0, 80),
                 providerStatus: call.providerStatus,
                 at: new Date(now()).toISOString(),
-            };
-            entry.rows.set(callId, row);
-            // An older row of this call that the store could not keep is no longer the one to keep: it is saved again only if the new one fails to be
-            entry.unsaved.delete(callId);
-            queued.set(jobId, entry);
-            // Kept where a restart does not lose it, and sent without waiting: the call that made the row is not held for either
-            keep(entry, jobId, row);
-            void send(jobId);
+            });
+        },
+        arrived(botId, jobId, at) {
+            if (!options.sink && !store) return;
+            const callId = `arrival_${at.run ?? ''}_${at.turn ?? ''}`.slice(0, 120);
+            // One row per job, run and turn from this server: the next call of the same turn adds nothing (Orbit's record is one row per job and call id, so another
+            // server's row of the same turn, or one sent again after a restart, is the same row)
+            forget();
+            const told = arrivals.get(jobId) ?? { ids: new Set<string>(), at: now() };
+            told.at = now();
+            arrivals.set(jobId, told);
+            if (told.ids.has(callId) || told.ids.size >= ARRIVALS_PER_JOB) return;
+            told.ids.add(callId);
+            queueRow(botId, jobId, {
+                turn: at.turn,
+                ...(at.run ? { run: at.run } : {}),
+                callId,
+                kind: 'answered',
+                reason: 'relay_reached',
+                source: 'universe-ai',
+                route: null,
+                providerStatus: null,
+                at: new Date(now()).toISOString(),
+            });
         },
         flush(jobId) {
             const entry = queued.get(jobId);

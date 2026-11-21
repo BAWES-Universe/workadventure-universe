@@ -53,7 +53,7 @@ return 1
 const wrongType = (error: unknown): boolean => error instanceof Error && /^WRONGTYPE\b/.test(error.message);
 export const EVIDENCE_TTL_SECONDS = Math.round(EVIDENCE_KEEP_MS / 1000);
 
-const KINDS = new Set(['fault', 'not_ours', 'uncertain']);
+const KINDS = new Set(['fault', 'not_ours', 'uncertain', 'answered']);
 const SOURCES = new Set(['universe-ai', 'own-key']);
 const text = (value: unknown): value is string => typeof value === 'string' && value !== '';
 
@@ -62,7 +62,11 @@ function validRow(value: unknown): CallRow | null {
     if (typeof value !== 'object' || value === null) return null;
     const row = value as Record<string, unknown>;
     if (!text(row.callId) || row.callId.length > 120 || !text(row.reason) || typeof row.kind !== 'string' || !KINDS.has(row.kind)) return null;
-    if (typeof row.source !== 'string' || !SOURCES.has(row.source) || !text(row.route) || !text(row.at)) return null;
+    // The route is text, except for the arrival row (`answered` / `relay_reached`: a call reached the relay, no route was looked at), which has none
+    const arrival = row.kind === 'answered' && row.reason === 'relay_reached';
+    if (typeof row.source !== 'string' || !SOURCES.has(row.source) || !(text(row.route) || (arrival && row.route === null)) || !text(row.at)) return null;
+    // An `answered` row is no row but the arrival one: anything else of that kind is not ours
+    if (row.kind === 'answered' && !arrival) return null;
     // A turn the server that saw the call could not tell is `null`: Orbit reads such a row with every turn it judges
     if (row.turn !== null && (typeof row.turn !== 'number' || !Number.isInteger(row.turn) || row.turn < 0)) return null;
     if (row.providerStatus !== null && typeof row.providerStatus !== 'number') return null;
