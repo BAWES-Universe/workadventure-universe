@@ -546,8 +546,43 @@ const COMPUTER_STARTED_RETRY_MS = [1000, 2000];
 export const COMPUTER_START_ATTEMPT_HEADER = 'X-Computer-Start-Attempt';
 /** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
 const COMPUTER_JOB_LIVE = ['running', 'waiting', 'queued'];
-/** The states of a job that was made and is over. */
+/** The states of a job that was made and is over without having finished: it failed or was stopped. */
 const COMPUTER_JOB_OVER = ['failed', 'stopped'];
+/** The state of a job that finished. */
+const COMPUTER_JOB_DONE = ['done'];
+
+/**
+ * What is true of a job Orbit has, by its state: ONE reading, for the start's own answer, for the answer to a start that repeats a key and for the look-up of a start whose
+ * answer was lost, so the same job is never told one way on one path and another way on another. `live`: it is queued, waiting or running. `done`: it finished. `ended`: it
+ * failed or was stopped. `unknown`: a state this server does not know, of which nothing can be said.
+ */
+export function readComputerJobState(status: string): 'live' | 'done' | 'ended' | 'unknown' {
+    if (COMPUTER_JOB_LIVE.includes(status)) return 'live';
+    if (COMPUTER_JOB_DONE.includes(status)) return 'done';
+    if (COMPUTER_JOB_OVER.includes(status)) return 'ended';
+    return 'unknown';
+}
+
+/** A key Orbit takes for a start (`^[A-Za-z0-9_-]{8,64}$`): one that is not that is replaced by a new one, so the start is never refused for its key. */
+const START_KEY_SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Orbit's own refusal of a start, in the shape Orbit gives it (`{ ok: false, reason }`, with the reason a word): the only answer that says no and why. */
+function isOrbitRefusal(data: unknown): data is { ok: false; reason: string; app?: unknown } {
+    return isPlainObject(data) && data.ok === false && typeof data.reason === 'string' && data.reason !== '';
+}
+
+/**
+ * An answer that Orbit itself wrote to a start it refused before making anything: its refusal (`{ ok: false, reason }`), its own 400 for a request it cannot read
+ * (`{ error: 'Invalid input data' }`) or 401 for a service token it does not know (`{ error: 'Unauthorized' }`). A JSON answer of any other kind (a rate limiter's 429 in front
+ * of Orbit, a gateway's 403 with a JSON body) is not Orbit's: what Orbit decided is not known.
+ */
+function isOrbitsOwnAnswer(status: number, data: unknown): boolean {
+    if (isOrbitRefusal(data)) return true;
+    if (!isPlainObject(data)) return false;
+    return (status === 400 && data.error === 'Invalid input data') || (status === 401 && data.error === 'Unauthorized');
+}
 
 /** Whether a call failed because it took too long (our own timeout, or a gateway in front of Orbit that gave up): the work may be going on behind it. */
 export function isSlowAnswer(error: unknown): boolean {
@@ -557,9 +592,9 @@ export function isSlowAnswer(error: unknown): boolean {
 }
 /**
  * Whether a failed start proves NOTHING about what Orbit decided, so the start may well have made a job behind it and the question "did this start make one?" has to be asked
- * before anyone is told it failed. Only an answer Orbit ITSELF gave is final: a 4xx with its own JSON body (a refusal, a bad request). Everything else may have been
+ * before anyone is told it failed. Only an answer Orbit ITSELF gave is final: a 4xx in the shape of its own refusal or error (see `isOrbitsOwnAnswer`). Everything else may have been
  * committed behind it: no HTTP answer at all (a connection reset, a broken pipe, a refused or dropped connection, a timeout: any network code), 408, every 5xx (502, 503,
- * 504, 524...), and a 4xx that is not Orbit's own (a gateway's or proxy's page with no JSON body). An error raised before anything was sent (no setup, a bad address) is no
+ * 504, 524...), and a 4xx that is not Orbit's own (a gateway's or proxy's page, or a JSON answer of another kind: a rate limiter's 429). An error raised before anything was sent (no setup, a bad address) is no
  * failure of a start that was made: nothing was started, and the caller is told it failed.
  */
 export function mayHaveStarted(error: unknown): boolean {
@@ -568,8 +603,9 @@ export function mayHaveStarted(error: unknown): boolean {
     if (response && typeof response === 'object') {
         const status = typeof response.status === 'number' ? response.status : 0;
         if (status === 408 || status >= 500) return true;
-        // A 4xx is Orbit's own no only when it comes with Orbit's own JSON body; a page or an empty answer is a gateway's
-        return !(typeof response.data === 'object' && response.data !== null && !Array.isArray(response.data));
+        // A 4xx is Orbit's own no only when it has the shape Orbit gives its own refusals and errors (see `isOrbitsOwnAnswer`): a page, an empty answer, or a JSON
+        // answer of another kind (a rate limiter's 429, a gateway's 403) is not, and says nothing of whether Orbit made the job behind it
+        return !isOrbitsOwnAnswer(status, response.data);
     }
     // Raised before the request went out: nothing was sent, so nothing was started
     if (typeof code === 'string' && (code === 'ERR_INVALID_URL' || code.startsWith('ERR_BAD_OPTION'))) return false;
@@ -1736,21 +1772,25 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
+        ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string }; startKey?: string }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
-        const startKey = randomUUID();
+        // The key of this start. A caller that asks for the same thing again (a reply written again, a tool call retried) sends the key of the first ask, so Orbit answers with
+        // the job that ask made and never makes a second; a deliberate second job is a new ask and has a key of its own
+        const startKey = typeof ask.startKey === 'string' && START_KEY_SHAPE.test(ask.startKey) ? ask.startKey : randomUUID();
         // Asks Orbit which job THIS start made (by its key), and says what is true of it: the same for a start whose answer was lost and for one whose answer came but
         // did not say what happened
         const lookUp = async (): Promise<{ ok: false; reason: string }> => {
             const made = await this.computerJobStarted(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
             // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
             if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };
-            if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
-            // A job that failed or stopped: it WAS made and is over. That is no connection failure of the start (nothing was unreachable), and the person is
-            // told what is true of it: `ended`
-            if (COMPUTER_JOB_OVER.includes(made.status)) return { ok: false, reason: 'ended' };
-            // A state this server does not know: nothing can be said of it
-            return { ok: false, reason: 'unknown' };
+            return told(made.status);
+        };
+        // What is true of a job that was made, by its state (the same reading for every way an answer about it comes): live is `starting` (it exists; nothing is
+        // said of the machine), one that finished is `done`, one that failed or was stopped is `ended`: it WAS made and is over, which is no connection failure of
+        // the start (nothing was unreachable); a state this server does not know says nothing
+        const told = (status: string): { ok: false; reason: string } => {
+            const state = readComputerJobState(status);
+            return { ok: false, reason: state === 'live' ? 'starting' : state === 'unknown' ? 'unknown' : state };
         };
         let answer: Awaited<ReturnType<AdminApiService['sendComputerJob']>>;
         try {
@@ -1761,7 +1801,12 @@ export class AdminApiService {
         }
         // An answer that says it worked (`ok: true`) but not what was made, or that says neither one thing nor the other: the job may well have been made, so it is
         // asked for by its key like a lost answer, and when that cannot confirm it nothing is said of it (never a second job, never "failed")
-        return answer === 'unclear' ? lookUp() : answer;
+        if (answer === 'unclear') return lookUp();
+        // A job that Orbit answers with is told by its state, whichever way the answer came (a start that repeated a key is answered with the job that key made,
+        // which may be over): one that is still going on (queued, waiting, running) is the whole success; one that finished, or failed or was stopped, or is in a
+        // state this server does not know is told the way the look-up tells it, never as a job that "is running"
+        if (answer.ok && readComputerJobState(answer.job.status) !== 'live') return told(answer.job.status);
+        return answer;
     }
 
     private async sendComputerJob(
@@ -1796,9 +1841,9 @@ export class AdminApiService {
                 restoredFrom: typeof data.restoredFrom === 'string' ? data.restoredFrom : null,
             };
         }
-        // Only an explicit refusal (Orbit says no, and why) is final here; an answer that is neither a whole success nor that is `'unclear'`
-        if (data && typeof data === 'object' && data.ok !== true && (data.ok === false || typeof data.reason === 'string')) {
-            return { ok: false, reason: typeof data.reason === 'string' ? data.reason : 'unknown', ...(typeof data.app === 'string' ? { app: data.app } : {}) };
+        // Only Orbit's own refusal, in the shape it gives it (`ok: false` and a reason that is a word), is final here; an answer that is neither a whole success nor that is `'unclear'`
+        if (isOrbitRefusal(data)) {
+            return { ok: false, reason: data.reason, ...(typeof data.app === 'string' ? { app: data.app } : {}) };
         }
         return 'unclear';
     }

@@ -1476,6 +1476,7 @@ export class PersistentMemory extends ConversationMemory {
             pointedArtifacts: undefined,
             artifactCalls: undefined,
             instantCalls: undefined,
+            computerStarts: undefined,
             sharedUncertain: undefined,
             sharedInFlight: undefined,
             instantTurn: undefined,

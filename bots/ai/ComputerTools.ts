@@ -8,6 +8,7 @@
  * (Part 12): a second job waits its turn, a resting computer wakes, a broken one says so, a restored one says which day.
  * No count, no price, no provider or machine name ever reaches the model, so none reaches the chat.
  */
+import { randomUUID } from 'node:crypto';
 import type { AdminApiService } from '../server/AdminApiService';
 
 export const COMPUTER_TOOL = 'use_computer';
@@ -70,7 +71,39 @@ export interface ComputerToolContext {
     reviewed?: ReadonlySet<string>;
     /** Called once a job is running, so a development server can pretend to do it. */
     onStarted?: (jobId: string) => void;
+    /**
+     * The start keys of the chat's asks (kept by the chat, per Brick and person), by chat and title. The same ask again (a reply written again, a tool call retried, the person
+     * asking again while the first is not known to have started or is starting) sends the key of the first, so Orbit answers with the job the first made and never makes a
+     * second. An ask whose outcome is not known (`unknown`) or whose job was found live (`starting`) keeps its key for ten minutes, across turns; one that is settled
+     * (a start that worked, a job that ended or finished) keeps it for the turn only, and a new message from the person starts that clean (`forgetSettledStarts`). A different
+     * title, or another chat, has a key of its own. Without it every ask has a key of its own.
+     */
+    startKeys?: Map<string, StartKeyEntry>;
 }
+
+/** A start key of an ask, when it was first sent, and whether the outcome of that ask is still open (`unknown`, `starting`). */
+export interface StartKeyEntry {
+    key: string;
+    at: number;
+    open: boolean;
+}
+
+/** How long the key of an ask whose outcome is open is sent again for the same ask: long enough for a person to ask again, short enough that a new job is a new job. */
+export const START_KEY_KEEP_MS = 10 * 60_000;
+
+/** What was asked, as one string: the same title in the same chat is the same ask (the details a model words differently when it asks again do not make a second job). */
+const askedOf = (job: string, origin: { kind: 'dm'; ref: string } | undefined): string => JSON.stringify([origin?.kind ?? null, origin?.ref ?? null, job.toLowerCase()]);
+
+/** At a new message from the person: the keys of asks that are settled, or older than their keep, are forgotten; those whose outcome is open stay for their ten minutes. */
+export function forgetSettledStarts(starts: Map<string, StartKeyEntry> | undefined, now = Date.now()): void {
+    if (!starts) return;
+    for (const [asked, entry] of starts) if (!entry.open || now - entry.at >= START_KEY_KEEP_MS) starts.delete(asked);
+}
+
+/** The reasons a start was refused before any job was made: the ask went nowhere, so the next ask in the turn is a new one with a key of its own. */
+const UNCERTAIN_REASONS = ['starting', 'unknown', 'ended', 'done'];
+/** Of those, the ones whose outcome is still open: the key stays for the next ask of the same title, whichever turn it is in. */
+const OPEN_REASONS = ['starting', 'unknown'];
 
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 
@@ -193,13 +226,29 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const planned = text(args.app, 120) || fits || '';
     const steps = typeof args.app_steps === 'number' && Number.isInteger(args.app_steps) && args.app_steps >= 1 ? Math.min(args.app_steps, 10000) : undefined;
     const plan = planned ? { app: planned, ...(steps !== undefined ? { steps } : {}), ...(appCannot ? { appCannot } : {}) } : undefined;
+    // The key of this ask: the one an earlier ask of the same title in this chat sent while its outcome is open (or in this turn), else a new one (see `startKeys`)
+    const asked = askedOf(job, context.origin);
+    const now = Date.now();
+    const earlier = context.startKeys?.get(asked);
+    const entry: StartKeyEntry = earlier && now - earlier.at < START_KEY_KEEP_MS ? earlier : { key: randomUUID(), at: now, open: false };
+    const startKey = entry.key;
+    context.startKeys?.set(asked, entry);
+    // An ask that went nowhere (Orbit said no before it made anything, or the request itself failed with an answer that is final) is not kept: asking again is a new ask
+    const dropKey = () => {
+        if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
+    };
     let started;
     try {
-        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) });
+        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) });
     } catch (error) {
+        // Thrown only when the start is known to have made nothing (Orbit's own no, or nothing was sent): the ask is over
+        dropKey();
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
     }
+    if (!started.ok && !UNCERTAIN_REASONS.includes(started.reason)) dropKey();
+    // Only an outcome that is not known, or a job found live, keeps its key across turns
+    entry.open = !started.ok && OPEN_REASONS.includes(started.reason);
     if (!started.ok) {
         switch (started.reason) {
             case 'cheaper_route':
@@ -213,6 +262,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                 // The answer was slow and nobody can tell whether THIS job was made. Not a failure (it may be running): the person must not be told it failed,
                 // or they ask again and a second job is paid for behind the first
                 return { started: false, unknown: true, note: 'It is not known whether this job started. Say in one short sentence that you couldn\'t confirm it, and ask them to look at the bar above this chat before asking again. Do not say it failed or that it started.' };
+            case 'done':
+                // The job of this ask is made and has finished (a start that was asked for again, or a slow one that Orbit found over): its result and its receipt are the ones it has
+                return { started: false, done: true, note: 'Orbit found this job and it has finished. Say in one short sentence that your job finished, and that its result and receipt are with this chat and in [Usage](#usage). Do not say it is running or starting, and do not start it again unless they ask you to.' };
             case 'ended':
                 // The answer was slow, and Orbit shows that the job THIS start made has already failed or been stopped: it was made, so it is no connection failure
                 return { started: false, ended: true, note: 'Orbit found this job and it has already ended (it failed or was stopped). Say in one short sentence that the job was found but has already ended, and that the bar above this chat shows how. Do not say your computer could not be reached or that it is running. Do not start it again unless they ask you to.' };

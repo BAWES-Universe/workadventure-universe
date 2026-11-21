@@ -165,6 +165,10 @@ export interface BotPlayerMemory {
     /** The Instant App runs of the turn being answered, by tool and arguments, so asking the model again for the same turn (a repeated
      * reply is regenerated) never runs or pays a second time. Cleared when the next turn starts. Runtime only. */
     instantCalls?: Map<string, Promise<Record<string, unknown>>>;
+    /** The start keys of the computer jobs asked for in this chat, by chat and title, so asking again (a reply written again, a tool call retried, the person asking again) sends
+     * the key of the first ask and Orbit answers with the job it made, never a second. An ask whose outcome is open keeps its key for ten minutes; a settled one is cleared when the
+     * next turn starts. Runtime only. */
+    computerStarts?: Map<string, { key: string; at: number; open: boolean }>;
     /** The jobs of an App that someone else asked for in the turn being answered and that may have run (no answer came back), by job and
      * inputs: the same one is not sent again in this turn (#2006). Cleared when the next turn starts. Runtime only. */
     sharedUncertain?: Set<string>;

@@ -287,16 +287,59 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         });
 
         it.each([
-            ['400', answered(400, { error: 'bad' })],
-            ['401', answered(401, { error: 'no' })],
-            ['403', answered(403, { error: 'no' })],
-            ['404', answered(404, { error: 'no' })],
-            ['422', answered(422, { error: 'no' })],
-            ['429', answered(429, { error: 'slow down' })],
-        ])('throws at once after Orbit itself answered %s (its own no): the start made no job, and no look-up is made', async (_name, failure) => {
+            ['400 (its own: invalid input)', answered(400, { error: 'Invalid input data' })],
+            ['401 (its own: unauthorized)', answered(401, { error: 'Unauthorized' })],
+        ])('throws at once after Orbit itself answered %s: the start made no job, and no look-up is made', async (_name, failure) => {
             const { orbit, call } = lostBy(failure, () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
             await expect(orbit.startComputerJob('b', 'u', ASK)).rejects.toThrow(/status code/);
             expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
+        });
+
+        it('throws at once after a 4xx that carries Orbit\'s own business refusal in its body (`ok: false` and a reason): that is an answer, and the start made no job', async () => {
+            const { orbit, call } = lostBy(answered(403, { ok: false, reason: 'off' }), () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
+            await expect(orbit.startComputerJob('b', 'u', ASK)).rejects.toThrow(/status code/);
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
+        });
+
+        // GPT round 3, finding 3: a JSON 429 (or 403/404/422) that is not one of Orbit's own shapes can come from a gateway or a rate limiter in front of Orbit,
+        // and says nothing of what Orbit did with the start: the same key is looked up, and the job it made (if any) is found
+        it.each([
+            ['429 with a JSON body', answered(429, { error: 'slow down' })],
+            ['403 with a JSON body', answered(403, { error: 'no' })],
+            ['404 with a JSON body', answered(404, { error: 'no' })],
+            ['422 with a JSON body', answered(422, { error: 'no' })],
+            ['400 with another JSON body', answered(400, { error: 'bad' })],
+            ['401 with another JSON body', answered(401, { error: 'no' })],
+            ['429 whose body has a reason but not ok:false', answered(429, { reason: 'slow_down' })],
+            ['429 whose body is a JSON array', answered(429, [])],
+        ])('looks up the SAME key after a %s, because it does not prove Orbit made no job: found live, it is "starting"', async (_name, failure) => {
+            const { orbit, call } = lostBy(failure, () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
+            expect((call.mock.calls[1][3] as { attempt: string }).attempt).toBe(sentKey(call));
+        });
+
+        it('says "unknown" after a JSON 429 when the look-up finds no job yet or fails (the attempt is kept, never a failure that has the person ask again), and "done" when the job of the key finished', async () => {
+            const none = lostBy(answered(429, { error: 'slow down' }), () => ({ data: { started: null } }));
+            expect(await none.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+            const done = lostBy(answered(429, { error: 'slow down' }), () => ({ data: { started: { id: 'j', status: 'done' } } }));
+            expect(await done.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'done' });
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const down = lostBy(answered(429, { error: 'slow down' }), () => { throw new Error('down'); });
+            expect(await down.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+            warn.mockRestore();
+        });
+
+        it('uses the key the caller asked for (the same key on the start and on the look-up), and a key that does not fit the shape is replaced', async () => {
+            const mine = lostBy(network('ECONNRESET'), () => ({ data: { started: { id: 'j', status: 'running' } } }));
+            await mine.orbit.startComputerJob('b', 'u', { ...ASK, startKey: 'chat-key_0123456789' });
+            expect(sentKey(mine.call)).toBe('chat-key_0123456789');
+            expect((mine.call.mock.calls[1][3] as { attempt: string }).attempt).toBe('chat-key_0123456789');
+            for (const bad of ['short', 'has space in it!!', 'x'.repeat(65), '']) {
+                const replaced = lostBy(network('ECONNRESET'), () => ({ data: { started: { id: 'j', status: 'running' } } }));
+                await replaced.orbit.startComputerJob('b', 'u', { ...ASK, startKey: bad });
+                expect(sentKey(replaced.call), bad).toMatch(UUID);
+            }
         });
 
         it('throws at once when nothing was sent (Orbit not set up, a bad address): no look-up, nothing was started', async () => {
@@ -341,14 +384,48 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
             warn.mockRestore();
         });
 
-        it('keeps a whole success and an explicit refusal on the direct path: no look-up is made', async () => {
+        it('keeps a whole success and a whole refusal (`ok: false` with a reason) on the direct path: no look-up is made', async () => {
             const whole = answers({ ok: true, job: { id: 'j', status: 'queued', queuedFor: null } }, () => ({ data: { started: { id: 'x', status: 'running' } } }));
             expect(await whole.orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: true, job: { id: 'j' } });
             expect(whole.call.mock.calls.map((one) => one[0])).toEqual(['post']);
-            for (const refusal of [{ ok: false, reason: 'off' }, { ok: false }, { reason: 'busy' }]) {
+            for (const refusal of [{ ok: false, reason: 'off' }, { ok: false, reason: 'cheaper_route', app: 'Notion' }]) {
                 const refused = answers(refusal, () => ({ data: { started: { id: 'x', status: 'running' } } }));
-                expect(await refused.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: (refusal as { reason?: string }).reason ?? 'unknown' });
+                expect(await refused.orbit.startComputerJob('b', 'u', ASK)).toEqual(refusal);
                 expect(refused.call.mock.calls.map((one) => one[0])).toEqual(['post']);
+            }
+        });
+
+        // GPT round 3, finding 3: the shape of Orbit's refusal is checked, a body that only looks like one is looked up by the key
+        it.each([
+            ['ok:false with no reason', { ok: false }],
+            ['a reason with no ok:false', { reason: 'busy' }],
+            ['ok:false with an empty reason', { ok: false, reason: '' }],
+            ['ok:false with a reason that is not text', { ok: false, reason: 5 }],
+            ['a JSON array', []],
+        ])('looks up the key after %s (it is not Orbit\'s refusal): live is "starting", none is "unknown"', async (_name, post) => {
+            const live = answers(post, () => ({ data: { started: { id: 'j', status: 'running' } } }));
+            expect(await live.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(live.call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
+            const none = answers(post, () => ({ data: { started: null } }));
+            expect(await none.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+        });
+
+        // a whole success is told by the real state of its job: a job that is already over is never "running"
+        it.each([
+            ['done', { ok: false, reason: 'done' }],
+            ['failed', { ok: false, reason: 'ended' }],
+            ['stopped', { ok: false, reason: 'ended' }],
+            ['brand-new-state', { ok: false, reason: 'unknown' }],
+        ])('tells a whole success whose job is already "%s" as it is, never as a job that is running', async (status, told) => {
+            const { orbit, call } = answers({ ok: true, job: { id: 'j', status, queuedFor: null } }, () => ({ data: { started: { id: 'x', status: 'running' } } }));
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual(told);
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
+        });
+
+        it('keeps a whole success whose job is queued, running or waiting as the success it is', async () => {
+            for (const status of ['queued', 'running', 'waiting']) {
+                const { orbit } = answers({ ok: true, job: { id: 'j', status, queuedFor: null } }, () => ({ data: {} }));
+                expect(await orbit.startComputerJob('b', 'u', ASK), status).toMatchObject({ ok: true, job: { id: 'j', status } });
             }
         });
     });
@@ -386,6 +463,12 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
             expect(await orbit.startComputerJob('b', 'u', ASK), String(read)).toEqual({ ok: false, reason: 'unknown' });
         }
         warn.mockRestore();
+    });
+
+    it('answers `done` when the job of this start has finished (a look-up, not a start that answered): the job is over and its result is with the person, so it is never told as running', async () => {
+        const { orbit, call } = slowStart(() => ({ data: { started: { id: 'j', status: 'done' } } }));
+        expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'done' });
+        expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
     });
 
     it('says "starting" for a job that is running, waiting or queued, and leaves the guest flag out when it is not known', async () => {

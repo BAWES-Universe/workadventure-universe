@@ -132,7 +132,7 @@ import {
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
-import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
+import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
@@ -1387,6 +1387,7 @@ export class AIService {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
+            forgetSettledStarts(memory?.computerStarts);
             memory?.sharedUncertain?.clear();
             memory?.sharedInFlight?.clear();
             memory?.sentAgain?.clear();
@@ -4136,6 +4137,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             ...(memory?.dmRoomId ? { origin: { kind: 'dm' as const, ref: memory.dmRoomId } } : {}),
             apps: where.apps,
             reviewed: where.reviewed,
+            // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
+            ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time

@@ -13,7 +13,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 import axios from 'axios';
 import { AdminApiService } from '../server/AdminApiService';
 import { AIService } from '../ai/AIService';
-import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from '../ai/ComputerTools';
+import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, runComputerTool, type StartKeyEntry } from '../ai/ComputerTools';
 import { PRETEND_STEPS, pretendRunnerOn, runPretendJob } from '../ai/ComputerPretendRunner';
 import { describeStep, resultOf } from '../ai/ToolSteps';
 
@@ -48,7 +48,7 @@ describe('use_computer (#2000)', () => {
         const admin = asking({ ok: true, job: job(), restoredFrom: null });
         const started = vi.fn();
         const result = await run(admin, { job: '  Visa   form ', reads_only: true }, started);
-        expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Visa form', writes: false });
+        expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Visa form', writes: false, startKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) });
         expect(result).toMatchObject({ started: true });
         expect(started).toHaveBeenCalledWith('j1');
         expect(JSON.stringify(result)).not.toMatch(/\$|credit|\d+ ?%|machine|provider/i);
@@ -57,7 +57,7 @@ describe('use_computer (#2000)', () => {
     it('hands the computer the person’s words as the job’s details, cleaned and cut, and nothing when there are none', async () => {
         const admin = asking({ ok: true, job: job(), restoredFrom: null });
         await run(admin, { job: 'Visa form', details: '  Two people\u0000, the Kuwait visa site  ' });
-        expect(admin.startComputerJob).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { title: 'Visa form', brief: 'Two people , the Kuwait visa site', writes: undefined });
+        expect(admin.startComputerJob).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { title: 'Visa form', brief: 'Two people , the Kuwait visa site', writes: undefined, startKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) });
         await run(admin, { job: 'Visa form', details: 'x'.repeat(9000) });
         expect((admin.startComputerJob.mock.calls.at(-1)?.[2] as { brief: string }).brief).toHaveLength(4000);
         await run(admin, { job: 'Visa form', details: '   ' });
@@ -133,6 +133,20 @@ describe('use_computer (#2000)', () => {
         expect(String(ended.note)).not.toMatch(/could not be reached just now/);
     });
 
+    it('says the job was found and has finished when Orbit tells the ask is over (`done`): a job that ran is never told as running or starting, and is not started again', async () => {
+        const done = await run(asking({ ok: false, reason: 'done' }));
+        expect(done).toMatchObject({ started: false, done: true });
+        expect(done).not.toHaveProperty('success');
+        expect(done).not.toHaveProperty('starting');
+        const note = String(done.note);
+        expect(note).toMatch(/Orbit found this job and it has finished/);
+        expect(note).toMatch(/result and receipt are with this chat and in \[Usage\]\(#usage\)/);
+        expect(note).toMatch(/Do not say it is running or starting/);
+        expect(note).not.toMatch(/bar above this chat/);
+        expect(note).not.toMatch(/could not be reached/);
+        expect(resultOf('c1', done)).toMatchObject({ ok: true });
+    });
+
     it('says that Orbit found the job, not that the computer is starting, when a slow start was matched to a queued, waiting or running job', async () => {
         const found = await run(asking({ ok: false, reason: 'starting' }));
         expect(found).toMatchObject({ started: false, found: true });
@@ -164,6 +178,137 @@ describe('use_computer (#2000)', () => {
 
     it('shows as one step on the steps line', () => {
         expect(describeStep({ id: 'c1', name: COMPUTER_TOOL, arguments: { job: 'Visa form' } })).toMatchObject({ doing: 'Starting its computer, this takes a minute', done: 'Worked on its computer', detail: 'Visa form', kind: 'write' });
+    });
+});
+
+describe('the key of an ask (GPT round 3, finding 3): the same ask is the same start for as long as its outcome is open, a second job is its own', () => {
+    const KEY = /^[A-Za-z0-9_-]{8,64}$/;
+    const keysOf = (admin: ReturnType<typeof asking>) => admin.startComputerJob.mock.calls.map((one) => (one[2] as { startKey: string }).startKey);
+    const withKeys = (admin: ReturnType<typeof asking>, startKeys: Map<string, StartKeyEntry>, args: Record<string, unknown> = { job: 'Visa form' }, origin?: { kind: 'dm'; ref: string }) =>
+        runComputerTool(args, { admin, botId: BRICK, userId: 'uuid-alice', startKeys, ...(origin ? { origin } : {}) });
+
+    it('sends a key of the shape Orbit takes, a new one for each ask when nothing is kept', async () => {
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        await run(admin);
+        await run(admin);
+        const [first, second] = keysOf(admin);
+        expect(first).toMatch(KEY);
+        expect(second).toMatch(KEY);
+        expect(first).not.toBe(second);
+    });
+
+    it('sends the SAME key when the same ask is made again (an automatic retry, a reconnect, the person asking again) after an answer that left it open or settled in the turn', async () => {
+        for (const reason of ['unknown', 'starting', 'ended', 'done']) {
+            const admin = asking({ ok: false, reason });
+            const kept = new Map<string, StartKeyEntry>();
+            await withKeys(admin, kept);
+            await withKeys(admin, kept);
+            const [first, second] = keysOf(admin);
+            expect(second, reason).toBe(first);
+            expect(kept.size).toBe(1);
+        }
+    });
+
+    it('keeps the key for a whole success too, for the turn: the same ask again finds the same job, never a second one', async () => {
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        const kept = new Map<string, StartKeyEntry>();
+        await withKeys(admin, kept);
+        await withKeys(admin, kept);
+        expect(keysOf(admin)[1]).toBe(keysOf(admin)[0]);
+    });
+
+    it('goes by the title and the chat: another title or another chat is another ask, and words the model changes when it asks again (the details) are not', async () => {
+        const admin = asking({ ok: false, reason: 'unknown' });
+        const kept = new Map<string, StartKeyEntry>();
+        const here = { kind: 'dm' as const, ref: '!a:chat.test' };
+        await withKeys(admin, kept, { job: 'Visa form' }, here);
+        await withKeys(admin, kept, { job: 'Hotel booking' }, here);
+        await withKeys(admin, kept, { job: 'Visa form' }, { kind: 'dm', ref: '!b:chat.test' });
+        await withKeys(admin, kept, { job: 'Visa form' });
+        await withKeys(admin, kept, { job: '  visa   FORM ', details: 'worded another way', reads_only: true }, here);
+        const keys = keysOf(admin);
+        expect(new Set(keys.slice(0, 4)).size).toBe(4);
+        expect(keys[4]).toBe(keys[0]);
+    });
+
+    it('keeps the key of an ask whose outcome is open (unknown, starting) for ten minutes across turns, and a new message clears only what is settled', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-11-21T10:00:00Z'));
+        const kept = new Map<string, StartKeyEntry>();
+        const unknown = asking({ ok: false, reason: 'unknown' });
+        const starting = asking({ ok: false, reason: 'starting' });
+        const worked = asking({ ok: true, job: job(), restoredFrom: null });
+        const over = asking({ ok: false, reason: 'ended' });
+        await withKeys(unknown, kept, { job: 'Unknown one' });
+        await withKeys(starting, kept, { job: 'Starting one' });
+        await withKeys(worked, kept, { job: 'Worked one' });
+        await withKeys(over, kept, { job: 'Ended one' });
+        expect([...kept.values()].map((entry) => entry.open)).toEqual([true, true, false, false]);
+        // the next message from the person
+        forgetSettledStarts(kept);
+        expect(kept.size).toBe(2);
+        // asked again nine minutes on: the same job
+        vi.setSystemTime(new Date('2026-11-21T10:09:00Z'));
+        await withKeys(unknown, kept, { job: 'Unknown one' });
+        await withKeys(worked, kept, { job: 'Worked one' });
+        expect(unknown.startComputerJob.mock.calls[1][2]).toMatchObject({ startKey: (unknown.startComputerJob.mock.calls[0][2] as { startKey: string }).startKey });
+        expect(worked.startComputerJob.mock.calls[1][2]).not.toMatchObject({ startKey: (worked.startComputerJob.mock.calls[0][2] as { startKey: string }).startKey });
+        // after the ten minutes the ask is a new one, and a new message forgets what has run out
+        vi.setSystemTime(new Date('2026-11-21T10:10:01Z'));
+        forgetSettledStarts(kept);
+        expect([...kept.keys()].some((asked) => asked.includes('starting one'))).toBe(false);
+        await withKeys(unknown, kept, { job: 'Unknown one' });
+        expect(unknown.startComputerJob.mock.calls[2][2]).not.toMatchObject({ startKey: (unknown.startComputerJob.mock.calls[0][2] as { startKey: string }).startKey });
+    });
+
+    it('does not send an old key for an ask made again after its ten minutes even when no new message cleared it (a long turn)', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-11-21T10:00:00Z'));
+        const kept = new Map<string, StartKeyEntry>();
+        const unknown = asking({ ok: false, reason: 'unknown' });
+        await withKeys(unknown, kept);
+        vi.setSystemTime(new Date('2026-11-21T10:10:01Z'));
+        await withKeys(unknown, kept);
+        const [first, second] = keysOf(unknown);
+        expect(second).not.toBe(first);
+        expect([...kept.values()].map((entry) => entry.key)).toEqual([second]);
+    });
+
+    it('settles the key once an ask that was open comes back over or done: a new message then starts clean', async () => {
+        const kept = new Map<string, StartKeyEntry>();
+        await withKeys(asking({ ok: false, reason: 'unknown' }), kept);
+        expect([...kept.values()][0].open).toBe(true);
+        await withKeys(asking({ ok: false, reason: 'done' }), kept);
+        expect([...kept.values()][0].open).toBe(false);
+        forgetSettledStarts(kept);
+        expect(kept.size).toBe(0);
+        forgetSettledStarts(undefined);
+    });
+
+    it('takes the key back when Orbit said no before it made anything (a refusal that is final, or a failure that made nothing): asking again is a new ask', async () => {
+        for (const reason of ['off', 'paused', 'broken_start', 'not_owner', 'cheaper_route', 'something_new']) {
+            const admin = asking({ ok: false, reason });
+            const kept = new Map<string, StartKeyEntry>();
+            await withKeys(admin, kept);
+            expect(kept.size, reason).toBe(0);
+            await withKeys(admin, kept);
+            const [first, second] = keysOf(admin);
+            expect(second, reason).not.toBe(first);
+        }
+        const down = { startComputerJob: vi.fn().mockRejectedValue(new Error('offline')) };
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const kept = new Map<string, StartKeyEntry>();
+        await withKeys(down as unknown as ReturnType<typeof asking>, kept);
+        warn.mockRestore();
+        expect(kept.size).toBe(0);
+    });
+
+    it('does not touch a key another ask made when this one is over', async () => {
+        const kept = new Map<string, StartKeyEntry>();
+        await withKeys(asking({ ok: false, reason: 'unknown' }), kept, { job: 'Hotel booking' });
+        const before = [...kept.values()].map((entry) => entry.key);
+        await withKeys(asking({ ok: false, reason: 'off' }), kept, { job: 'Visa form' });
+        expect([...kept.values()].map((entry) => entry.key)).toEqual(before);
     });
 });
 
@@ -212,11 +357,22 @@ describe('asking Orbit for a computer (#2000)', () => {
         expect(JSON.stringify(request.mock.calls.at(-1))).not.toContain('plan');
     });
 
-    it('throws when Orbit itself answers with a failure status (a 4xx with its own JSON body), since every refusal comes as a 200 with a reason', async () => {
+    it('throws when Orbit itself answers with a failure status (its own 400 or 401 shape), since every refusal comes as a 200 with a reason', async () => {
         process.env.BOT_SERVICE_TOKEN = 'secret';
-        request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 403'), { isAxiosError: true, response: { status: 403, data: { error: 'Not allowed' } } }));
-        await expect(service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).rejects.toThrow(/403/);
+        request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 401'), { isAxiosError: true, response: { status: 401, data: { error: 'Unauthorized' } } }));
+        await expect(service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).rejects.toThrow(/401/);
         expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('looks for the job of the start after a JSON 403 or 429 that is not Orbit\'s own shape (a gateway or a limiter in front of it may have answered, and the job made behind it)', async () => {
+        process.env.BOT_SERVICE_TOKEN = 'secret';
+        for (const status of [403, 429]) {
+            request.mockReset();
+            request.mockRejectedValueOnce(Object.assign(new Error(`Request failed with status code ${status}`), { isAxiosError: true, response: { status, data: { error: 'Not allowed' } } }));
+            request.mockImplementationOnce(async (config: { params?: { attempt?: string } }) => ({ data: { started: { id: 'j-made', status: 'running', attempt: config.params?.attempt } } }));
+            expect(await service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' }), String(status)).toEqual({ ok: false, reason: 'starting' });
+            expect(request).toHaveBeenCalledTimes(2);
+        }
     });
 
     it('looks for the job of the start after a 5xx (the answer may be a gateway\u2019s, and the job made behind it), and does not throw: the person is not told it failed', async () => {
@@ -347,7 +503,48 @@ describe('who has the computer in a chat (#2000)', () => {
         expect(await ai.runComputerToolCall({ job: 'x' }, { botId: BRICK, playerId: 1 })).toEqual({ error: "That can't be done in this chat right now." });
         ai.noteBrick(BRICK, { isDefault: false });
         expect(await ai.runComputerToolCall({ job: 'Taxi booking' }, { botId: BRICK, playerId: 1 })).toMatchObject({ queued: true });
-        expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', writes: undefined });
+        expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', writes: undefined, startKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) });
+    });
+
+    it('keeps the key of an ask in the chat\'s memory: the same ask again sends it, a retried reply keeps all, and a new message from the person clears the settled and keeps the open', async () => {
+        const startComputerJob = vi.fn().mockImplementation(async (_botId: string, _user: string, ask: { title: string }) => (ask.title === 'Taxi booking' ? { ok: false, reason: 'unknown' } : { ok: true, job: job(), restoredFrom: null }));
+        const memory: Record<string, unknown> = { userUuid: 'uuid-alice' };
+        const ai = Object.create(AIService.prototype) as AIService;
+        Object.assign(ai, {
+            helperBricks: new Set<string>(),
+            ownBricks: new Set<string>(),
+            knownBricks: new Set<string>(),
+            brickOwners: new Map<string, string>(),
+            computerOnCache: new Map(),
+            botLimits: new Map(),
+            adminApiService: { isConfigured: () => true, startComputerJob },
+            conversationMemory: { getMemory: () => memory },
+        });
+        const chat = ai as unknown as Ai & { generateBotResponseStream: AIService['generateBotResponseStream'] };
+        chat.noteBrick(BRICK, { isDefault: false });
+        const keysOf = (title: string) => startComputerJob.mock.calls.filter((one) => (one[2] as { title: string }).title === title).map((one) => (one[2] as { startKey: string }).startKey);
+        const ask = (job: string) => chat.runComputerToolCall({ job }, { botId: BRICK, playerId: 1 });
+        await ask('Taxi booking');
+        await ask('Taxi booking');
+        await ask('Visa form');
+        await ask('Visa form');
+        expect(keysOf('Taxi booking')[1]).toBe(keysOf('Taxi booking')[0]);
+        expect(keysOf('Visa form')[1]).toBe(keysOf('Visa form')[0]);
+        // the reply begun again for the same message (a retry) keeps all of it
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const retried = chat.generateBotResponseStream(BRICK, 1, 'a message', '', 'none', 'matrix-dm', '', ...([undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, true] as never[]));
+        await retried.next();
+        await retried.return(undefined);
+        expect((memory.computerStarts as Map<string, unknown>).size).toBe(2);
+        // a new message from the person: what is settled goes, what is open (not known whether it started) stays, so asking again is still the same job
+        const next = chat.generateBotResponseStream(BRICK, 1, 'a new message', '', 'none', 'matrix-dm', '');
+        await next.next();
+        await next.return(undefined);
+        expect((memory.computerStarts as Map<string, unknown>).size).toBe(1);
+        await ask('Taxi booking');
+        await ask('Visa form');
+        expect(keysOf('Taxi booking')[2]).toBe(keysOf('Taxi booking')[0]);
+        expect(keysOf('Visa form')[2]).not.toBe(keysOf('Visa form')[0]);
     });
 
     it('sends the speaker\'s guest status from the chat\'s own memory with the job', async () => {
@@ -356,7 +553,7 @@ describe('who has the computer in a chat (#2000)', () => {
             const ai = service({ startComputerJob }, 'uuid-alice', isGuest);
             ai.noteBrick(BRICK, { isDefault: false });
             await ai.runComputerToolCall({ job: 'Taxi booking' }, { botId: BRICK, playerId: 1 });
-            expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', isGuest, writes: undefined });
+            expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', isGuest, writes: undefined, startKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) });
         }
     });
 });
