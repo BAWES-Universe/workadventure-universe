@@ -1934,6 +1934,27 @@ describe('calls of a job that arrive at another bot server', () => {
             expect((await b.turnOfCall('j', b.mark())).turn).toBeNull();
         });
 
+        it('cannot tell the turn when TWO runners’ promises both cover the arrival (a job taken over while the first one’s promise still stands), though the call is well away from every turn’s beginning: no turn, no run', async () => {
+            const clock = 100_000;
+            const store = sharedStore();
+            const first = createRefusalNotes(() => clock, { shared: store.forServer('A'), runsHere: () => true });
+            const relay = createRefusalNotes(() => clock, { shared: store.forServer('B'), runsHere: () => false });
+            first.turn('j', 1, 'run-1');
+            await Promise.resolve();
+            // the arrival is 3 s after the turn began (more than the clock skew from its beginning), inside the promise by more than the skew (until 106 000)
+            const arrival = { order: 1, at: clock + 3000 };
+            expect(await relay.turnOfCall('j', arrival)).toEqual({ turn: 1, run: 'run-1' });
+            // another server's runner takes the job over and promises its own turns, with its own beginnings well away from the arrival too
+            const second = createRefusalNotes(() => clock, { shared: store.forServer('C'), runsHere: () => true });
+            second.turn('j', 1, 'run-2');
+            await Promise.resolve();
+            const lists = await store.forServer('B').turnsByOthers!('j');
+            expect(lists).toHaveLength(2);
+            expect(lists.every((one) => arrival.at < one.until - SHARED_CALL_SKEW_MS && Math.abs(arrival.at - one.turns[0].at) > SHARED_CALL_SKEW_MS)).toBe(true);
+            // both cover it and neither is nearer: it is not told
+            expect(await relay.turnOfCall('j', arrival)).toEqual({ turn: null });
+        });
+
         it('cannot tell the turn of a call that arrived within the clock skew of any turn’s beginning (the servers’ clocks differ by 1.5 s, either way): turn null and no run, while a call well inside a turn keeps it', async () => {
             let runnerClock = 100_000;
             const store = sharedStore();
