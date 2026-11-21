@@ -13,7 +13,7 @@
  * The person's own Stop, a computer turned off and a Brick deleted are never offered: they just did it.
  *
  * The late follow-up (`late`): an App that was let go unconfirmed (so its hold was released and nothing was charged) may be confirmed later by the provider's log. Orbit then offers
- * one more message for the job, once, in the same conversation: "Update: <App> did go out after all. We couldn't confirm it earlier. You weren't charged for it." The game only says
+ * one more message for the job, once, in the same conversation: "Update: <App> did go out after all. We couldn't confirm it earlier. You weren't charged for it." ("for them" for several Apps). The game only says
  * it, from Orbit's facts: it never charges, refunds or decides anything. Orbit offers it only to a game that asks for it (`accepts=late`), so an older game never meets the kind.
  *
  * The file card: the files a finished job made come as `handed`: they are the person's own, kept by Orbit (and shown in their Files) whether or not the chat took them.
@@ -280,7 +280,7 @@ export function reportText(report: ComputerReport): string {
         case 'late': {
             // Only what Orbit's record proves: the provider's log confirmed it later, nothing was ever charged for it. Said once, as one message, whatever the number of Apps
             const named = report.apps.length > APPS_NAMED ? [...report.apps.slice(0, APPS_NAMED - 1), `${report.apps.length - (APPS_NAMED - 1)} more`] : report.apps;
-            return `Update: ${list(named)} did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.`;
+            return `Update: ${list(named)} did go out after all. We couldn’t confirm it earlier. You weren’t charged for ${report.apps.length === 1 ? 'it' : 'them'}.`;
         }
     }
 }

@@ -208,4 +208,27 @@ describe('through the notes: an Orbit that counts refused rows without naming th
         expect(told).toContain('dead_letter job bad');
         expect(told.filter((one) => one.startsWith('dead_letter'))).toHaveLength(1);
     });
+
+    it('a count of two with only one row named (Opus): the named row is set aside, the rest goes through the suspect path and ends taken or set aside, never dropped, and the operators are told exactly once for the job', async () => {
+        const taken = new Set<string>();
+        const told: string[] = [];
+        // Orbit says 2 rows were refused and names only 'bad1'; the second it counts is not a row of this batch that it can name
+        respond = (body) => {
+            const ids = (body.faults ?? []).map((fault) => fault.callId);
+            for (const id of ids.filter((one) => one !== 'bad1')) taken.add(id);
+            return { status: 200, body: ids.includes('bad1') ? { ok: true, rejected: [{ callId: 'bad1', why: 'x' }], rejectedCount: 2 } : { ok: true } };
+        };
+        const notes = createRefusalNotes(() => 1000, {
+            retryMs: [0],
+            laterMs: [],
+            sink: (botId, jobId, rows) => service.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
+            report: (what, info) => told.push(`${what} ${info.jobId} ${info.callId}`),
+        });
+        for (const id of ['a', 'bad1', 'b', 'c']) notes.record('bot', 'job', rowOf(id));
+        expect(await notes.flush('job')).toBe(true);
+        // every row not named is sent again and taken; none is dropped
+        expect([...taken].sort()).toEqual(['a', 'b', 'c']);
+        expect(told.filter((one) => one.startsWith('dead_letter'))).toEqual(['dead_letter job bad1']);
+        expect(told.filter((one) => one.startsWith('unnamed_rejection'))).toEqual(['unnamed_rejection job ']);
+    });
 });

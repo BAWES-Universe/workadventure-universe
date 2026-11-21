@@ -504,17 +504,17 @@ const lateOf = (over: Record<string, unknown> = {}): ComputerReport => {
 describe('the late follow-up: an App that went out after all', () => {
     it('says it in Brick’s approved words, one App or several, as one message', () => {
         expect(reportText(lateOf())).toBe('Update: Gmail did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.');
-        expect(reportText(lateOf({ apps: ['Gmail', 'Slack'] }))).toBe('Update: Gmail and Slack did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.');
-        expect(reportText(lateOf({ apps: ['Gmail', 'Slack', 'Notion'] }))).toBe('Update: Gmail, Slack and Notion did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Slack'] }))).toBe('Update: Gmail and Slack did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Slack', 'Notion'] }))).toBe('Update: Gmail, Slack and Notion did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
         // The first sentence is the news a locked phone shows
         expect(firstSentence(reportText(lateOf()))).toBe('Update: Gmail did go out after all.');
     });
 
     it('names no more than five Apps, and says how many more, so it stays one short message', () => {
         const five = reportText(lateOf({ apps: ['A1', 'A2', 'A3', 'A4', 'A5'] }));
-        expect(five).toBe('Update: A1, A2, A3, A4 and A5 did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.');
+        expect(five).toBe('Update: A1, A2, A3, A4 and A5 did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
         const seven = reportText(lateOf({ apps: ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7'] }));
-        expect(seven).toBe('Update: A1, A2, A3, A4 and 3 more did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.');
+        expect(seven).toBe('Update: A1, A2, A3, A4 and 3 more did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
     });
 
     it('is built only from what Orbit gives: the title, the files, the receipt and the number of a report are never in it', () => {
