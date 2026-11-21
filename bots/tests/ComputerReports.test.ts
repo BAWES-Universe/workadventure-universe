@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ComputerReports, FILE_TRIES, computerReportOf, missedText, reportText, receiptOf, workedLine, type AttachedFile, type ComputerReport, type ComputerReportsApi, type ComputerSpeaker, type ComputerSpoke, type FilesAnswer, type UndeliverableWhy } from '../server/ComputerReports';
+import { ComputerReports, FILE_TRIES, computerReportOf, missedText, moneyText, reportText, receiptOf, workedLine, type AttachedFile, type ComputerReport, type ComputerReportsApi, type ComputerSpeaker, type ComputerSpoke, type FilesAnswer, type UndeliverableWhy } from '../server/ComputerReports';
 import axios from 'axios';
 import { AdminApiService } from '../server/AdminApiService';
 
@@ -22,6 +22,7 @@ const base: ComputerReport = {
     files: [],
     handed: [],
     givenBack: false,
+    refundPendingMicros: 0,
 };
 const report = (over: Partial<ComputerReport>): ComputerReport => ({ ...base, ...over });
 
@@ -94,6 +95,63 @@ describe('what Brick says when a computer job ends or waits', () => {
         expect(partway).not.toContain('nothing was sent or paid');
     });
 
+    it('says a refund that is pending as pending, and not that the try was given back', () => {
+        const text = reportText(report({ kind: 'failed', givenBack: true, refundPendingMicros: 50_000 }));
+        expect(text).toContain('$0.05 refund pending.');
+        expect(text).not.toContain("won't count against your month");
+        expect(text).not.toMatch(/given back|returned/i);
+        // from an older Orbit, or with nothing pending, it reads as before
+        expect(reportText(report({ kind: 'failed', givenBack: true, refundPendingMicros: 0 }))).toContain("This try won't count against your month.");
+        expect(reportText(report({ kind: 'failed', givenBack: false }))).not.toContain('refund pending');
+        // and in the other reports that carry a receipt
+        expect(reportText(report({ kind: 'done', refundPendingMicros: 9_000 }))).toContain('$0.009 refund pending.');
+        expect(reportText(report({ kind: 'rule', refundPendingMicros: 120_000 }))).toContain('$0.12 refund pending.');
+        expect(receiptOf({ effects: [], writes: true, refundPendingMicros: 50_000 })).toBe('My record shows nothing was sent or paid. $0.05 refund pending.');
+    });
+
+    it('says a refund that is pending in every message that needs the person, whatever it waits for, with or without effects', () => {
+        for (const waitingFor of ['signin', 'upload', 'details', 'answer', 'pay', 'submit'] as const) {
+            const text = reportText(report({ kind: 'needs', waitingFor, effects: [], refundPendingMicros: 50_000 }));
+            expect(text, waitingFor).toContain('$0.05 refund pending.');
+            // nothing pending: nothing is said, as before
+            expect(reportText(report({ kind: 'needs', waitingFor, effects: [], refundPendingMicros: 0 })), waitingFor).not.toContain('refund pending');
+        }
+        // sign-in with nothing done yet reads in the waiting voice, with the pending refund last
+        expect(reportText(report({ kind: 'needs', waitingFor: 'signin', effects: [], writes: true, refundPendingMicros: 50_000 }))).toContain('Nothing has been sent or paid yet. $0.05 refund pending.');
+    });
+
+    it("writes money exactly as Orbit's dollars() does: thousandths under a cent, cents above, rounded the same way", () => {
+        const table: Array<[number, string]> = [
+            [0, '$0'],
+            [1, 'less than $0.001'],
+            [499, 'less than $0.001'],
+            [500, '$0.001'],
+            [1200, '$0.001'],
+            [1500, '$0.002'],
+            [2500, '$0.003'],
+            [9000, '$0.009'],
+            [9999, '$0.010'],
+            [10000, '$0.01'],
+            [10001, '$0.01'],
+            [15000, '$0.01'],
+            [25000, '$0.03'],
+            [35000, '$0.04'],
+            [45000, '$0.04'],
+            [50000, '$0.05'],
+            [1250000, '$1.25'],
+            [5000000, '$5.00'],
+            [3209999, '$3.21'],
+        ];
+        for (const [micros, said] of table) expect(moneyText(micros)).toBe(said);
+    });
+
+    it('reads the refund Orbit has not paid yet as whole micros, and none from an older Orbit or from nonsense', () => {
+        const raw = { key: 'k', jobId: 'j', botId: 'b', title: 'T', kind: 'failed' };
+        expect(computerReportOf({ ...raw, refundPendingMicros: 50_000.4 })?.refundPendingMicros).toBe(50_000);
+        expect(computerReportOf(raw)?.refundPendingMicros).toBe(0);
+        for (const bad of [0, -5, 'x', null, Number.NaN, Infinity]) expect(computerReportOf({ ...raw, refundPendingMicros: bad })?.refundPendingMicros).toBe(0);
+    });
+
     it('says nobody came, at which step, and that it is all saved', () => {
         const text = reportText(report({ kind: 'unanswered', waitedFor: 'pay' }));
         expect(firstSentence(text)).toBe('Visa form stopped waiting for you.');
@@ -111,6 +169,19 @@ describe('what Brick says when a computer job ends or waits', () => {
     it('says a rule the person set stopped it, in their words', () => {
         const text = reportText(report({ kind: 'rule', why: 'no more than $1 a month' }));
         expect(text).toContain('I stopped Visa form because of a rule you set. You said: “no more than $1 a month”.');
+    });
+
+    it('never says a job is done for any ending but done: a job stopped at a rule or its computer time, and every other report that is not a finished one, says what it is instead', () => {
+        for (const kind of ['failed', 'needs', 'unanswered', 'month', 'rule'] as const) {
+            const text = reportText(report({ kind, why: 'no more than $1 a month' }));
+            expect(text).not.toMatch(/\bis done\b|\bwas done\b|\bfinished it\b/i);
+        }
+        // what did work before the stop is said as what it is, beside the stop, never as the job being done
+        const stopped = reportText(report({ kind: 'rule', effects: [{ kind: 'send', state: 'done', where: 'the embassy' }] }));
+        expect(stopped).toContain('I stopped Visa form because of a rule you set.');
+        expect(stopped).toContain('Sent to the embassy.');
+        expect(stopped).not.toMatch(/\bis done\b/);
+        expect(reportText(report({ kind: 'done' }))).toMatch(/is done\./);
     });
 
     it('keeps a long title short and without a stop, so the headline is still a headline', () => {
@@ -245,6 +316,11 @@ describe('what the bot server tells Orbit about delivery', () => {
         expect(calls[0][2]).toEqual({ userId: 'u', title: 'Visa form', origin: { kind: 'dm', ref: '!dm:chat.test' } });
         await service.startComputerJob('brick-1', 'u', { title: 'Visa form' });
         expect(calls[1][2]).toEqual({ userId: 'u', title: 'Visa form' });
+        // a key of its own for each start, in the header Orbit reads it from
+        const keyOf = (call: unknown[]) => (call[5] as Record<string, string>)['X-Computer-Start-Attempt'];
+        expect(keyOf(calls[0])).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+        expect(keyOf(calls[1])).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+        expect(keyOf(calls[0])).not.toBe(keyOf(calls[1]));
     });
 });
 

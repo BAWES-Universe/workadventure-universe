@@ -7,6 +7,7 @@
 
 import { createClient, type RedisClientType, commandOptions } from 'redis';
 import type { ForgetQueueRedis } from '../memory/ForgetQueue';
+import type { EvidenceRedis } from './ComputerEvidenceStore';
 
 /** How long a stop waits for Redis to answer before it cuts the connection off. */
 const SHUTDOWN_WAIT_MS = 3_000;
@@ -423,6 +424,11 @@ export class BotRegistry {
     /** The shared store's client while it is connected (and ready), null while it is not: where the forgets Orbit has not taken yet are kept for every bot server. */
     forgetQueueClient(): ForgetQueueRedis | null {
         return isUp(this.redis) ? (this.redis as unknown as ForgetQueueRedis) : null;
+    }
+
+    /** The shared store's client while it is connected (and ready), null while it is not: where the evidence of failed computer jobs waits for Orbit (it survives a restart). */
+    evidenceClient(): EvidenceRedis | null {
+        return isUp(this.redis) ? (this.redis as unknown as EvidenceRedis) : null;
     }
 
     /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */

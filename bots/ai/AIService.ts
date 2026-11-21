@@ -306,7 +306,7 @@ export class AIService {
     private botCredentialVersion: Map<string, number> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
     /** How each Brick's computer reaches its AI, kept for the same short time (relayRoute). */
-    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null; expiresAt: number }>();
+    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null; expiresAt: number }>();
     /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
     private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
     private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
@@ -784,15 +784,17 @@ export class AIService {
 
     /**
      * How a Brick's computer reaches its AI (the model relay): the same answer a reply gets from Orbit, by Brick, with the key still
-     * encrypted. Null when Orbit does not know the Brick or its key is resting (nothing is called then). Kept for the same short
+     * encrypted. Null when Orbit does not know the Brick; `restingOwnKey` when its own key is down and the owner chose Stop replying (nothing is called then). Kept for the same short
      * time as a reply's, so a run of calls does not ask Orbit each time; a Brick moved to another AI is followed within seconds.
      */
-    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null> {
+    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null> {
         const cacheKey = `relay:${botId}`;
         const cached = this.relayRouteCache.get(cacheKey);
         if (cached && Date.now() < cached.expiresAt) return cached.route;
         const answer = await this.adminApiService.getBotAiCredentials(botId);
-        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null = null;
+        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null = null;
+        // The owner's own key is down and they chose Stop replying: the person's, not ours (an answer with no owner is not that)
+        if (answer && answer.source === 'resting' && answer.keyOwnerId) route = { restingOwnKey: true };
         if (answer && answer.source !== 'resting') {
             const resolved = this.resolvedFromAnswer(answer);
             if ('config' in resolved) route = { config: resolved.config, source: resolved.source, keyOwnerId: answer.source === 'own-key' ? (answer.keyOwnerId ?? null) : null };

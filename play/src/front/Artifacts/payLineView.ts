@@ -100,6 +100,15 @@ export function describePayLine(
     if (line.problem === "not_paid") {
         return { title: LL.payNotPaid(), sub: LL.payNotPaidSub(), actions: [check, ...restoreToo], closable: false };
     }
+    // The order closed and the payment service has not had the last word: still being checked, with Check payment, and a new purchase is not held up by it
+    if (line.problem === "still_checking") {
+        return {
+            title: LL.payStillChecking(),
+            sub: LL.payStillCheckingSub(),
+            actions: [check, ...restoreToo],
+            closable: false,
+        };
+    }
     if (line.problem === "cant_confirm") {
         return { title: LL.payNotHeard(), sub: LL.payNotHeardSub(), actions: [check, ...restoreToo], closable: false };
     }

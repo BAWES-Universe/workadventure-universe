@@ -27,7 +27,7 @@ import type { ArtifactChat, ArtifactPay, ArtifactPayRequest } from "./ArtifactAp
 /** The id a page gives its request: short and plain, so it can only be echoed back and never carry anything else. */
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export type PayProblem = "unavailable" | "limit" | "not_paid" | "cant_confirm" | "none";
+export type PayProblem = "unavailable" | "limit" | "not_paid" | "cant_confirm" | "still_checking" | "none";
 
 /** What the window says under the page while a payment is on its way. */
 export interface PayLine {
@@ -475,6 +475,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                     next = Math.min(MOST_POLL_MS, Math.max(LEAST_POLL_MS, answer.pollAfterMs));
                 }
                 const test = answer.testPayment === true;
+                // The order closed and the payment service has not had the last word: there is no link to go on with, and asking for twenty minutes
+                // would get the same answer. The line says it is still being checked, the page is told it could not confirm yet, and its own Buy stays
+                if (answer.status === "checking" && answer.longWait === true) {
+                    return finish({ problem: "still_checking", canCheck: true }, "cant_confirm");
+                }
                 // An order that was adopted with no link (a restore found it before its checkout existed) gets its Continue link once an answer carries one
                 if (answer.status === "checking" && current.checking && !current.resume && !checkout?.popup) {
                     const link = safeCheckout(answer.checkoutUrl);
@@ -485,7 +490,12 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 if (answer.status === "cant_confirm") {
                     return finish({ problem: "cant_confirm", canCheck: true }, "cant_confirm");
                 }
-            } catch {
+            } catch (error) {
+                // Orbit answers an order as "not there" when it is not this buyer's any more (another account signed in on this device
+                // while the checkout was on its way) or its page is no longer shared. Asking again would get the same answer for twenty
+                // minutes, and the line would keep telling the one who stayed what the one who left was paying: the line is cleared, and
+                // the page hears "unavailable" under its own request and session, never "paid"
+                if (error instanceof ArtifactRequestError && error.status === 404) return finish({}, "unavailable");
                 // Try again on the next turn
             }
             if (!over && !destroyed) timer = setTimeout(() => void poll(), next);
@@ -639,8 +649,12 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         })();
     };
 
+    // A closed order that is still being checked has no link either, and is no start that is going on: it is not waited on
     const unfinishedOwnStart = (answer: ArtifactPay) =>
-        answer.status === "checking" && answer.via === "own" && !safeCheckout(answer.checkoutUrl);
+        answer.status === "checking" &&
+        answer.via === "own" &&
+        answer.longWait !== true &&
+        !safeCheckout(answer.checkoutUrl);
 
     /**
      * Restore found the buyer's own start unfinished: Restore is asked again (not the order's status: there is no checkout to watch yet) until
@@ -711,6 +725,17 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 }
                 // Nothing found by itself (a new phone, a cleared browser): the page is told so, and the buyer is offered Restore purchase, quietly
                 if (answer.status === "none") return end({ offerRestore: true }, "none", request, from, false, asker);
+                // An order of theirs that closed while the service has still not had the last word: never "no purchase found", and not waited on
+                if (answer.status === "checking" && answer.longWait === true) {
+                    return end(
+                        { problem: "still_checking", canCheck: true },
+                        "cant_confirm",
+                        request,
+                        from,
+                        false,
+                        asker
+                    );
+                }
                 if (answer.status === "checking" && answer.orderId) {
                     // An order of theirs is still open: it is watched like a new checkout, and the page hears how it ends under this request.
                     // Its own link is offered, so a reload or a lost pop-up goes on with the SAME order and does not need a second one
@@ -894,6 +919,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                         "paid",
                         test
                     );
+                }
+                // Closed, and the service has not had the last word: still being checked, never waited on and never "not paid"
+                if (answer.status === "checking" && answer.longWait === true) {
+                    return settle({ problem: "still_checking", canCheck: true }, "cant_confirm");
                 }
                 if (answer.status === "checking" && answer.orderId) {
                     // An order that was found by asking for the buyer's purchases is the one to ask about from now on, not the wish of an earlier checkout

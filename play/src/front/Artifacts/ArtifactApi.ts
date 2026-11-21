@@ -180,6 +180,11 @@ export interface ArtifactPay {
     testPayment?: boolean;
     /** How long to wait before asking about the order again, in milliseconds (the server slows it down for an order that waits) */
     pollAfterMs?: number;
+    /**
+     * Of a `checking` answer: the order closed and the payment service has not had the last word. There is no link and nothing to wait on for
+     * twenty minutes: the line says it is still being checked. An answer without it (an older Orbit) is read as before.
+     */
+    longWait?: boolean;
     /** When a restored purchase was paid (ISO), so the line can say "Your purchase from 19 Nov is back." */
     paidAt?: string | null;
     /** A start sent again found the order it had made, and made no second one */
