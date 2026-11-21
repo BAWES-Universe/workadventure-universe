@@ -1341,6 +1341,27 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
     });
 
+    it('is the agent’s when a confirmed fault of the streak was recovered in its own turn (a call answered after it) and the turns then said nothing', async () => {
+        let t = 0;
+        const clock = () => ++t;
+        const confirmedFault = (notes: ReturnType<typeof createRefusalNotes>) =>
+            notes.record('bot', JOB.jobId, { callId: `c${t}`, kind: 'fault', reason: 'provider_key_ours', source: 'universe-ai', route: 'r', providerStatus: 401 });
+        const silentTurn = (notes: ReturnType<typeof createRefusalNotes>, recovered: boolean) => () => {
+            confirmedFault(notes);
+            if (recovered) notes.answered(JOB.jobId);
+            return [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'completed', outputText: '', usage: null }] as RunnerEvent[];
+        };
+        for (const [recovered, cause] of [[true, 'agent'], [false, 'ours']] as const) {
+            const notes = createRefusalNotes(clock);
+            const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => silentTurn(notes, recovered)));
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await runner.idle();
+            expect(finished(seen), `recovered ${recovered}`).toEqual([{ action: 'finish', outcome: 'failed', cause, turns: [1, 2, 3] }]);
+        }
+    });
+
     it('stays the agent’s for a silent turn and unresolved faults only (nothing confirmed), and for a streak the person’s allowance or a rule stopped', async () => {
         let call = 0;
         const unresolved = { sawSince: () => false, endedOnFault: () => (call += 1) > 1, confirmedSince: () => false };

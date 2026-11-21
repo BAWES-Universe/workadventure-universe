@@ -75,6 +75,17 @@ describe('the fault record Orbit keeps of a computer job’s model calls', () =>
         expect(await service.computerJobFaults('b', 'j', [row])).toBe(false);
     });
 
+    it('says \'rejected\' only for Orbit’s own 400 about the rows: a bare 400 (a gateway) is still false and the rows are sent again', async () => {
+        answer = { status: 400, body: { error: 'Invalid request' } };
+        expect(await service.computerJobFaults('b', 'j', [row])).toBe('rejected');
+        answer = { status: 400, body: { error: 'Bad gateway thing' } };
+        expect(await service.computerJobFaults('b', 'j', [row])).toBe(false);
+        answer = { status: 401, body: { error: 'Invalid request' } };
+        expect(await service.computerJobFaults('b', 'j', [row])).toBe(false);
+        answer = { status: 422, body: { error: 'Invalid request' } };
+        expect(await service.computerJobFaults('b', 'j', [row])).toBe(false);
+    });
+
     it('is false when Orbit cannot be reached', async () => {
         const gone = new AdminApiService('http://127.0.0.1:1', 'admin-token');
         expect(await gone.computerJobFaults('b', 'j', [row])).toBe(false);

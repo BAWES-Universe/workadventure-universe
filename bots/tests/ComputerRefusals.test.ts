@@ -511,7 +511,7 @@ describe('the evidence kept before the money decision is final, and delivered af
         };
         return { store, held, log, state };
     };
-    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: 'not_durable' | 'unacked', info: { jobId: string; callId: string }) => void } = {}) => {
+    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: 'not_durable' | 'unacked' | 'dead_letter', info: { jobId: string; callId: string }) => void } = {}) => {
         const sent: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
         let at = 1000;
         const notes = createRefusalNotes(() => at, {
@@ -784,6 +784,148 @@ describe('the evidence kept before the money decision is final, and delivered af
         expect(sent).toHaveLength(1);
     });
 
+    describe('a batch Orbit refuses for what is in it', () => {
+        /**
+         * A sink that refuses (Orbit's own 400) any batch with a bad row in it, takes the others, and can be told to be away. The first row sent goes at once,
+         * on its own: the sink holds every answer until `open()`, so the rows that are recorded meanwhile are sent together in the next batch.
+         */
+        const orbit = (bad: Set<string>) => {
+            const state = { away: false, awayForOnly: undefined as string | undefined };
+            let open!: () => void;
+            const gate = new Promise<void>((resolve) => (open = resolve));
+            const taken: string[] = [];
+            const calls: string[][] = [];
+            const sink = async (_botId: string, _jobId: string, rows: CallRow[]): Promise<boolean | 'rejected'> => {
+                await gate;
+                const ids = rows.map((row) => row.callId);
+                calls.push(ids);
+                if (state.away || (state.awayForOnly !== undefined && ids.join() === state.awayForOnly)) return false;
+                if (ids.some((id) => bad.has(id))) return 'rejected';
+                taken.push(...ids);
+                return true;
+            };
+            return { state, taken, calls, sink, open };
+        };
+
+        it('splits the batch so the good rows get through, and drops the row that is refused alone from the queue and the store, telling the operators once with its ids', async () => {
+            const mem = memoryStore();
+            const o = orbit(new Set(['bad']));
+            const told: Array<[string, { jobId: string; callId: string }]> = [];
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what, info) => told.push([what, info]) });
+            for (const id of ['a', 'b', 'bad', 'c', 'd']) notes.record('bot', 'job', call(id));
+            await vi.waitFor(() => expect(mem.held.size).toBe(5));
+            o.open();
+            expect(await notes.flush('job')).toBe(true);
+            expect([...o.taken].sort()).toEqual(['a', 'b', 'c', 'd']);
+            expect(told).toEqual([['dead_letter', { jobId: 'job', callId: 'bad' }]]);
+            await vi.waitFor(() => expect(mem.held.size).toBe(0));
+            // it is not sent again, and the operators are not told again
+            const before = o.calls.length;
+            expect(await notes.flush('job')).toBe(true);
+            expect(o.calls.length).toBe(before);
+            expect(told).toHaveLength(1);
+        });
+
+        it('lets the rows that came after a bad one through when there are more rows than one batch holds', async () => {
+            const o = orbit(new Set(['c000']));
+            const told: string[] = [];
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: o.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+            const ids = Array.from({ length: 130 }, (_, n) => `c${String(n).padStart(3, '0')}`);
+            for (const id of ids) notes.record('bot', 'job', call(id));
+            o.open();
+            expect(await notes.flush('job')).toBe(true);
+            expect([...o.taken].sort()).toEqual(ids.filter((id) => id !== 'c000'));
+            expect(told).toEqual(['dead_letter c000']);
+        });
+
+        it('drops every row Orbit refuses, each told once, and still takes the rest', async () => {
+            const o = orbit(new Set(['x', 'y']));
+            const told: string[] = [];
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: o.sink, report: (_what, info) => told.push(info.callId) });
+            for (const id of ['x', 'a', 'y', 'b']) notes.record('bot', 'job', call(id));
+            o.open();
+            expect(await notes.flush('job')).toBe(true);
+            expect([...o.taken].sort()).toEqual(['a', 'b']);
+            expect(told.sort()).toEqual(['x', 'y']);
+        });
+
+        it('keeps a row, with its call id, while Orbit is away or fails: only a refusal of the row alone drops it', async () => {
+            const o = orbit(new Set(['bad']));
+            const told: string[] = [];
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: o.sink, report: (what) => told.push(what) });
+            o.state.away = true;
+            for (const id of ['a', 'bad']) notes.record('bot', 'job', call(id));
+            o.open();
+            expect(await notes.flush('job')).toBe(false);
+            expect(o.taken).toEqual([]);
+            expect(told).toEqual([]);
+            o.state.away = false;
+            expect(await notes.flush('job')).toBe(true);
+            expect(o.taken).toEqual(['a']);
+            expect(told).toEqual(['dead_letter']);
+        });
+
+        it('stops where Orbit goes away in the middle of a split, and sends the rest again later with the same call ids', async () => {
+            const o = orbit(new Set(['bad']));
+            const notes = createRefusalNotes(() => 1000, { retryMs: [], laterMs: [], sink: o.sink });
+            o.state.awayForOnly = 'b';
+            for (const id of ['a', 'b', 'bad', 'c']) notes.record('bot', 'job', call(id));
+            o.open();
+            // [a] went first; then [b, bad, c] was refused, split into [b, bad] (refused) and [b], and Orbit was away for [b]
+            expect(await notes.flush('job')).toBe(false);
+            expect(o.taken).toEqual(['a']);
+            o.state.awayForOnly = undefined;
+            expect(await notes.flush('job')).toBe(true);
+            expect([...o.taken].sort()).toEqual(['a', 'b', 'c']);
+        });
+
+        it('leaves a newer row of the same call id where it is when the older one was refused alone', async () => {
+            const mem = memoryStore();
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            const taken: CallRow[] = [];
+            const told: string[] = [];
+            const notes = createRefusalNotes(() => 1000, {
+                retryMs: [0],
+                laterMs: [],
+                store: mem.store,
+                report: (what) => told.push(what),
+                sink: async (_b, _j, rows) => {
+                    await gate;
+                    if (rows.some((row) => row.kind === 'uncertain')) return 'rejected';
+                    taken.push(...rows.map((row) => ({ ...row })));
+                    return true;
+                },
+            });
+            notes.record('bot', 'job', call('c1', { kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 }));
+            const flushed = notes.flush('job');
+            // upgraded while the older one is on its way
+            notes.record('bot', 'job', call('c1', { kind: 'fault', reason: 'provider_key_ours', providerStatus: 401 }));
+            release();
+            expect(await flushed).toBe(true);
+            // the older row was refused alone and dropped; the newer row was not touched by that, and went on its own
+            await vi.waitFor(() => expect(taken.map((row) => row.kind)).toEqual(['fault']));
+            expect(told).toEqual(['dead_letter']);
+            await vi.waitFor(() => expect(mem.held.size).toBe(0));
+        });
+
+        it('does not let a report that throws hold the rows', async () => {
+            const o = orbit(new Set(['bad']));
+            const notes = createRefusalNotes(() => 1000, {
+                retryMs: [0],
+                laterMs: [],
+                sink: o.sink,
+                report: () => {
+                    throw new Error('sentry down');
+                },
+            });
+            for (const id of ['a', 'bad', 'b']) notes.record('bot', 'job', call(id));
+            o.open();
+            expect(await notes.flush('job')).toBe(true);
+            expect([...o.taken].sort()).toEqual(['a', 'b']);
+        });
+    });
+
     it('a ledger with no store behaves as before: rows are not kept anywhere but memory, and resume is a yes', async () => {
         const notes = createRefusalNotes(() => 1000, { sink: async () => true });
         expect(await notes.resume()).toBe(true);
@@ -828,6 +970,50 @@ describe('whether any call of a job reached the relay', () => {
         at = REFUSAL_NOTE_KEEP_MS + 5000;
         notes.called('new');
         expect(notes.calledSince('a', 0)).toBe(false);
+    });
+});
+
+describe('whether a turn had a confirmed fault that was not recovered', () => {
+    const confirmed = (notes: ReturnType<typeof createRefusalNotes>, job: string, id: string) =>
+        notes.record('b', job, { callId: id, kind: 'fault', reason: 'provider_key_ours', source: 'universe-ai', route: 'r', providerStatus: 401 });
+    const answered = (notes: ReturnType<typeof createRefusalNotes>, job: string) => notes.record('b', job, { callId: 'ok', kind: 'answered', reason: 'provider_5xx', source: 'universe-ai', route: 'r', providerStatus: 200 });
+
+    it('is true for a confirmed fault in the window, and false when a call was answered after it in the same window', () => {
+        const notes = createRefusalNotes(() => 1000);
+        const before = notes.mark();
+        expect(notes.confirmedSince('a', before)).toBe(false);
+        confirmed(notes, 'a', 'c1');
+        expect(notes.confirmedSince('a', before)).toBe(true);
+        // the agent got round it: a call was answered after the fault
+        answered(notes, 'a');
+        expect(notes.confirmedSince('a', before)).toBe(false);
+        // a later confirmed fault counts again, whatever came before it
+        confirmed(notes, 'a', 'c2');
+        expect(notes.confirmedSince('a', before)).toBe(true);
+        // an answer BEFORE the fault is no recovery
+        confirmed(notes, 'b', 'c1');
+        const second = notes.mark();
+        answered(notes, 'b');
+        confirmed(notes, 'b', 'c2');
+        expect(notes.confirmedSince('b', second)).toBe(true);
+        // an unresolved fault after the answer changes nothing about the confirmed one that was recovered
+        confirmed(notes, 'c', 'c1');
+        answered(notes, 'c');
+        notes.record('b', 'c', { callId: 'u', kind: 'uncertain', reason: 'provider_5xx', source: 'universe-ai', route: 'r', providerStatus: 500 });
+        expect(notes.confirmedSince('c', before)).toBe(false);
+        // a window that began after it does not hold it
+        expect(notes.confirmedSince('a', notes.mark())).toBe(false);
+    });
+
+    it('agrees with endedOnFault: a confirmed fault that was recovered is neither a turn that ended on a fault nor a confirmed one', () => {
+        const notes = createRefusalNotes(() => 1000);
+        const before = notes.mark();
+        confirmed(notes, 'a', 'c1');
+        expect(notes.endedOnFault('a', before)).toBe(true);
+        expect(notes.confirmedSince('a', before)).toBe(true);
+        answered(notes, 'a');
+        expect(notes.endedOnFault('a', before)).toBe(false);
+        expect(notes.confirmedSince('a', before)).toBe(false);
     });
 });
 

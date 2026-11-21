@@ -1742,15 +1742,18 @@ export class AdminApiService {
      * The model relay's durable record of how a job's model calls ended (the fault record Orbit judges a failed job's refund by): one row per job and
      * call, idempotent. True when Orbit took the rows, or answered with its own "Job not found" (it has no such job, so there is nothing to keep them for).
      * False when it could not be reached, failed, or has no such route yet (a bare 404 or 405 from an older Orbit): the rows are kept and sent again,
-     * so they are still there once Orbit is upgraded.
+     * so they are still there once Orbit is upgraded. `'rejected'` when Orbit answered with its own 400 ("Invalid request": one row it cannot read
+     * rejects the whole batch, and the same rows are refused every time): the caller splits the batch to find the row.
      */
-    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean> {
+    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected'> {
         try {
             const response = await this.brickCall<{ ok?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
             return response.status === 200 && response.data?.ok !== false;
         } catch (error) {
             // Only Orbit's own answer for an unknown job is final; a missing route answers 404 or 405 with something else
             if (axios.isAxiosError(error) && error.response?.status === 404 && (error.response.data as { error?: unknown } | undefined)?.error === 'Job not found') return true;
+            // Likewise only Orbit's own words for a refused body: a bare 400 (a proxy, a gateway) says nothing of the rows and is tried again
+            if (axios.isAxiosError(error) && error.response?.status === 400 && (error.response.data as { error?: unknown } | undefined)?.error === 'Invalid request') return 'rejected';
             return false;
         }
     }

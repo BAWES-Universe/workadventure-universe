@@ -160,8 +160,11 @@ export interface CallTurn {
 export const REFUSAL_NOTE_KEEP_MS = 60 * 60 * 1000;
 
 export interface RefusalOptions {
-    /** Where rows go: Orbit's fault record. Resolves false when Orbit could not take them (they are kept and tried again). */
-    sink?: (botId: string, jobId: string, rows: CallRow[]) => Promise<boolean>;
+    /**
+     * Where rows go: Orbit's fault record. Resolves false when Orbit could not take them (they are kept and tried again), and `'rejected'` when Orbit
+     * answered that it will not take THESE rows, whatever the time (its own 400): the batch is split to find the row that is refused.
+     */
+    sink?: (botId: string, jobId: string, rows: CallRow[]) => Promise<boolean | 'rejected'>;
     /** How long to wait before each new try to send rows. */
     retryMs?: number[];
     /** How long to wait, after those tries all failed, before each later try in the background (rows are kept an hour in all). */
@@ -174,9 +177,10 @@ export interface RefusalOptions {
     storeLaterMs?: number;
     /**
      * Tells the operators (Sentry) once: `not_durable` when a row could not be kept in the store (once until a write succeeds again), `unacked` when
-     * a row has waited for Orbit longer than `EVIDENCE_UNACKED_MS` (once per row). Carries ids only. Never throws into the caller's way.
+     * a row has waited for Orbit longer than `EVIDENCE_UNACKED_MS` (once per row), `dead_letter` when Orbit refused a row ALONE (its own 400: sending it
+     * again cannot change that), so the row was dropped from the queue and the store. Carries ids only. Never throws into the caller's way.
      */
-    report?: (what: 'not_durable' | 'unacked', info: { jobId: string; callId: string }) => void;
+    report?: (what: 'not_durable' | 'unacked' | 'dead_letter', info: { jobId: string; callId: string }) => void;
 }
 
 /** How long a row that Orbit has not taken is kept and sent again, in the store and in memory: 7 days. */
@@ -231,7 +235,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const queued = new Map<string, Queue>();
     let notDurableTold = false;
     const unackedTold = new Set<string>();
-    const tell = (what: 'not_durable' | 'unacked', jobId: string, callId: string) => {
+    const tell = (what: 'not_durable' | 'unacked' | 'dead_letter', jobId: string, callId: string) => {
         try {
             options.report?.(what, { jobId, callId });
         } catch {
@@ -314,6 +318,45 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     };
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+    /** Takes rows out of the queue once Orbit has dealt with them (took them, or refused one alone for good). A row that was changed meanwhile (an upgrade) stays. */
+    const settle = (entry: Queue, jobId: string, rows: CallRow[]) => {
+        for (const row of rows) {
+            if (entry.rows.get(row.callId) !== row) continue;
+            entry.rows.delete(row.callId);
+            entry.unsaved.delete(row.callId);
+            unackedTold.delete(`${jobId}|${row.callId}`);
+        }
+        // Every row Orbit dealt with leaves the store, a replaced one too: the store keeps the row only if it still holds exactly that one, so a replacement
+        // whose write went through stays, and an older row left behind by a replacement whose write failed does not come back after a restart
+        release(entry, jobId, rows);
+    };
+
+    /**
+     * Gets one batch to Orbit. True when every row of it was dealt with, false when Orbit could not be reached or failed (the rest waits for the next
+     * try, with the same call ids). When Orbit refuses the batch for what is in it (a 400 rejects all of a batch for one bad row), the batch is split in
+     * halves so the good rows get through; a row refused ALONE can never be taken, so it is dropped (queue and store) and the operators are told once.
+     */
+    const deliver = async (entry: Queue, jobId: string, batch: CallRow[], sink: NonNullable<RefusalOptions['sink']>): Promise<boolean> => {
+        let answer: boolean | 'rejected' = false;
+        try {
+            answer = await sink(entry.botId, jobId, batch);
+        } catch {
+            answer = false;
+        }
+        if (answer === true) {
+            settle(entry, jobId, batch);
+            return true;
+        }
+        if (answer !== 'rejected') return false;
+        if (batch.length === 1) {
+            settle(entry, jobId, batch);
+            tell('dead_letter', jobId, batch[0].callId);
+            return true;
+        }
+        const half = Math.ceil(batch.length / 2);
+        return (await deliver(entry, jobId, batch.slice(0, half), sink)) && (await deliver(entry, jobId, batch.slice(half), sink));
+    };
+
     /** Sends the job's queued rows, a batch at a time; a batch Orbit did not take waits for the next try. One sender per job at a time. */
     const send = (jobId: string): Promise<boolean> => {
         const entry = queued.get(jobId);
@@ -328,23 +371,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 for (const row of [...entry.unsaved.values()]) if (entry.rows.get(row.callId) === row) keep(entry, jobId, row);
                 while (entry.rows.size > 0) {
                     const batch = [...entry.rows.values()].slice(0, FAULT_ROWS_PER_CALL);
-                    let took = false;
-                    try {
-                        took = await sink(entry.botId, jobId, batch);
-                    } catch {
-                        took = false;
-                    }
-                    if (!took) break;
-                    // A row that was changed while it was being sent (an upgrade) stays for the next batch
-                    for (const row of batch) {
-                        if (entry.rows.get(row.callId) !== row) continue;
-                        entry.rows.delete(row.callId);
-                        entry.unsaved.delete(row.callId);
-                        unackedTold.delete(`${jobId}|${row.callId}`);
-                    }
-                    // Every row Orbit took leaves the store, a replaced one too: the store keeps the row only if it still holds exactly that one, so a replacement
-                    // whose write went through stays, and an older row left behind by a replacement whose write failed does not come back after a restart
-                    release(entry, jobId, batch);
+                    if (!(await deliver(entry, jobId, batch, sink))) break;
                 }
                 if (entry.rows.size === 0) {
                     // Everything was taken: the budget of later tries starts again for rows that come next, and a try still waiting has nothing to send
@@ -496,8 +523,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         },
         mark: () => ({ order: count }),
         confirmedSince(jobId, since) {
-            const seen = calls.get(jobId)?.confirmed;
-            return seen !== undefined && within(seen, since);
+            const seen = calls.get(jobId);
+            if (seen?.confirmed === undefined || !within(seen.confirmed, since)) return false;
+            // A confirmed fault that a call answered after, in the same window, was recovered (the same rule as `endedOnFault`): the turn went on and the agent
+            // got round it, so a streak of turns that then said nothing is the agent's and not ours
+            return seen.answered === undefined || seen.answered.order < seen.confirmed.order;
         },
         note(jobId) {
             forget();

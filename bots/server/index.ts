@@ -98,9 +98,10 @@ const aiService = botManager.getAIService();
 const computerRefusals = createRefusalNotes(Date.now, {
     sink: (botId, jobId, rows) => adminApiService.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
     store: new RedisEvidenceStore(() => botRegistry.evidenceClient()),
-    // Told once: a row the shared store could not keep (it is still in memory and still sent), and a row Orbit has not taken for an hour. Ids only.
+    // Told once: a row the shared store could not keep (it is still in memory and still sent), a row Orbit has not taken for an hour, and a row Orbit
+    // refused alone (dropped: sending it again cannot change the answer). Ids only.
     report: (what, info) =>
-        Sentry.captureMessage(what === 'not_durable' ? 'Fault evidence not durable' : 'Fault evidence not acknowledged by Orbit for an hour', {
+        Sentry.captureMessage(what === 'not_durable' ? 'Fault evidence not durable' : what === 'dead_letter' ? 'Fault evidence row refused by Orbit and dropped' : 'Fault evidence not acknowledged by Orbit for an hour', {
             level: 'warning',
             tags: { area: 'computer-fault-evidence', what },
             extra: info,
