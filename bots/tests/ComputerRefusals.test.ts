@@ -2053,6 +2053,82 @@ describe('calls of a job that arrive at another bot server', () => {
             }
         });
 
+        it('does not keep what it told of a job’s turns for ever: after the promise has lapsed (and the notes are cleaned) the bookkeeping of many jobs is gone, not one entry per job', async () => {
+            let clock = 100_000;
+            const store = sharedStore();
+            const a = createRefusalNotes(() => clock, { shared: store.forServer('A'), runsHere: () => false });
+            for (let n = 0; n < 300; n++) a.turn(`job-${n}`, 1, 'run');
+            await Promise.resolve();
+            expect(a.trackedPublications()).toEqual({ attempted: 300, publishing: 300 });
+            // the promises lapse, and the notes are kept an hour: then a later turn of another job cleans them out
+            clock += SHARED_TURN_LEASE_MS + REFUSAL_NOTE_KEEP_MS + 1;
+            a.turn('latest', 1, 'run');
+            await Promise.resolve();
+            expect(a.trackedPublications()).toEqual({ attempted: 1, publishing: 1 });
+            // the same for jobs that went on after: only the ones still going are held
+            for (let n = 0; n < 50; n++) a.turn(`next-${n}`, 1, 'run');
+            clock += SHARED_TURN_LEASE_MS + 1;
+            // their writes have settled
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            a.turn('after', 1, 'run');
+            await Promise.resolve();
+            expect(a.trackedPublications()).toEqual({ attempted: 1, publishing: 1 });
+        });
+
+        it('drops a lapsed promise and a settled publication as soon as notes are cleaned, even when the job’s turn history is still kept', async () => {
+            let clock = 100_000;
+            const store = sharedStore();
+            const a = createRefusalNotes(() => clock, { shared: store.forServer('A'), runsHere: () => false });
+            a.turn('j', 1, 'run');
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            expect(a.trackedPublications()).toEqual({ attempted: 1, publishing: 1 });
+            // inside its promise nothing is dropped (another job's turn cleans the notes)
+            clock += SHARED_TURN_LEASE_MS - 1;
+            a.turn('other', 1, 'run');
+            await Promise.resolve();
+            expect(a.trackedPublications().attempted).toBe(2);
+            // the promise has lapsed: j's entries go, the history of the job stays (the turn is still known here)
+            clock += 2;
+            a.turn('third', 1, 'run');
+            await Promise.resolve();
+            expect(a.turnOf('j')).toBe(1);
+            expect(a.trackedPublications()).toEqual({ attempted: 2, publishing: 2 });
+        });
+
+        it('keeps a publication that a turnPublished wait could still read: the write is lost and the promise of the lists before it still stands', async () => {
+            vi.useFakeTimers();
+            try {
+                let clock = 100_000;
+                const store = sharedStore();
+                const a = createRefusalNotes(() => clock, { shared: store.forServer('A'), runsHere: () => true });
+                a.turn('j', 4, 'run-1');
+                await a.turnPublished!('j');
+                store.state.failTurns = 1000;
+                clock += 1000;
+                a.turn('j', 5, 'run-1');
+                // notes are cleaned by other jobs' turns while the wait goes on (the promise of turn 4's list stands until 106 000)
+                let begun = false;
+                const waiting = a.turnPublished!('j').then(() => (begun = true));
+                await vi.advanceTimersByTimeAsync(1500);
+                clock += 1000;
+                a.turn('other', 1, 'run');
+                await vi.advanceTimersByTimeAsync(300);
+                expect(a.trackedPublications().publishing).toBe(2);
+                expect(begun).toBe(false);
+                // the promise runs out: the wait ends and the entry may go at the next cleaning
+                clock += SHARED_TURN_LEASE_MS;
+                await vi.advanceTimersByTimeAsync(1000);
+                await waiting;
+                expect(begun).toBe(true);
+                a.turn('later', 1, 'run');
+                await vi.advanceTimersByTimeAsync(10);
+                // j's lapsed one and the other job's settled one are gone: only the newest may still be there
+                expect(a.trackedPublications().publishing).toBeLessThanOrEqual(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         it('never ends a turn the runner is on as a fault of its own for a call made on the other server: a null-turn row leaves the runner’s own notes of the turn alone', async () => {
             const { a, b, advance } = rigTurns();
             a.turn('j', 1, 'run-1');

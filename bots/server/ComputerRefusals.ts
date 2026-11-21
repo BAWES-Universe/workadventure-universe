@@ -344,7 +344,7 @@ const DEFAULT_LATER_MS = [30_000, 120_000, 600_000];
 /** A job is not held up longer than this to get its rows to Orbit before it ends. */
 const DEFAULT_FLUSH_BUDGET_MS = 5000;
 
-export function createRefusalNotes(now: () => number = Date.now, options: RefusalOptions = {}): RefusalNotes {
+export function createRefusalNotes(now: () => number = Date.now, options: RefusalOptions = {}): RefusalNotes & { /** For tests: how many jobs the runner's publication bookkeeping holds. */ trackedPublications(): { attempted: number; publishing: number } } {
     const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
     const laterMs = options.laterMs ?? DEFAULT_LATER_MS;
     const flushBudgetMs = options.flushBudgetMs ?? DEFAULT_FLUSH_BUDGET_MS;
@@ -453,6 +453,12 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0, seen.called?.at ?? 0, seen.accepted?.at ?? 0, seen.pooled?.at ?? 0, seen.other?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
         for (const [jobId, at] of unrecordedTold) if (at < cutoff) unrecordedTold.delete(jobId);
+        // What the runner told of its turns is only read while a promise could still be read as covering: a promise that has lapsed says nothing (`turn()` copies
+        // `before` by value, so dropping a lapsed one is safe), and a publication is kept while a `turnPublished` wait could still read it (its write is going, or
+        // the promise of the lists before it still stands), and dropped with the job's turn history
+        const present = now();
+        for (const [jobId, until] of attempted) if (until < present) attempted.delete(jobId);
+        for (const [jobId, entry] of publishing) if (!turns.has(jobId) || (entry.settled && entry.before <= present)) publishing.delete(jobId);
         // With a store, rows Orbit has not taken are kept (and sent again) as long as in the store
         const queueCutoff = store ? now() - EVIDENCE_KEEP_MS : cutoff;
         for (const [jobId, entry] of queued) {
@@ -688,7 +694,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     // What this runner has told the other servers of its turns. `attempted`: the latest promise (`until`) of any list it tried to publish, landed or not (a write that
     // timed out may still land), so it is never begun on a turn that no published list holds while such a promise could still be read as covering
     const attempted = new Map<string, number>();
-    const publishing = new Map<string, { done: Promise<boolean>; before: number }>();
+    const publishing = new Map<string, { done: Promise<boolean>; before: number; settled: boolean }>();
     const beats = new Map<string, ReturnType<typeof setTimeout>>();
     const publishTurns = (jobId: string): Promise<boolean> => {
         const shared = options.shared;
@@ -713,6 +719,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     };
 
     return {
+        trackedPublications: () => ({ attempted: attempted.size, publishing: publishing.size }),
         turn(jobId, turn, run) {
             forget();
             const history = turns.get(jobId) ?? [];
@@ -726,7 +733,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             // The other servers learn which turn the runner is on, for the calls of the machine that reach them (see `turnPublished`)
             if (options.shared?.noteTurn) {
                 const before = attempted.get(jobId) ?? 0;
-                publishing.set(jobId, { done: publishTurns(jobId), before });
+                const entry = { done: publishTurns(jobId), before, settled: false };
+                void entry.done.then(() => (entry.settled = true));
+                publishing.set(jobId, entry);
                 keepPromise(jobId);
             }
         },
