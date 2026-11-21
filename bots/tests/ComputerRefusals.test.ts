@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { KEEP_LATER, RedisSharedCalls, SET_AND_RENEW, type EvidenceRedis } from '../server/ComputerEvidenceStore';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, type CallRow, type EvidenceStore, type SharedCalls, type SharedTurn } from '../server/ComputerRefusals';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, type CallRow, type EvidenceStore, type SharedCalls, type SharedTurn } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -1599,10 +1599,10 @@ describe('calls of a job that arrive at another bot server', () => {
         it('gives the call the turn the runner on the other server had reached when the call arrived, with its run, so Orbit finds the row for that turn', async () => {
             const { a, b, sentByB, advance } = rigTurns();
             a.turn('j', 1, 'run-1');
-            advance(1000);
+            advance(10_000);
             a.turn('j', 2, 'run-1');
             await Promise.resolve();
-            advance(10);
+            advance(10_000);
             const began = await callOnB(b, 'c1');
             expect(began).toEqual({ turn: 2, run: 'run-1' });
             expect(sentByB.map((row) => [row.callId, row.turn, row.run])).toEqual([['c1', 2, 'run-1']]);
@@ -1611,13 +1611,13 @@ describe('calls of a job that arrive at another bot server', () => {
         it('keeps a call that arrived in turn 2 in turn 2 when the runner has moved on to turn 3 by the time the call ends, and a call that arrives after turn 3 began is turn 3', async () => {
             const { a, b, sentByB, advance } = rigTurns();
             a.turn('j', 2, 'run-1');
-            advance(100);
+            advance(10_000);
             const late = await callOnB(b, 'early', () => {
-                advance(500);
+                advance(10_000);
                 a.turn('j', 3, 'run-1');
             });
             expect(late.turn).toBe(2);
-            advance(100);
+            advance(10_000);
             const next = await callOnB(b, 'later');
             expect(next.turn).toBe(3);
             expect(sentByB.map((row) => [row.callId, row.turn])).toEqual([['early', 2], ['later', 3]]);
@@ -1627,9 +1627,9 @@ describe('calls of a job that arrive at another bot server', () => {
             const { a, b, advance } = rigTurns();
             a.turn('j', 1, 'run-old');
             a.turn('j', 2, 'run-old');
-            advance(5000);
+            advance(50_000);
             a.turn('j', 1, 'run-new');
-            advance(10);
+            advance(10_000);
             expect(await b.turnOfCall('j', b.mark())).toEqual({ turn: 1, run: 'run-new' });
         });
 
@@ -1638,18 +1638,44 @@ describe('calls of a job that arrive at another bot server', () => {
             // the runner has said nothing yet
             expect((await callOnB(b, 'unknown-1')).turn).toBeNull();
             a.turn('j', 4, 'run-1');
-            advance(10);
+            advance(10_000);
             store.state.down = true;
             expect(await callOnB(b, 'unknown-2')).toEqual({ turn: null });
             store.state.down = false;
             expect(sentByB.map((row) => [row.callId, row.turn, 'run' in row])).toEqual([['unknown-1', null, false], ['unknown-2', null, false]]);
             // the call arrived before the runner's first turn began: it is no call of that turn either
             const before = b.mark();
-            advance(1000);
+            advance(10_000);
             a.turn('j', 5, 'run-1');
             expect((await b.turnOfCall('j', before)).turn).toBe(4);
             const never = createRefusalNotes(() => 1, { shared: store.forServer('C'), runsHere: () => false });
             expect(await never.turnOfCall('fresh-job', { order: 1, at: 1 })).toEqual({ turn: null });
+        });
+
+        it('cannot tell the turn of a call that arrived within the clock skew of any turn’s beginning (the servers’ clocks differ by 1.5 s, either way): turn null and no run, while a call well inside a turn keeps it', async () => {
+            let runnerClock = 100_000;
+            const store = sharedStore();
+            const a = createRefusalNotes(() => runnerClock, { shared: store.forServer('A'), runsHere: () => true });
+            // two relay servers: one whose clock runs 1.5 s ahead of the runner server's, one 1.5 s behind
+            const ahead = createRefusalNotes(() => runnerClock + 1500, { shared: store.forServer('B'), runsHere: () => false });
+            const behind = createRefusalNotes(() => runnerClock - 1500, { shared: store.forServer('C'), runsHere: () => false });
+            a.turn('j', 1, 'run-1');
+            runnerClock += 30_000;
+            a.turn('j', 2, 'run-1');
+            await Promise.resolve();
+            const turn2 = runnerClock;
+            // a call that really arrived 1 s BEFORE turn 2 began, seen by the relay server that runs ahead, is stamped 0.5 s after it: it belongs to turn 1
+            expect(await ahead.turnOfCall('j', { order: 1, at: turn2 - 1000 + 1500 })).toEqual({ turn: null });
+            // a call that really arrived 1 s AFTER turn 2 began, seen by the server that runs behind, is stamped 0.5 s before it: it belongs to turn 2
+            expect(await behind.turnOfCall('j', { order: 1, at: turn2 + 1000 - 1500 })).toEqual({ turn: null });
+            // the same near the beginning of the first turn (any turn's beginning counts)
+            expect(await ahead.turnOfCall('j', { order: 1, at: turn2 - 30_000 - 1000 + 1500 })).toEqual({ turn: null });
+            // a call well inside a turn (more than the skew from every beginning): its turn, with its run
+            expect(await ahead.turnOfCall('j', { order: 1, at: turn2 + 10_000 + 1500 })).toEqual({ turn: 2, run: 'run-1' });
+            expect(await behind.turnOfCall('j', { order: 1, at: turn2 - 10_000 - 1500 })).toEqual({ turn: 1, run: 'run-1' });
+            // exactly at the skew still cannot be told; just past it can
+            expect((await ahead.turnOfCall('j', { order: 1, at: turn2 + SHARED_CALL_SKEW_MS })).turn).toBeNull();
+            expect((await ahead.turnOfCall('j', { order: 1, at: turn2 + SHARED_CALL_SKEW_MS + 1 })).turn).toBe(2);
         });
 
         it('does not hold the call for a store that does not answer: unknown turn after the bound', async () => {

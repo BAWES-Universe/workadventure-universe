@@ -168,7 +168,7 @@ export interface RefusalNotes {
      * The turn (and run) a call that reached the relay at `arrived` belongs to. When the job's runner works on this server it is what `turnAt` says. When it works
      * on ANOTHER server (the machine's calls reach whichever server the load balancer picks) this server has no history of the job's turns, so the runner's
      * server is asked through the shared record: the turn that had begun by the time the call arrived. `turn: null` when that cannot be told (nothing was said,
-     * or the store cannot be read): the row is then read by Orbit with every turn it judges. Never rejects.
+     * the store cannot be read, or the call arrived within `SHARED_CALL_SKEW_MS` of a turn's beginning: the two servers' clocks may differ by that much): the row is then read by Orbit with every turn it judges. Never rejects.
      */
     turnOfCall(jobId: string, arrived?: { order: number; at: number }): Promise<{ turn: number | null; run?: string }>;
     /**
@@ -673,6 +673,10 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     );
                 });
                 const arrivedAt = arrived?.at ?? now();
+                // The turns' moments are the runner server's clock and the arrival is this server's: the clocks of two servers differ a little, so a call that arrived
+                // near the moment ANY turn began could be put in the turn before or after the one it belongs to. Its turn cannot be told; the row is then read by
+                // Orbit with every turn it judges
+                if (said.some((one) => Math.abs(arrivedAt - one.at) <= SHARED_CALL_SKEW_MS)) return { turn: null };
                 let chosen: SharedTurn | undefined;
                 for (const one of said) if (one.at <= arrivedAt && (chosen === undefined || one.at > chosen.at)) chosen = one;
                 return chosen ? { turn: chosen.turn, ...(chosen.run ? { run: chosen.run } : {}) } : { turn: null };
