@@ -592,6 +592,26 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         res.json({ object: 'list', data: [{ id: 'universe-ai', object: 'model', created: 0, owned_by: 'universe' }] });
     });
 
+    /** The turn a call belongs to (the one current when it ARRIVED) and the run of the runner of that turn: `turn` is null when that cannot be told. */
+    async function startOf(jobId: string, arrived: { order: number; at: number } | undefined): Promise<{ turn: number | null; run?: string }> {
+        // The turn is the runner's: when the runner works on another bot server this one asks the shared record which turn had begun when the call arrived
+        // (`null` when that cannot be told: Orbit reads such a row with every turn it judges)
+        if (deps.refusals?.turnOfCall) {
+            const there = await deps.refusals.turnOfCall(jobId, arrived).catch(() => ({ turn: null as number | null }));
+            const run = (there as { run?: string }).run;
+            return { turn: there.turn, ...(run ? { run } : {}) };
+        }
+        const at = arrived !== undefined && deps.refusals?.turnAt ? deps.refusals.turnAt(jobId, arrived) : undefined;
+        const run = at ? at.run : deps.refusals?.runOf?.(jobId);
+        return { turn: at ? at.turn : deps.refusals?.turnOf?.(jobId) ?? 0, ...(run ? { run } : {}) };
+    }
+
+    // A body too big, or not JSON: said in the shape clients read, never as a page
+    const bodyProblem = (res: Response, error: unknown) => {
+        const status = isRecord(error) && typeof error.status === 'number' && error.status >= 400 && error.status < 500 ? error.status : 400;
+        return problem(res, status, status === 413 ? 'The request is too large.' : 'The request could not be read.', status === 413 ? 'request_too_large' : 'invalid_request');
+    };
+
     // Where in the order of events this call ARRIVED: taken before its body is read (a body can be slow to arrive) and before the job is known
     // (nothing of anyone's is read from it: it is only a point in a counter). Reading the body and asking Orbit who the caller is can each take
     // longer than a turn change, and the call belongs to the turn that was current when it arrived
@@ -599,16 +619,32 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         res.locals.arrived = deps.refusals?.mark?.();
         next();
     };
-    router.post('/v1/chat/completions', arrival, json, async (req: Request, res: Response) => {
+    // A body that is too big or cannot be read is a call that REACHED the relay all the same: the parser rejects it before the handler, so the error is kept
+    // here and the handler answers it after it has noted the arrival (see `bodyProblem` below, which says what clients read)
+    const readBody = (req: Request, res: Response, next: express.NextFunction) => {
+        json(req, res, (error?: unknown) => {
+            if (error !== undefined) res.locals.bodyError = error;
+            next();
+        });
+    };
+    router.post('/v1/chat/completions', arrival, readBody, async (req: Request, res: Response) => {
         const token = bearerOf(req);
         const arrived = res.locals.arrived as { order: number; at: number } | undefined;
+        // Set when the body could not be read (over the bound, or not JSON): the call is answered with that, once it is noted as having reached the relay
+        const bodyError = res.locals.bodyError as unknown;
+        const wasBodyError = res.locals.bodyError !== undefined;
         let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
         try {
             who = token ? await deps.orbit.identify(token) : null;
         } catch {
+            if (wasBodyError) return bodyProblem(res, bodyError);
             return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
         }
-        if (!token || !who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
+        if (!token || !who?.ok) {
+            // As before for a body that could not be read: its own answer, and nothing is noted for a key that proves nothing
+            if (wasBodyError) return bodyProblem(res, bodyError);
+            return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
+        }
         const { jobId, botId } = who as { ok: true; jobId: string; botId: string };
         // A call that failed for a fault of ours is noted for the runner (see ComputerRefusals): Hermes may hand its error back as a finished turn
         // Only the agent's own calls (they carry its tools) count: a side call Hermes makes with the same key (a summary, a title) that fails
@@ -623,20 +659,16 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // again from 1 after a restart, so the number alone is not the turn
         // The turn is the runner's: when the runner works on another bot server this one asks the shared record which turn had begun when the call arrived
         // (`null` when that cannot be told: Orbit reads such a row with every turn it judges)
-        let startedTurn: number | null;
-        let startedRun: string | undefined;
-        if (deps.refusals?.turnOfCall) {
-            const there = await deps.refusals.turnOfCall(jobId, arrived).catch(() => ({ turn: null as number | null }));
-            startedTurn = there.turn;
-            startedRun = (there as { run?: string }).run;
-        } else {
-            const at = arrived !== undefined && deps.refusals?.turnAt ? deps.refusals.turnAt(jobId, arrived) : undefined;
-            startedTurn = at ? at.turn : deps.refusals?.turnOf?.(jobId) ?? 0;
-            startedRun = at ? at.run : deps.refusals?.runOf?.(jobId);
-        }
+        const started = await startOf(jobId, arrived);
+        const startedTurn = started.turn;
+        const startedRun = started.run;
         // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
         // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
         const reachedAnswer = await reachedRelay(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) }, arrived?.at);
+        // A body the relay could not read was answered by the relay itself (413 or 400): the machine reached us, so the turn is no turn with no call. It is a
+        // mistake of the request, never of ours: no row is written (a body that cannot be read cannot be told to be an agent's call, and nothing of ours failed), and
+        // the answer is the same whether or not the call could be recorded for a runner on another server (a retry would send the same body)
+        if (wasBodyError) return bodyProblem(res, bodyError);
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
@@ -1060,11 +1092,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
     }
 
-    // A body too big, or not JSON: said in the shape clients read, never as a page
+    // Anything else the parser raised before the handler: said in the same shape
     router.use((error: unknown, _req: Request, res: Response, next: express.NextFunction) => {
         if (res.headersSent) return next(error);
-        const status = isRecord(error) && typeof error.status === 'number' && error.status >= 400 && error.status < 500 ? error.status : 400;
-        return problem(res, status, status === 413 ? 'The request is too large.' : 'The request could not be read.', status === 413 ? 'request_too_large' : 'invalid_request');
+        return bodyProblem(res, error);
     });
 
     return router;

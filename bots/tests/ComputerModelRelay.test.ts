@@ -175,6 +175,59 @@ describe('a call that reached the relay is noted for the runner', () => {
     });
 });
 
+describe('a body the relay cannot read is still a call that reached it', () => {
+    const rawAsk = (body: string, token: string | null = TOKEN) =>
+        fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body });
+    const oversized = () => JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(RELAY_GUARDS.maxBodyBytes + 1024) }], tools: [{ type: 'function', function: { name: 'x' } }] });
+
+    it('notes a call whose body is over the bound as having reached the relay, answers 413, and writes no row (a mistake of the request, nothing of ours failed)', async () => {
+        const before = notes.mark();
+        expect(await notes.calledAnywhereSince(JOB, before)).toBe(false);
+        const answer = await rawAsk(oversized());
+        expect(answer.status).toBe(413);
+        expect((await answer.json()).error.code).toBe('request_too_large');
+        expect(notes.calledSince(JOB, before)).toBe(true);
+        // the call that the runner asks about (any server)
+        expect(await notes.calledAnywhereSince(JOB, before)).toBe(true);
+        await notes.flush(JOB);
+        expect(rowsOf(JOB)).toEqual([]);
+        expect(notes.sawSince(JOB, before)).toBe(false);
+        expect(orbit.authorize).not.toHaveBeenCalled();
+        expect(upstreamRequests).toHaveLength(0);
+    });
+
+    it('notes a call whose body is not JSON the same way, with the answer it had before', async () => {
+        const before = notes.mark();
+        const answer = await rawAsk('{"messages": [');
+        expect(answer.status).toBe(400);
+        expect((await answer.json()).error.code).toBe('invalid_request');
+        expect(notes.calledSince(JOB, before)).toBe(true);
+        await notes.flush(JOB);
+        expect(rowsOf(JOB)).toEqual([]);
+        expect(orbit.authorize).not.toHaveBeenCalled();
+    });
+
+    it('notes nothing, and answers as before, for a key Orbit refuses, an Orbit that cannot be asked, and no key at all', async () => {
+        const before = notes.mark();
+        orbit.identify.mockResolvedValueOnce({ ok: false });
+        expect((await rawAsk(oversized())).status).toBe(413);
+        orbit.identify.mockRejectedValueOnce(new Error('down'));
+        expect((await rawAsk('{"messages": [')).status).toBe(400);
+        orbit.identify.mockClear();
+        expect((await rawAsk(oversized(), null)).status).toBe(413);
+        expect(orbit.identify).not.toHaveBeenCalled();
+        expect(notes.calledSince(JOB, before)).toBe(false);
+        expect(await notes.calledAnywhereSince(JOB, before)).toBe(false);
+    });
+
+    it('still reads a whole body as before: a call that is read is answered by the handler, not by the body answer', async () => {
+        const before = notes.mark();
+        expect((await ask({ messages })).status).toBe(200);
+        expect(notes.calledSince(JOB, before)).toBe(true);
+        expect((await ask({ messages: [] })).status).toBe(400);
+    });
+});
+
 describe('room before the call', () => {
     it('notes a refusal for the person’s allowance or a rule of theirs for the job, and no other refusal', async () => {
         const before = Date.now() - 1;
@@ -2364,6 +2417,20 @@ describe('the shared record of a call, before the call goes on', () => {
         }
         expect(written).toEqual([`called:${JOB}`]);
         expect(upstreamRequests).toHaveLength(1);
+    });
+
+    it('records a call whose body could not be read for the runner on another server, with the moment it arrived, and answers it as before', async () => {
+        const answer = await fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: '{"messages": [' });
+        expect(answer.status).toBe(400);
+        expect(written).toEqual([`called:${JOB}`]);
+        expect(moments).toHaveLength(1);
+        expect(upstreamRequests).toHaveLength(0);
+        // a store that cannot be written is no reason to answer a body that cannot be read with anything but its own answer
+        written.length = 0;
+        state.failWrites = 4;
+        // (another job: the operators are told once for a job, and the next test reads that for this one's)
+        orbit.identify.mockResolvedValueOnce({ ok: true, jobId: 'job-body-store', botId: BOT });
+        expect((await fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: '{"messages": [' })).status).toBe(400);
     });
 
     it('tries the record again when a write is lost, and the call goes on with nothing told', async () => {

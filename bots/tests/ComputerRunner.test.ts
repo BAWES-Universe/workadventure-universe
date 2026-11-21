@@ -1,4 +1,8 @@
 import { AdminApiService } from '../server/AdminApiService';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
+import { createComputerModelRelay, RELAY_GUARDS } from '../server/ComputerModelRelay';
 import { describe, expect, it, vi } from 'vitest';
 import {
     RESUME_PROMPT,
@@ -267,6 +271,52 @@ describe('a job that runs', () => {
         await runner.idle();
         expect(seen.turns).toHaveLength(1 + RUNNER_GUARDS.maxBadTurns);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2, 3, 4] }]);
+    });
+
+    describe('a call whose body the relay cannot read, through the real relay and the real notes', () => {
+        const turnWith = (call: () => Promise<unknown>): (() => TurnOpened) => () => ({
+            ok: true,
+            events: (async function* () {
+                await call();
+                yield { type: 'created', id: 'r', sessionId: 's' } as RunnerEvent;
+                yield { type: 'failed', code: 'model_error', message: 'The request is too large.' } as RunnerEvent;
+            })(),
+        });
+        const run = async (call: (base: string) => Promise<unknown>) => {
+            const rows: CallRow[] = [];
+            const notes = createRefusalNotes(Date.now, { sink: async (_bot, _job, batch) => (rows.push(...batch), true), retryMs: [0] });
+            const app = express();
+            app.use(createComputerModelRelay({ orbit: { identify: async () => ({ ok: true, jobId: JOB.jobId, botId: JOB.botId }), authorize: async () => ({ ok: true }), settle: async () => ({ ok: true }) } as never, routeFor: async () => null, refusals: notes }));
+            const server: Server = await new Promise((resolve) => { const started = app.listen(0, () => resolve(started)); });
+            const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+            try {
+                const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => turnWith(() => call(base))));
+                const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+                orbit.running = async () => [JOB];
+                await runner.tick();
+                await runner.idle();
+                await notes.flush(JOB.jobId);
+                return { rows, seen };
+            } finally {
+                server.closeAllConnections?.();
+                await new Promise<void>((resolve) => server.close(() => resolve()));
+            }
+        };
+        const post = (body: string) => (base: string) => fetch(`${base}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer cjt_${'a'.repeat(43)}` }, body });
+
+        it('writes no no_call marker for a turn whose only call was too large, nor for one that could not be read', async () => {
+            for (const body of [JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(RELAY_GUARDS.maxBodyBytes + 1024) }] }), '{"messages": [']) {
+                const { rows, seen } = await run(post(body));
+                expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+                expect(rows.filter((row) => row.callId.startsWith('no_call_'))).toEqual([]);
+                expect(rows.filter((row) => row.reason === 'relay_down')).toEqual([]);
+            }
+        }, 30_000);
+
+        it('still writes it for a turn in which no call reached the relay at all', async () => {
+            const { rows } = await run(async () => undefined);
+            expect(rows.filter((row) => row.callId.startsWith('no_call_') && row.kind === 'fault' && row.reason === 'relay_down')).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        });
     });
 
     describe('a fault of ours that Hermes hands back as a finished turn', () => {
