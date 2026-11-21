@@ -489,10 +489,12 @@ describe('the evidence kept before the money decision is final, and delivered af
                 held.set(`${jobId}|${row.callId}`, { botId, jobId, row: { ...row } });
                 return true;
             },
-            drop: async (jobId, callIds) => {
-                for (const id of callIds) {
-                    log.push(`drop ${id}`);
-                    held.delete(`${jobId}|${id}`);
+            // Each row only while the store still holds exactly the row that was taken (a newer row of the same call id stays)
+            drop: async (botId, jobId, rows) => {
+                for (const row of rows) {
+                    log.push(`drop ${row.callId}`);
+                    const kept = held.get(`${jobId}|${row.callId}`);
+                    if (kept && kept.botId === botId && JSON.stringify(kept.row) === JSON.stringify(row)) held.delete(`${jobId}|${row.callId}`);
                 }
             },
             load: async () => {
@@ -592,6 +594,57 @@ describe('the evidence kept before the money decision is final, and delivered af
         expect(mem.log).toEqual([]);
         release();
         await vi.waitFor(() => expect(mem.log).toEqual(['save c1', 'drop c1']));
+        expect(mem.held.size).toBe(0);
+    });
+
+    it('does not let the acknowledgement of an older row delete a newer row of the same call that Orbit has not taken', async () => {
+        const mem = memoryStore();
+        let release!: () => void;
+        mem.state.gate = new Promise<void>((resolve) => (release = resolve));
+        let orbitUp = true;
+        const { notes, sent } = ledger(mem.store, () => orbitUp);
+        notes.record('b', 'j', call('c1', { kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 }));
+        // Orbit takes the first row while its write to the store is still going
+        await vi.waitFor(() => expect(sent).toHaveLength(1));
+        orbitUp = false;
+        // the same call is written again (a later, firmer reading of it) while the first write is pending, and Orbit does not take it
+        notes.record('b', 'j', call('c1', { kind: 'fault', reason: 'provider_key_ours', providerStatus: 401 }));
+        release();
+        await vi.waitFor(() => expect(mem.log.filter((entry) => entry.startsWith('save'))).toHaveLength(2));
+        await vi.waitFor(() => expect(mem.log).toContain('drop c1'));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        // what the store holds is the newer row, for a restart to deliver
+        expect(mem.held.get('j|c1')?.row).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+    });
+
+    it('writes a row the store could not keep again while Orbit is still away and Redis is back, and never writes one Orbit has taken', async () => {
+        const mem = memoryStore();
+        // the first write and the retry of the flush both fail; then Redis is back, while Orbit still does not answer
+        mem.state.failSaves = 2;
+        let orbitUp = false;
+        const { notes, sent } = ledger(mem.store, () => orbitUp, { storeLaterMs: 5 });
+        notes.record('b', 'j', call('c1'));
+        await notes.flush('j');
+        // the tries that only reach Orbit now keep the row in the store too, once it can be kept
+        await vi.waitFor(() => expect(mem.held.has('j|c1')).toBe(true), { timeout: 3000 });
+        expect(sent).toHaveLength(0);
+        // Orbit takes it: it is removed from the store, and nothing is written for it afterwards
+        orbitUp = true;
+        await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 3000 });
+        await vi.waitFor(() => expect(mem.held.size).toBe(0));
+        const saves = mem.log.filter((entry) => entry.startsWith('save')).length;
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        expect(mem.log.filter((entry) => entry.startsWith('save'))).toHaveLength(saves);
+    });
+
+    it('does not write a row to the store that Orbit took while the store was away', async () => {
+        const mem = memoryStore();
+        mem.state.failSaves = 1;
+        const { notes } = ledger(mem.store, () => true);
+        notes.record('b', 'j', call('c1'));
+        expect(await notes.flush('j')).toBe(true);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(mem.log.filter((entry) => entry.startsWith('save'))).toEqual([]);
         expect(mem.held.size).toBe(0);
     });
 
@@ -764,6 +817,27 @@ describe('whether every call of a turn was refused for want of room in the share
         expect(notes.onlyPoolBusySince('b', before)).toBe(false);
         // a turn that began after it does not hold it
         expect(notes.onlyPoolBusySince('a', notes.mark())).toBe(false);
+    });
+
+    it('is false when the person’s allowance or a rule of theirs refused a call of the turn too, whatever the order', () => {
+        const notes = createRefusalNotes(() => 1000);
+        for (const [job, order] of [['a', ['pool', 'allowance']], ['b', ['allowance', 'pool']], ['c', ['pool', 'rule']]] as const) {
+            const before = notes.mark();
+            for (const [n, what] of order.entries()) {
+                if (what === 'pool') pool(notes, job, `p${n}`);
+                else notes.record('b', job, { callId: `r${n}`, kind: 'not_ours', reason: what, source: 'universe-ai', route: 'r', providerStatus: 429 });
+            }
+            expect(notes.onlyPoolBusySince(job, before), job).toBe(false);
+        }
+        // only pool refusals (confirmed, with an unresolved one beside them) is still pool-only
+        const before = notes.mark();
+        pool(notes, 'd', 'p1');
+        pool(notes, 'd', 'p2', 'uncertain');
+        expect(notes.onlyPoolBusySince('d', before)).toBe(true);
+        // a refusal of the person's from an earlier turn does not make this one mixed
+        const next = notes.mark();
+        pool(notes, 'a', 'p9');
+        expect(notes.onlyPoolBusySince('a', next)).toBe(true);
     });
 
     it('is false for a turn with a call taken up, before or after the refusal, and for a refusal that was no refusal for room', () => {

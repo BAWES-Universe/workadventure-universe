@@ -14,11 +14,30 @@ export interface EvidenceRedis {
     hGetAll(key: string): Promise<Record<string, string>>;
     hSet(key: string, field: string, value: string): Promise<unknown>;
     hDel(key: string, fields: string | string[]): Promise<unknown>;
+    /** Runs a script in the store, so a comparison and the deletion that rests on it are one step (node-redis v4: `eval(script, { keys, arguments })`). */
+    eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
     expire(key: string, seconds: number): Promise<unknown>;
     scan(cursor: number, options: { MATCH: string; COUNT: number }): Promise<{ cursor: number; keys: string[] }>;
 }
 
 export const EVIDENCE_PREFIX = 'computer:faults:pending:';
+
+/**
+ * Deletes fields of the hash KEYS[1] only where each still holds the value it was given (ARGV: field, value, field, value...): a field that was written
+ * again since (a newer row of the same call id, which Orbit has not taken) stays. Answers how many were deleted.
+ */
+export const DELETE_IF_UNCHANGED = `
+local removed = 0
+for i = 1, #ARGV, 2 do
+  if redis.call('HGET', KEYS[1], ARGV[i]) == ARGV[i + 1] then
+    removed = removed + redis.call('HDEL', KEYS[1], ARGV[i])
+  end
+end
+return removed
+`;
+
+/** A key of another kind that matches the prefix (Redis answers WRONGTYPE to a hash command on it): not ours, and no reason to stop reading the others. */
+const wrongType = (error: unknown): boolean => error instanceof Error && /^WRONGTYPE\b/.test(error.message);
 export const EVIDENCE_TTL_SECONDS = Math.round(EVIDENCE_KEEP_MS / 1000);
 
 const KINDS = new Set(['fault', 'not_ours', 'uncertain']);
@@ -80,13 +99,18 @@ export class RedisEvidenceStore implements EvidenceStore {
         }
     }
 
-    async drop(jobId: string, callIds: string[]): Promise<void> {
-        if (callIds.length === 0) return;
+    async drop(botId: string, jobId: string, rows: CallRow[]): Promise<void> {
+        if (rows.length === 0) return;
         try {
-            await this.within(this.client().hDel(EVIDENCE_PREFIX + jobId, callIds));
+            // Each row only while it is the one in the store: a newer row of the same call id (written after the one Orbit took) is not Orbit's yet
+            await this.deleteIfUnchanged(EVIDENCE_PREFIX + jobId, rows.map((row) => [row.callId, JSON.stringify({ botId, row })] as [string, string]));
         } catch {
             /* a row left behind is only sent again, and Orbit keeps one per job and call */
         }
+    }
+
+    private async deleteIfUnchanged(key: string, fields: Array<[string, string]>): Promise<void> {
+        await this.within(this.client().eval(DELETE_IF_UNCHANGED, { keys: [key], arguments: fields.flat() }));
     }
 
     async load(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>> {
@@ -102,10 +126,17 @@ export class RedisEvidenceStore implements EvidenceStore {
         for (const key of keys) {
             const jobId = key.slice(EVIDENCE_PREFIX.length);
             if (jobId === '') continue;
-            const all = await this.within(client.hGetAll(key));
+            let all: Record<string, string>;
+            try {
+                all = await this.within(client.hGetAll(key));
+            } catch (error) {
+                // A foreign key that matches the prefix must not stop every job from coming back; a store that cannot be reached still does (it is asked again)
+                if (wrongType(error)) continue;
+                throw error;
+            }
             const rows: CallRow[] = [];
             let botId: string | undefined;
-            const stale: string[] = [];
+            const stale: Array<[string, string]> = [];
             for (const [field, value] of Object.entries(all)) {
                 let entry: { botId?: unknown; row?: unknown } | null = null;
                 try {
@@ -117,13 +148,14 @@ export class RedisEvidenceStore implements EvidenceStore {
                 if (!entry || !row || !text(entry.botId) || row.callId !== field) continue;
                 const at = Date.parse(row.at);
                 if (Number.isFinite(at) && at < this.now() - EVIDENCE_KEEP_MS) {
-                    stale.push(field);
+                    stale.push([field, value]);
                     continue;
                 }
                 botId = entry.botId;
                 rows.push(row);
             }
-            if (stale.length > 0) await this.within(client.hDel(key, stale)).catch(() => undefined);
+            // An expired row is removed only if it is still the one that was read: another bot server may have written a newer one since
+            if (stale.length > 0) await this.deleteIfUnchanged(key, stale).catch(() => undefined);
             if (botId && rows.length > 0) jobs.push({ botId, jobId, rows });
         }
         return jobs;

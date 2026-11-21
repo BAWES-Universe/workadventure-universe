@@ -1242,6 +1242,17 @@ describe('the bot server’s calls to Orbit', () => {
 });
 
 describe('whyOf: the one sentence the agent gave for why it could not go on', () => {
+    it('redacts the whole sentence before it is cut to its length: a cut through an assignment must not leave its value showing', () => {
+        const words = `PASSWORD=hunter2 ${'x '.repeat(144)}tail [[failed]]`;
+        const why = whyOf(words) ?? '';
+        expect(why).not.toContain('hunter2');
+        expect(why.length).toBeLessThanOrEqual(300);
+        expect(why.endsWith('tail')).toBe(true);
+        // the same when the value is a key by its shape, or a header
+        const key = `Authorization: Bearer ${'k'.repeat(24)}1 ${'y '.repeat(150)}end [[failed]]`;
+        expect(whyOf(key)).not.toMatch(/k{8}/);
+    });
+
     it('is the last sentence before the failed marker', () => {
         expect(whyOf('I opened the form. The site stopped me at the passport upload and kept showing an error. [[failed]]')).toBe('The site stopped me at the passport upload and kept showing an error.');
         expect(whyOf('First line\nThe site is down [[failed]]')).toBe('The site is down');
@@ -1673,6 +1684,27 @@ describe('a machine that cannot reach our own model service', () => {
     });
 });
 
+describe('a stop that comes while the relay’s address is being asked', () => {
+    it('sends no prepare for the job, and ends nothing', async () => {
+        let answer!: (result: RelayProbeResult) => void;
+        const probe = vi.fn(() => new Promise<RelayProbeResult>((resolve) => (answer = resolve)));
+        const warn = vi.fn();
+        const { orbit, seen } = fakeOrbit([done('[[done]]')]);
+        const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: { warn, error: vi.fn(), info: vi.fn() }, relayProbe: probe, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0], prepareMs: [0] } });
+        orbit.running = async () => [JOB];
+        await runner.tick();
+        await vi.waitFor(() => expect(probe).toHaveBeenCalled());
+        runner.stop();
+        // the address answers after the stop, as the relay or as nothing the bot server can tell
+        for (const result of [{ answer: 'relay', status: 401 }, { answer: 'unknown', status: null }] as const) {
+            answer(result);
+            await runner.idle();
+            expect(seen.prepares, result.answer).toEqual([]);
+            expect(finished(seen), result.answer).toEqual([]);
+        }
+    });
+});
+
 describe('asking an address whether it is the relay', () => {
     const answer = (status: number, body: string): typeof fetch => (async () => new Response(body, { status })) as never;
     it('reads the relay’s own answers (a JSON error without a key, the list, an Orbit that is away) as the relay', async () => {
@@ -1813,6 +1845,63 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
             await notes.flush(JOB.jobId);
             expect(sent.find((row) => row.callId === 'pool_busy_gave_up_run1_1')).toMatchObject({ kind: 'fault' });
+        });
+    });
+
+    it('does not give up on a turn it only reconnected to after a restart: a call taken up before the restart is unknown to it, so the refusals seen since are no proof', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            // the bot server restarted: the job has a turn already going, taken up with orbit.stream, and the notes begin empty
+            orbit.running = async () => [{ ...JOB, hasTurn: true }];
+            const events = (): AsyncGenerator<RunnerEvent> => (async function* () {
+                yield { type: 'created', id: 'r', sessionId: 's' };
+                notes.record(JOB.botId, JOB.jobId, poolRefusal);
+                await new Promise<void>((resolve) => setTimeout(resolve, 200_000));
+                yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null };
+            })();
+            orbit.stream = async () => ({ ok: true, events: events() });
+            const running = runJob(orbit, { ...JOB, hasTurn: true }, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.some((row) => row.callId.startsWith('pool_busy_gave_up'))).toBe(false);
+        });
+    });
+
+    it('still gives up on a turn it started itself in a job it took up after a restart', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            // the first turn is only reconnected to (and ends well); the next one is started here and met a pool with no room
+            let turns = 0;
+            orbit.stream = async () => ({ ok: true, events: (async function* (): AsyncGenerator<RunnerEvent> { yield { type: 'completed', outputText: 'Still on it.', usage: null }; })() });
+            retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)); turns += 1; }, 6 * 60_000);
+            const running = runJob(orbit, { ...JOB, hasTurn: true }, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            expect(turns).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2], why: POOL_BUSY_WHY }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.find((row) => row.callId === 'pool_busy_gave_up_run1_2')).toMatchObject({ kind: 'fault', turn: 2 });
+        });
+    });
+
+    it('does not give up on a turn in which the person’s allowance or a rule of theirs also refused a call: a spending limit stopped it too', async () => {
+        await withFakeClock(async () => {
+            const { notes } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, (at) => {
+                at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal));
+                at(10_000, () => notes.record(JOB.botId, JOB.jobId, { callId: 'c-allowance', kind: 'not_ours', reason: 'allowance', source: 'universe-ai', route: 'universe-ai:p', providerStatus: 429 }));
+            }, 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen).every((one) => one.action === 'finish' && one.why !== POOL_BUSY_WHY)).toBe(true);
         });
     });
 

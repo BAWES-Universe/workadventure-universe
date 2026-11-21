@@ -1952,31 +1952,20 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
         expect((await ask(agent)).status).toBe(503);
         expect((await rowsSent('job-r-pool'))[0]).toMatchObject({ kind: 'fault', reason: 'pool_busy' });
 
-        // A call refused for its own size (the pool had room for a smaller one, and a call grows with what the job sent) is unresolved, never confirmed,
-        // when calls of the job were taken up before: the pool had room for them
-        asJob('job-r-pool-size');
-        notes.accepted('job-r-pool-size');
-        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool', full: false });
-        expect((await ask(agent)).status).toBe(503);
-        expect((await rowsSent('job-r-pool-size'))[0]).toMatchObject({ kind: 'uncertain', reason: 'pool_busy' });
-        asJob('job-r-pool-nofield');
-        notes.accepted('job-r-pool-nofield');
-        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool' });
-        expect((await ask(agent)).status).toBe(503);
-        expect((await rowsSent('job-r-pool-nofield'))[0]).toMatchObject({ kind: 'uncertain', reason: 'pool_busy' });
-        // The same refusal for a job none of whose calls was ever taken up is confirmed: the pool had no room at all, whatever the size of the call
+        // A call refused for its own size (the pool may have room for a smaller one, and a call grows with what the job sent) is unresolved, never confirmed:
+        // also when it is the first call of the job, and when an older Orbit says nothing of the size. Orbit confirms a pool that took none of a job's calls by its own record
         for (const refusal of [{ ok: false, reason: 'pool', full: false }, { ok: false, reason: 'pool' }] as const) {
-            asJob(`job-r-pool-never-${'full' in refusal ? 'sized' : 'plain'}`);
+            const name = `job-r-pool-first-${'full' in refusal ? 'sized' : 'plain'}`;
+            asJob(name);
             orbit.authorize.mockResolvedValue(refusal);
             expect((await ask(agent)).status).toBe(503);
-            expect((await rowsSent(`job-r-pool-never-${'full' in refusal ? 'sized' : 'plain'}`))[0]).toMatchObject({ kind: 'fault', reason: 'pool_busy' });
+            expect((await rowsSent(name))[0]).toMatchObject({ kind: 'uncertain', reason: 'pool_busy' });
         }
-        // A call Orbit found room for is noted as taken up (and one refused, or from a caller that went away, is not)
+        // A call Orbit found room for is noted as taken up (a call refused is not), whatever the provider then said
         asJob('job-r-taken');
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool', full: true });
         await ask(agent);
         expect(notes.acceptedSince('job-r-taken', 0)).toBe(false);
-        // (a call the provider then refused is taken up all the same: the pool had room for it)
         orbit.authorize.mockResolvedValue({ ok: true });
         upstreamHandler = refused(401, { message: 'revoked' });
         await askAndSettle(agent, 1);
@@ -2115,5 +2104,108 @@ describe('an error nobody expected while the provider is called', () => {
         } finally {
             await new Promise<void>((resolve) => { own.closeAllConnections?.(); own.close(() => resolve()); });
         }
+    });
+});
+
+describe('a call that is identified, or taken up, after the runner has moved on to the next turn', () => {
+    const agent = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
+    const asJob = (jobId: string) => orbit.identify.mockResolvedValue({ ok: true, jobId, botId: BOT });
+    const gate = <T,>() => {
+        let open!: (value: T) => void;
+        const promise = new Promise<T>((resolve) => (open = resolve));
+        return { promise, open };
+    };
+    const poolRefusal = { callId: 'turn5-pool', kind: 'fault', reason: 'pool_busy', source: 'universe-ai', route: 'universe-ai:p', providerStatus: 503 } as const;
+
+    it('does not count a call of turn 4 that Orbit identifies in turn 5 as a call of turn 5', async () => {
+        for (const moved of [true, false]) {
+            const job = `job-late-identify-${moved}`;
+            asJob(job);
+            notes.turn(job, 4, 'r');
+            const identified = gate<{ ok: true; jobId: string; botId: string }>();
+            orbit.identify.mockImplementationOnce(() => identified.promise);
+            const asked = ask(agent);
+            await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalled(), { timeout: 3000 });
+            // the runner moves on to turn 5 while the call waits to be identified
+            const turn4 = moved ? undefined : notes.mark();
+            if (moved) notes.turn(job, 5, 'r');
+            const turn5 = notes.mark();
+            identified.open({ ok: true, jobId: job, botId: BOT });
+            await (await asked).text();
+            if (moved) expect(notes.calledSince(job, turn5)).toBe(false);
+            // a call that arrived and was identified in the turn that is going counts as it always did
+            else expect(notes.calledSince(job, turn4!)).toBe(true);
+        }
+    });
+
+    it('still counts a call that arrives in turn 5, and leaves no marker for a key Orbit does not know', async () => {
+        const job = 'job-turn5-call';
+        asJob(job);
+        notes.turn(job, 4, 'r');
+        notes.turn(job, 5, 'r');
+        const turn5 = notes.mark();
+        await (await ask(agent)).text();
+        expect(notes.calledSince(job, turn5)).toBe(true);
+        const unknown = 'job-unknown-key';
+        notes.turn(unknown, 1, 'r');
+        orbit.identify.mockResolvedValue({ ok: false });
+        const before = notes.mark();
+        expect((await ask(agent)).status).toBe(401);
+        expect(notes.calledSince(unknown, before)).toBe(false);
+    });
+
+    it('does not record a call of turn 4 that Orbit takes up in turn 5 as a call taken up in turn 5', async () => {
+        const job = 'job-late-accept';
+        asJob(job);
+        notes.turn(job, 4, 'r');
+        const room = gate<{ ok: true }>();
+        orbit.authorize.mockImplementationOnce(() => room.promise);
+        const asked = ask(agent);
+        await vi.waitFor(() => expect(orbit.authorize).toHaveBeenCalled(), { timeout: 3000 });
+        notes.turn(job, 5, 'r');
+        const turn5 = notes.mark();
+        // in turn 5 the pool refuses a call outright
+        notes.record(BOT, job, { ...poolRefusal, turn: 5, run: 'r' });
+        room.open({ ok: true });
+        await (await asked).text();
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalled(), { timeout: 3000 });
+        // nothing of turn 5 was taken up: it is a turn of refusals for room, as it was
+        expect(notes.acceptedSince(job, turn5)).toBe(false);
+        expect(notes.onlyPoolBusySince(job, turn5)).toBe(true);
+    });
+});
+
+describe('a model of the person’s own key that the provider says it does not have', () => {
+    const agent = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
+    const asJob = (jobId: string) => orbit.identify.mockResolvedValue({ ok: true, jobId, botId: BOT });
+    const refusedWith = (status: number, error: Record<string, unknown>) => (_req: express.Request, res: express.Response) => res.status(status).json({ error });
+
+    it('is unresolved, while a revoked key and an exhausted credit stay the person’s', async () => {
+        route = { config: config({ endpoint: upstreamBase }), source: 'own-key', keyOwnerId: 'person-owner' };
+        let settledCalls = 0;
+        for (const [name, status, error, expected] of [
+            ['job-own-model-code', 404, { code: 'model_not_found', message: 'The model `x` does not exist or you do not have access to it.' }, { kind: 'uncertain', reason: 'field_relay_set' }],
+            ['job-own-model-message', 404, { message: 'The model x does not exist' }, { kind: 'uncertain', reason: 'field_relay_set' }],
+            ['job-own-model-429', 429, { code: 'model_not_found', type: 'invalid_request_error', message: 'no such model' }, { kind: 'uncertain', reason: 'field_relay_set' }],
+            ['job-own-key-revoked', 401, { code: 'invalid_api_key', message: 'Incorrect API key provided' }, { kind: 'not_ours', reason: 'own_provider' }],
+            ['job-own-credit', 429, { code: 'insufficient_quota', type: 'insufficient_quota', message: 'You exceeded your current quota' }, { kind: 'not_ours', reason: 'own_provider' }],
+            ['job-own-both', 404, { code: 'model_not_found', type: 'authentication_error', message: 'nope' }, { kind: 'not_ours', reason: 'own_provider' }],
+        ] as const) {
+            asJob(name);
+            upstreamHandler = refusedWith(status, error);
+            const answer = await ask(agent);
+            await answer.text();
+            await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(++settledCalls), { timeout: 3000 });
+            expect((await rowsSent(name))[0], name).toMatchObject({ ...expected, source: 'own-key' });
+        }
+    });
+
+    it('is still a confirmed fault of ours on Universe’s own key (a model of ours that is missing)', async () => {
+        route = { config: config({ endpoint: upstreamBase }), source: 'universe-ai', keyOwnerId: null };
+        asJob('job-ours-model');
+        upstreamHandler = refusedWith(404, { code: 'model_not_found', message: 'The model x does not exist' });
+        await (await ask(agent)).text();
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect((await rowsSent('job-ours-model'))[0]).toMatchObject({ kind: 'fault', reason: 'provider_key_ours', source: 'universe-ai' });
     });
 });

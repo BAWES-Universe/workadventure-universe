@@ -140,7 +140,8 @@ export function whyOf(words: string): string | null {
     const sentences = before.split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9“"'(])/).map((one) => one.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const last = sentences[sentences.length - 1] ?? '';
     // The computer's own sentence may quote a command it ran: nothing secret goes on to Orbit or the person
-    return last ? redactSecrets(last.slice(-300)) : null;
+    // (the whole sentence is redacted first: a cut at 300 characters through `PASSWORD=hunter2` would leave a value no pattern can tell from a word)
+    return last ? redactSecrets(last).slice(-300) : null;
 }
 
 /**
@@ -389,6 +390,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             let unreachable = false;
             let answer: { ok: true } | { ok: false; reason: string } = { ok: true };
             const seen = await relayAnswer(relay, attempt > 0);
+            // A stop that came while the address was being asked: no prepare is sent for a job that is no longer being worked on
+            if (signal.aborted) return 'stopped';
             if (seen.answer === 'wrong') {
                 // The job ends here (its own fault row says so): Orbit is not asked to prepare a machine for it
                 unreachable = true;
@@ -421,7 +424,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     }
 
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
-    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined, since: Since | null): Promise<TurnResult> {
+    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined, since: Since | null, seenFromStart: () => boolean): Promise<TurnResult> {
         // A stop that came while the machine was being made ready has already fired: its listener would never be told
         if (signal.aborted) return { kind: 'stopped' };
         const turnController = new AbortController();
@@ -434,7 +437,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let poolTimer: ReturnType<typeof setTimeout> | undefined;
         let poolWatch: ReturnType<typeof setTimeout> | undefined;
         let gaveUp = false;
-        const poolBusy = () => since !== null && deps.refusals?.onlyPoolBusySince?.(job.jobId, since) === true;
+        // Only for a turn this process saw from its beginning: after a restart the notes know nothing of a call that was taken up before it, so a turn taken up
+        // by reconnecting is not judged pool-only from the refusals seen since (the turns it starts itself, and Orbit's own record, still are)
+        const poolBusy = () => since !== null && seenFromStart() && deps.refusals?.onlyPoolBusySince?.(job.jobId, since) === true;
         const watchPool = () => {
             if (turnController.signal.aborted) return;
             if (poolBusy()) {
@@ -739,7 +744,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             }
             deps.refusals?.turn?.(job.jobId, turnNo, run);
             accepted.joined = false;
-            const result = await oneTurn(job, input, signal, renewing, accepted, generation, turnStartedAt);
+            const result = await oneTurn(job, input, signal, renewing, accepted, generation, turnStartedAt, () => seenFromStart && !(freshWindow && accepted.joined));
             if (freshWindow && accepted.joined) seenFromStart = false;
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;

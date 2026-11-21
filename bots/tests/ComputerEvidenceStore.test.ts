@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EVIDENCE_PREFIX, EVIDENCE_TTL_SECONDS, RedisEvidenceStore, type EvidenceRedis } from '../server/ComputerEvidenceStore';
+import { DELETE_IF_UNCHANGED, EVIDENCE_PREFIX, EVIDENCE_TTL_SECONDS, RedisEvidenceStore, type EvidenceRedis } from '../server/ComputerEvidenceStore';
 import { createRefusalNotes, EVIDENCE_KEEP_MS, type CallRow } from '../server/ComputerRefusals';
 
 const row = (callId: string, over: Partial<CallRow> = {}): CallRow => ({
@@ -21,20 +21,39 @@ function fakeRedis() {
     const hashes = new Map<string, Map<string, string>>();
     const ttl = new Map<string, number>();
     const hash = (key: string) => hashes.get(key) ?? hashes.set(key, new Map()).get(key)!;
-    const state = { down: false, silent: false, pageSize: 2, scans: 0 };
+    const state = { down: false, silent: false, pageSize: 2, scans: 0, wrongTypes: new Set<string>(), beforeEval: undefined as undefined | (() => void) };
     const gate = async <T>(work: () => T): Promise<T> => {
         if (state.down) throw new Error('Redis went away');
         if (state.silent) return new Promise<T>(() => undefined);
         return work();
     };
     const client: EvidenceRedis = {
-        hGetAll: (key) => gate(() => Object.fromEntries(hashes.get(key) ?? [])),
+        hGetAll: (key) =>
+            gate(() => {
+                if (state.wrongTypes.has(key)) throw new Error('WRONGTYPE Operation against a key holding the wrong kind of value');
+                return Object.fromEntries(hashes.get(key) ?? []);
+            }),
         hSet: (key, field, value) => gate(() => (hash(key).set(field, value), 1)),
         hDel: (key, fields) =>
             gate(() => {
                 for (const field of Array.isArray(fields) ? fields : [fields]) hashes.get(key)?.delete(field);
                 if (hashes.get(key)?.size === 0) hashes.delete(key);
                 return 1;
+            }),
+        // The one script the store runs: delete each field only while it holds the value it was given, as one step
+        eval: (script, options) =>
+            gate(() => {
+                if (script !== DELETE_IF_UNCHANGED) throw new Error('an unknown script');
+                state.beforeEval?.();
+                let removed = 0;
+                for (let i = 0; i < options.arguments.length; i += 2) {
+                    if (hashes.get(options.keys[0])?.get(options.arguments[i]) === options.arguments[i + 1]) {
+                        hashes.get(options.keys[0])?.delete(options.arguments[i]);
+                        removed++;
+                    }
+                }
+                if (hashes.get(options.keys[0])?.size === 0) hashes.delete(options.keys[0]);
+                return removed;
             }),
         expire: (key, seconds) => gate(() => (ttl.set(key, seconds), 1)),
         scan: (cursor, options) =>
@@ -76,9 +95,9 @@ describe('the evidence kept for Orbit in the shared store', () => {
             ['bot-2', 'job-2', ['c3']],
         ]);
         expect(loaded.find((job) => job.jobId === 'job-1')?.rows.find((one) => one.callId === 'c1')).toEqual(row('c1', { kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 }));
-        await store.drop('job-1', ['c1', 'c2']);
+        await store.drop('bot-1', 'job-1', [row('c2', { kind: 'uncertain', reason: 'stream_cut', providerStatus: null }), row('c1', { kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 })]);
         expect(redis.keys()).toEqual(['computer:faults:pending:job-2']);
-        await store.drop('job-1', []);
+        await store.drop('bot-1', 'job-1', []);
     });
 
     it('finds every job’s hash whatever the page size of the scan', async () => {
@@ -105,7 +124,7 @@ describe('the evidence kept for Orbit in the shared store', () => {
         const store = new RedisEvidenceStore(() => redis.client, Date.now, 50);
         redis.state.down = true;
         expect(await store.save('b', 'j', row('c1'))).toBe(false);
-        await expect(store.drop('j', ['c1'])).resolves.toBeUndefined();
+        await expect(store.drop('b', 'j', [row('c1')])).resolves.toBeUndefined();
         redis.state.down = false;
         redis.state.silent = true;
         const started = Date.now();
@@ -168,5 +187,62 @@ describe('the evidence kept for Orbit in the shared store', () => {
         // a replay with nothing pending sends nothing
         expect(await second.resume()).toBe(true);
         expect(delivered).toHaveLength(1);
+    });
+});
+
+describe('what the store does not take for granted', () => {
+    it('keeps a newer row of the same call id when Orbit took the older one: a drop removes only the row that was taken', async () => {
+        const redis = fakeRedis();
+        const store = new RedisEvidenceStore(() => redis.client, () => NOW);
+        const older = row('c1', { kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 });
+        const newer = row('c1', { kind: 'fault', reason: 'provider_key_ours', providerStatus: 401, at: '2026-11-20T10:01:00.000Z' });
+        await store.save('bot-1', 'job-1', older);
+        // the newer row is saved before the drop for the older one runs
+        await store.save('bot-1', 'job-1', newer);
+        await store.drop('bot-1', 'job-1', [older]);
+        const kept = await store.load();
+        expect(kept).toHaveLength(1);
+        expect(kept[0].rows).toEqual([newer]);
+        // and the row that was taken, left alone since, is removed
+        await store.drop('bot-1', 'job-1', [newer]);
+        expect(await store.load()).toEqual([]);
+        // a row of another bot's id is not the one that was kept
+        await store.save('bot-1', 'job-2', older);
+        await store.drop('bot-2', 'job-2', [older]);
+        expect(redis.fields('job-2')).toEqual(['c1']);
+    });
+
+    it('removes an expired row only if it is still the one that was read: one written meanwhile by another bot server stays', async () => {
+        const redis = fakeRedis();
+        let at = NOW;
+        const store = new RedisEvidenceStore(() => redis.client, () => at);
+        await store.save('b', 'j', row('old'));
+        await store.save('b', 'j', row('fresh'));
+        at = Date.parse(row('old').at) + EVIDENCE_KEEP_MS + 1;
+        const replacement = row('old', { at: new Date(at).toISOString() });
+        // after the hash was read and before the expired row is deleted, another server writes a newer row under the same call id
+        redis.state.beforeEval = () => {
+            redis.state.beforeEval = undefined;
+            redis.raw('j', 'old', JSON.stringify({ botId: 'b', row: replacement }));
+        };
+        const loaded = await store.load();
+        // the expired ones were not brought back, and the replacement written meanwhile was not removed
+        expect(loaded.map((job) => job.rows.map((one) => one.callId))).toEqual([]);
+        expect(redis.fields('j')).toContain('old');
+        const again = await store.load();
+        expect(again.flatMap((job) => job.rows.map((one) => one.callId))).toEqual(['old']);
+    });
+
+    it('goes on with the other jobs when a key that matches the prefix is not a hash, and still fails when the store cannot be reached', async () => {
+        const redis = fakeRedis();
+        redis.state.pageSize = 100;
+        const store = new RedisEvidenceStore(() => redis.client, () => NOW);
+        await store.save('b', 'job-1', row('c1'));
+        await store.save('b', 'job-2', row('c2'));
+        redis.state.wrongTypes.add('computer:faults:pending:job-1');
+        const loaded = await store.load();
+        expect(loaded.map((job) => job.jobId)).toEqual(['job-2']);
+        redis.state.down = true;
+        await expect(store.load()).rejects.toThrow();
     });
 });

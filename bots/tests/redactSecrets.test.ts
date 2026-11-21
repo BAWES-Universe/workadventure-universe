@@ -92,6 +92,61 @@ describe('a label of several lines, or with tabs, is judged and hidden as the ma
     });
 });
 
+describe('a value is read whole, as the shell reads a word', () => {
+    it('hides a value with an escaped space, an escaped quote, or quotes joined to plain characters, all of it', () => {
+        const cases: Array<[string, string]> = [
+            ['PASSWORD=two\\ words next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=a\\ b\\ c;echo', `PASSWORD=${HIDDEN};echo`],
+            ['PASSWORD="say \\"hi\\" now" next', `PASSWORD=${HIDDEN} next`],
+            ["PASSWORD=it\\'s\\ here next", `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=pre"mid dle"post next', `PASSWORD=${HIDDEN} next`],
+            ["PASSWORD='two words' next", `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=hunter2 next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD="two words" next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD="never closed words', `PASSWORD=${HIDDEN}`],
+            ['x?token=abc&other=1', `x?token=${HIDDEN}&other=${HIDDEN}`],
+        ];
+        for (const [text, hidden] of cases) {
+            expect(redactSecrets(text), text).toBe(hidden);
+            for (const left of ['words', 'two', 'dle', 'closed', 'here', 'say', 'hi']) if (!hidden.includes(left)) expect(redactSecrets(text), text).not.toContain(left);
+        }
+    });
+
+    it('also hides it where the computer says why it could not go on, and in a label', () => {
+        expect(whyOf('It refused me: PASSWORD=two\\ words [[failed]]')).not.toContain('words');
+        expect(safeStepLabel('Signing in with PASSWORD=two\\ words now')).toBe(`Signing in with PASSWORD=${HIDDEN} now`);
+    });
+});
+
+describe('a command given by its path, or by a terminal tool, is never shown', () => {
+    it('says a command that starts with a path as a plain description, whatever follows', () => {
+        for (const command of ['/usr/bin/python3 login.py alice hunter2', './run.sh alice hunter2', '~/bin/login alice hunter2', '../tools/login alice hunter2', 'cd /tmp; /opt/app/login alice hunter2', '/usr/bin/python3 login.py alice hunter2 + 2 commands']) {
+            expect(looksLikeCommand(command), command).toBe(true);
+            expect(safeStepLabel(command), command).toMatch(new RegExp(`^${PLAIN_STEP}( \\+ \\d+ commands)?$`));
+            noSecret(safeStepLabel(command));
+        }
+        expect(safeStepLabel('/usr/bin/python3 login.py alice hunter2 + 2 commands')).toBe(`${PLAIN_STEP} + 2 commands`);
+    });
+
+    it('keeps an ordinary description that only mentions a path or a slash', () => {
+        for (const label of ['Opening the file at /home/user/notes', 'Reading and/or editing the form', 'Opening https://example.test/account', 'Typing 12/05/2026 in the date box']) {
+            expect(looksLikeCommand(label), label).toBe(false);
+            expect(safeStepLabel(label), label).toBe(label);
+        }
+    });
+
+    it('says a terminal tool’s label as a plain description even when it reads like a sentence, and keeps a browser tool’s label', () => {
+        expect(safeStepLabel('login alice hunter2', 'terminal')).toBe(PLAIN_STEP);
+        expect(safeStepLabel('login alice hunter2 + 3 commands', 'shell')).toBe(`${PLAIN_STEP} + 3 commands`);
+        expect(safeStepLabel('Opening the form', 'browser')).toBe('Opening the form');
+        const terminal = runnerEventOf(JSON.stringify({ type: 'tool', state: 'started', tool: 'terminal', label: 'login alice hunter2' }));
+        expect(terminal).toMatchObject({ type: 'tool', label: PLAIN_STEP });
+        const path = runnerEventOf(JSON.stringify({ type: 'tool', state: 'started', tool: 'browser', label: '/usr/bin/python3 login.py alice hunter2' }));
+        expect(path).toMatchObject({ type: 'tool', label: PLAIN_STEP });
+        noSecret(JSON.stringify([terminal, path]));
+    });
+});
+
 describe('hiding secrets in any text', () => {
     it('hides an Authorization header, a Bearer token, and a header given to a command', () => {
         expect(redactSecrets('Authorization: Bearer hunter2')).toBe(`Authorization: ${HIDDEN}`);

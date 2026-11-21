@@ -113,9 +113,14 @@ describe('use_computer (#2000)', () => {
 
     it('says a computer that is still being made as starting, in plain words, and not as a failure', async () => {
         const starting = await run(asking({ ok: false, reason: 'starting' }));
-        expect(starting).toMatchObject({ started: true, starting: true });
+        // A slow answer with a busy computer is not evidence that THIS job was taken (the busy read may be an earlier job): nothing is promised
+        expect(starting).toMatchObject({ started: false, starting: true });
         expect(starting).not.toHaveProperty('success');
-        expect(String(starting.note)).toMatch(/starting your computer and it takes a minute/);
+        expect(String(starting.note)).toMatch(/your computer is starting/i);
+        expect(String(starting.note)).toMatch(/not known yet whether this job has been taken/);
+        expect(String(starting.note)).toMatch(/ask you again/);
+        expect(String(starting.note)).not.toMatch(/begins by itself/);
+        expect(String(starting.note)).toMatch(/Do not say the job has begun, or will begin by itself/);
         expect(String(starting.note)).not.toMatch(/could not be reached/);
         expect(resultOf('c1', starting)).toMatchObject({ ok: true });
     });

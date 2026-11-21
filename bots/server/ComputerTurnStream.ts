@@ -33,7 +33,7 @@ export function runnerEventOf(data: string): RunnerEvent | null {
                 state,
                 tool: text(body.tool, 80),
                 // A step's label may be a raw command with the job's own key in it: only a description, with nothing secret in it, goes on
-                ...(typeof body.label === 'string' ? { label: text(safeStepLabel(body.label.slice(0, 2000)), 200) } : {}),
+                ...(typeof body.label === 'string' ? { label: text(safeStepLabel(body.label.slice(0, 2000), text(body.tool, 80)), 200) } : {}),
                 ...(count(body.durationMs) !== null ? { durationMs: count(body.durationMs) as number } : {}),
                 ...(typeof body.error === 'string' ? { error: text(redactSecrets(body.error.slice(0, 2000)), 300) } : {}),
             };

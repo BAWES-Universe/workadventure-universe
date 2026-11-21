@@ -1740,15 +1740,17 @@ export class AdminApiService {
 
     /**
      * The model relay's durable record of how a job's model calls ended (the fault record Orbit judges a failed job's refund by): one row per job and
-     * call, idempotent. True when Orbit took the rows, or has no such record yet (an older Orbit answers 404 or 405: nothing to keep trying for); false
-     * when it could not be reached or failed, so the rows are kept and sent again.
+     * call, idempotent. True when Orbit took the rows, or answered with its own "Job not found" (it has no such job, so there is nothing to keep them for).
+     * False when it could not be reached, failed, or has no such route yet (a bare 404 or 405 from an older Orbit): the rows are kept and sent again,
+     * so they are still there once Orbit is upgraded.
      */
     async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean> {
         try {
             const response = await this.brickCall<{ ok?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
             return response.status === 200 && response.data?.ok !== false;
         } catch (error) {
-            if (axios.isAxiosError(error) && error.response && (error.response.status === 404 || error.response.status === 405)) return true;
+            // Only Orbit's own answer for an unknown job is final; a missing route answers 404 or 405 with something else
+            if (axios.isAxiosError(error) && error.response?.status === 404 && (error.response.data as { error?: unknown } | undefined)?.error === 'Job not found') return true;
             return false;
         }
     }

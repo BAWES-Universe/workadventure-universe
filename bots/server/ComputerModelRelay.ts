@@ -302,6 +302,8 @@ function wordsOf(text: string): string {
 /** The codes and types a provider sets when the error is about our key, our credit or our model (it never echoes what the job sent in them): ours. */
 const KEY_CODES = /invalid[_ -]?api[_ -]?key|model[_ -]?not[_ -]?found|insufficient[_ -]?(quota|funds|credit)|billing|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
 /** The same said in a message: read only when the error has no status and names no field, since a provider echoes the job's own values in a message. */
+const KEY_CODES_NOT_MODEL = /invalid[_ -]?api[_ -]?key|insufficient[_ -]?(quota|funds|credit)|billing|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
+const KEY_MESSAGE_NOT_MODEL = /incorrect api key|invalid api key|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
 const KEY_MESSAGE = /incorrect api key|invalid api key|model .*does not exist|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
 /** A 404 that says the model we named is missing (the relay chooses the model; the job cannot). */
 /** The fields of a call that choose the model or the provider that serves it (OpenRouter's routing and its server-side plugins): never the job's to set. */
@@ -340,9 +342,11 @@ export interface ProviderReading {
     who: 'ours' | 'request';
     kind: 'fault' | 'uncertain' | 'not_ours';
     reason: FaultReason;
+    /** Ours because the provider says the MODEL is missing, and nothing says the key or the credit was refused: on a person's own key that is not their refusal. */
+    model?: true;
 }
 
-const OURS_FAULT = (reason: FaultReason): ProviderReading => ({ who: 'ours', kind: 'fault', reason });
+const OURS_FAULT = (reason: FaultReason, model = false): ProviderReading => ({ who: 'ours', kind: 'fault', reason, ...(model ? { model: true as const } : {}) });
 const OURS_UNSURE = (reason: FaultReason): ProviderReading => ({ who: 'ours', kind: 'uncertain', reason });
 const REQUESTS = (): ProviderReading => ({ who: 'request', kind: 'not_ours', reason: 'field_job_set' });
 
@@ -359,7 +363,9 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
     // answer a used-up credit or a refused key with 429 and `insufficient_quota`, which is not a rate limit: only what the provider sets (code, type) is read
     // for that, never a message, since a message echoes the job's own values and a job can steer those
     const codes = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
-    if (numeric === 429 && KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours');
+    // Said in the codes: the model is missing and nothing says the key or the credit was refused
+    const modelOnly = !KEY_CODES_NOT_MODEL.test(codes);
+    if (numeric === 429 && KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours', modelOnly);
     if (numeric === 429 && REQUEST_TOO_LARGE.test(words)) {
         // "Requested" is the input and the limit we set together: when the input alone fits under the provider's limit, it was our limit that made the
         // request too large (ours); when the job set the limit, or the input alone does not fit, it is the request's
@@ -376,7 +382,7 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
     // chose is ours, unless the wording blames the prompt or the context (a context that is too long, N tokens in the messages, inputs tokens)
     // Our key, our credit or our model, named by the error's own code or type: ours, before the field it names is looked at (a `model_not_found` that
     // names `model` is a missing model of ours, not a refusal of a field); read above for a 429, here for every other status
-    if (KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours');
+    if (KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours', modelOnly);
     const paramField = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
     const refusedShape = numeric === null || numeric === 400 || numeric === 422;
     if (refusedShape && RELAY_FIELDS.has(paramField)) {
@@ -387,7 +393,7 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
         return jobs.limit || INPUT_WORDS.test(words) ? REQUESTS() : OURS_UNSURE('field_relay_set');
     }
     if (CONTENT_WORDS.test(words)) return REQUESTS();
-    if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return OURS_FAULT('provider_key_ours');
+    if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return OURS_FAULT('provider_key_ours', !KEY_MESSAGE_NOT_MODEL.test(typeof record.message === 'string' ? record.message : ''));
     // A refusal of the shape of the call (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is
     // about our key or our model): the request's when it names a field the job sent, unresolved when it names no field at all (a bad payload of the job's
     // or a forwarding or serialization error of ours cannot be told apart)
@@ -396,7 +402,7 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
     if (numeric === 401 || numeric === 402) return OURS_FAULT('provider_key_ours');
     // A 404 is ours only when it says OUR model is missing: a provider also answers 404 when the request needs something the model lacks ("No endpoints
     // found that support image input", "... tool use"), and the job decides what it sends. A plain 403 is not enough either (a key code was read above)
-    if (numeric === 404 && typeof record.message === 'string' && MODEL_MISSING.test(record.message) && !NEEDS_FEATURE.test(record.message)) return OURS_FAULT('provider_key_ours');
+    if (numeric === 404 && typeof record.message === 'string' && MODEL_MISSING.test(record.message) && !NEEDS_FEATURE.test(record.message)) return OURS_FAULT('provider_key_ours', !KEY_MESSAGE_NOT_MODEL.test(record.message));
     // Any other status, or an error that says nothing of a code: unresolved (a plain 403 has a reason of its own, so operations can read it)
     return OURS_UNSURE(numeric === null ? 'provider_5xx' : numeric === 403 ? 'provider_403' : 'fieldless_400');
 }
@@ -574,7 +580,6 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
         if (!token || !who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         const { jobId, botId } = who as { ok: true; jobId: string; botId: string };
-        deps.refusals?.called?.(jobId);
         // A call that failed for a fault of ours is noted for the runner (see ComputerRefusals): Hermes may hand its error back as a finished turn
         // Only the agent's own calls (they carry its tools) count: a side call Hermes makes with the same key (a summary, a title) that fails
         // after the turn was answered is no failure of the turn. Set once the body is read.
@@ -587,6 +592,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         const at = arrived !== undefined && deps.refusals?.turnAt ? deps.refusals.turnAt(jobId, arrived) : undefined;
         const startedTurn = at ? at.turn : deps.refusals?.turnOf?.(jobId) ?? 0;
         const startedRun = at ? at.run : deps.refusals?.runOf?.(jobId);
+        // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
+        // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
+        deps.refusals?.called?.(jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
@@ -668,15 +676,17 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 if (reason === 'pool') {
                     // Confirmed ours only when the pool has no room for even the smallest call: the size of a call grows with what the job sent, so a call
                     // refused for its own size is unresolved
-                    // A job none of whose calls was ever taken up has met a pool with no room at all: that is confirmed too, whatever the size of the call
-                    if (!nobody) noteCall(('full' in allowed && allowed.full === true) || !deps.refusals?.acceptedSince?.(jobId, 0) ? 'fault' : 'uncertain', 'pool_busy', 503);
+                    // The size of a call grows with what the job sent, so a call refused for its own size (full: false, or no word of it from an older Orbit)
+                    // is unresolved even when it is the job's first: the pool may have room for a smaller one. Orbit confirms a pool that took none of a
+                    // job's calls by its own record
+                    if (!nobody) noteCall('full' in allowed && allowed.full === true ? 'fault' : 'uncertain', 'pool_busy', 503);
                     return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
                 }
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
             }
 
             // Orbit found room for this call: it is taken up (a turn whose calls were all refused for room is a different thing from one with a call taken)
-            if (agentCall && !gone && !res.destroyed) deps.refusals?.accepted?.(jobId);
+            if (agentCall && !gone && !res.destroyed) deps.refusals?.accepted?.(jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
                 else {
@@ -707,6 +717,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                             // On a person's own key only a refusal of the key or the credit is theirs (it was revoked, its credit ran out): the runner never
                             // ends the job as ours for it. Every other failure of the provider (a 5xx, a rate limit, a cut stream, a timeout, an endpoint that
                             // could not be reached, a plain 403) is read as on Universe's key: unresolved, since nothing proves whose it was
+                            // (a model of theirs the provider says it does not have is neither: the key and the credit may be fine, so it is unresolved)
+                            else if (source === 'own-key' && reading?.reason === 'provider_key_ours' && reading.model) noteCall('uncertain', 'field_relay_set', status);
                             else if (source === 'own-key' && reading?.reason === 'provider_key_ours') noteCall('not_ours', 'own_provider', status);
                             else if (reading) noteCall(reading.kind, reading.reason, status);
                             // A stream that broke after it began, or an answer that was a 5xx with nothing read from it: unresolved

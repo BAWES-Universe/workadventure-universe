@@ -69,8 +69,11 @@ export interface CallRow {
 export interface EvidenceStore {
     /** Keeps one row (replacing the one with the same call id). Resolves false when it could not be kept. */
     save(botId: string, jobId: string, row: CallRow): Promise<boolean>;
-    /** Takes the rows with these call ids out (Orbit has them). Never throws into the caller's way: a row left behind is only sent again, which is harmless. */
-    drop(jobId: string, callIds: string[]): Promise<void>;
+    /**
+     * Takes these rows out (Orbit has them), each only while the store still holds exactly the row that was taken: a newer row of the same call id (Orbit
+     * has not taken it) stays. Never throws into the caller's way: a row left behind is only sent again, which is harmless.
+     */
+    drop(botId: string, jobId: string, rows: CallRow[]): Promise<void>;
     /** Every row kept and not yet taken, by job. Throws when the store cannot be reached (an empty store is an empty answer). */
     load(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>>;
 }
@@ -133,15 +136,24 @@ export interface RefusalNotes {
     /** Whether the job's last call since this point (or at or after this moment, ms) was a fault of ours that no later call made good. */
     endedOnFault(jobId: string, since: Since): boolean;
     /** A call of this job REACHED the relay (its key was known to Orbit): whatever became of the call, the machine can reach the relay. */
-    called(jobId: string): void;
+    called(jobId: string, at?: CallTurn): void;
     /** Whether any call of this job reached the relay since this point (or at or after this moment, ms). */
     calledSince(jobId: string, since: Since): boolean;
     /** A call of this job got past Orbit's room check (the shared pool had room for it): it was taken up, whatever became of it after. */
-    accepted(jobId: string): void;
+    accepted(jobId: string, at?: CallTurn): void;
     /** Whether any call of this job was taken up since this point (or at or after this moment, ms): `0` asks whether one ever was. */
     acceptedSince(jobId: string, since: Since): boolean;
-    /** Whether the calls of this job since this point were ALL refused for want of room in the shared pool: at least one was, CONFIRMED (kind `fault`), and none was taken up. */
+    /**
+     * Whether the calls of this job since this point were ALL refused for want of room in the shared pool: at least one was, CONFIRMED (kind `fault`), none was
+     * taken up, and nothing else refused a call either (the person's allowance or a rule of theirs, a refusal that is theirs).
+     */
     onlyPoolBusySince(jobId: string, since: Since): boolean;
+}
+
+/** The turn (and run) a call began in: what a call is tied to when the relay only learns who it is after the runner may have moved on. */
+export interface CallTurn {
+    turn: number;
+    run?: string;
 }
 
 /** A note older than this can no longer belong to a turn that is being read. */
@@ -198,6 +210,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const turns = new Map<string, Array<{ turn: number; run?: string; at: number; order: number }>>();
     const TURN_HISTORY = 16;
     const lastTurn = (jobId: string) => turns.get(jobId)?.at(-1);
+    /** A call that began in a turn (or a run) the runner has left says nothing of the turn it is on now. */
+    const staleCall = (jobId: string, at: CallTurn | undefined) => {
+        const active = lastTurn(jobId);
+        return at !== undefined && active !== undefined && (active.turn !== at.turn || active.run !== at.run);
+    };
     // Rows not yet taken by Orbit, per job. A row is sent again until Orbit takes it (Orbit keeps one per job and call).
     type Queue = {
         botId: string;
@@ -260,11 +277,14 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             if (entry.writes.get(row.callId) === write) entry.writes.delete(row.callId);
         });
     };
-    /** Takes rows Orbit has taken out of the store, after any write of them that is still going. */
-    const release = (entry: Queue, jobId: string, callIds: string[]) => {
-        if (!store || callIds.length === 0) return;
-        void Promise.all(callIds.map((id) => entry.writes.get(id) ?? true))
-            .then(() => store.drop(jobId, callIds))
+    /**
+     * Takes rows Orbit has taken out of the store, after any write of them that is still going. Only the rows Orbit took: a row of the same call id that
+     * was saved since (a newer one Orbit has not taken) is left where it is.
+     */
+    const release = (entry: Queue, jobId: string, rows: CallRow[]) => {
+        if (!store || rows.length === 0) return;
+        void Promise.all(rows.map((row) => entry.writes.get(row.callId) ?? true))
+            .then(() => store.drop(entry.botId, jobId, rows))
             .catch(() => undefined);
     };
     const forget = () => {
@@ -303,25 +323,28 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         const sink = options.sink;
         entry.sending = (async () => {
             for (let attempt = 0; ; attempt++) {
+                // Rows the store could not keep are written again with each try, the later ones in the background included: Redis may be back while Orbit is
+                // still away, and the row is the only copy that survives a restart (one Orbit has taken is not written again: it is no longer in `unsaved`)
+                for (const row of [...entry.unsaved.values()]) if (entry.rows.get(row.callId) === row) keep(entry, jobId, row);
                 while (entry.rows.size > 0) {
                     const batch = [...entry.rows.values()].slice(0, FAULT_ROWS_PER_CALL);
-                    let taken = false;
+                    let took = false;
                     try {
-                        taken = await sink(entry.botId, jobId, batch);
+                        took = await sink(entry.botId, jobId, batch);
                     } catch {
-                        taken = false;
+                        took = false;
                     }
-                    if (!taken) break;
+                    if (!took) break;
                     // A row that was changed while it was being sent (an upgrade) stays for the next batch
-                    const takenIds: string[] = [];
+                    const taken: CallRow[] = [];
                     for (const row of batch) {
                         if (entry.rows.get(row.callId) !== row) continue;
                         entry.rows.delete(row.callId);
                         entry.unsaved.delete(row.callId);
                         unackedTold.delete(`${jobId}|${row.callId}`);
-                        takenIds.push(row.callId);
+                        taken.push(row);
                     }
-                    release(entry, jobId, takenIds);
+                    release(entry, jobId, taken);
                 }
                 if (entry.rows.size === 0) {
                     // Everything was taken: the budget of later tries starts again for rows that come next, and a try still waiting has nothing to send
@@ -383,8 +406,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         record(botId, jobId, call) {
             // A call that belongs to a turn (or a run) the runner has left says nothing of the turn it is on now: its row is still sent under its own
             // turn and run, but the notes the runner reads for the turn in progress are not changed by it
-            const active = lastTurn(jobId);
-            const stale = call.turn !== undefined && active !== undefined && (active.turn !== call.turn || active.run !== call.run);
+            const stale = staleCall(jobId, call.turn !== undefined ? { turn: call.turn, run: call.run } : undefined);
             if (call.kind === 'answered') return stale ? undefined : mark(jobId, 'answered');
             if (!stale) {
                 if (call.kind === 'not_ours') {
@@ -482,19 +504,28 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         },
         fault: (jobId) => mark(jobId, 'fault'),
         answered: (jobId) => mark(jobId, 'answered'),
-        called: (jobId) => mark(jobId, 'called'),
+        called(jobId, at) {
+            if (!staleCall(jobId, at)) mark(jobId, 'called');
+        },
         calledSince(jobId, since) {
             const seen = calls.get(jobId)?.called;
             return seen !== undefined && within(seen, since);
         },
-        accepted: (jobId) => mark(jobId, 'accepted'),
+        accepted(jobId, at) {
+            // Taken up in the turn that made the call: one taken up after the runner moved on belongs to the turn it began in, not to the one that is going now
+            if (!staleCall(jobId, at)) mark(jobId, 'accepted');
+        },
         acceptedSince(jobId, since) {
             const seen = calls.get(jobId)?.accepted;
             return seen !== undefined && within(seen, since);
         },
         onlyPoolBusySince(jobId, since) {
             const seen = calls.get(jobId);
-            return seen?.pooled !== undefined && within(seen.pooled, since) && !(seen.accepted !== undefined && within(seen.accepted, since));
+            if (seen?.pooled === undefined || !within(seen.pooled, since)) return false;
+            if (seen.accepted !== undefined && within(seen.accepted, since)) return false;
+            // The person's allowance or a rule of theirs refused a call of the turn too: a spending limit also stopped it, so it is no pool-only turn
+            const other = last.get(jobId);
+            return !(other !== undefined && within(other, since));
         },
         endedOnFault(jobId, since) {
             const seen = calls.get(jobId);

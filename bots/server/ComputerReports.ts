@@ -218,7 +218,7 @@ export function reportText(report: ComputerReport): string {
                     ? ` I'm ready to put in ${report.ready.what.trim().replace(/[.!?]+$/, '')} at ${report.ready.where.trim().replace(/[.!?]+$/, '')}, and nothing of yours has reached it yet.`
                     : '';
             // Paying and submitting are the person's: they are told, from the record, that nothing has gone yet (or what has)
-            const so = report.effects.length > 0 || report.waitingFor === 'pay' || report.waitingFor === 'submit' ? ` ${receiptOf(report, 'waiting')}` : '';
+            const so = report.effects.length > 0 || report.waitingFor === 'pay' || report.waitingFor === 'submit' || report.refundPendingMicros > 0 ? ` ${receiptOf(report, 'waiting')}` : '';
             return `${name} needs you.${ready}${so} ${next}`;
         }
         case 'failed': {

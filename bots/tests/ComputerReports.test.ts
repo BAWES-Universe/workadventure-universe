@@ -109,6 +109,17 @@ describe('what Brick says when a computer job ends or waits', () => {
         expect(receiptOf({ effects: [], writes: true, refundPendingMicros: 50_000 })).toBe('My record shows nothing was sent or paid. $0.05 refund pending.');
     });
 
+    it('says a refund that is pending in every message that needs the person, whatever it waits for, with or without effects', () => {
+        for (const waitingFor of ['signin', 'upload', 'details', 'answer', 'pay', 'submit'] as const) {
+            const text = reportText(report({ kind: 'needs', waitingFor, effects: [], refundPendingMicros: 50_000 }));
+            expect(text, waitingFor).toContain('$0.05 refund pending.');
+            // nothing pending: nothing is said, as before
+            expect(reportText(report({ kind: 'needs', waitingFor, effects: [], refundPendingMicros: 0 })), waitingFor).not.toContain('refund pending');
+        }
+        // sign-in with nothing done yet reads in the waiting voice, with the pending refund last
+        expect(reportText(report({ kind: 'needs', waitingFor: 'signin', effects: [], writes: true, refundPendingMicros: 50_000 }))).toContain('Nothing has been sent or paid yet. $0.05 refund pending.');
+    });
+
     it("writes money exactly as Orbit's dollars() does: thousandths under a cent, cents above, rounded the same way", () => {
         const table: Array<[number, string]> = [
             [0, '$0'],
