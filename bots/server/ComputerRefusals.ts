@@ -202,7 +202,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const last = new Map<string, { at: number; order: number }>();
     // The order of events is kept by count, since two can land in the same millisecond
     let count = 0;
-    const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: { at: number; order: number }; answered?: { at: number; order: number }; called?: { at: number; order: number }; accepted?: { at: number; order: number }; pooled?: { at: number; order: number } }>();
+    const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: { at: number; order: number }; answered?: { at: number; order: number }; called?: { at: number; order: number }; accepted?: { at: number; order: number }; pooled?: { at: number; order: number }; other?: { at: number; order: number } }>();
     /** Whether an event is inside a window that begins at `since`. */
     const within = (event: { at: number; order: number }, since: Since) => (typeof since === 'number' ? event.at >= since : event.order > since.order);
     // The turns the runner said it was on, newest last, each with its place in the order of events: a short history, so a call can be tied to the
@@ -290,7 +290,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const forget = () => {
         const cutoff = now() - REFUSAL_NOTE_KEEP_MS;
         for (const [jobId, seen] of last) if (seen.at < cutoff) last.delete(jobId);
-        for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0, seen.called?.at ?? 0, seen.accepted?.at ?? 0, seen.pooled?.at ?? 0) < cutoff) calls.delete(jobId);
+        for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0, seen.called?.at ?? 0, seen.accepted?.at ?? 0, seen.pooled?.at ?? 0, seen.other?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
         // With a store, rows Orbit has not taken are kept (and sent again) as long as in the store
         const queueCutoff = store ? now() - EVIDENCE_KEEP_MS : cutoff;
@@ -301,7 +301,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             queued.delete(jobId);
         }
     };
-    const mark = (jobId: string, kind: 'fault' | 'answered' | 'called' | 'accepted' | 'pooled', confirmed = false) => {
+    const mark = (jobId: string, kind: 'fault' | 'answered' | 'called' | 'accepted' | 'pooled' | 'other', confirmed = false) => {
         forget();
         const seen = calls.get(jobId) ?? {};
         seen[kind] = { at: now(), order: ++count };
@@ -336,15 +336,15 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     }
                     if (!took) break;
                     // A row that was changed while it was being sent (an upgrade) stays for the next batch
-                    const taken: CallRow[] = [];
                     for (const row of batch) {
                         if (entry.rows.get(row.callId) !== row) continue;
                         entry.rows.delete(row.callId);
                         entry.unsaved.delete(row.callId);
                         unackedTold.delete(`${jobId}|${row.callId}`);
-                        taken.push(row);
                     }
-                    release(entry, jobId, taken);
+                    // Every row Orbit took leaves the store, a replaced one too: the store keeps the row only if it still holds exactly that one, so a replacement
+                    // whose write went through stays, and an older row left behind by a replacement whose write failed does not come back after a restart
+                    release(entry, jobId, batch);
                 }
                 if (entry.rows.size === 0) {
                     // Everything was taken: the budget of later tries starts again for rows that come next, and a try still waiting has nothing to send
@@ -419,6 +419,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     // up): the runner reads a turn of nothing but these as a machine to give up. A call refused for its own size (`uncertain`) is unresolved,
                     // so it neither starts the give-up nor ends a job as a confirmed fault of ours
                     if (call.reason === 'pool_busy' && call.kind === 'fault') mark(jobId, 'pooled');
+                    // Any other way a call failed (the relay could not look up the route, a provider error, a key refused...) is no refusal for room: a turn that
+                    // had one is no pool-only turn, whatever else it had
+                    else if (call.reason !== 'pool_busy') mark(jobId, 'other');
                 }
             }
             if (!options.sink && !store) return;
@@ -440,6 +443,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 at: new Date(now()).toISOString(),
             };
             entry.rows.set(callId, row);
+            // An older row of this call that the store could not keep is no longer the one to keep: it is saved again only if the new one fails to be
+            entry.unsaved.delete(callId);
             queued.set(jobId, entry);
             // Kept where a restart does not lose it, and sent without waiting: the call that made the row is not held for either
             keep(entry, jobId, row);
@@ -454,7 +459,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 if (store) {
                     // A write still going may end in a failure: wait for the writes first, then make again what did not stay (once, not for ever)
                     await Promise.all([...entry.writes.values()]).catch(() => undefined);
-                    for (const row of [...entry.unsaved.values()]) keep(entry, jobId, row);
+                    // Only a row that is still the current one: an older row saved over its replacement would bring the old outcome back after a restart
+                    for (const row of [...entry.unsaved.values()]) if (entry.rows.get(row.callId) === row) keep(entry, jobId, row);
                     await Promise.all([...entry.writes.values()]).catch(() => undefined);
                 }
                 if (entry.sending) await entry.sending.catch(() => false);
@@ -523,9 +529,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             const seen = calls.get(jobId);
             if (seen?.pooled === undefined || !within(seen.pooled, since)) return false;
             if (seen.accepted !== undefined && within(seen.accepted, since)) return false;
-            // The person's allowance or a rule of theirs refused a call of the turn too: a spending limit also stopped it, so it is no pool-only turn
-            const other = last.get(jobId);
-            return !(other !== undefined && within(other, since));
+            // The person's allowance or a rule of theirs refused a call of the turn too (a spending limit also stopped it), or a call of the turn failed some
+            // other way of ours (a relay failure, a provider error): it is no pool-only turn
+            const refused = last.get(jobId);
+            if (refused !== undefined && within(refused, since)) return false;
+            return !(seen.other !== undefined && within(seen.other, since));
         },
         endedOnFault(jobId, since) {
             const seen = calls.get(jobId);

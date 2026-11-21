@@ -477,10 +477,11 @@ describe('the evidence kept before the money decision is final, and delivered af
     const memoryStore = () => {
         const held = new Map<string, { botId: string; jobId: string; row: CallRow }>();
         const log: string[] = [];
-        const state = { failSaves: 0, failLoad: false, gate: undefined as Promise<void> | undefined };
+        const state = { failSaves: 0, down: false, failLoad: false, gate: undefined as Promise<void> | undefined };
         const store: EvidenceStore = {
             save: async (botId, jobId, row) => {
                 if (state.gate) await state.gate;
+                if (state.down) return false;
                 if (state.failSaves > 0) {
                     state.failSaves--;
                     return false;
@@ -619,13 +620,17 @@ describe('the evidence kept before the money decision is final, and delivered af
 
     it('writes a row the store could not keep again while Orbit is still away and Redis is back, and never writes one Orbit has taken', async () => {
         const mem = memoryStore();
-        // the first write and the retry of the flush both fail; then Redis is back, while Orbit still does not answer
-        mem.state.failSaves = 2;
+        // Redis is away for the first write, for the retry of the flush and for as long as the flush takes; Orbit does not answer either
+        mem.state.down = true;
         let orbitUp = false;
         const { notes, sent } = ledger(mem.store, () => orbitUp, { storeLaterMs: 5 });
         notes.record('b', 'j', call('c1'));
-        await notes.flush('j');
-        // the tries that only reach Orbit now keep the row in the store too, once it can be kept
+        expect(await notes.flush('j')).toBe(false);
+        // nothing was kept when the flush returned: only the tries that come after it can keep the row
+        expect(mem.held.size).toBe(0);
+        expect(mem.log.filter((entry) => entry.startsWith('save'))).toEqual([]);
+        // Redis is back while Orbit is still away: the background tries, which reach Orbit, keep the row in the store too
+        mem.state.down = false;
         await vi.waitFor(() => expect(mem.held.has('j|c1')).toBe(true), { timeout: 3000 });
         expect(sent).toHaveLength(0);
         // Orbit takes it: it is removed from the store, and nothing is written for it afterwards
@@ -635,6 +640,38 @@ describe('the evidence kept before the money decision is final, and delivered af
         const saves = mem.log.filter((entry) => entry.startsWith('save')).length;
         await new Promise((resolve) => setTimeout(resolve, 40));
         expect(mem.log.filter((entry) => entry.startsWith('save'))).toHaveLength(saves);
+    });
+
+    it('removes the row Orbit took from the store even when a newer row of the call is waiting in memory and its own write failed', async () => {
+        const mem = memoryStore();
+        const sends: Array<(took: boolean) => void> = [];
+        const notes = createRefusalNotes(() => 1000, { retryMs: [], laterMs: [], store: mem.store, sink: () => new Promise<boolean>((resolve) => sends.push(resolve)) });
+        notes.record('b', 'j', call('c1', { kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 }));
+        await vi.waitFor(() => expect(mem.held.get('j|c1')?.row).toMatchObject({ kind: 'uncertain' }));
+        await vi.waitFor(() => expect(sends).toHaveLength(1));
+        // a newer row of the same call takes its place in memory, and its write to the store fails
+        mem.state.failSaves = 1;
+        notes.record('b', 'j', call('c1', { kind: 'fault', reason: 'provider_key_ours', providerStatus: 401 }));
+        await vi.waitFor(() => expect(mem.state.failSaves).toBe(0));
+        // Orbit takes the OLDER row: the store must not go on holding it, or a restart would bring the older outcome back
+        sends[0](true);
+        await vi.waitFor(() => expect(mem.held.has('j|c1')).toBe(false));
+    });
+
+    it('does not save a row over its replacement: only the current row of a call is written again by a flush', async () => {
+        const mem = memoryStore();
+        // no quick tries and nothing in the background yet: only the flush looks again at what was not kept
+        const notes = createRefusalNotes(() => 1000, { retryMs: [], laterMs: [], store: mem.store, sink: async () => false });
+        // the first row of the call cannot be kept; its replacement can
+        mem.state.failSaves = 1;
+        notes.record('b', 'j', call('c1', { kind: 'uncertain', reason: 'provider_5xx', providerStatus: 500 }));
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        notes.record('b', 'j', call('c1', { kind: 'fault', reason: 'provider_key_ours', providerStatus: 401 }));
+        await vi.waitFor(() => expect(mem.held.get('j|c1')?.row).toMatchObject({ kind: 'fault' }));
+        // Orbit is away: the flush looks at what is left to keep, and must not write the older row over the newer one
+        expect(await notes.flush('j')).toBe(false);
+        expect(mem.held.get('j|c1')?.row).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+        expect(mem.log.filter((entry) => entry.startsWith('save'))).toEqual(['save c1']);
     });
 
     it('does not write a row to the store that Orbit took while the store was away', async () => {
@@ -835,6 +872,31 @@ describe('whether every call of a turn was refused for want of room in the share
         pool(notes, 'd', 'p2', 'uncertain');
         expect(notes.onlyPoolBusySince('d', before)).toBe(true);
         // a refusal of the person's from an earlier turn does not make this one mixed
+        const next = notes.mark();
+        pool(notes, 'a', 'p9');
+        expect(notes.onlyPoolBusySince('a', next)).toBe(true);
+    });
+
+    it('is false when a call of the turn failed some other way of ours too (the relay could not find its route, a provider error), whatever the order', () => {
+        const notes = createRefusalNotes(() => 1000);
+        const fail = (job: string, id: string, reason: 'relay_down' | 'provider_5xx' | 'field_relay_set', kind: 'fault' | 'uncertain') =>
+            notes.record('b', job, { callId: id, kind, reason, source: 'universe-ai', route: 'r', providerStatus: null });
+        for (const [job, order] of [
+            ['a', ['pool', 'relay']],
+            ['b', ['relay', 'pool']],
+            ['c', ['pool', 'provider']],
+            ['d', ['pool', 'field']],
+        ] as const) {
+            const before = notes.mark();
+            for (const [n, what] of order.entries()) {
+                if (what === 'pool') pool(notes, job, `p${n}`);
+                else if (what === 'relay') fail(job, `r${n}`, 'relay_down', 'fault');
+                else if (what === 'provider') fail(job, `r${n}`, 'provider_5xx', 'uncertain');
+                else fail(job, `r${n}`, 'field_relay_set', 'uncertain');
+            }
+            expect(notes.onlyPoolBusySince(job, before), job).toBe(false);
+        }
+        // a failure of an earlier turn does not make this one mixed
         const next = notes.mark();
         pool(notes, 'a', 'p9');
         expect(notes.onlyPoolBusySince('a', next)).toBe(true);

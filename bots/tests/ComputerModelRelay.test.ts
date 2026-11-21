@@ -2123,9 +2123,14 @@ describe('a call that is identified, or taken up, after the runner has moved on 
             asJob(job);
             notes.turn(job, 4, 'r');
             const identified = gate<{ ok: true; jobId: string; botId: string }>();
-            orbit.identify.mockImplementationOnce(() => identified.promise);
+            // Said by THIS request's own identify: a call an earlier round left in the mock's history cannot stand in for it
+            const entered = gate<void>();
+            orbit.identify.mockImplementationOnce(() => {
+                entered.open();
+                return identified.promise;
+            });
             const asked = ask(agent);
-            await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalled(), { timeout: 3000 });
+            await Promise.race([entered.promise, new Promise((_, reject) => setTimeout(() => reject(new Error('the request never reached identify')), 3000).unref())]);
             // the runner moves on to turn 5 while the call waits to be identified
             const turn4 = moved ? undefined : notes.mark();
             if (moved) notes.turn(job, 5, 'r');
@@ -2189,6 +2194,10 @@ describe('a model of the person’s own key that the provider says it does not h
             ['job-own-model-429', 429, { code: 'model_not_found', type: 'invalid_request_error', message: 'no such model' }, { kind: 'uncertain', reason: 'field_relay_set' }],
             ['job-own-key-revoked', 401, { code: 'invalid_api_key', message: 'Incorrect API key provided' }, { kind: 'not_ours', reason: 'own_provider' }],
             ['job-own-credit', 429, { code: 'insufficient_quota', type: 'insufficient_quota', message: 'You exceeded your current quota' }, { kind: 'not_ours', reason: 'own_provider' }],
+            // A model NAMED like a credit word is still a missing model: only a separate statement about the key or the credit is the person's
+            ['job-own-model-billing', 404, { message: 'The model billing-assistant does not exist' }, { kind: 'uncertain', reason: 'field_relay_set' }],
+            ['job-own-model-billing-quoted', 404, { code: 'model_not_found', message: 'The model `billing-assistant` does not exist or you do not have access to it.' }, { kind: 'uncertain', reason: 'field_relay_set' }],
+            ['job-own-model-and-billing', 404, { message: 'The model billing-assistant does not exist. Your billing account is suspended' }, { kind: 'not_ours', reason: 'own_provider' }],
             ['job-own-both', 404, { code: 'model_not_found', type: 'authentication_error', message: 'nope' }, { kind: 'not_ours', reason: 'own_provider' }],
         ] as const) {
             asJob(name);
@@ -2198,6 +2207,24 @@ describe('a model of the person’s own key that the provider says it does not h
             await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(++settledCalls), { timeout: 3000 });
             expect((await rowsSent(name))[0], name).toMatchObject({ ...expected, source: 'own-key' });
         }
+    });
+
+    it('reads a missing model whose NAME holds a credit word as a missing model, and keeps a separate statement about the key or the credit the person’s', () => {
+        for (const [status, error] of [
+            [404, { message: 'The model billing-assistant does not exist' }],
+            [404, { message: 'The model `billing-assistant` does not exist or you do not have access to it.' }],
+            [404, { message: 'No endpoints found for billing/assistant' }],
+            [null, { message: 'model billing-assistant does not exist' }],
+        ] as const) expect(readProviderError(status, error), JSON.stringify(error)).toMatchObject({ kind: 'fault', reason: 'provider_key_ours', model: true });
+        for (const [status, error] of [
+            [404, { message: 'The model billing-assistant does not exist. Your billing account is suspended' }],
+            [404, { message: 'The model x does not exist. You exceeded your current quota' }],
+            [null, { message: 'model x does not exist, insufficient quota' }],
+        ] as const) expect(readProviderError(status, error), JSON.stringify(error)).toMatchObject({ kind: 'fault', reason: 'provider_key_ours' });
+        for (const [status, error] of [
+            [404, { message: 'The model billing-assistant does not exist. Your billing account is suspended' }],
+            [null, { message: 'model x does not exist, insufficient quota' }],
+        ] as const) expect(readProviderError(status, error).model, JSON.stringify(error)).toBeUndefined();
     });
 
     it('is still a confirmed fault of ours on Universe’s own key (a model of ours that is missing)', async () => {

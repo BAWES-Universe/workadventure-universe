@@ -112,6 +112,34 @@ describe('a value is read whole, as the shell reads a word', () => {
         }
     });
 
+    it('hides an unclosed double quote that ends in a lone backslash, and the rest of an incomplete escape', () => {
+        expect(redactSecrets('PASSWORD="hunter2\\')).toBe(`PASSWORD=${HIDDEN}`);
+        expect(redactSecrets('warn: PASSWORD="hunter2 two\\')).toBe(`warn: PASSWORD=${HIDDEN}`);
+        expect(redactSecrets('PASSWORD=hunter2\\')).toBe(`PASSWORD=${HIDDEN}`);
+    });
+
+    it('hides a command substitution, a backtick command or an expansion in a value, all of it', () => {
+        const cases: Array<[string, string]> = [
+            ["PASSWORD=$(printf '%s' 'hunter2') next", `PASSWORD=${HIDDEN} next`],
+            ["PASSWORD=$(printf '%s' 'hunter2')", `PASSWORD=${HIDDEN}`],
+            ['PASSWORD=$(echo "a ) b" | tr a-z A-Z) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(cat $(echo hunter2.txt)) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$((1 + 2)) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=`printf hunter2 x` next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=${HUNTER:-hunter2 x} next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD="$(printf hunter2 x) y" next', `PASSWORD=${HIDDEN} next`],
+            ["PASSWORD=pre$(printf '%s' 'hunter2')post next", `PASSWORD=${HIDDEN} next`],
+            // where the end cannot be told, the rest of the text goes
+            ["PASSWORD=$(printf '%s' 'hunter2'", `PASSWORD=${HIDDEN}`],
+            ['PASSWORD=`printf hunter2 x', `PASSWORD=${HIDDEN}`],
+            ['A=1 B=$(printf hunter2 x) C=3', `A=${HIDDEN} B=${HIDDEN} C=${HIDDEN}`],
+        ];
+        for (const [text, hidden] of cases) {
+            expect(redactSecrets(text), text).toBe(hidden);
+            expect(redactSecrets(text), text).not.toContain('hunter2');
+        }
+    });
+
     it('also hides it where the computer says why it could not go on, and in a label', () => {
         expect(whyOf('It refused me: PASSWORD=two\\ words [[failed]]')).not.toContain('words');
         expect(safeStepLabel('Signing in with PASSWORD=two\\ words now')).toBe(`Signing in with PASSWORD=${HIDDEN} now`);

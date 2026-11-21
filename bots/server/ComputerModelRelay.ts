@@ -309,6 +309,9 @@ const KEY_MESSAGE = /incorrect api key|invalid api key|model .*does not exist|ex
 /** The fields of a call that choose the model or the provider that serves it (OpenRouter's routing and its server-side plugins): never the job's to set. */
 export const ROUTING_FIELDS = ['models', 'provider', 'route', 'transforms', 'plugins', 'preset', 'fallbacks'] as const;
 
+/** The part of a message that says a model is missing, with the model's name after it where the name comes after the words: what a message says of the key or the credit is read from what is left, since a model can be named anything (`billing-assistant`). */
+const MODEL_CLAUSE = /\bmodel\b[^.]{0,120}\b(?:does not exist|not found|is not available|has been (?:deprecated|decommissioned|removed))|no endpoints found for\s+\S+/gi;
+const statesKeyOrCredit = (message: string): boolean => KEY_MESSAGE_NOT_MODEL.test(message.replace(MODEL_CLAUSE, ' '));
 const MODEL_MISSING = /\bmodel\b[^.]{0,120}\b(does not exist|not found|is not available|has been (deprecated|decommissioned|removed))|no endpoints found for\b/i;
 /** A 404 that says the request needs something the model lacks (image input, tool use...): the job's own request, not a missing model. */
 const NEEDS_FEATURE = /that support|support(s|ed)? (image|tool|function|vision|json|structured|reasoning|streaming|input)|(image|tool|vision|function)[ _-](input|use|calling)/i;
@@ -393,7 +396,7 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
         return jobs.limit || INPUT_WORDS.test(words) ? REQUESTS() : OURS_UNSURE('field_relay_set');
     }
     if (CONTENT_WORDS.test(words)) return REQUESTS();
-    if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return OURS_FAULT('provider_key_ours', !KEY_MESSAGE_NOT_MODEL.test(typeof record.message === 'string' ? record.message : ''));
+    if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return OURS_FAULT('provider_key_ours', !statesKeyOrCredit(typeof record.message === 'string' ? record.message : ''));
     // A refusal of the shape of the call (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is
     // about our key or our model): the request's when it names a field the job sent, unresolved when it names no field at all (a bad payload of the job's
     // or a forwarding or serialization error of ours cannot be told apart)
@@ -402,7 +405,7 @@ export function readProviderError(status: number | null, error: unknown, jobs: J
     if (numeric === 401 || numeric === 402) return OURS_FAULT('provider_key_ours');
     // A 404 is ours only when it says OUR model is missing: a provider also answers 404 when the request needs something the model lacks ("No endpoints
     // found that support image input", "... tool use"), and the job decides what it sends. A plain 403 is not enough either (a key code was read above)
-    if (numeric === 404 && typeof record.message === 'string' && MODEL_MISSING.test(record.message) && !NEEDS_FEATURE.test(record.message)) return OURS_FAULT('provider_key_ours', !KEY_MESSAGE_NOT_MODEL.test(record.message));
+    if (numeric === 404 && typeof record.message === 'string' && MODEL_MISSING.test(record.message) && !NEEDS_FEATURE.test(record.message)) return OURS_FAULT('provider_key_ours', !statesKeyOrCredit(record.message));
     // Any other status, or an error that says nothing of a code: unresolved (a plain 403 has a reason of its own, so operations can read it)
     return OURS_UNSURE(numeric === null ? 'provider_5xx' : numeric === 403 ? 'provider_403' : 'fieldless_400');
 }
