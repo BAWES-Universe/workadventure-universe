@@ -208,6 +208,9 @@ export interface RelayProbeResult {
 /** The one line said to the person when the machine could not reach our own model service: nothing was taken. */
 export const RELAY_UNREACHABLE_WHY = "We couldn't reach our own service, you weren't charged.";
 
+/** What opening a turn's stream answers when the turn was stopped here while it was being opened. */
+const STOPPED_HERE = Symbol('stopped here');
+
 /** The one line said to the person when every model call of a turn was refused for want of room: the machine is given up, and nothing was taken. */
 export const POOL_BUSY_WHY = "Computers are busy right now, so we stopped this and you weren't charged.";
 
@@ -366,9 +369,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     /** The relay's address, asked once in a while and not for every turn: what it answered and when. */
     let probed: { relay: string; at: number; result: RelayProbeResult } | null = null;
     const PROBE_KEEP_MS = 60_000;
-    async function relayAnswer(relay: string): Promise<RelayProbeResult> {
+    async function relayAnswer(relay: string, afresh = false): Promise<RelayProbeResult> {
         if (!deps.relayProbe) return { answer: 'unknown', status: null };
-        if (probed && probed.relay === relay && now() - probed.at < (probed.result.answer === 'relay' ? PROBE_KEEP_MS : PROBE_KEEP_MS / 6)) return probed.result;
+        // A try again is asked of the relay itself: what was kept is for the turns that come one after the other, not for a relay that may have come back
+        if (!afresh && probed && probed.relay === relay && now() - probed.at < (probed.result.answer === 'relay' ? PROBE_KEEP_MS : PROBE_KEEP_MS / 6)) return probed.result;
         const result = await deps.relayProbe(relay).catch(() => ({ answer: 'unknown', status: null }) as RelayProbeResult);
         probed = { relay, at: now(), result };
         return result;
@@ -384,7 +388,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (signal.aborted) return 'stopped';
             let unreachable = false;
             let answer: { ok: true } | { ok: false; reason: string } = { ok: true };
-            const seen = await relayAnswer(relay);
+            const seen = await relayAnswer(relay, attempt > 0);
             if (seen.answer === 'wrong') {
                 // The job ends here (its own fault row says so): Orbit is not asked to prepare a machine for it
                 unreachable = true;
@@ -503,9 +507,26 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 });
             };
 
-            let opened: TurnOpened = input === null ? await orbit.stream(job.jobId, turnController.signal) : await orbit.turn(job.jobId, input, turnController.signal);
+            // A turn that was stopped here (the pool had no room, the job's room was gone, a stop) before its stream opened, or while it waited to
+            // reconnect, makes the call to open it fail with the abort itself: that is the stop, never an error that leaves the turn
+            const opening = async <T>(open: () => Promise<T>): Promise<T | typeof STOPPED_HERE> => {
+                try {
+                    return await open();
+                } catch (error) {
+                    if (turnController.signal.aborted) return STOPPED_HERE;
+                    throw error;
+                }
+            };
+            const stoppedHere = (): TurnResult => (signal.aborted ? { kind: 'stopped' } : gaveUp ? { kind: 'poolBusy' } : { kind: 'look', cancelled: true });
+            const first = await opening(() => (input === null ? orbit.stream(job.jobId, turnController.signal) : orbit.turn(job.jobId, input, turnController.signal)));
+            if (first === STOPPED_HERE) return stoppedHere();
+            let opened: TurnOpened = first;
             // The agent is still on a turn of its own (we lost it, or Orbit restarted): read that one instead of starting another
-            if ('reason' in opened && opened.reason === 'busy') opened = await orbit.stream(job.jobId, turnController.signal);
+            if ('reason' in opened && opened.reason === 'busy') {
+                const again = await opening(() => orbit.stream(job.jobId, turnController.signal));
+                if (again === STOPPED_HERE) return stoppedHere();
+                opened = again;
+            }
             if ('reason' in opened) {
                 // A turn that is gone is no silence of the agent's: it counts as a failed turn, like one lost on a reconnect
                 if (opened.reason === 'no_turn') return { kind: 'ended', words: '', failed: true, fenced: false };
@@ -547,7 +568,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (reconnects >= timing.reconnectMs.length) return { kind: 'ended', words, failed: true, fenced: false };
                 await sleep(timing.reconnectMs[reconnects], turnController.signal);
                 reconnects += 1;
-                const again = await orbit.stream(job.jobId, turnController.signal);
+                const again = await opening(() => orbit.stream(job.jobId, turnController.signal));
+                if (again === STOPPED_HERE) return stoppedHere();
                 // A turn that is gone without its end having been seen is not a turn that ended well: what was said before is not taken as its ending
                 if ('reason' in again) return again.reason === 'no_turn' ? { kind: 'ended', words, failed: true, fenced: false } : { kind: 'look' };
                 opened = again;

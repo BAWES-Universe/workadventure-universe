@@ -1546,6 +1546,30 @@ describe('a machine that cannot reach our own model service', () => {
         }
     });
 
+    it('asks the address afresh at every try to get ready, so a relay that was only down for a moment is not judged by what was kept', async () => {
+        // the clock of this rig moves one tick per call: the kept answer would still be fresh at every try
+        const answers: RelayProbeResult[] = [{ answer: 'wrong', status: 502 }, { answer: 'relay', status: 401 }];
+        const probe = vi.fn(async (): Promise<RelayProbeResult> => answers.shift() ?? { answer: 'relay', status: 401 });
+        const { seen, rows, run } = rig([done('[[done]]')], { probe });
+        await run();
+        expect(probe).toHaveBeenCalledTimes(2);
+        expect(seen.prepares).toHaveLength(1);
+        expect(seen.turns).toHaveLength(1);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(rows).toEqual([]);
+    });
+
+    it('ends the job as unreachable only when the address answered as something else at every one of the tries', async () => {
+        const probe = vi.fn(async (): Promise<RelayProbeResult> => ({ answer: 'wrong', status: 404 }));
+        const { seen, rows, run } = rig([], { probe });
+        await run();
+        // three tries, each asked of the address itself
+        expect(probe).toHaveBeenCalledTimes(3);
+        expect(seen.prepares).toEqual([]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
+        expect(rows).toHaveLength(1);
+    });
+
     it('asks the address once in a while, not for every job and turn', async () => {
         const probe = vi.fn(async (): Promise<RelayProbeResult> => ({ answer: 'relay', status: 401 }));
         const { run } = rig([done('Carrying on'), done('[[done]]')], { probe });
@@ -1735,6 +1759,135 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             await running;
             expect(seen.cancels).toBe(0);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+});
+
+describe('a turn stopped while its stream is being opened', () => {
+    const poolRefusal = { callId: 'c1', kind: 'fault', reason: 'pool_busy', source: 'universe-ai', route: 'universe-ai:p', providerStatus: 503 } as const;
+    const aborted = () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' });
+    /** A sleep that ends when its signal does, as the real one does. */
+    const sleeping = (ms: number, signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+            if (signal.aborted) return resolve();
+            const timer = setTimeout(resolve, ms);
+            signal.addEventListener('abort', () => (clearTimeout(timer), resolve()), { once: true });
+        });
+    /** Opening with a signal that has already ended fails with the abort itself, as `fetch` does. */
+    const opening = (events: () => AsyncGenerator<RunnerEvent>) => async (_jobId: string, ...rest: unknown[]): Promise<TurnOpened> => {
+        const signal = rest[rest.length - 1] as AbortSignal;
+        if (signal.aborted) throw aborted();
+        return { ok: true, events: events() };
+    };
+    const rigged = (reconnectMs: number[] = [200_000]) => {
+        const rows: CallRow[] = [];
+        const notes = createRefusalNotes(Date.now, { sink: async (_botId, _jobId, sent) => (rows.push(...sent), true) });
+        const warn = vi.fn();
+        const { orbit, seen } = fakeOrbit([]);
+        const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: sleeping, log: { warn, error: vi.fn(), info: vi.fn() }, refusals: notes, runId: () => 'run1', timing: { waitMs: 0, progressMs: 0, reconnectMs, prepareMs: [0] } });
+        orbit.running = async () => [JOB];
+        return { orbit, seen, notes, rows, warn, runner };
+    };
+    const withFakeClock = async (test: () => Promise<void>) => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            await test();
+        } finally {
+            vi.useRealTimers();
+        }
+    };
+    /** A turn that opens, then its stream breaks after a second: the runner waits to reconnect. */
+    const breaking = async function* (): AsyncGenerator<RunnerEvent> {
+        yield { type: 'created', id: 'r', sessionId: 's' };
+        await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+        throw new Error('terminated');
+    };
+    /** What the runner logs when an error left a turn and ended the worker: the job is then picked up again on the next look. */
+    const escaped = (rig: ReturnType<typeof rigged>) => rig.warn.mock.calls.filter((call) => String(call[0]).includes('stopped on an error'));
+    const poolBusyEnd = (rig: ReturnType<typeof rigged>) => {
+        expect(finished(rig.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+        expect(rig.seen.cancels).toBe(1);
+        expect(rig.rows.filter((row) => row.callId === 'pool_busy_gave_up_run1_1')).toHaveLength(1);
+        // nothing left the turn as an error to be picked up again
+        expect(escaped(rig)).toEqual([]);
+    };
+
+    it('ends the job as pool_busy, once, when the give-up comes while the runner waits to reconnect', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            rig.orbit.turn = async (_jobId, _input, signal) => (rig.notes.record(JOB.botId, JOB.jobId, poolRefusal), opening(breaking)('', signal));
+            rig.orbit.stream = opening(breaking);
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            poolBusyEnd(rig);
+        });
+    });
+
+    it('ends the job as pool_busy, once, when the give-up comes before the first stream has opened', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            rig.orbit.turn = (_jobId, _input, signal) =>
+                new Promise((_resolve, reject) => {
+                    rig.notes.record(JOB.botId, JOB.jobId, poolRefusal);
+                    // opening is slow, and fails with the abort when the turn is stopped
+                    signal.addEventListener('abort', () => reject(aborted()), { once: true });
+                });
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            poolBusyEnd(rig);
+        });
+    });
+
+    it('ends as stopped, with no finish and no error, when the runner is stopped in the same window (waiting to reconnect, or opening)', async () => {
+        for (const window of ['reconnect', 'opening'] as const) {
+            await withFakeClock(async () => {
+                const rig = rigged();
+                if (window === 'reconnect') {
+                    rig.orbit.turn = opening(breaking);
+                    rig.orbit.stream = opening(breaking);
+                } else {
+                    rig.orbit.turn = (_jobId, _input, signal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(aborted()), { once: true }));
+                }
+                const running = rig.runner.tick().then(() => rig.runner.idle());
+                await vi.advanceTimersByTimeAsync(10_000);
+                rig.runner.stop();
+                await vi.advanceTimersByTimeAsync(10_000);
+                await running;
+                expect(finished(rig.seen), window).toEqual([]);
+                expect(escaped(rig), window).toEqual([]);
+            });
+        }
+    });
+
+    it('ends as a turn that was stopped (told to look again), with no error, when Orbit refuses a renewal while the stream is being reopened', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged([200_000]);
+            let renewals = 0;
+            const original = rig.orbit.action;
+            rig.orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'renew') {
+                    // the first renewal is granted for five seconds; the next is refused while the runner waits to reconnect
+                    if (renewals++ === 0) return { ok: true, renewInSeconds: 5 };
+                    throw Object.assign(new Error('Request failed with status code 404'), { response: { status: 404 } });
+                }
+                return original(botId, jobId, body);
+            };
+            let streams = 0;
+            rig.orbit.turn = opening(breaking);
+            rig.orbit.stream = async (_jobId, signal) => {
+                if (signal.aborted) throw aborted();
+                return streams++ === 0 ? { ok: true, events: (async function* (): AsyncGenerator<RunnerEvent> { yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null }; })() } : { ok: true, events: (async function* () {})() };
+            };
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(20_000);
+            // the job is read again (it is over for Orbit then), and no error left the turn
+            rig.runner.stop();
+            await vi.advanceTimersByTimeAsync(10_000);
+            await running;
+            expect(escaped(rig)).toEqual([]);
+            expect(rig.seen.cancels).toBeGreaterThanOrEqual(1);
         });
     });
 });
