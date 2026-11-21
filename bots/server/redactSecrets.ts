@@ -61,10 +61,11 @@ export function looksLikeCommand(label: string): boolean {
  * The count the machine adds after a command ("+ 7 commands") is kept: it says how much was done, and holds nothing.
  */
 export function safeStepLabel(label: string): string {
-    const trimmed = label.replace(/\s+/g, ' ').trim();
-    if (looksLikeCommand(trimmed)) {
-        const more = /\+\s*(\d+)\s+(commands?|steps?)\s*$/i.exec(trimmed);
+    // Read as the machine wrote it: the line breaks and tabs are what tell a command (`Checking\nPASSWORD=… curl …`) from a description, and where an
+    // assignment begins, so nothing is collapsed before the label has been judged and its secrets hidden
+    if (looksLikeCommand(label)) {
+        const more = /\+\s*(\d+)\s+(commands?|steps?)\s*$/i.exec(label.trim());
         return more ? `${PLAIN_STEP} + ${more[1]} ${more[2].toLowerCase()}` : PLAIN_STEP;
     }
-    return redactSecrets(trimmed);
+    return redactSecrets(label).replace(/\s+/g, ' ').trim();
 }

@@ -53,6 +53,45 @@ describe('hiding what a raw command carries', () => {
     });
 });
 
+describe('a label of several lines, or with tabs, is judged and hidden as the machine wrote it', () => {
+    it('says a label with a command on any line as a plain description, and never shows an assignment that starts a line', () => {
+        for (const label of [
+            'Checking service\nPASSWORD=hunter2 curl https://example.test',
+            'Checking service\n\tPASSWORD=hunter2',
+            'Checking\nTOKEN=hunter2',
+            'Opening the form\ncurl -s https://x.test',
+            'Reading page\r\nexport KEY=hunter2',
+            'PASSWORD=hunter2\nOpening the form',
+            'Working\n\n\nT=sk-live-abcdefghijklmnop1234 run.sh + 3 commands',
+        ]) {
+            const said = safeStepLabel(label);
+            expect(looksLikeCommand(label), label).toBe(true);
+            expect(said, label).toMatch(new RegExp(`^${PLAIN_STEP}( \\+ \\d+ commands)?$`));
+            noSecret(said);
+        }
+        expect(safeStepLabel('Working\nT=cjt_8f3kQ2mZp0Lx9RtYvB4nWc7HdSa1JeUg curl x + 3 commands')).toBe(`${PLAIN_STEP} + 3 commands`);
+    });
+
+    it('hides an assignment after a line break or a tab in any text, keeping the line it was on, and the name', () => {
+        expect(redactSecrets('Checking service\nPASSWORD=hunter2 curl https://example.test')).toBe(`Checking service\nPASSWORD=${HIDDEN} curl https://example.test`);
+        expect(redactSecrets('Note:\tSECRET=hunter2\tdone')).toBe(`Note:\tSECRET=${HIDDEN}\tdone`);
+        expect(redactSecrets('PASSWORD=hunter2\nnext line')).toBe(`PASSWORD=${HIDDEN}\nnext line`);
+        expect(redactSecrets('line one\r\n\tKEY="a b c"\r\nline three')).toBe(`line one\r\n\tKEY=${HIDDEN}\r\nline three`);
+    });
+
+    it('hides an assignment that begins a line in the computer’s own sentence about why it could not go on', () => {
+        for (const words of ['I could not sign in.\nPASSWORD=hunter2 curl https://x.test [[failed]]', 'It refused me after:\n\tTOKEN=hunter2 run [[failed]]', 'Checking service\r\nPASSWORD=hunter2 [[failed]]']) {
+            expect(whyOf(words), words).not.toContain('hunter2');
+            expect(whyOf(words), words).toContain(HIDDEN);
+        }
+    });
+
+    it('keeps a description a person can read on one line, with tabs and runs of spaces made single spaces, and its secrets hidden', () => {
+        expect(safeStepLabel('Reading   the page\tabout   the visa')).toBe('Reading the page about the visa');
+        expect(safeStepLabel(`Note:\tSECRET=hunter2\tdone`)).toBe(`Note: SECRET=${HIDDEN} done`);
+    });
+});
+
 describe('hiding secrets in any text', () => {
     it('hides an Authorization header, a Bearer token, and a header given to a command', () => {
         expect(redactSecrets('Authorization: Bearer hunter2')).toBe(`Authorization: ${HIDDEN}`);
