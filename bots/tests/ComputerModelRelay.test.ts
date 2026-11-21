@@ -2420,17 +2420,45 @@ describe('the shared record of a call, before the call goes on', () => {
     });
 
     it('records a call whose body could not be read for the runner on another server, with the moment it arrived, and answers it as before', async () => {
-        const answer = await fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: '{"messages": [' });
+        const unreadable = (jobId?: string) => {
+            if (jobId) orbit.identify.mockResolvedValueOnce({ ok: true, jobId, botId: BOT });
+            return fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: '{"messages": [' });
+        };
+        const answer = await unreadable();
         expect(answer.status).toBe(400);
         expect(written).toEqual([`called:${JOB}`]);
         expect(moments).toHaveLength(1);
         expect(upstreamRequests).toHaveLength(0);
-        // a store that cannot be written is no reason to answer a body that cannot be read with anything but its own answer
+        // no row: it is the request's mistake
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(rowsB).toEqual([]);
+        // one write lost, the second lands: the arrival is in the record, so the answer is the body's own
         written.length = 0;
+        state.failWrites = 1;
+        expect((await unreadable('job-body-store-once')).status).toBe(400);
+        expect(written).toEqual(['called:job-body-store-once']);
+        // the runner works the job on THIS server: its own notes see the call, so a record that cannot be written changes nothing
+        written.length = 0;
+        here.add('job-body-store-here');
         state.failWrites = 4;
-        // (another job: the operators are told once for a job, and the next test reads that for this one's)
-        orbit.identify.mockResolvedValueOnce({ ok: true, jobId: 'job-body-store', botId: BOT });
-        expect((await fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: '{"messages": [' })).status).toBe(400);
+        expect((await unreadable('job-body-store-here')).status).toBe(400);
+        here.delete('job-body-store-here');
+    });
+
+    it('refuses a call whose body could not be read, as a fault of ours (503), when its arrival cannot be recorded for the runner on another server: a missing note is never left to read as "no call reached the relay" behind a 400 or 413', async () => {
+        state.failWrites = 4;
+        orbit.identify.mockResolvedValueOnce({ ok: true, jobId: 'job-body-store-down', botId: BOT });
+        const answer = await fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: '{"messages": [' });
+        expect(answer.status).toBe(503);
+        expect((await answer.json()).error.code).toBe('service_unavailable');
+        expect(written).toEqual([]);
+        expect(upstreamRequests).toHaveLength(0);
+        expect(orbit.authorize).not.toHaveBeenCalled();
+        // the same call too large
+        state.failWrites = 4;
+        orbit.identify.mockResolvedValueOnce({ ok: true, jobId: 'job-body-store-down-2', botId: BOT });
+        const big = await fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(RELAY_GUARDS.maxBodyBytes + 1024) }] }) });
+        expect(big.status).toBe(503);
     });
 
     it('tries the record again when a write is lost, and the call goes on with nothing told', async () => {

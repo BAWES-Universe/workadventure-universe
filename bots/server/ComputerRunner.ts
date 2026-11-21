@@ -79,9 +79,11 @@ export interface RunnerTiming {
     poolCheckMs?: number;
     /** How long the calls of a turn may ALL be refused for want of room before the machine is given up (Hermes tries a turn for about 6 minutes). */
     poolGiveUpMs?: number;
+    /** The most a turn that ends waits for the give-up that was still writing to the shared store (a close, or taking one back) to finish: it is bounded, never open-ended. */
+    cleanupMs?: number;
 }
 
-export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000 };
+export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000, cleanupMs: 10_000 };
 
 export const RUNNER_GUARDS = {
     /** Jobs the runner works on at once. */
@@ -488,6 +490,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let poolTimer: ReturnType<typeof setTimeout> | undefined;
         let poolWatch: ReturnType<typeof setTimeout> | undefined;
         let gaveUp = false;
+        // The give-up that is writing to the shared store right now (the close of the turn, or the taking of it back): the end of the turn waits for it, bounded
+        let watchdog: Promise<void> | undefined;
         // The turn's own end was read (a terminal event that needs no reconnection): nothing is given up on after it, whatever the pool answers
         let turnOver = false;
         // Only for a turn this process saw from its beginning: after a restart the notes know nothing of a call that was taken up before it, so a turn taken up
@@ -532,7 +536,12 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (poolBusy()) {
                 poolTimer ??= setTimeout(() => {
                     poolTimer = undefined;
-                    void giveUpIfStill();
+                    // Kept: the turn does not end (and the worker does not report that it is idle) while this is still writing to the shared store
+                    const running = giveUpIfStill().catch(() => undefined);
+                    watchdog = running;
+                    void running.then(() => {
+                        if (watchdog === running) watchdog = undefined;
+                    });
                 }, timing.poolGiveUpMs ?? RUNNER_TIMING.poolGiveUpMs);
             } else if (poolTimer) {
                 clearTimeout(poolTimer);
@@ -688,6 +697,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (poolWatch) clearTimeout(poolWatch);
             signal.removeEventListener('abort', onStop);
             turnController.abort();
+            // A close that was being written when the turn ended (a stop of the worker, the turn's own end) is taken back by the give-up itself, which sees the
+            // turn over: the end of the turn waits for that (bounded), so a worker that reports it is idle has not left a fence in the store that makes the relays
+            // of other servers refuse the calls of a turn that is still going. A give-up that goes on keeps its fence
+            const pending = watchdog;
+            if (pending) {
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                await Promise.race([pending, new Promise<void>((resolve) => (timer = setTimeout(resolve, timing.cleanupMs ?? RUNNER_TIMING.cleanupMs)))]);
+                if (timer) clearTimeout(timer);
+            }
         }
     }
 

@@ -2418,6 +2418,63 @@ describe('calls of a job that arrive at another bot server', () => {
                     }
                 });
 
+                const row = (id: string, over: Partial<Parameters<ReturnType<typeof createRefusalNotes>['record']>[2]> = {}) => ({ callId: id, kind: 'fault' as const, reason: 'relay_down' as const, source: 'universe-ai' as const, route: 'unknown', providerStatus: 503 as number | null, ...over });
+
+                it('a call refused by the close itself leaves no provisional fault behind: when the close is taken back and the turn then fails, the person’s allowance refusal that came in during the close decides, not a fault of ours', async () => {
+                    const { a, advance } = rigTurns();
+                    await begin(a, 'cr', 1, 'run-1');
+                    const since = a.mark();
+                    advance(10);
+                    const attempt: CloseAttempt = {};
+                    expect(await a.closeTurn('cr', since, attempt)).toBe(true);
+                    // during the close: a call is refused BECAUSE of it (its row is still written), and the person's allowance refuses another
+                    expect(a.accepted('cr', { turn: 1, run: 'run-1' }, 'refused-by-close')).toBe(false);
+                    a.record('bot', 'cr', row('refused-by-close', { turn: 1, run: 'run-1' }));
+                    a.record('bot', 'cr', row('allowance-1', { kind: 'not_ours', reason: 'allowance', providerStatus: 429, turn: 1, run: 'run-1' }));
+                    // the runner takes the close back and the turn then fails with no answer
+                    await a.reopenTurn('cr', attempt);
+                    expect(a.confirmedSince('cr', since)).toBe(false);
+                    expect(a.endedOnFault('cr', since)).toBe(false);
+                    expect(a.sawSince('cr', since)).toBe(true);
+                });
+
+                it('a fault of ours that is not the close’s own doing still counts, in the same turn', async () => {
+                    const { a, advance } = rigTurns();
+                    await begin(a, 'cr2', 1, 'run-1');
+                    const since = a.mark();
+                    advance(10);
+                    const attempt: CloseAttempt = {};
+                    expect(await a.closeTurn('cr2', since, attempt)).toBe(true);
+                    expect(a.accepted('cr2', { turn: 1, run: 'run-1' }, 'refused-by-close')).toBe(false);
+                    a.record('bot', 'cr2', row('refused-by-close', { turn: 1, run: 'run-1' }));
+                    a.record('bot', 'cr2', row('route-gone', { reason: 'route_unknown', turn: 1, run: 'run-1' }));
+                    await a.reopenTurn('cr2', attempt);
+                    expect(a.confirmedSince('cr2', since)).toBe(true);
+                    expect(a.endedOnFault('cr2', since)).toBe(true);
+                });
+
+                it('a call that arrived in a turn change (its turn could not be told) is sent with no turn and changes none of the active turn’s notes: no confirmed fault, no answer, no refusal for the runner to read', async () => {
+                    let at = 100_000;
+                    const store = sharedStore();
+                    const sent: CallRow[] = [];
+                    const a = createRefusalNotes(() => at, { shared: store.forServer('A'), runsHere: () => true, retryMs: [0], sink: async (_bot, _job, rows) => (sent.push(...rows.map((one) => ({ ...one }))), true) });
+                    await begin(a, 'nt', 1, 'run-1');
+                    const since = a.mark();
+                    at += 10;
+                    a.record('bot', 'nt', row('c-fault', { turn: null }));
+                    a.record('bot', 'nt', row('c-allowance', { kind: 'not_ours', reason: 'allowance', providerStatus: 429, turn: null }));
+                    a.record('bot', 'nt', row('c-answered', { kind: 'answered' as never, reason: 'provider_5xx', providerStatus: 200, turn: null }));
+                    expect(a.confirmedSince('nt', since)).toBe(false);
+                    expect(a.endedOnFault('nt', since)).toBe(false);
+                    expect(a.sawSince('nt', since)).toBe(false);
+                    // the durable rows are written, with no turn (Orbit reads them against every turn it judges)
+                    await a.flush('nt');
+                    expect(sent.filter((one) => one.callId !== 'c-answered').map((one) => [one.callId, one.turn])).toEqual([['c-fault', null], ['c-allowance', null]]);
+                    // a call of the active turn and run still counts
+                    a.record('bot', 'nt', row('c-here', { turn: 1, run: 'run-1' }));
+                    expect(a.confirmedSince('nt', since)).toBe(true);
+                });
+
                 it('when the fence cannot be taken back either, it clears itself after FENCE_LIFE_MS: the other server’s call is refused until then (a fault of ours, the machine tries again), and taken after', async () => {
                     const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
                     try {

@@ -665,10 +665,18 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
         // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
         const reachedAnswer = await reachedRelay(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) }, arrived?.at);
-        // A body the relay could not read was answered by the relay itself (413 or 400): the machine reached us, so the turn is no turn with no call. It is a
-        // mistake of the request, never of ours: no row is written (a body that cannot be read cannot be told to be an agent's call, and nothing of ours failed), and
-        // the answer is the same whether or not the call could be recorded for a runner on another server (a retry would send the same body)
-        if (wasBodyError) return bodyProblem(res, bodyError);
+        // A body the relay could not read was answered by the relay itself (413 or 400): the machine reached us, so the turn is no turn with no call (the arrival
+        // is noted above, for a key Orbit knows and for no other). It is a mistake of the request, never of ours: no row is written (a body that cannot be read
+        // cannot be told to be an agent's call, and nothing of ours failed). Nothing is forwarded and no room was taken (this is before Orbit is asked for any)
+        if (wasBodyError) {
+            // ...unless the arrival could not be recorded for the runner of the job on ANOTHER server. The servers say nothing to each other but through the shared
+            // record, and its write failed (twice, for the call and for the marker that says a call could not be recorded): the runner would read "no call
+            // reached any relay" and write a confirmed no_call of ours for a call that did arrive, and no other channel exists that it reads. So the call is refused
+            // exactly as every other call that cannot be recorded for its runner (503, the machine tries again and the load balancer may send it to the runner's
+            // server, which records it and answers its own 413/400): a refusal of ours that the runner's marker agrees with, never a missing note taken for proof
+            if (reachedAnswer === 'unservable' && !res.destroyed) return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+            return bodyProblem(res, bodyError);
+        }
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.

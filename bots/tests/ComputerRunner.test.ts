@@ -282,21 +282,40 @@ describe('a job that runs', () => {
                 yield { type: 'failed', code: 'model_error', message: 'The request is too large.' } as RunnerEvent;
             })(),
         });
-        const run = async (call: (base: string) => Promise<unknown>) => {
+        /** The relay and the runner on one server, or (`remote`) the relay on ANOTHER server whose writes to the shared record work (`ok`) or all fail (`down`). */
+        const run = async (call: (base: string) => Promise<{ status: number } | undefined | void>, remote?: 'ok' | 'down') => {
             const rows: CallRow[] = [];
-            const notes = createRefusalNotes(Date.now, { sink: async (_bot, _job, batch) => (rows.push(...batch), true), retryMs: [0] });
+            const statuses: number[] = [];
+            const called = new Map<string, number>();
+            const storeFor = (id: string, down: boolean) => ({
+                noteCalled: async (_job: string, at: number) => {
+                    if (down) throw new Error('write lost');
+                    called.set(id, Math.max(at, called.get(id) ?? 0));
+                },
+                noteUnrecorded: async () => {
+                    if (down) throw new Error('write lost');
+                },
+                lastCalledByOthers: async () => {
+                    const others = [...called].filter(([server]) => server !== id).map(([, at]) => at);
+                    return others.length > 0 ? Math.max(...others) : null;
+                },
+            });
+            const sink = async (_bot: string, _job: string, batch: CallRow[]) => (rows.push(...batch), true);
+            const notes = createRefusalNotes(Date.now, remote ? { sink, shared: storeFor('A', false), runsHere: () => true, retryMs: [0] } : { sink, retryMs: [0] });
+            const relayNotes = remote ? createRefusalNotes(Date.now, { sink, shared: storeFor('B', remote === 'down'), runsHere: () => false, retryMs: [0] }) : notes;
             const app = express();
-            app.use(createComputerModelRelay({ orbit: { identify: async () => ({ ok: true, jobId: JOB.jobId, botId: JOB.botId }), authorize: async () => ({ ok: true }), settle: async () => ({ ok: true }) } as never, routeFor: async () => null, refusals: notes }));
+            app.use(createComputerModelRelay({ orbit: { identify: async () => ({ ok: true, jobId: JOB.jobId, botId: JOB.botId }), authorize: async () => ({ ok: true }), settle: async () => ({ ok: true }) } as never, routeFor: async () => null, refusals: relayNotes }));
             const server: Server = await new Promise((resolve) => { const started = app.listen(0, () => resolve(started)); });
             const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
             try {
-                const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => turnWith(() => call(base))));
+                const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => turnWith(async () => { const answered = await call(base); if (answered) statuses.push(answered.status); })));
                 const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
                 orbit.running = async () => [JOB];
                 await runner.tick();
                 await runner.idle();
                 await notes.flush(JOB.jobId);
-                return { rows, seen };
+                await relayNotes.flush(JOB.jobId);
+                return { rows, seen, statuses };
             } finally {
                 server.closeAllConnections?.();
                 await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -311,6 +330,18 @@ describe('a job that runs', () => {
                 expect(rows.filter((row) => row.callId.startsWith('no_call_'))).toEqual([]);
                 expect(rows.filter((row) => row.reason === 'relay_down')).toEqual([]);
             }
+        }, 30_000);
+
+        it('with the relay on ANOTHER server: a call it answers 413 or 400 has its arrival in the shared record, so the runner writes no no_call; when the arrival cannot be recorded the call is refused (503) as a fault of ours, never answered 400 behind a missing note', async () => {
+            const body = '{"messages": [';
+            const recorded = await run(post(body), 'ok');
+            expect(recorded.statuses).toEqual([400, 400, 400]);
+            expect(recorded.rows.filter((row) => row.callId.startsWith('no_call_'))).toEqual([]);
+            const lost = await run(post(body), 'down');
+            // never a 400 or 413 whose arrival the runner cannot see: the relay refuses (ours), so a no_call of ours is no false statement
+            expect(lost.statuses.every((status) => status === 503)).toBe(true);
+            expect(lost.statuses).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+            expect(lost.rows.filter((row) => row.callId.startsWith('no_call_')).length).toBeGreaterThan(0);
         }, 30_000);
 
         it('still writes it for a turn in which no call reached the relay at all', async () => {
@@ -2209,7 +2240,9 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
         /** The moments of the fences written and not taken back. */
         const fences: number[] = [];
         // The store takes its time to get a command (latency) and then does it as one step: `began` says a close of the turn was sent
-        const latency = { ms: 0, began: undefined as (() => void) | undefined };
+        const latency = { ms: 0, retractMs: 0, began: undefined as (() => void) | undefined };
+        /** How many closes were committed and how many fences were taken back. */
+        const counts = { commits: 0, retracts: 0 };
         const forServer = (id: string) => ({
             noteCalled: async (_jobId: string, at: number) => void called.set(id, Math.max(at, called.get(id) ?? 0)),
             noteUnrecorded: async () => undefined,
@@ -2230,20 +2263,23 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 if (others.length > 0 && Math.max(...others) >= from - 2000) return false;
                 fenced = true;
                 fences.push(at ?? 0);
+                counts.commits += 1;
                 return true;
             },
             // as the store does it: only the fence that holds exactly that moment goes
             retractFence: async (_jobId: string, _turn: unknown, at: number) => {
+                if (latency.retractMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.retractMs));
                 const index = fences.indexOf(at);
                 if (index >= 0) fences.splice(index, 1);
                 fenced = fences.length > 0;
+                counts.retracts += 1;
             },
             lastAcceptedByOthers: async () => {
                 const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
                 return others.length > 0 ? Math.max(...others) : null;
             },
         });
-        return { forServer, accepted, latency, fences };
+        return { forServer, accepted, latency, fences, counts };
     };
 
     it('does not give up on a turn when the pool took up a call of the job on ANOTHER bot server: only a call taken up nowhere is a pool with no room', async () => {
@@ -2379,6 +2415,48 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             expect(record.fences).toEqual([]);
             // the turn takes calls again on this server too
             expect(notes.accepted(JOB.jobId, { turn: 1, run: 'run1' })).not.toBe(false);
+        });
+    });
+
+    it('does not report the worker idle while the give-up is still taking a close back: the fence is out of the store by the time idle() resolves', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            // the close takes a second to commit, taking it back another two
+            record.latency.ms = 1000;
+            record.latency.retractMs = 2000;
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+            // the worker stops 300 ms after the close was sent: before the store committed it
+            record.latency.began = () => void setTimeout(() => runner.stop(), 300);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            const idle = runner.idle().then(() => ({ fences: [...record.fences], ...record.counts }));
+            await vi.advanceTimersByTimeAsync(130_000);
+            // at the moment the worker said it was idle, the close had committed AND been taken back
+            const atIdle = await idle;
+            expect(atIdle.fences).toEqual([]);
+            expect(atIdle.commits).toBe(1);
+            expect(atIdle.retracts).toBeGreaterThanOrEqual(1);
+            expect(seen.cancels).toBe(0);
+        });
+    });
+
+    it('waits for that clean-up only for a bounded time: a close that never answers does not hold the worker', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const real = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit } = fakeOrbit([]);
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0], cleanupMs: 500 }, refusals: { ...real, closeTurn: () => { setTimeout(() => runner.stop(), 300); return new Promise<boolean>(() => undefined); } }, runId: () => 'run1' });
+            retryingTurn(orbit, (at) => at(0, () => real.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            let idle = false;
+            void runner.idle().then(() => (idle = true));
+            // the stop came 300 ms into a close that never answers; the clean-up is allowed 500 ms more
+            await vi.advanceTimersByTimeAsync(95_000 + 2000);
+            expect(idle).toBe(true);
         });
     });
 

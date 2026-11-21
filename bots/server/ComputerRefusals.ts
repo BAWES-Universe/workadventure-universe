@@ -934,13 +934,19 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             // A call that belongs to a turn (or a run) the runner has left says nothing of the turn it is on now: its row is still sent under its own
             // turn and run, but the notes the runner reads for the turn in progress are not changed by it
             const stale = staleCall(jobId, call.turn !== undefined && call.turn !== null ? { turn: call.turn, run: call.run } : undefined);
-            if (call.kind === 'answered') return stale ? undefined : mark(jobId, 'answered');
-            if (!stale) {
+            // A call whose turn could not be told (it arrived in a turn change, or on a server that cannot read the runner's turns) is no call of the turn in progress
+            // either: its row is sent with no turn (Orbit reads such a row against every turn it judges), and the notes of the active turn are not changed by it
+            const unattributed = call.turn === null;
+            if (call.kind === 'answered') return stale || unattributed ? undefined : mark(jobId, 'answered');
+            if (!stale && !unattributed) {
                 if (call.kind === 'not_ours') {
                     forget();
                     last.set(jobId, { at: now(), order: ++count });
                     mark(jobId, 'called');
-                } else {
+                } else if (!(call.reason === 'relay_down' && closeRefused.get(jobId)?.ids.has(call.callId.slice(0, 120)))) {
+                    // (a relay_down row of a call that this server refused because the runner CLOSED the turn is the close's own doing, and is no evidence of its own:
+                    // it is decided BEFORE anything is noted, so that a close that is taken back leaves no provisional fault behind to outweigh what really happened
+                    // in the turn, the person's allowance for one; the row itself is still written below)
                     mark(jobId, 'fault', call.kind === 'fault');
                     // Refused for want of room in the shared pool and CONFIRMED so (no room for even the smallest call, or none of the job's calls was ever taken
                     // up): the runner reads a turn of nothing but these as a machine to give up. A call refused for its own size (`uncertain`) is unresolved,
@@ -948,8 +954,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     if (call.reason === 'pool_busy' && call.kind === 'fault') mark(jobId, 'pooled');
                     // Any other way a call failed (the relay could not look up the route, a provider error, a key refused...) is no refusal for room: a turn that
                     // had one is no pool-only turn, whatever else it had
-                    // (a relay_down row of a call that this server refused because the runner CLOSED the turn is the close's own doing, and is no evidence of its own)
-                    else if (call.reason !== 'pool_busy' && !(call.reason === 'relay_down' && closeRefused.get(jobId)?.ids.has(call.callId.slice(0, 120)))) mark(jobId, 'other');
+                    else if (call.reason !== 'pool_busy') mark(jobId, 'other');
                 }
             }
             if (!options.sink && !store) return;
