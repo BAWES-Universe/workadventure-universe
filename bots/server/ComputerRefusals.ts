@@ -714,20 +714,24 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
      */
     const resolveSuspects = async (entry: Queue, jobId: string, suspects: Set<CallRow>): Promise<boolean> => {
         if (suspects.size === 0) return true;
+        // A row put back by a replay is still kept among the dead letters: refused alone again it goes back to waiting there, and nothing is told again. This does
+        // not depend on whether Orbit has taken rows lately (the copy among the dead letters is the one that stays, so nothing is lost), otherwise a replay on a quiet
+        // server or after a restart would be sent again every few minutes for days and raise "all refused" for rows that are already kept
+        const fresh = new Set<CallRow>();
+        for (const row of suspects) {
+            if (entry.fromDead.delete(row)) settle(entry, jobId, [row]);
+            else fresh.add(row);
+        }
+        if (fresh.size === 0) return true;
         if (orbitTookAt === null || now() - orbitTookAt > ORBIT_TAKING_ROWS_MS) {
             if (!allRefusedTold) {
                 allRefusedTold = true;
-                tell('all_refused', jobId, [...suspects][0].callId);
+                tell('all_refused', jobId, [...fresh][0].callId);
             }
             return false;
         }
         let all = true;
-        for (const row of suspects) {
-            // A row put back by a replay is still kept among the dead letters: refused alone again it goes back to waiting there, and nothing is told again
-            if (entry.fromDead.delete(row)) {
-                settle(entry, jobId, [row]);
-                continue;
-            }
+        for (const row of fresh) {
             // Kept apart first: only then does the row leave the rows waiting for Orbit
             if (!(await keepDead(entry.botId, jobId, row))) {
                 all = false;

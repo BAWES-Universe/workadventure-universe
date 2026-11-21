@@ -1306,6 +1306,43 @@ describe('the evidence kept before the money decision is final, and delivered af
                 expect(told).toEqual([]);
             });
 
+            it('a replayed dead letter that Orbit refuses again goes back to the dead letters even when Orbit has taken no row lately (a quiet server or a restart): it is not sent again for days, and no "all refused" is raised for it (Sentry on #2114)', async () => {
+                const mem = memoryStore();
+                const told: string[] = [];
+                const all = naming(new Set(['d1', 'd2']));
+                all.open();
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: all.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                mem.dead.set('job|d1', { botId: 'bot', jobId: 'job', row: call('d1') as CallRow });
+                mem.dead.set('job|d2', { botId: 'bot', jobId: 'job', row: call('d2') as CallRow });
+                expect(await notes.replayDeadLetters()).toBe(2);
+                expect(await notes.flush('job')).toBe(true);
+                expect(told).toEqual([]);
+                expect(all.taken).toEqual([]);
+                expect([...mem.dead.keys()].sort()).toEqual(['job|d1', 'job|d2']);
+                // not sent again
+                const before = all.calls.length;
+                expect(await notes.flush('job')).toBe(true);
+                expect(all.calls.length).toBe(before);
+            });
+
+            it('beside a fresh row on a quiet server, a replayed dead letter refused again goes back to the dead letters, and the "all refused" alert names the FRESH row, which is kept and sent again', async () => {
+                const mem = memoryStore();
+                const told: string[] = [];
+                const all = naming(new Set(['d1', 'fresh']));
+                all.open();
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: all.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                mem.dead.set('job|d1', { botId: 'bot', jobId: 'job', row: call('d1') as CallRow });
+                expect(await notes.replayDeadLetters()).toBe(1);
+                notes.record('bot', 'job', call('fresh'));
+                expect(await notes.flush('job')).toBe(false);
+                expect(told).toEqual(['all_refused fresh']);
+                // the replayed row is back among the dead letters and is not sent again; the fresh row stays waiting for Orbit
+                expect([...mem.dead.keys()]).toEqual(['job|d1']);
+                await vi.waitFor(() => expect([...mem.held.keys()]).toEqual(['job|fresh']));
+                const sentAgain = all.calls.slice(1).flat();
+                expect(sentAgain).not.toContain('d1');
+            });
+
             it('a row taken in the same pass as a named one does not leave Orbit "away": the named row is set aside as a dead letter even when it is alone in a later batch', async () => {
                 const o = naming(new Set(['bad']));
                 o.open();
