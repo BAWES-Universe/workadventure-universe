@@ -2474,6 +2474,42 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
         });
     });
 
+    it('keeps one give-up at a time: while the first close is still being written the timers arm no other, and the end of the turn waits for THAT close to be taken back', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const real = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            const closes: number[] = [];
+            const events: string[] = [];
+            let runner!: ReturnType<typeof createComputerRunner>;
+            // the first close is slow (it commits at 6 s and then answers); a second one, if it were ever asked, answers at once
+            const closeTurn = (_job: string): Promise<boolean> => {
+                closes.push(Date.now());
+                if (closes.length === 1) {
+                    // the worker stops while the first close is on its way
+                    setTimeout(() => runner.stop(), 3000);
+                    return new Promise<boolean>((resolve) => setTimeout(() => (events.push('first close answered'), resolve(true)), 6000));
+                }
+                return Promise.resolve(false);
+            };
+            const reopenTurn = async () => void events.push('close taken back');
+            // the give-up timer fires at 1 s and the pool is looked at every 0.5 s: the timers fire again while the first close is pending
+            runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0], poolGiveUpMs: 1000, poolCheckMs: 500 }, refusals: { ...real, closeTurn, reopenTurn }, runId: () => 'run1' });
+            retryingTurn(orbit, (at) => at(0, () => real.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            void runner.idle().then(() => events.push('worker idle'));
+            await vi.advanceTimersByTimeAsync(5000);
+            // no second give-up was started while the first was pending
+            expect(closes).toHaveLength(1);
+            await vi.advanceTimersByTimeAsync(20_000);
+            // the first close answered at 6 s, the turn was over: it was taken back, and the worker was idle only after that
+            expect(closes).toHaveLength(1);
+            expect(events).toEqual(['first close answered', 'close taken back', 'worker idle']);
+            expect(seen.cancels).toBe(0);
+        });
+    });
+
     it('waits for that clean-up only for a bounded time: a close that never answers does not hold the worker', async () => {
         await withFakeClock(async () => {
             const record = sharedRecord();

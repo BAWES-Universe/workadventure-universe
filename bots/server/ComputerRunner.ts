@@ -534,7 +534,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const watchPool = () => {
             if (turnOver || turnController.signal.aborted) return;
             if (poolBusy()) {
-                poolTimer ??= setTimeout(() => {
+                // One give-up at a time: while one is still writing to the shared store (its close, or taking it back) no other is armed, and the one that is
+                // pending is never replaced, so the end of the turn waits for THE give-up that holds a fence. When it has settled, the next look arms again if the
+                // turn is still going and still pool-only
+                if (watchdog === undefined) poolTimer ??= setTimeout(() => {
                     poolTimer = undefined;
                     // Kept: the turn does not end (and the worker does not report that it is idle) while this is still writing to the shared store
                     const running = giveUpIfStill().catch(() => undefined);

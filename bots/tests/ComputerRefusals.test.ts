@@ -2469,10 +2469,31 @@ describe('calls of a job that arrive at another bot server', () => {
                     expect(a.sawSince('nt', since)).toBe(false);
                     // the durable rows are written, with no turn (Orbit reads them against every turn it judges)
                     await a.flush('nt');
-                    expect(sent.filter((one) => one.callId !== 'c-answered').map((one) => [one.callId, one.turn])).toEqual([['c-fault', null], ['c-allowance', null]]);
+                    // (the complete output: the answer is never sent, it is no row)
+                    expect(sent.map((one) => [one.callId, one.turn])).toEqual([['c-fault', null], ['c-allowance', null]]);
                     // a call of the active turn and run still counts
                     a.record('bot', 'nt', row('c-here', { turn: 1, run: 'run-1' }));
                     expect(a.confirmedSince('nt', since)).toBe(true);
+                });
+
+                it('an answer of a call with no turn does not clear a fault of the active turn, and an answer of the active turn does', async () => {
+                    const { a, advance } = rigTurns();
+                    await begin(a, 'nt2', 1, 'run-1');
+                    const since = a.mark();
+                    advance(10);
+                    a.record('bot', 'nt2', row('active-fault', { turn: 1, run: 'run-1' }));
+                    expect(a.confirmedSince('nt2', since)).toBe(true);
+                    expect(a.endedOnFault('nt2', since)).toBe(true);
+                    // an answer that arrived in a turn change is no answer of this turn: the fault stands
+                    advance(10);
+                    a.record('bot', 'nt2', row('unplaced-answer', { kind: 'answered' as never, reason: 'provider_5xx', providerStatus: 200, turn: null }));
+                    expect(a.confirmedSince('nt2', since)).toBe(true);
+                    expect(a.endedOnFault('nt2', since)).toBe(true);
+                    // an answer of the active turn and run recovers it
+                    advance(10);
+                    a.record('bot', 'nt2', row('active-answer', { kind: 'answered' as never, reason: 'provider_5xx', providerStatus: 200, turn: 1, run: 'run-1' }));
+                    expect(a.confirmedSince('nt2', since)).toBe(false);
+                    expect(a.endedOnFault('nt2', since)).toBe(false);
                 });
 
                 it('when the fence cannot be taken back either, it clears itself after FENCE_LIFE_MS: the other server’s call is refused until then (a fault of ours, the machine tries again), and taken after', async () => {
