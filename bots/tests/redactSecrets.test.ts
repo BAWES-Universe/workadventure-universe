@@ -222,6 +222,88 @@ describe('a value is read whole, as the shell reads a word', () => {
         }
     });
 
+    it('judges a word on the text with its line continuations taken out, as Bash does: a keyword split by one is still the keyword', () => {
+        const nl = '\n';
+        const bs = '\\';
+        const cases: Array<[string, string]> = [
+            [`PASSWORD=$(ca${bs}${nl}se x in x) printf hunter2;; esac) next`, `PASSWORD=${HIDDEN}`],
+            [`PASSWORD=$(c${bs}${nl}ase x in x) printf hunter2;; esac) next`, `PASSWORD=${HIDDEN}`],
+            [`PASSWORD=$(cas${bs}${nl}e x in x) printf hunter2;; esac) next`, `PASSWORD=${HIDDEN}`],
+            // the here-document marker, the substitution, the comment and the subscript
+            [`PASSWORD=$(cat <${bs}${nl}<EOF${nl}x )${nl}hunter2${nl}EOF${nl}) next`, `PASSWORD=${HIDDEN}`],
+            [`PASSWORD=$${bs}${nl}(printf hunter2 ; echo a) next`, `PASSWORD=${HIDDEN} next`],
+            [`PASSWORD=$(printf x ${bs}${nl}# ) ${nl}printf hunter2) next`, `PASSWORD=${HIDDEN} next`],
+            [`PASSWORD=$(a${bs}${nl}[ ) ]=x; echo hunter2) next`, `PASSWORD=${HIDDEN} next`],
+            // a name split by one is the name
+            [`PASS${bs}${nl}WORD=hunter2 next`, `PASSWORD=${HIDDEN} next`],
+        ];
+        for (const [text, hidden] of cases) {
+            expect(redactSecrets(text), JSON.stringify(text)).toBe(hidden);
+            expect(redactSecrets(text), JSON.stringify(text)).not.toContain('hunter2');
+        }
+    });
+
+    it('finds every part from the text as it was written: a pass that hid a part must not change where a quoted value ends', () => {
+        const bs = '\\';
+        const secrets = ['Authorization=abc', 'x Bearer abcdef', 'https://u:p@h/', 'sk-live-abcdefghijklmnop1234', 'Proxy-Authorization: Basic abc', '-H X=y'];
+        for (const inside of secrets) {
+            const text = `PASSWORD="${inside}${bs}"hunter2" next`;
+            expect(redactSecrets(text), JSON.stringify(text)).not.toContain('hunter2');
+            expect(redactSecrets(text), JSON.stringify(text)).toBe(`PASSWORD=${HIDDEN} next`);
+            // the other passes' parts before the assignment and after it, one blank between
+            const assignment = `PASSWORD="abc${bs}"hunter2" next`;
+            for (const said of [`${inside} ${assignment}`, `${assignment} ${inside}`]) {
+                const hidden = redactSecrets(said);
+                expect(hidden, said).not.toContain('hunter2');
+                expect(hidden.includes(`PASSWORD=${HIDDEN} next`), said).toBe(true);
+            }
+        }
+        expect(redactSecrets(`PASSWORD="abc${bs}"hunter2" next`)).toBe(`PASSWORD=${HIDDEN} next`);
+        // a header that stands alone is still hidden as a header, and so is one with an escaped blank in its value
+        expect(redactSecrets('authorization=Bearer hunter2')).toBe(`authorization: ${HIDDEN}`);
+        expect(redactSecrets(`authorization=two${bs} words`)).not.toContain('words');
+        expect(redactSecrets(`curl -H "X-Key: abc${bs}"hunter2" https://x.test`)).not.toContain('hunter2');
+        expect(redactSecrets(`curl -H "X-Key: abc${bs}"hunter2" https://x.test`)).toContain('https://x.test');
+        // an escaped blank in a header's value is part of the value
+        expect(redactSecrets(`Authorization: Bearer two${bs} words next`)).not.toContain('words');
+        expect(redactSecrets(`Authorization: Bearer two${bs} words next`)).toBe(`Authorization: ${HIDDEN} next`);
+        // a long base64 run that ends in `=` is a secret whole: its name is not left behind as an assignment's
+        expect(redactSecrets('sent dXNlcjpzZWNyZXRwYXNzd29yZDEyMzQ1Njc4OTA= to the service')).toBe(`sent ${HIDDEN} to the service`);
+    });
+
+    it('ends a comment at its physical line even when the line ends in a continuation: what follows is a line of its own, with its own quotes', () => {
+        // Each of these is a script Bash accepts whole (found by the differential test): a comment that ends in a backslash is not joined to the next line, so a
+        // quote or a `$(` that opens there still opens, and a `)` after it is inside it
+        for (const text of [
+            'PASSWORD=$(#\\\n $\' ( ; echo $(# )\n hunter2) && echo hunter2\n\necho a\\ #b )\n$\'!x[[)',
+            'PASSWORD=$(#$(ifesac cat\\\n <<EOF\nz )\nEOF\n\n\n(print\\\nf ok)# hunter2 )\necho $#)',
+            'PASSWORD=$(x\\\n && # && echo \\\n$(# )\n hunter\\\n2) ; echo \'hunter2 )\')',
+            'PASSWORD=$(  # $\' echo \')\'; ec\\\nho $((1 + 2)) cat <<EOF\nz )\nEO\\\nF\n\n hunter2 echo ${a[1]})',
+            'PASSWORD=$(x #  ;&x ; ech\\\no $(# )\n hunter2) ; echo hunter2\n\ncat <<-\'EOF\'\n	z )\n	EOF\n)',
+        ]) {
+            expect(redactSecrets(text), JSON.stringify(text)).not.toContain('hunter2');
+        }
+        expect(redactSecrets("PASSWORD=$(#\\\n $' ) hunter2 '; echo a) next")).toBe(`PASSWORD=${HIDDEN} next`);
+    });
+
+    it('reads `$((` as arithmetic as well as a command: in arithmetic a `#`, a `<<` and a `case` are nothing, and only the parentheses count', () => {
+        const bs = '\\';
+        for (const text of [
+            'PASSWORD=$(! ; x $((;# ( cat <<E\\\nOF\nz )\n\\\nEOF\n\n)) hunter2 \nprintf \'%s\' x)',
+            `PASSWORD=$((1 + (2 * 3)) + 4) next`,
+            `PASSWORD=$(echo $((;# ( x )) ; printf hunter2) next`,
+            `PASSWORD=$((16#ff + 1)) next`,
+            `PASSWORD=$(echo $(( 1 + 2 )) ${bs}${'\n'}# ) ; echo hunter2) next`,
+        ]) {
+            expect(redactSecrets(text), JSON.stringify(text)).not.toContain('hunter2');
+        }
+        expect(redactSecrets('PASSWORD=$((1 + (2 * 3)) + 4) next')).toBe(`PASSWORD=${HIDDEN} next`);
+        expect(redactSecrets('PASSWORD=$((16#ff + 1)) next')).toBe(`PASSWORD=${HIDDEN} next`);
+        // the same text read as a command (a subshell in a substitution) is still read as one
+        expect(redactSecrets('PASSWORD=$((echo a) ; echo b) next')).toBe(`PASSWORD=${HIDDEN} next`);
+        expect(redactSecrets('PASSWORD=$((echo a # x\nprintf hunter2) ; echo b) next')).toBe(`PASSWORD=${HIDDEN} next`);
+    });
+
     it('does not read a `#` as a comment where it is not one: in quotes, `$#`, `${#x}`, in the middle of a word', () => {
         const cases: Array<[string, string]> = [
             ["PASSWORD=$(printf '%s' '# )' hunter2) next", `PASSWORD=${HIDDEN} next`],

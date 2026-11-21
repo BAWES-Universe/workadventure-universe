@@ -57,6 +57,11 @@ const FRAGMENTS = [
     'echo \\;# )\n',
     'echo a\\\n# )\n',
     'echo a[0-9]',
+    'echo $((1 + (2 * 3)))',
+    'echo $((;# ( x ))',
+    '(echo a)',
+    'echo $(( 1 )) # )\n',
+    'x=$((2))',
     'echo ${a[1]}',
     `echo ${SECRET}`,
     `echo '${SECRET} )'`,
@@ -75,6 +80,7 @@ const FRAGMENTS = [
 ];
 /** How much of a try is made of whole fragments rather than loose tokens: FUZZ_FRAGMENTS (0 to 1) shifts it. */
 const FRAGMENT_SHARE = Number(process.env.FUZZ_FRAGMENTS ?? 0.7);
+const CONTINUED_SHARE = Number(process.env.FUZZ_CONTINUED ?? 0.35);
 const SEPARATORS = ['', ' ', '\n', ';', '; ', ' && ', ' | ', ' || ', '\n\n', ' ; '];
 
 function generate(random: () => number): string {
@@ -89,7 +95,15 @@ function generate(random: () => number): string {
         if (n < count - 1) parts.push(pick(SEPARATORS));
     }
     if (!hasSecret) parts.splice(Math.floor(random() * (parts.length + 1)), 0, random() < 0.5 ? SECRET : ` ${SECRET} `);
-    return parts.join('');
+    let body = parts.join('');
+    // A share of the bodies have line continuations put in at random: Bash takes them out before it reads a word, so a keyword or a marker may be split by one
+    if (random() < CONTINUED_SHARE) {
+        for (let n = 1 + Math.floor(random() * 3); n > 0; n--) {
+            const at = Math.floor(random() * (body.length + 1));
+            body = `${body.slice(0, at)}\\\n${body.slice(at)}`;
+        }
+    }
+    return body;
 }
 
 /** The cases Bash accepts: the body is a whole script by itself, and the substitution around it is one too, so the whole body is inside the value. */
@@ -103,6 +117,85 @@ export function validCases(seed: number, attempts: number): string[] {
     }
     return found;
 }
+
+/** What the other passes of the redaction hide: a header, a Bearer token, a header flag, a URL login, a key by its shape, a standalone header. */
+const MATERIAL = ['Authorization=abc', 'authorization=Bearer abc', 'x Bearer abcdef', 'https://u:p@h/', 'sk-live-abcdefghijklmnop1234', 'cjt_8f3kQ2mZp0Lx9RtYvB4nWc7HdSa1JeUg', 'Proxy-Authorization: Basic abc', "-H 'X-Key: abc'", '-H "X-Key: abc"', 'dXNlcjpzZWNyZXRwYXNzd29yZDEyMzQ1Njc4OTA=', 'q?token=abc&b=1'];
+/** The loose parts of the inside of a double-quoted value: no unescaped double quote, so the secret is inside it by construction. */
+const QUOTED_PARTS = [' ', ' ', 'a', 'x1', '\\"', '\\\\', '\\\n', '$x', '${x}', '$(echo a)', '#', "'", ')', '(', ';', '&', '|', '<', '>', SECRET, SECRET, ...MATERIAL.filter((one) => !one.includes('"'))];
+
+/** Whether the secret survives in any text built round a value: the other passes' parts before it, after it, and both. */
+function leaksAround(assignment: string, random: () => number): string | null {
+    const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
+    const before = pick(MATERIAL);
+    const after = pick(MATERIAL);
+    for (const text of [assignment, `${before} ${assignment}`, `${assignment} ${after}`, `${before} ${assignment} ${after}`, `${assignment} next`]) {
+        if (redactSecrets(text).includes(SECRET)) return text;
+    }
+    return null;
+}
+
+describe.skipIf(!haveBash)('redactSecrets against real Bash: where the other passes are on, and where a keyword is split by a continuation', () => {
+    it('hides the secret in a quoted value, whatever the other passes hid round it, in both orders of text', () => {
+        const attempts = Number(process.env.FUZZ_QUOTED ?? 1500);
+        const random = seeded(Number(process.env.FUZZ_SEED ?? 20261121) + 7);
+        const leaks: string[] = [];
+        let valid = 0;
+        for (let n = 0; n < attempts; n++) {
+            const body = Array.from({ length: 1 + Math.floor(random() * 8) }, () => QUOTED_PARTS[Math.floor(random() * QUOTED_PARTS.length)]).join(random() < 0.5 ? '' : ' ');
+            if (!body.includes(SECRET)) continue;
+            const assignment = `PASSWORD="${body}"`;
+            if (!validBash(assignment)) continue;
+            valid++;
+            const leaked = leaksAround(assignment, random);
+            if (leaked) leaks.push(JSON.stringify(leaked));
+        }
+        if (process.env.FUZZ_DUMP) writeFileSync(`${process.env.FUZZ_DUMP}.quoted`, JSON.stringify(leaks, null, 1));
+        expect(leaks, `${valid} valid of ${attempts}`).toEqual([]);
+        expect(valid).toBeGreaterThan(Math.min(20, attempts / 100));
+    }, 600_000);
+
+    it('hides the secret in a substitution with the other passes on round it', () => {
+        const attempts = Number(process.env.FUZZ_ATTEMPTS ?? 1500) / 3;
+        const random = seeded(Number(process.env.FUZZ_SEED ?? 20261121) + 11);
+        const leaks: string[] = [];
+        for (const script of validCases(Number(process.env.FUZZ_SEED ?? 20261121) + 13, attempts)) {
+            const leaked = leaksAround(script, random);
+            if (leaked) leaks.push(JSON.stringify(leaked));
+        }
+        if (process.env.FUZZ_DUMP) writeFileSync(`${process.env.FUZZ_DUMP}.around`, JSON.stringify(leaks, null, 1));
+        expect(leaks).toEqual([]);
+    }, 600_000);
+
+    it('hides the secret when a continuation splits a keyword or a marker at any place', () => {
+        const bodies = [
+            `case x in x) printf ${SECRET};; esac`,
+            `case "$x" in (a) echo a;; *) printf ${SECRET};; esac`,
+            `cat <<EOF\nx )\n${SECRET}\nEOF\n`,
+            `cat <<-'EOF'\n\tx )\n\t${SECRET}\n\tEOF\n`,
+            `echo a # ) \n printf ${SECRET}`,
+            `printf ${SECRET}; (echo a)# ) \n`,
+            `a[ ) ]=x; echo ${SECRET}`,
+            `echo $(echo ${SECRET}) \${#x} $#`,
+            `echo \${x:-${SECRET}} $'it\\'s ${SECRET}'`,
+            `echo \`echo ${SECRET}\` $((1 + 2))`,
+            `if true; then echo ${SECRET}; fi`,
+        ];
+        const leaks: string[] = [];
+        let valid = 0;
+        for (const body of bodies) {
+            for (let at = 0; at <= body.length; at++) {
+                const split = `${body.slice(0, at)}\\\n${body.slice(at)}`;
+                const script = `PASSWORD=$(${split})`;
+                if (!validBash(split) || !validBash(script)) continue;
+                valid++;
+                for (const text of [script, `${script} next`, `${MATERIAL[1]} ${script}`]) if (redactSecrets(text).includes(SECRET)) leaks.push(JSON.stringify(text));
+            }
+        }
+        expect(leaks, `${valid} valid splits`).toEqual([]);
+        expect(valid).toBeGreaterThan(100);
+    }, 600_000);
+});
+
 
 describe.skipIf(!haveBash)('redactSecrets against real Bash: a secret inside the value of an assignment never survives', () => {
     it('hides the secret in every substitution that Bash accepts as a whole', () => {

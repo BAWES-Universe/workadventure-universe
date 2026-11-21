@@ -16,11 +16,11 @@ export const PLAIN_STEP = 'Working on the computer';
 const KNOWN_TOKENS = /\b(?:cjt_[A-Za-z0-9_-]{6,}|sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
 
 /** `Authorization: Bearer x`, `Authorization: Basic x`, `Bearer x`, with or without quotes around the header. */
-const AUTH_HEADER = /\b(Authorization|Proxy-Authorization)\s*[:=]\s*(?:Bearer|Basic|Token)?\s*[^\s'"]+/gi;
+const AUTH_HEADER = /\b(Authorization|Proxy-Authorization)\s*[:=]\s*(?:Bearer|Basic|Token)?\s*(?:\\[\s\S]|[^\s'"\\])+/gi;
 const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{6,}/g;
 
 /** A header given to a command: `-H 'X-Api-Key: …'`, `--header "…"`. The whole header goes, whatever it holds. */
-const HEADER_FLAG = /(^|\s)(-H|--header)(?:\s+|=)(?:'[^']*'|"[^"]*"|\S+)/g;
+const HEADER_FLAG = /(^|\s)(-H|--header)(?:\s+|=)(?:'[^']*'|"(?:[^"\\]|\\[\s\S])*"|\S+)/g;
 
 /** A URL with credentials in it: `https://user:pass@host`, `https://token@host`. */
 const URL_CREDENTIALS = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@'"]+@/g;
@@ -29,7 +29,8 @@ const URL_CREDENTIALS = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@'"]+@/g;
 const ASSIGNMENT_START = /(^|[\s;&|?(])([A-Za-z_][A-Za-z0-9_]*)=/g;
 
 /**
- * Where the value that starts at `from` ends, read as the shell reads one word: plain characters, an escaped character (`two\ words`, `a\"b`, a lone
+ * Where the value that starts at `from` ends in `text` (which has its line continuations taken out, as Bash does before it reads a word), read as the shell
+ * reads one word: plain characters, an escaped character (`two\ words`, `a\"b`, a lone
  * backslash at the end, a backslash before a line break), a double-quoted part (escapes inside it), a single-quoted part, an ANSI-C quoted part
  * (`$'it\'s'`), a command substitution (`$(…)` with its own quotes, parentheses and comments, `$((…))`, backticks), a `${…}` expansion and an array
  * `(…)`, any of them joined (`a"b c"d`).
@@ -39,33 +40,20 @@ const ASSIGNMENT_START = /(^|[\s;&|?(])([A-Za-z_][A-Za-z0-9_]*)=/g;
  * closes nothing. A `#` that begins a word inside `$(…)` starts a comment to the end of its line, and nothing in it (a `)`, a quote) closes or opens anything;
  * a `#` anywhere else (inside quotes, `$#`, `${#x}`, in the middle of a word) is an ordinary character.
  */
-function endOfShellWord(text: string, from: number): number {
+function endOfShellWord(text: string, from: number, origin: number[]): number {
     const end = text.length;
-    // The line break that ended the last comment: a backslash before it was part of the comment, not a line continuation
-    let commentEnd = -1;
+    // Where a line continuation was taken out, a physical line ended: a comment does not go on past it, and what follows it begins a line
+    const cut = (index: number): boolean => index > 0 && origin[index] > origin[index - 1] + 1;
+    const lineStarts = new Set<number>();
     // The character at `at` is escaped by a backslash before it (an odd run of them): `\ #` is one word, not a blank and a comment
     const escapedAt = (at: number): boolean => {
-        if (at === commentEnd) return false;
         let run = 0;
         while (at - 1 - run >= 0 && text[at - 1 - run] === '\\') run++;
         return run % 2 === 1;
     };
-    // The index of the character before `at`, a backslash and a line break (a line continuation, which Bash takes out) not counted; -1 at the start
-    const indexBefore = (at: number): number => {
-        let j = at - 1;
-        while (j >= 1 && j !== commentEnd && text[j] === '\n' && text[j - 1] === '\\' && !escapedAt(j - 1)) j -= 2;
-        return j;
-    };
-    const charBefore = (at: number): string => {
-        const j = indexBefore(at);
-        return j >= 0 ? text[j] : '';
-    };
     // The character before `at` begins a new word (as in Bash, where `#` starts a comment only then): the start of the text, a blank or line break, or one
-    // of `; & | ( ) < >`, none of them escaped; a line continuation before it is taken out first
-    const wordStart = (at: number): boolean => {
-        const j = indexBefore(at);
-        return j < 0 || (/[\s;&|()<>]/.test(text[j]) && !escapedAt(j));
-    };
+    // of `; & | ( ) < >`, none of them escaped
+    const wordStart = (index: number): boolean => index === 0 || lineStarts.has(index) || (/[\s;&|()<>]/.test(text[index - 1]) && !escapedAt(index - 1));
     // After a `<<` that is a here-document (not the `<<<` here-string)
     const heredocAt = (at: number): boolean => text[at] === '<' && text[at + 1] === '<' && text[at + 2] !== '<' && text[at - 1] !== '<';
     const quoted = (start: number, quote: '"' | "'", ansi = false): number => {
@@ -114,8 +102,31 @@ function endOfShellWord(text: string, from: number): number {
         }
         return end;
     };
+    // `open` is the index of the first `(` of a `$((`: Bash reads it as arithmetic (up to the `))` that balances it: no comment, here-document or `case` in it)
+    // and, when that does not fit, as a command substitution that begins with a parenthesis. Which one it was is not told here: the later end of the two
+    const arithmetic = (open: number): number => {
+        let depth = 0;
+        let i = open;
+        while (i < end) {
+            const c = text[i];
+            if (c === '\\') i += 2;
+            else if (c === "'") i = quoted(i + 1, "'");
+            else if (c === '"') i = quoted(i + 1, '"');
+            else if (c === '`') i = backticks(i + 1);
+            else if (c === '(') {
+                depth++;
+                i++;
+            } else if (c === ')') {
+                depth--;
+                i++;
+                if (depth === 0) return i;
+            } else i++;
+        }
+        return end;
+    };
     // `open` is the index of the `(` or `{` after a `$`; returns the index after its balanced close (or the end)
-    const nested = (open: number): number => {
+    const nested = (open: number): number => (text[open] === '(' && text[open + 1] === '(' ? Math.max(arithmetic(open), command(open)) : command(open));
+    const command = (open: number): number => {
         const stack: string[] = [text[open] === '(' ? ')' : '}'];
         let i = open + 1;
         while (i < end && stack.length > 0) {
@@ -127,14 +138,17 @@ function endOfShellWord(text: string, from: number): number {
             else if (c === '$' && text[i + 1] === "'") i = quoted(i + 2, "'", true);
             else if (c === '`') i = backticks(i + 1);
             else if (inCommand && c === '#' && wordStart(i)) {
-                // A comment: to the end of its line, whatever it holds. No line break after it: it runs to the end, and so does the value
-                const lineEnd = text.indexOf('\n', i);
-                if (lineEnd < 0) return end;
-                commentEnd = lineEnd;
+                // A comment: to the end of its physical line, whatever it holds (a backslash at its end continues nothing: the line after it is a line of its
+                // own). No line end after it: it runs to the end, and so does the value
+                let lineEnd = i + 1;
+                while (lineEnd < end && text[lineEnd] !== '\n' && !cut(lineEnd)) lineEnd++;
+                if (lineEnd >= end) return end;
+                if (text[lineEnd] !== '\n') lineStarts.add(lineEnd);
                 i = lineEnd;
             } else if (inCommand && heredocAt(i)) return end;
             else if (inCommand && c === 'c' && wordStart(i) && /^case\s/.test(text.slice(i, i + 5))) return end;
-            else if (inCommand && c === '[' && /[A-Za-z0-9_]/.test(charBefore(i))) i = subscript(i);
+            else if (c === '$' && text[i + 1] === '(' && text[i + 2] === '(') i = nested(i + 1);
+            else if (inCommand && c === '[' && /[A-Za-z0-9_]/.test(text[i - 1] ?? '')) i = subscript(i);
             else if (c === '(') {
                 stack.push(')');
                 i++;
@@ -164,18 +178,63 @@ function endOfShellWord(text: string, from: number): number {
     return Math.min(i, end);
 }
 
-/** Hides the value of every shell assignment in the text (and of every query parameter), keeping the name. */
-function hideAssignments(text: string): string {
-    let out = '';
-    let at = 0;
-    ASSIGNMENT_START.lastIndex = 0;
-    for (let found = ASSIGNMENT_START.exec(text); found !== null; found = ASSIGNMENT_START.exec(text)) {
-        const end = endOfShellWord(text, found.index + found[0].length);
-        out += `${text.slice(at, found.index)}${found[1]}${found[2]}=${HIDDEN}`;
-        at = end;
-        ASSIGNMENT_START.lastIndex = Math.max(end, found.index + found[0].length);
+/** A part of a text to say as something else, by its place in the original text. */
+interface Span {
+    start: number;
+    end: number;
+    text: string;
+    /** An assignment: the one to give way when another pass found the same part (a base64 run that ends in `=` reads as an assignment, and its name is the secret). */
+    weak?: true;
+}
+
+/** Takes out the line continuations (a backslash before a line break, not itself escaped), keeping where each character of what is left stood. */
+function joinContinuations(text: string): { logical: string; at: number[] } {
+    let logical = '';
+    const at: number[] = [];
+    let run = 0;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (c === '\\') {
+            run++;
+            // A backslash that is not escaped and is followed by a line break is a continuation: it and the line break go
+            if (run % 2 === 1 && text[i + 1] === '\n') {
+                i++;
+                run = 0;
+                continue;
+            }
+        } else run = 0;
+        logical += c;
+        at.push(i);
     }
-    return out + text.slice(at);
+    at.push(text.length);
+    return { logical, at };
+}
+
+/** Every shell assignment in the text (and every query parameter): its value goes, the name stays. Read from the text as it was written. */
+function assignmentSpans(text: string): Span[] {
+    const { logical, at } = joinContinuations(text);
+    const spans: Span[] = [];
+    ASSIGNMENT_START.lastIndex = 0;
+    for (let found = ASSIGNMENT_START.exec(logical); found !== null; found = ASSIGNMENT_START.exec(logical)) {
+        const nameStart = found.index + found[1].length;
+        const valueStart = found.index + found[0].length;
+        const end = endOfShellWord(logical, valueStart, at);
+        spans.push({ start: at[nameStart], end: at[end], text: `${found[2]}=${HIDDEN}`, weak: true });
+        ASSIGNMENT_START.lastIndex = Math.max(end, valueStart);
+    }
+    return spans;
+}
+
+/** The parts of the text a pattern finds, each said as `say` makes it. */
+function spansOf(text: string, pattern: RegExp, say: (found: RegExpExecArray) => { start: number; text: string }): Span[] {
+    const spans: Span[] = [];
+    pattern.lastIndex = 0;
+    for (let found = pattern.exec(text); found !== null; found = pattern.exec(text)) {
+        const one = say(found);
+        spans.push({ start: found.index + one.start, end: found.index + found[0].length, text: one.text });
+        if (found[0].length === 0) pattern.lastIndex++;
+    }
+    return spans;
 }
 
 /** A long run of letters and digits with at least one digit (base64, hex, an id used as a secret) that is no word. */
@@ -188,17 +247,51 @@ const COMMAND_WORDS =
 const EXECUTABLE_PATH = /(^|[;&|(]\s*)(?:\.{0,2}\/|~\/)[^\s;&|()]+(?=\s|$)/;
 const COMMAND_SHAPES = /&&|\|\||\$\(|`|\s\|\s|\s>>?\s|\s2>&?1|(^|\s)--?[A-Za-z][\w-]*(\s|=|$)|\\\n|\n/;
 
-/** Hides every part of the text that is a secret, by its place (a header, an assignment, a URL's credentials) or by its shape (a known key, a long opaque run). */
+/**
+ * Hides every part of the text that is a secret, by its place (a header, an assignment, a URL's credentials) or by its shape (a known key, a long opaque
+ * run). Every part is found in the text as it was written, never in text another pass has changed (a pass that hid part of a quoted value would change
+ * where the value ends); parts that touch are hidden together, said as the longest of them says it, and a shape that gives its name to an assignment says it.
+ */
 export function redactSecrets(text: string): string {
-    const redacted = text
-        .replace(AUTH_HEADER, (_m, name: string) => `${name}: ${HIDDEN}`)
-        .replace(HEADER_FLAG, (_m, space: string, flag: string) => `${space}${flag} ${HIDDEN}`)
-        .replace(BEARER, (_m, word: string) => `${word} ${HIDDEN}`)
-        .replace(URL_CREDENTIALS, (_m, scheme: string) => `${scheme}${HIDDEN}@`)
-        // By shape first: a base64 run ends in `=`, which an assignment would read as its own
-        .replace(KNOWN_TOKENS, HIDDEN)
-        .replace(LONG_OPAQUE, HIDDEN);
-    return hideAssignments(redacted);
+    const spans: Span[] = [
+        ...spansOf(text, AUTH_HEADER, (found) => ({ start: 0, text: `${found[1]}: ${HIDDEN}` })),
+        ...spansOf(text, HEADER_FLAG, (found) => ({ start: found[1].length, text: `${found[2]} ${HIDDEN}` })),
+        ...spansOf(text, BEARER, (found) => ({ start: 0, text: `${found[1]} ${HIDDEN}` })),
+        ...spansOf(text, URL_CREDENTIALS, (found) => ({ start: 0, text: `${found[1]}${HIDDEN}@` })),
+        ...spansOf(text, KNOWN_TOKENS, () => ({ start: 0, text: HIDDEN })),
+        ...spansOf(text, LONG_OPAQUE, () => ({ start: 0, text: HIDDEN })),
+        ...assignmentSpans(text),
+    ];
+    // An assignment that begins inside a part that ends in a quote (a `-H "Cookie: a=b"` header) is inside that quoted string: its value ends with the part, and
+    // the quote that closes the string is not one that opens another
+    for (const one of spans) {
+        if (!one.weak) continue;
+        for (const around of spans) {
+            if (!around.weak && around.start < one.start && one.start < around.end && one.end > around.end && /["']$/.test(text.slice(around.start, around.end))) one.end = around.end;
+        }
+    }
+    spans.sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
+    let out = '';
+    let at = 0;
+    for (let i = 0; i < spans.length; ) {
+        let chosen = spans[i];
+        let end = chosen.end;
+        let j = i + 1;
+        // Spans that overlap are one part: all of it goes, said as the longest says it (a strong one before a weak one when they are as long)
+        for (; j < spans.length && spans[j].start < end; j++) {
+            const next = spans[j];
+            end = Math.max(end, next.end);
+            const longer = next.end - next.start > chosen.end - chosen.start;
+            const same = next.end - next.start === chosen.end - chosen.start;
+            if (longer || (same && chosen.weak && !next.weak)) chosen = next;
+        }
+        if (chosen.start >= at) {
+            out += text.slice(at, chosen.start) + chosen.text;
+            at = end;
+        }
+        i = j;
+    }
+    return out + text.slice(at);
 }
 
 /** Whether the tool that ran is a terminal or a shell: what it shows as its label is the command itself. */
