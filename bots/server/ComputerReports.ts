@@ -13,7 +13,7 @@
  * The person's own Stop, a computer turned off and a Brick deleted are never offered: they just did it.
  *
  * The late follow-up (`late`): an App that was let go unconfirmed (so its hold was released and nothing was charged) may be confirmed later by the provider's log. Orbit then offers
- * one more message for the job, once, in the same conversation: "Update: <App> did go out after all. We couldn't confirm it earlier. You weren't charged for it." ("for them" for several Apps). The game only says
+ * one more message for the job, once per batch of Apps confirmed together (its key ends in the batch's number, which only goes up for a job, and `seq` carries it, told back like a wait's), in the same conversation: "Update: <App> did go out after all. We couldn't confirm it earlier. You weren't charged for it." ("for them" for several Apps). The game only says
  * it, from Orbit's facts: it never charges, refunds or decides anything. Orbit offers it only to a game that asks for it (`accepts=late`), so an older game never meets the kind.
  *
  * The file card: the files a finished job made come as `handed`: they are the person's own, kept by Orbit (and shown in their Files) whether or not the chat took them.
@@ -132,8 +132,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     }
     const origin = report.origin as { kind?: unknown; ref?: unknown } | null | undefined;
     const kind = report.kind as ReportKind;
-    // A late report is told once for the whole job: it has no number, and one that came with a number is told without it
-    const seq = kind !== 'late' && typeof report.seq === 'number' ? report.seq : null;
+    const seq = typeof report.seq === 'number' ? report.seq : null;
     const apps = kind === 'late' ? appsOf(report.apps) : [];
     // "You weren't charged" is only said when Orbit says the hold was released, and an App is only named when there is a name to say: otherwise there is nothing true to tell
     if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true)) return null;
