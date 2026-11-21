@@ -111,6 +111,17 @@ describe('use_computer (#2000)', () => {
         expect(await run(asking({}), {})).toEqual({ error: 'Say in a few words what the job is.' });
     });
 
+    it('says it is not known whether a job started when the start was slow and Orbit could not say: not a failure, not a start, and to look before asking again', async () => {
+        const unknown = await run(asking({ ok: false, reason: 'unknown' }));
+        expect(unknown).toMatchObject({ started: false, unknown: true });
+        expect(unknown).not.toHaveProperty('success');
+        expect(unknown).not.toHaveProperty('starting');
+        expect(String(unknown.note)).toMatch(/not known whether this job started/);
+        expect(String(unknown.note)).toMatch(/couldn't confirm it/);
+        expect(String(unknown.note)).toMatch(/look at the bar above this chat before asking again/);
+        expect(String(unknown.note)).toMatch(/Do not say it failed or that it started/);
+    });
+
     it('says a computer that is still being made as starting, in plain words, and not as a failure', async () => {
         const starting = await run(asking({ ok: false, reason: 'starting' }));
         // A slow answer with a busy computer is not evidence that THIS job was taken (the busy read may be an earlier job): nothing is promised

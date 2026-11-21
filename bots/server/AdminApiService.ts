@@ -544,6 +544,8 @@ const COMPUTER_STARTED_LOOK_MAX_SECONDS = 600;
 const COMPUTER_STARTED_LOOK_SLACK_SECONDS = 5;
 /** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
 const COMPUTER_JOB_LIVE = ['running', 'waiting', 'queued'];
+/** The states of a job that was made and is over. */
+const COMPUTER_JOB_OVER = ['failed', 'stopped'];
 
 /** Whether a call failed because it took too long (our own timeout, or a gateway in front of Orbit that gave up): the work may be going on behind it. */
 export function isSlowAnswer(error: unknown): boolean {
@@ -1509,10 +1511,10 @@ export class AdminApiService {
     /**
      * The job this very start made, when Orbit can prove it (#2000): read only, asked after a start whose answer was slow. Orbit looks for the newest job of
      * this Brick for this person that began in this conversation (`originRef`, the direct chat), with this title, in the last `sinceSeconds` (an elapsed time:
-     * the two servers' clocks are never compared). Null when there is none, when Orbit does not say (an Orbit without this read answers without `started`),
-     * or when it cannot be asked: nothing is then known to have started.
+     * the two servers' clocks are never compared). `'none'` when Orbit answers that there is none (`started: null`). `'unknown'` when it does not say (an Orbit
+     * without this read answers without `started`, a damaged answer) or cannot be asked: the start may well have made a job, which nobody can tell.
      */
-    async computerJobStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; originRef: string; title: string; sinceSeconds: number }): Promise<{ id: string; status: string } | null> {
+    async computerJobStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; originRef: string; title: string; sinceSeconds: number }): Promise<{ id: string; status: string } | 'none' | 'unknown'> {
         try {
             const response = await this.brickCall<{ started?: { id?: unknown; status?: unknown } | null }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, {
                 userId,
@@ -1521,11 +1523,15 @@ export class AdminApiService {
                 title: find.title,
                 sinceSeconds: String(Math.max(1, Math.min(COMPUTER_STARTED_LOOK_MAX_SECONDS, Math.ceil(find.sinceSeconds)))),
             });
-            const started = response.data?.started;
-            return started && typeof started.id === 'string' && started.id !== '' && typeof started.status === 'string' ? { id: started.id, status: started.status } : null;
+            const data = response.data;
+            // No `started` at all is an Orbit that does not have this read: it says nothing. Only its own `null` says there is no such job.
+            if (!data || typeof data !== 'object' || !('started' in data) || data.started === undefined) return 'unknown';
+            const started = data.started;
+            if (started === null) return 'none';
+            return typeof started === 'object' && typeof started.id === 'string' && started.id !== '' && typeof started.status === 'string' ? { id: started.id, status: started.status } : 'unknown';
         } catch (error) {
             console.warn("[AdminApiService] Could not read whether a Brick's computer job was started:", error instanceof Error ? error.message : error);
-            return null;
+            return 'unknown';
         }
     }
 
@@ -1680,7 +1686,9 @@ export class AdminApiService {
      * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. A start that takes longer than we wait (or that a gateway
      * cut) is not a failure of the computer when Orbit PROVES that this start made a job (one for this person, from this conversation, with this title, begun
      * since the ask went out, running or waiting): the machine is being made, and it answers `starting`. That the person has some other job going proves
-     * nothing about this one: with nothing proven, no origin to prove it by, or an Orbit that cannot say, the start throws as any failure does.
+     * nothing about this one. When Orbit says there is no such job (or one that failed or stopped) the start throws as any failure does. When it CANNOT say
+     * (no origin to ask by, an Orbit without the read, a damaged answer, the read failing) the answer is `unknown`: the slow start may well have made a job,
+     * and telling the person it failed would have them ask again and pay for a second one.
      */
     async startComputerJob(
         viaBotId: string,
@@ -1691,7 +1699,9 @@ export class AdminApiService {
         try {
             return await this.sendComputerJob(viaBotId, userId, ask);
         } catch (error) {
-            if (isSlowAnswer(error) && ask.origin?.ref) {
+            if (isSlowAnswer(error)) {
+                // Nothing to ask by: it cannot be proved either way
+                if (!ask.origin?.ref) return { ok: false, reason: 'unknown' };
                 const made = await this.computerJobStarted(viaBotId, userId, {
                     ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
                     originRef: ask.origin.ref,
@@ -1699,7 +1709,14 @@ export class AdminApiService {
                     // The wait itself, and a few seconds more for the time it took the ask to be sent and written
                     sinceSeconds: (Date.now() - began) / 1000 + COMPUTER_STARTED_LOOK_SLACK_SECONDS,
                 });
-                if (made && COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
+                if (made === 'unknown') return { ok: false, reason: 'unknown' };
+                if (made !== 'none') {
+                    if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
+                    // A job that failed or stopped: it was made and is over, which is what a failed start says too
+                    if (COMPUTER_JOB_OVER.includes(made.status)) throw error;
+                    // A state this server does not know: nothing can be said of it
+                    return { ok: false, reason: 'unknown' };
+                }
             }
             throw error;
         }

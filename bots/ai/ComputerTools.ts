@@ -208,6 +208,10 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                 // The answer was slow and Orbit says it made THIS job (one for this person, from this chat, with this title, begun since the ask went out):
                 // the machine is being made. Nothing about its progress is known, so nothing is promised: only what is known is said, and they can ask again
                 return { started: false, starting: true, note: 'Your computer is starting. It is not known yet whether this job has been taken. Say in one short sentence that your computer is starting and that if the job does not show in the bar above this chat in a minute or two, they can ask you again. Do not say the job has begun, or will begin by itself. Do not say how long it will take.' };
+            case 'unknown':
+                // The answer was slow and nobody can tell whether THIS job was made. Not a failure (it may be running): the person must not be told it failed,
+                // or they ask again and a second job is paid for behind the first
+                return { started: false, unknown: true, note: 'It is not known whether this job started. Say in one short sentence that you couldn\'t confirm it, and ask them to look at the bar above this chat before asking again. Do not say it failed or that it started.' };
             case 'off':
                 return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
             case 'broken_start':
