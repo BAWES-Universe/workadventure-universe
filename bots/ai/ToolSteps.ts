@@ -119,7 +119,7 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
     // Forgetting something about the person (game #2003): "Forgot", with their own words under it
     [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
     // A job on the Brick's own computer (game #2000)
-    [COMPUTER_TOOL]: (args) => ({ doing: 'Working on its computer', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
+    [COMPUTER_TOOL]: (args) => ({ doing: 'Starting its computer, this takes a minute', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
     // A reminder the person asked for (game #2002): "Set a reminder", with what it says under it. Reading what is kept is never a step.
     [SET_REMINDER_TOOL]: (args) => ({ doing: 'Setting a reminder', done: 'Set a reminder', detail: shown(args.text), group: 'set_reminder', kind: 'write' }),
     // A briefing, a watch or a goal the person asked for: what it is, with their words under it

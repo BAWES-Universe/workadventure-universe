@@ -111,6 +111,15 @@ describe('use_computer (#2000)', () => {
         expect(await run(asking({}), {})).toEqual({ error: 'Say in a few words what the job is.' });
     });
 
+    it('says a computer that is still being made as starting, in plain words, and not as a failure', async () => {
+        const starting = await run(asking({ ok: false, reason: 'starting' }));
+        expect(starting).toMatchObject({ started: true, starting: true });
+        expect(starting).not.toHaveProperty('success');
+        expect(String(starting.note)).toMatch(/starting your computer and it takes a minute/);
+        expect(String(starting.note)).not.toMatch(/could not be reached/);
+        expect(resultOf('c1', starting)).toMatchObject({ ok: true });
+    });
+
     it('marks a job that did not start as a failed step, and a job that is running or waiting its turn as one that worked', async () => {
         const down = { startComputerJob: vi.fn().mockRejectedValue(new Error('offline')) };
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -125,7 +134,7 @@ describe('use_computer (#2000)', () => {
     });
 
     it('shows as one step on the steps line', () => {
-        expect(describeStep({ id: 'c1', name: COMPUTER_TOOL, arguments: { job: 'Visa form' } })).toMatchObject({ doing: 'Working on its computer', done: 'Worked on its computer', detail: 'Visa form', kind: 'write' });
+        expect(describeStep({ id: 'c1', name: COMPUTER_TOOL, arguments: { job: 'Visa form' } })).toMatchObject({ doing: 'Starting its computer, this takes a minute', done: 'Worked on its computer', detail: 'Visa form', kind: 'write' });
     });
 });
 

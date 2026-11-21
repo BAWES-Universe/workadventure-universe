@@ -534,6 +534,18 @@ export type GuestBrickAllowance =
 const BRICK_CALL_TIMEOUT_MS = 8_000;
 /** Ending a computer job: Orbit hands its files over before it answers, which can take up to about four minutes. */
 const COMPUTER_FINISH_TIMEOUT_MS = 6 * 60_000;
+/**
+ * The first job on a brand-new Brick makes its machine inside Orbit's start call (40 to 126 s measured on dev); Orbit waits up to 4 minutes for a machine to be
+ * ready (READY_WITHIN_MS), so the start call waits longer than that, and the answer is never cut while the machine is still being made.
+ */
+export const COMPUTER_START_TIMEOUT_MS = 6 * 60_000;
+
+/** Whether a call failed because it took too long (our own timeout, or a gateway in front of Orbit that gave up): the work may be going on behind it. */
+export function isSlowAnswer(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const { code, response } = error as { code?: unknown; response?: { status?: unknown } };
+    return code === 'ECONNABORTED' || code === 'ETIMEDOUT' || response?.status === 504 || response?.status === 524;
+}
 /** A file a computer job made can be as big as Limits allow, so its fetch gets longer than a call for a list. */
 const COMPUTER_FILE_TIMEOUT_MS = 120_000;
 /** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
@@ -1489,6 +1501,17 @@ export class AdminApiService {
         }
     }
 
+    /** Does this Brick have a job running or waiting for this person (#2000)? Read only. False when Orbit cannot be asked: nothing is then known to be going on. */
+    async computerIsBusy(viaBotId: string, userId: string): Promise<boolean> {
+        try {
+            const response = await this.brickCall<{ busy?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId });
+            return response.data?.busy === true;
+        } catch (error) {
+            console.warn("[AdminApiService] Could not read whether a Brick's computer is busy:", error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
     /** An Instant call to Orbit with the service token. Never throws: 200 and 202 are answers, 404 is "not the owner", the rest are not answers. */
     private async instantCall(method: 'get' | 'post', path: string, body: unknown, params: Record<string, string> | undefined, timeout: number): Promise<{ status: number; data: Record<string, unknown> } | { status: 'none'; retry: boolean; rejected?: true; http?: number }> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
@@ -1636,8 +1659,24 @@ export class AdminApiService {
         return answer.status === 200 || answer.status === 404;
     }
 
-    /** Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. */
+    /**
+     * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. A start that takes longer than we wait (or that a gateway
+     * cut) is not a failure of the computer when Orbit now has a job running or waiting for this person: the machine is being made, and it answers `starting`.
+     */
     async startComputerJob(
+        viaBotId: string,
+        userId: string,
+        ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
+        try {
+            return await this.sendComputerJob(viaBotId, userId, ask);
+        } catch (error) {
+            if (isSlowAnswer(error) && (await this.computerIsBusy(viaBotId, userId))) return { ok: false, reason: 'starting' };
+            throw error;
+        }
+    }
+
+    private async sendComputerJob(
         viaBotId: string,
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
@@ -1653,7 +1692,9 @@ export class AdminApiService {
                 ...(ask.writes === undefined ? {} : { writes: ask.writes }),
                 ...(ask.plan ? { plan: ask.plan } : {}),
                 ...(ask.origin ? { origin: ask.origin } : {}),
-            }
+            },
+            undefined,
+            COMPUTER_START_TIMEOUT_MS
         );
         const data = response.data;
         const job = data?.job;
