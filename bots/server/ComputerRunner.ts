@@ -19,6 +19,7 @@ import { randomBytes } from 'node:crypto';
 import type { AdminApiService } from './AdminApiService';
 import type { RefusalNotes, Since } from './ComputerRefusals';
 import { readRunnerEvents } from './ComputerTurnStream';
+import { redactSecrets, safeStepLabel } from './redactSecrets';
 
 export type RunnerEvent =
     | { type: 'created'; id: string; sessionId: string | null }
@@ -134,7 +135,8 @@ export function whyOf(words: string): string | null {
     // A stop inside a name or number ("passport.pdf", "3.5", "e.g. the form") is no end of a sentence: only a stop followed by a space and a capital, a digit or an opening quote is
     const sentences = before.split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9“"'(])/).map((one) => one.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const last = sentences[sentences.length - 1] ?? '';
-    return last ? last.slice(-300) : null;
+    // The computer's own sentence may quote a command it ran: nothing secret goes on to Orbit or the person
+    return last ? redactSecrets(last.slice(-300)) : null;
 }
 
 /**
@@ -303,7 +305,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     // Counts each start and stop, so a poll that was asked before a stop can tell it was
     let generation = 0;
 
-    const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? error.message : '');
+    // What a failure says can hold what a request held (an address, a header): nothing secret reaches a log
+    const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? redactSecrets(error.message) : '');
 
     /**
      * Ends the job at Orbit. A failure says whose it was: `ours` (no relay, a machine that would not get ready, turns that kept going wrong,
@@ -484,7 +487,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     for await (const event of opened.events) {
                         if (event.type === 'text') words = (words + event.text).slice(-RUNNER_GUARDS.maxWords);
                         else if (event.type === 'tool') {
-                            if (event.state === 'started' && event.label) label = event.label;
+                            if (event.state === 'started' && event.label) label = safeStepLabel(event.label);
                             if (event.state === 'completed') {
                                 stepDone += 1;
                                 await report();
