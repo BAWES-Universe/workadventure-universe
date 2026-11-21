@@ -75,6 +75,18 @@ describe('the fault record Orbit keeps of a computer job’s model calls', () =>
         expect(await service.computerJobFaults('b', 'j', [row])).toBe(false);
     });
 
+    it('takes only Orbit’s own positive answer (200 with ok: true) as taking the rows: a 200 with no `ok`, an empty body, a page or a non-true `ok` leaves them kept', async () => {
+        for (const body of [{}, { stored: 1 }, 'OK', '<html>ok</html>', [], null, { ok: 'true' }, { ok: 1 }, { ok: null }]) {
+            answer = { status: 200, body };
+            expect(await service.computerJobFaults('b', 'j', [row])).toBe(false);
+        }
+        // any other 2xx is no answer of Orbit's either
+        answer = { status: 202, body: { ok: true } };
+        expect(await service.computerJobFaults('b', 'j', [row])).toBe(false);
+        answer = { status: 200, body: { ok: true } };
+        expect(await service.computerJobFaults('b', 'j', [row])).toBe(true);
+    });
+
     it('says \'rejected\' only for Orbit’s own 400 about the rows: a bare 400 (a gateway) is still false and the rows are sent again', async () => {
         answer = { status: 400, body: { error: 'Invalid request' } };
         expect(await service.computerJobFaults('b', 'j', [row])).toBe('rejected');

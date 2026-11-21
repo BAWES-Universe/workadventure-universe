@@ -6,7 +6,7 @@
  * last write. A row holds ids, a reason, a source, a route and times: nothing anyone said, no key. A damaged or foreign entry is skipped (and never
  * stops the bot server starting); an entry older than the time rows are kept is removed.
  */
-import type { CallRow, EvidenceStore, SharedCalls, SharedTurn } from './ComputerRefusals';
+import type { CallRow, CallTurn, EvidenceStore, SharedCalls, SharedTurn, SharedTurnList } from './ComputerRefusals';
 import { DEAD_LETTER_KEEP_MS, EVIDENCE_KEEP_MS, REFUSAL_NOTE_KEEP_MS } from './ComputerRefusals';
 
 /** The few Redis commands used (a node-redis v4 client has them all). */
@@ -292,26 +292,31 @@ export class RedisSharedCalls implements SharedCalls {
         await this.write(jobId, UNRECORDED_FIELD + this.instanceId, at);
     }
 
-    async noteTurn(jobId: string, turns: SharedTurn[]): Promise<void> {
+    async noteTurn(jobId: string, turns: SharedTurn[], until: number): Promise<void> {
         const client = this.client();
-        // The list replaces the one before it (the runner's own latest few), with the hash's life renewed in the same step
-        await this.within(client.eval(SET_AND_RENEW, { keys: [CALLED_PREFIX + jobId], arguments: [TURN_FIELD + this.instanceId, JSON.stringify(turns), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000))] }));
+        // The list (with its promise) replaces the one before it (the runner's own latest few), with the hash's life renewed in the same step
+        await this.within(client.eval(SET_AND_RENEW, { keys: [CALLED_PREFIX + jobId], arguments: [TURN_FIELD + this.instanceId, JSON.stringify({ turns, until }), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000))] }));
     }
 
-    async turnsByOthers(jobId: string): Promise<SharedTurn[]> {
+    async turnsByOthers(jobId: string): Promise<SharedTurnList[]> {
         const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
-        const out: SharedTurn[] = [];
+        const out: SharedTurnList[] = [];
         for (const [field, value] of Object.entries(all)) {
             if (!field.startsWith(TURN_FIELD) || field.slice(TURN_FIELD.length) === this.instanceId) continue;
             try {
-                const list: unknown = JSON.parse(value);
-                if (!Array.isArray(list)) continue;
-                for (const one of list) {
+                const said: unknown = JSON.parse(value);
+                // A list with no promise (written before the promise existed, or damaged) covers nothing
+                if (typeof said !== 'object' || said === null || Array.isArray(said)) continue;
+                const { turns, until } = said as { turns?: unknown; until?: unknown };
+                if (!Array.isArray(turns) || typeof until !== 'number' || !Number.isFinite(until)) continue;
+                const list: SharedTurn[] = [];
+                for (const one of turns) {
                     if (typeof one === 'object' && one !== null && Number.isInteger((one as SharedTurn).turn) && (one as SharedTurn).turn >= 0 && Number.isFinite((one as SharedTurn).at)) {
                         const run = (one as SharedTurn).run;
-                        out.push({ turn: (one as SharedTurn).turn, ...(typeof run === 'string' && run !== '' ? { run } : {}), at: (one as SharedTurn).at });
+                        list.push({ turn: (one as SharedTurn).turn, ...(typeof run === 'string' && run !== '' ? { run } : {}), at: (one as SharedTurn).at });
                     }
                 }
+                out.push({ turns: list, until });
             } catch {
                 /* a damaged field is skipped */
             }
@@ -319,15 +324,26 @@ export class RedisSharedCalls implements SharedCalls {
         return out;
     }
 
-    async noteAccepted(jobId: string, at: number): Promise<void> {
-        await this.write(jobId, ACCEPTED_FIELD + this.instanceId, at);
+    async noteAccepted(jobId: string, at: number, turn?: CallTurn): Promise<void> {
+        // One field per server and turn (and run), so a call of an earlier turn taken up later never takes the place of the later turn's: a call whose turn was
+        // not known is the field of the server alone, which counts for every turn
+        await this.write(jobId, ACCEPTED_FIELD + this.instanceId + (turn ? `|${turn.turn}|${turn.run ?? ''}` : ''), at);
     }
 
-    async lastAcceptedByOthers(jobId: string): Promise<number | null> {
+    async lastAcceptedByOthers(jobId: string, turn?: CallTurn): Promise<number | null> {
         const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
         let latest: number | null = null;
         for (const [field, value] of Object.entries(all)) {
-            if (!field.startsWith(ACCEPTED_FIELD) || field.slice(ACCEPTED_FIELD.length) === this.instanceId) continue;
+            if (!field.startsWith(ACCEPTED_FIELD)) continue;
+            const rest = field.slice(ACCEPTED_FIELD.length);
+            const bar = rest.indexOf('|');
+            const instance = bar < 0 ? rest : rest.slice(0, bar);
+            if (instance === this.instanceId) continue;
+            // A field of a turn counts only for that turn and run (one with no turn counts for every turn: it is not known which it was)
+            if (bar >= 0 && turn) {
+                const [theTurn, ...theRun] = rest.slice(bar + 1).split('|');
+                if (Number(theTurn) !== turn.turn || theRun.join('|') !== (turn.run ?? '')) continue;
+            }
             const at = Number(value);
             if (Number.isFinite(at) && (latest === null || at > latest)) latest = at;
         }

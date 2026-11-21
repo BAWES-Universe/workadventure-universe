@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { KEEP_LATER, RedisSharedCalls, SET_AND_RENEW, type EvidenceRedis } from '../server/ComputerEvidenceStore';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, type CallRow, type EvidenceStore, type SharedCalls, type SharedTurn } from '../server/ComputerRefusals';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, SHARED_TURN_LEASE_MS, SHARED_TURN_RENEW_MS, type CallRow, type EvidenceStore, type SharedCalls, type SharedTurn, type SharedTurnList, type CallTurn } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -1179,9 +1179,11 @@ describe('whether any call of a job reached the relay', () => {
 /** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
 const sharedStore = () => {
     const seen = new Map<string, Map<string, number>>();
-    const state = { down: false, failCalled: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
+    const state = { moments: [] as Array<[string, number]>, down: false, failCalled: 0, failTurns: 0, failAccepted: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
     /** The turns each server's runner said, per job: the field `turn:<server>` of the shared record. */
-    const turns = new Map<string, Map<string, SharedTurn[]>>();
+    const turns = new Map<string, Map<string, SharedTurnList>>();
+    /** The acceptances each server noted, per job: its moment and the turn (and run) the call began in (`undefined`: not known). */
+    const accepted: Array<{ server: string; jobId: string; at: number; turn?: CallTurn }> = [];
     const put = (jobId: string, field: string, at: number) => {
         const byServer = seen.get(jobId) ?? new Map<string, number>();
         byServer.set(field, Math.max(at, byServer.get(field) ?? 0));
@@ -1191,6 +1193,7 @@ const sharedStore = () => {
         noteCalled: async (jobId, at) => {
             if (state.hold) await state.hold;
             if (state.down) throw new Error('shared store down');
+            state.moments.push(['called', at]);
             if (state.failCalled > 0) {
                 state.failCalled -= 1;
                 throw new Error('write lost');
@@ -1199,21 +1202,42 @@ const sharedStore = () => {
             put(jobId, id, at);
         },
         noteUnrecorded: async (jobId, at) => {
+            state.moments.push(['unrecorded', at]);
             if (state.down || state.failUnrecorded) throw new Error('shared store down');
             state.unrecorded.push(`${id}:${jobId}`);
             put(jobId, `unsure:${id}`, at);
         },
-        noteTurn: async (jobId, said) => {
-            if (state.down) throw new Error('shared store down');
-            const byServer = turns.get(jobId) ?? new Map<string, SharedTurn[]>();
-            byServer.set(id, said);
+        noteTurn: async (jobId, said, until) => {
+            if (state.down || state.failTurns > 0) {
+                if (state.failTurns > 0) state.failTurns -= 1;
+                throw new Error('shared store down');
+            }
+            const byServer = turns.get(jobId) ?? new Map<string, SharedTurnList>();
+            byServer.set(id, { turns: said, until });
             turns.set(jobId, byServer);
         },
         turnsByOthers: async (jobId) => {
             if (state.down) throw new Error('shared store down');
-            const out: SharedTurn[] = [];
-            for (const [server, said] of turns.get(jobId) ?? []) if (server !== id) out.push(...said);
+            const out: SharedTurnList[] = [];
+            for (const [server, said] of turns.get(jobId) ?? []) if (server !== id) out.push(said);
             return out;
+        },
+        noteAccepted: async (jobId, at, turn) => {
+            if (state.down || state.failAccepted > 0) {
+                if (state.failAccepted > 0) state.failAccepted -= 1;
+                throw new Error('shared store down');
+            }
+            accepted.push({ server: id, jobId, at, ...(turn ? { turn } : {}) });
+        },
+        lastAcceptedByOthers: async (jobId, turn) => {
+            if (state.down) throw new Error('shared store down');
+            let latest: number | null = null;
+            for (const one of accepted) {
+                if (one.server === id || one.jobId !== jobId) continue;
+                if (turn && one.turn && (one.turn.turn !== turn.turn || one.turn.run !== turn.run)) continue;
+                if (latest === null || one.at > latest) latest = one.at;
+            }
+            return latest;
         },
         lastCalledByOthers: async (jobId) => {
             if (state.down) throw new Error('shared store down');
@@ -1235,7 +1259,8 @@ describe('calls of a job that arrive at another bot server', () => {
         const store = sharedStore();
         /** The jobs whose runner is working on B this moment. */
         const here = new Set<string>();
-        const a = createRefusalNotes(() => at, { shared: store.forServer('A') });
+        // the runner of the jobs of these tests works on A
+        const a = createRefusalNotes(() => at, { shared: store.forServer('A'), runsHere: () => true });
         const b = createRefusalNotes(() => at, { shared: store.forServer('B'), runsHere: (jobId) => here.has(jobId) });
         return { a, b, store, here, advance: (ms: number) => (at += ms) };
     };
@@ -1508,7 +1533,7 @@ describe('calls of a job that arrive at another bot server', () => {
             const store = sharedStore();
             let asked = 0;
             // the runner works the job when the call arrives and has stopped it by the time the apart note failed
-            const b = createRefusalNotes(() => 1000, { shared: store.forServer('B'), runsHere: () => asked++ === 0 });
+            const b = createRefusalNotes(() => 1000, { shared: store.forServer('B'), runsHere: () => asked++ < 2 });
             store.state.failCalled = 2;
             store.state.failUnrecorded = true;
             expect(await b.reached('j')).toBe('unservable');
@@ -1518,7 +1543,7 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(await c.reached('k')).toBe(false);
             // the runner stopped the job but the apart note WAS written: whoever runs it now reads that a call may have arrived, so it may go ahead
             let n = 0;
-            const d = createRefusalNotes(() => 1000, { shared: store.forServer('D'), runsHere: () => n++ === 0 });
+            const d = createRefusalNotes(() => 1000, { shared: store.forServer('D'), runsHere: () => n++ < 2 });
             store.state.failCalled = 2;
             store.state.failUnrecorded = false;
             expect(await d.reached('m')).toBe(false);
@@ -1567,6 +1592,164 @@ describe('calls of a job that arrive at another bot server', () => {
         });
     });
 
+    describe('the moment a call arrived, and which server’s history says a call is of a turn gone by', () => {
+        it('writes the moment the call ARRIVED in both tries and in the marker of a call that could not be recorded, never the time the write is made', async () => {
+            let at = 100_000;
+            const store = sharedStore();
+            const b = createRefusalNotes(() => at, { shared: store.forServer('B'), runsHere: () => true });
+            store.state.failCalled = 2;
+            const arrivedAt = at;
+            // the writes are made a good while after the call arrived (the body, the key, the room were being waited for)
+            at += 4500;
+            expect(await b.reached('j', undefined, arrivedAt)).toBe(false);
+            expect(store.state.moments).toEqual([['called', arrivedAt], ['called', arrivedAt], ['unrecorded', arrivedAt]]);
+            // a write that goes through the first time says it too
+            store.state.moments.length = 0;
+            expect(await b.reached('k', undefined, arrivedAt + 1)).toBe(true);
+            expect(store.state.moments).toEqual([['called', arrivedAt + 1]]);
+            // with no arrival given (a caller that has none), it is the moment of the write as before
+            store.state.moments.length = 0;
+            expect(await b.reached('m')).toBe(true);
+            expect(store.state.moments).toEqual([['called', at]]);
+        });
+
+        it('a late write does not read as a later arrival for the runner on another server: a call that arrived before the turn began is not a call of it', async () => {
+            let at = 100_000;
+            const store = sharedStore();
+            const a = createRefusalNotes(() => at, { shared: store.forServer('A'), runsHere: () => true });
+            const b = createRefusalNotes(() => at, { shared: store.forServer('B'), runsHere: () => false });
+            a.turn('j', 4, 'r');
+            const arrivedAt = at;
+            at += 10_000;
+            a.turn('j', 5, 'r');
+            const mark = a.mark();
+            // the call of turn 4 is written to the shared record only now, long after it arrived (it carries its arrival)
+            expect(await b.reached('j', undefined, arrivedAt)).toBe(true);
+            expect(await a.calledAnywhereSince('j', mark)).toBe(false);
+            // written with the moment of the write it would have hidden a genuine no_call of turn 5
+            await b.reached('j');
+            expect(await a.calledAnywhereSince('j', mark)).toBe(true);
+        });
+
+        it('does not let a former runner’s history keep a call from the shared record: a server that ran the job before, and no longer does, still writes the arrival of a call that belongs to the runner elsewhere, and is unservable when it cannot', async () => {
+            const at = 100_000;
+            const store = sharedStore();
+            // B ran the job a while ago (its notes hold turn 2 of an old run); A runs it now, in turn 7 of another run
+            const b = createRefusalNotes(() => at, { shared: store.forServer('B'), runsHere: () => false });
+            b.turn('j', 2, 'old-run');
+            expect(await b.reached('j', { turn: 7, run: 'new-run' }, at)).toBe(true);
+            expect(store.state.told).toEqual(['B:j']);
+            // not recorded: refused, not forwarded
+            store.state.failCalled = 2;
+            expect(await b.reached('j', { turn: 7, run: 'new-run' }, at)).toBe('unservable');
+            // the runner HERE and a turn it has left: still nothing is written for it
+            const c = createRefusalNotes(() => at, { shared: store.forServer('C'), runsHere: () => true });
+            c.turn('k', 2, 'run');
+            store.state.told.length = 0;
+            expect(await c.reached('k', { turn: 1, run: 'run' }, at)).toBe(true);
+            expect(store.state.told).toEqual([]);
+        });
+    });
+
+    describe('a call taken up by the pool, as the runner on another server learns of it', () => {
+        const rigAccept = () => {
+            let at = 100_000;
+            const store = sharedStore();
+            const a = createRefusalNotes(() => at, { shared: store.forServer('A'), runsHere: () => true });
+            const b = createRefusalNotes(() => at, { shared: store.forServer('B'), runsHere: () => false });
+            return { a, b, store, advance: (ms: number) => (at += ms), now: () => at };
+        };
+
+        it('hands the acceptance over before the call goes on, when the runner is on another server: true when it was written, with the turn and run of the call', async () => {
+            const { b, store } = rigAccept();
+            const handed = b.accepted('j', { turn: 4, run: 'run-1' });
+            expect(handed).toBeInstanceOf(Promise);
+            expect(await handed).toBe(true);
+            expect(store.state.moments).toEqual([]);
+        });
+
+        it('is false when the handoff cannot be made (two bounded tries), and true when the second try works', async () => {
+            const { b, store } = rigAccept();
+            store.state.failAccepted = 2;
+            expect(await b.accepted('j', { turn: 4, run: 'run-1' })).toBe(false);
+            store.state.failAccepted = 1;
+            expect(await b.accepted('k', { turn: 4, run: 'run-1' })).toBe(true);
+            store.state.down = true;
+            expect(await b.accepted('m')).toBe(false);
+        });
+
+        it('does not wait on a store that does not answer: false after the bound, twice', async () => {
+            vi.useFakeTimers();
+            try {
+                const hang: SharedCalls = {
+                    noteCalled: async () => undefined,
+                    noteUnrecorded: async () => undefined,
+                    lastCalledByOthers: async () => null,
+                    noteAccepted: () => new Promise(() => undefined),
+                };
+                const b = createRefusalNotes(() => 1000, { shared: hang, runsHere: () => false });
+                const handed = b.accepted('j', { turn: 1 }) as Promise<boolean>;
+                await vi.advanceTimersByTimeAsync(2 * SHARED_WRITE_BOUND_MS + 10);
+                expect(await handed).toBe(false);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('notes it at once and returns nothing when the runner is here (the synchronous path), and tells the others without waiting', async () => {
+            const { a, store } = rigAccept();
+            a.turn('j', 5, 'run-1');
+            const mark = a.mark();
+            expect(a.accepted('j', { turn: 5, run: 'run-1' })).toBeUndefined();
+            expect(a.acceptedSince('j', mark)).toBe(true);
+            await Promise.resolve();
+            expect(await store.forServer('B').lastAcceptedByOthers!('j', { turn: 5, run: 'run-1' })).not.toBeNull();
+            // a call of a turn the runner here has left is not noted
+            a.turn('j', 6, 'run-1');
+            const next = a.mark();
+            expect(a.accepted('j', { turn: 5, run: 'run-1' })).toBeUndefined();
+            expect(a.acceptedSince('j', next)).toBe(false);
+            // and with a store that fails, the call is not held and nothing is thrown
+            store.state.down = true;
+            expect(() => a.accepted('j', { turn: 6, run: 'run-1' })).not.toThrow();
+        });
+
+        it('does not skip the handoff because this server remembers an old turn of the job (a former runner): the call belongs to the runner elsewhere', async () => {
+            const { b, store } = rigAccept();
+            b.turn('j', 2, 'old-run');
+            store.state.failAccepted = 2;
+            expect(await b.accepted('j', { turn: 7, run: 'new-run' })).toBe(false);
+            expect(await b.accepted('j', { turn: 7, run: 'new-run' })).toBe(true);
+            // it is the call of turn 7 that the runner elsewhere reads, not a turn of this server's old history
+            expect(await store.forServer('A').lastAcceptedByOthers!('j', { turn: 7, run: 'new-run' })).not.toBeNull();
+        });
+
+        it('the runner counts only an acceptance of the turn it is on: a call of turn 4 taken up (late) in turn 5 does not suppress the give-up of turn 5, a genuine turn 5 one does', async () => {
+            const { a, b, store, advance } = rigAccept();
+            a.turn('j', 4, 'run-1');
+            advance(10_000);
+            a.turn('j', 5, 'run-1');
+            const since = a.mark();
+            advance(10);
+            // the call of turn 4 is taken up by the pool after turn 5 began
+            expect(await b.accepted('j', { turn: 4, run: 'run-1' })).toBe(true);
+            expect(await a.acceptedAnywhereSince('j', since)).toBe(false);
+            // a call of turn 5 is taken up on the other server
+            expect(await b.accepted('j', { turn: 5, run: 'run-1' })).toBe(true);
+            expect(await a.acceptedAnywhereSince('j', since)).toBe(true);
+            // and one whose turn the relay could not tell counts (the give-up would cancel a call in flight otherwise)
+            const { a: a2, b: b2, advance: advance2 } = rigAccept();
+            a2.turn('k', 5, 'run-1');
+            const since2 = a2.mark();
+            advance2(10);
+            expect(await b2.accepted('k')).toBe(true);
+            expect(await a2.acceptedAnywhereSince('k', since2)).toBe(true);
+            // a store that cannot be read: nothing is concluded
+            store.state.down = true;
+            expect(await a.acceptedAnywhereSince('j', a.mark())).toBe(true);
+        });
+    });
+
     describe('the turn of a call that reaches a server other than the one that runs the job’s runner (two notes over one shared store)', () => {
         const fault = (callId: string) => ({ callId, kind: 'fault' as const, reason: 'provider_key_ours' as const, source: 'universe-ai' as const, route: 'r', providerStatus: 401 as number | null });
         const rigTurns = () => {
@@ -1584,8 +1767,10 @@ describe('calls of a job that arrive at another bot server', () => {
                     return true;
                 },
             });
-            return { a, b, store, sentByB, advance: (ms: number) => (at += ms) };
+            return { a, b, store, sentByB, advance: (ms: number) => (at += ms), now: () => at };
         };
+        /** The runner's promise is renewed while it works the job (every few seconds): the turn said again publishes the list again. */
+        const renew = (a: ReturnType<typeof createRefusalNotes>, turn: number, run: string) => a.turn('j', turn, run);
         // What the relay does with a call: where it arrived, who is asked for the turn, then the row at its end
         const callOnB = async (b: ReturnType<typeof createRefusalNotes>, id: string, then?: () => void) => {
             const arrived = b.mark();
@@ -1601,8 +1786,10 @@ describe('calls of a job that arrive at another bot server', () => {
             a.turn('j', 1, 'run-1');
             advance(10_000);
             a.turn('j', 2, 'run-1');
+            advance(1500);
+            renew(a, 2, 'run-1');
             await Promise.resolve();
-            advance(10_000);
+            advance(1500);
             const began = await callOnB(b, 'c1');
             expect(began).toEqual({ turn: 2, run: 'run-1' });
             expect(sentByB.map((row) => [row.callId, row.turn, row.run])).toEqual([['c1', 2, 'run-1']]);
@@ -1611,13 +1798,14 @@ describe('calls of a job that arrive at another bot server', () => {
         it('keeps a call that arrived in turn 2 in turn 2 when the runner has moved on to turn 3 by the time the call ends, and a call that arrives after turn 3 began is turn 3', async () => {
             const { a, b, sentByB, advance } = rigTurns();
             a.turn('j', 2, 'run-1');
-            advance(10_000);
+            advance(3000);
+            renew(a, 2, 'run-1');
             const late = await callOnB(b, 'early', () => {
-                advance(10_000);
+                advance(3000);
                 a.turn('j', 3, 'run-1');
             });
             expect(late.turn).toBe(2);
-            advance(10_000);
+            advance(3000);
             const next = await callOnB(b, 'later');
             expect(next.turn).toBe(3);
             expect(sentByB.map((row) => [row.callId, row.turn])).toEqual([['early', 2], ['later', 3]]);
@@ -1629,8 +1817,21 @@ describe('calls of a job that arrive at another bot server', () => {
             a.turn('j', 2, 'run-old');
             advance(50_000);
             a.turn('j', 1, 'run-new');
-            advance(10_000);
+            advance(3000);
             expect(await b.turnOfCall('j', b.mark())).toEqual({ turn: 1, run: 'run-new' });
+        });
+
+        it('says the same turn again (a reconnect to it) without making a second turn of it: the moment it began stays', async () => {
+            const { a, store, advance } = rigTurns();
+            a.turn('j', 3, 'run-1');
+            advance(5000);
+            a.turn('j', 3, 'run-1');
+            await Promise.resolve();
+            const lists = await store.forServer('B').turnsByOthers!('j');
+            expect(lists).toHaveLength(1);
+            expect(lists[0].turns).toEqual([{ turn: 3, run: 'run-1', at: 100_000 }]);
+            // the promise was made again, from the later moment
+            expect(lists[0].until).toBe(105_000 + SHARED_TURN_LEASE_MS);
         });
 
         it('sends a row with no turn (and no run) when nothing was said about the job, and when the shared store cannot be read: never a turn that is only a guess', async () => {
@@ -1638,18 +1839,99 @@ describe('calls of a job that arrive at another bot server', () => {
             // the runner has said nothing yet
             expect((await callOnB(b, 'unknown-1')).turn).toBeNull();
             a.turn('j', 4, 'run-1');
-            advance(10_000);
+            advance(1000);
             store.state.down = true;
             expect(await callOnB(b, 'unknown-2')).toEqual({ turn: null });
             store.state.down = false;
             expect(sentByB.map((row) => [row.callId, row.turn, 'run' in row])).toEqual([['unknown-1', null, false], ['unknown-2', null, false]]);
             // the call arrived before the runner's first turn began: it is no call of that turn either
             const before = b.mark();
-            advance(10_000);
+            advance(1000);
             a.turn('j', 5, 'run-1');
-            expect((await b.turnOfCall('j', before)).turn).toBe(4);
+            advance(3000);
+            renew(a, 5, 'run-1');
+            expect((await b.turnOfCall('j', before)).turn).toBeNull();
             const never = createRefusalNotes(() => 1, { shared: store.forServer('C'), runsHere: () => false });
             expect(await never.turnOfCall('fresh-job', { order: 1, at: 1 })).toEqual({ turn: null });
+        });
+
+        it('does not assign a turn from a list nobody promises is complete: the runner’s write of turn 5 was lost, Redis still answers with turn 4, and a call well inside turn 5 gets no turn', async () => {
+            const { a, b, store, advance } = rigTurns();
+            a.turn('j', 4, 'run-1');
+            advance(2000);
+            renew(a, 4, 'run-1');
+            await Promise.resolve();
+            // turn 5 begins and its write is lost (and so is every renewal after it): the store still answers, with turn 4 and a promise that has run out
+            store.state.failTurns = 100;
+            advance(1000);
+            a.turn('j', 5, 'run-1');
+            // while the promise made at the last renewal still stands, a call is covered by it (it arrived before turn 5 could have been begun without publishing: see the next test)
+            advance(SHARED_TURN_LEASE_MS);
+            const answer = await b.turnOfCall('j', b.mark());
+            expect(answer).toEqual({ turn: null });
+        });
+
+        it('begins no turn before it is in a published list: with the write lost it waits out the promise of the lists before it, and then the old list covers nothing', async () => {
+            vi.useFakeTimers();
+            try {
+                let clock = 100_000;
+                const store = sharedStore();
+                const a = createRefusalNotes(() => clock, { shared: store.forServer('A'), runsHere: () => true });
+                const b = createRefusalNotes(() => clock, { shared: store.forServer('B'), runsHere: () => false });
+                a.turn('j', 4, 'run-1');
+                await a.turnPublished!('j');
+                // the store loses every write of the turn that follows
+                store.state.failTurns = 1000;
+                clock += 1000;
+                a.turn('j', 5, 'run-1');
+                let begun = false;
+                const waiting = a.turnPublished!('j').then(() => (begun = true));
+                await vi.advanceTimersByTimeAsync(1500);
+                // turn 4's promise (6 s from 100_000) still stands at 101_000: turn 5 is not begun yet
+                expect(begun).toBe(false);
+                // the promise runs out (the runner's clock moves on): then it begins
+                clock += SHARED_TURN_LEASE_MS;
+                await vi.advanceTimersByTimeAsync(1000);
+                await waiting;
+                expect(begun).toBe(true);
+                // and what the old list said covers nothing by now
+                expect(await b.turnOfCall('j', { order: 1, at: clock - SHARED_CALL_SKEW_MS })).toEqual({ turn: null });
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('begins the turn at once when its write is made, with a store that works and with none', async () => {
+            const { a } = rigTurns();
+            a.turn('j', 1, 'run-1');
+            await a.turnPublished!('j');
+            a.turn('j', 2, 'run-1');
+            const started = Date.now();
+            await a.turnPublished!('j');
+            expect(Date.now() - started).toBeLessThan(500);
+            const alone = createRefusalNotes(() => 1000);
+            alone.turn('j', 1);
+            await alone.turnPublished?.('j');
+        });
+
+        it('cannot tell when the promise has run out (the runner stopped working the job), and when two runners both promise (a job taken over): no turn', async () => {
+            const { a, b, store, advance } = rigTurns();
+            a.turn('j', 1, 'run-1');
+            advance(1000);
+            renew(a, 1, 'run-1');
+            advance(2000);
+            // a call well inside the promise (4 s from the last renewal, minus the clock skew)
+            expect((await b.turnOfCall('j', b.mark())).turn).toBe(1);
+            // no renewal for longer than the promise: the runner is gone
+            advance(SHARED_TURN_LEASE_MS);
+            expect(await b.turnOfCall('j', b.mark())).toEqual({ turn: null });
+            // another server's runner takes the job over while the first one's promise still stands
+            const c = createRefusalNotes(() => 100_000 + 1000 + 2000 + SHARED_TURN_LEASE_MS, { shared: store.forServer('C'), runsHere: () => true });
+            c.turn('j', 1, 'run-2');
+            advance(0);
+            a.turn('j', 2, 'run-1');
+            await Promise.resolve();
+            expect((await b.turnOfCall('j', b.mark())).turn).toBeNull();
         });
 
         it('cannot tell the turn of a call that arrived within the clock skew of any turn’s beginning (the servers’ clocks differ by 1.5 s, either way): turn null and no run, while a call well inside a turn keeps it', async () => {
@@ -1668,14 +1950,13 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(await ahead.turnOfCall('j', { order: 1, at: turn2 - 1000 + 1500 })).toEqual({ turn: null });
             // a call that really arrived 1 s AFTER turn 2 began, seen by the server that runs behind, is stamped 0.5 s before it: it belongs to turn 2
             expect(await behind.turnOfCall('j', { order: 1, at: turn2 + 1000 - 1500 })).toEqual({ turn: null });
-            // the same near the beginning of the first turn (any turn's beginning counts)
-            expect(await ahead.turnOfCall('j', { order: 1, at: turn2 - 30_000 - 1000 + 1500 })).toEqual({ turn: null });
-            // a call well inside a turn (more than the skew from every beginning): its turn, with its run
-            expect(await ahead.turnOfCall('j', { order: 1, at: turn2 + 10_000 + 1500 })).toEqual({ turn: 2, run: 'run-1' });
-            expect(await behind.turnOfCall('j', { order: 1, at: turn2 - 10_000 - 1500 })).toEqual({ turn: 1, run: 'run-1' });
-            // exactly at the skew still cannot be told; just past it can
+            // a call within the promise, well inside a turn (more than the skew from every beginning): its turn, with its run
+            expect(await ahead.turnOfCall('j', { order: 1, at: turn2 + 3000 + 1500 - 1000 })).toEqual({ turn: 2, run: 'run-1' });
+            // exactly at the skew from a beginning still cannot be told; just past it can
             expect((await ahead.turnOfCall('j', { order: 1, at: turn2 + SHARED_CALL_SKEW_MS })).turn).toBeNull();
             expect((await ahead.turnOfCall('j', { order: 1, at: turn2 + SHARED_CALL_SKEW_MS + 1 })).turn).toBe(2);
+            // the first turn's beginning counts too (the promise has been renewed by the second turn's list, which holds both)
+            expect(await ahead.turnOfCall('j', { order: 1, at: turn2 - 30_000 + 1000 })).toEqual({ turn: null });
         });
 
         it('does not hold the call for a store that does not answer: unknown turn after the bound', async () => {
@@ -1702,7 +1983,7 @@ describe('calls of a job that arrive at another bot server', () => {
             here.turn('j', 7, 'run-1');
             const arrived = here.mark();
             // another server's runner said something else: the runner is here, its own history is the one to use
-            await store.forServer('Z').noteTurn!('j', [{ turn: 99, run: 'run-z', at: 1 }]);
+            await store.forServer('Z').noteTurn!('j', [{ turn: 99, run: 'run-z', at: 1 }], 10_000_000);
             expect(await here.turnOfCall('j', { order: arrived.order, at: arrived.at })).toEqual({ turn: 7, run: 'run-1' });
             const alone = createRefusalNotes(() => 2000);
             alone.turn('j', 3);
@@ -1710,18 +1991,45 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(await alone.turnOfCall('other-job')).toEqual({ turn: 0 });
         });
 
-        it('says its own turns to the others only (the latest few), and never reads its own back', async () => {
-            const { a, b, store } = rigTurns();
+        it('says its own turns to the others only (the latest few, with a promise), never reads its own back, and a failing store never holds the runner', async () => {
+            const { a, b, store, now } = rigTurns();
             for (let n = 1; n <= 9; n++) a.turn('j', n, 'run-1');
             await Promise.resolve();
             const said = await store.forServer('B').turnsByOthers!('j');
-            expect(said.map((one) => one.turn)).toEqual([4, 5, 6, 7, 8, 9]);
+            expect(said).toHaveLength(1);
+            expect(said[0].turns.map((one) => one.turn)).toEqual([4, 5, 6, 7, 8, 9]);
+            expect(said[0].until).toBe(now() + SHARED_TURN_LEASE_MS);
             expect(await store.forServer('A').turnsByOthers!('j')).toEqual([]);
-            // a rejecting store never holds the runner
             store.state.down = true;
             expect(() => a.turn('j', 10, 'run-1')).not.toThrow();
             await Promise.resolve();
             expect(b.turnOf('j')).toBe(0);
+        });
+
+        it('renews its promise while the runner works the job, and stops when it does not', async () => {
+            vi.useFakeTimers();
+            try {
+                const store = sharedStore();
+                let here = true;
+                const a = createRefusalNotes(() => Date.now(), { shared: store.forServer('A'), runsHere: () => here });
+                a.turn('j', 1, 'run-1');
+                await vi.advanceTimersByTimeAsync(0);
+                const first = (await store.forServer('B').turnsByOthers!('j'))[0].until;
+                await vi.advanceTimersByTimeAsync(SHARED_TURN_RENEW_MS + 10);
+                const second = (await store.forServer('B').turnsByOthers!('j'))[0].until;
+                expect(second).toBeGreaterThanOrEqual(first + SHARED_TURN_RENEW_MS);
+                await vi.advanceTimersByTimeAsync(SHARED_TURN_RENEW_MS);
+                const third = (await store.forServer('B').turnsByOthers!('j'))[0].until;
+                expect(third).toBeGreaterThan(second);
+                // the runner stops working the job: no more renewals
+                here = false;
+                await vi.advanceTimersByTimeAsync(SHARED_TURN_RENEW_MS + 10);
+                const stopped = (await store.forServer('B').turnsByOthers!('j'))[0].until;
+                await vi.advanceTimersByTimeAsync(SHARED_TURN_RENEW_MS * 5);
+                expect((await store.forServer('B').turnsByOthers!('j'))[0].until).toBe(stopped);
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it('never ends a turn the runner is on as a fault of its own for a call made on the other server: a null-turn row leaves the runner’s own notes of the turn alone', async () => {
@@ -1816,16 +2124,16 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(r.ttl.get('computer:called:j')).toBe(3600);
         });
 
-        it('keeps the turns of a runner in its own field for an hour, the others read them (never their own), and they are never read as a call or as an acceptance', async () => {
+        it('keeps the turns of a runner, with its promise, in its own field for an hour, the others read them (never their own), and they are never read as a call or as an acceptance', async () => {
             const r = redis();
             const a = new RedisSharedCalls(() => r.client, 'A');
             const b = new RedisSharedCalls(() => r.client, 'B');
-            await a.noteTurn('j', [{ turn: 1, run: 'run-1', at: 5000 }, { turn: 2, run: 'run-1', at: 6000 }]);
-            await a.noteTurn('j', [{ turn: 2, run: 'run-1', at: 6000 }, { turn: 3, at: 7000 }]);
+            await a.noteTurn('j', [{ turn: 1, run: 'run-1', at: 5000 }, { turn: 2, run: 'run-1', at: 6000 }], 12_000);
+            await a.noteTurn('j', [{ turn: 2, run: 'run-1', at: 6000 }, { turn: 3, at: 7000 }], 13_000);
             expect(Object.keys(r.hashes.get('computer:called:j') ?? {})).toEqual(['turn:A']);
             expect(r.ttl.get('computer:called:j')).toBe(3600);
             // the later list replaces the earlier one; a turn without a run reads without one
-            expect(await b.turnsByOthers('j')).toEqual([{ turn: 2, run: 'run-1', at: 6000 }, { turn: 3, at: 7000 }]);
+            expect(await b.turnsByOthers('j')).toEqual([{ turns: [{ turn: 2, run: 'run-1', at: 6000 }, { turn: 3, at: 7000 }], until: 13_000 }]);
             expect(await a.turnsByOthers('j')).toEqual([]);
             expect(await b.turnsByOthers('other')).toEqual([]);
             // not an arrival, not an acceptance
@@ -1836,19 +2144,49 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(await b.lastCalledByOthers('j')).toBe(9000);
         });
 
-        it('skips damaged turns and fields, and rejects when the store cannot be read or written', async () => {
+        it('skips damaged turns and fields (and a list with no promise, as an older server wrote it), and rejects when the store cannot be read or written', async () => {
             const r = redis();
             r.hashes.set('computer:called:j', {
                 'turn:X': 'not json',
                 'turn:Y': '{"turn":1}',
-                'turn:Z': JSON.stringify([{ turn: -1, at: 1 }, { turn: 1.5, at: 1 }, { turn: 2, at: 'x' }, null, 'x', { turn: 3, run: '', at: 3000 }, { turn: 4, run: 'r', at: 4000 }]),
+                'turn:old': JSON.stringify([{ turn: 5, at: 1 }]),
+                'turn:nopromise': JSON.stringify({ turns: [{ turn: 5, at: 1 }] }),
+                'turn:Z': JSON.stringify({ until: 9000, turns: [{ turn: -1, at: 1 }, { turn: 1.5, at: 1 }, { turn: 2, at: 'x' }, null, 'x', { turn: 3, run: '', at: 3000 }, { turn: 4, run: 'r', at: 4000 }] }),
             });
-            expect(await new RedisSharedCalls(() => r.client, 'A').turnsByOthers('j')).toEqual([{ turn: 3, at: 3000 }, { turn: 4, run: 'r', at: 4000 }]);
+            expect(await new RedisSharedCalls(() => r.client, 'A').turnsByOthers('j')).toEqual([{ turns: [{ turn: 3, at: 3000 }, { turn: 4, run: 'r', at: 4000 }], until: 9000 }]);
             await expect(new RedisSharedCalls(() => null, 'A').turnsByOthers('j')).rejects.toThrow();
-            await expect(new RedisSharedCalls(() => null, 'A').noteTurn('j', [])).rejects.toThrow();
+            await expect(new RedisSharedCalls(() => null, 'A').noteTurn('j', [], 1)).rejects.toThrow();
             const silent = { hGetAll: () => new Promise(() => undefined), eval: () => new Promise(() => undefined) } as unknown as EvidenceRedis;
             await expect(new RedisSharedCalls(() => silent, 'A', 20).turnsByOthers('j')).rejects.toThrow(/in time/);
-            await expect(new RedisSharedCalls(() => silent, 'A', 20).noteTurn('j', [])).rejects.toThrow(/in time/);
+            await expect(new RedisSharedCalls(() => silent, 'A', 20).noteTurn('j', [], 1)).rejects.toThrow(/in time/);
+        });
+
+        it('keeps one acceptance per server and turn (and run): a call of turn 4 taken up after one of turn 5 never takes its place, and the reader counts only the turn it asks for', async () => {
+            const r = redis();
+            const a = new RedisSharedCalls(() => r.client, 'A');
+            const b = new RedisSharedCalls(() => r.client, 'B');
+            await a.noteAccepted('j', 20_000, { turn: 5, run: 'run-1' });
+            // the call of turn 4 is taken up LATER than the one of turn 5
+            await a.noteAccepted('j', 21_000, { turn: 4, run: 'run-1' });
+            expect(Object.keys(r.hashes.get('computer:called:j') ?? {}).sort()).toEqual(['accepted:A|4|run-1', 'accepted:A|5|run-1']);
+            expect(await b.lastAcceptedByOthers('j', { turn: 5, run: 'run-1' })).toBe(20_000);
+            expect(await b.lastAcceptedByOthers('j', { turn: 4, run: 'run-1' })).toBe(21_000);
+            // another turn, and another run of the same turn number: none
+            expect(await b.lastAcceptedByOthers('j', { turn: 6, run: 'run-1' })).toBeNull();
+            expect(await b.lastAcceptedByOthers('j', { turn: 5, run: 'run-2' })).toBeNull();
+            expect(await b.lastAcceptedByOthers('j', { turn: 5 })).toBeNull();
+            // asked for no turn in particular: the latest of all
+            expect(await b.lastAcceptedByOthers('j')).toBe(21_000);
+            // its own are never read back
+            expect(await a.lastAcceptedByOthers('j', { turn: 5, run: 'run-1' })).toBeNull();
+            // a call whose turn was not known counts for every turn (never read as none: the runner would give up on a turn with a call in flight)
+            await b.noteAccepted('j', 30_000);
+            expect(Object.keys(r.hashes.get('computer:called:j') ?? {})).toContain('accepted:B');
+            expect(await a.lastAcceptedByOthers('j', { turn: 9, run: 'run-9' })).toBe(30_000);
+            // a run with no name is its own
+            await b.noteAccepted('j', 31_000, { turn: 2 });
+            expect(await a.lastAcceptedByOthers('j', { turn: 2 })).toBe(31_000);
+            expect(await a.lastAcceptedByOthers('j', { turn: 2, run: 'run-1' })).toBe(30_000);
         });
 
         it('ignores a damaged field, and rejects when the store is not connected or does not answer', async () => {

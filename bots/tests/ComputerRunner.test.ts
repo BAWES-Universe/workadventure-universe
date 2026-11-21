@@ -1253,6 +1253,23 @@ describe('whyOf: the one sentence the agent gave for why it could not go on', ()
         expect(whyOf(key)).not.toMatch(/k{8}/);
     });
 
+    it('redacts the text BEFORE it is split into sentences: a stop or a line break inside a quoted secret value is no end of a sentence, and no fragment of the value stands as the reason', () => {
+        for (const words of [
+            'The login failed with PASSWORD="hunter. Two3 secret" [[failed]]',
+            'The login failed with PASSWORD="hunter.\nTwo3 secret" [[failed]]',
+            "Tried it. The command export API_TOKEN='abc! Zed9 hidden' did not work [[failed]]",
+        ]) {
+            const why = whyOf(words) ?? '';
+            expect(why, words).not.toMatch(/Two3|secret|Zed9|hidden'/);
+            expect(why, words).toContain('[hidden]');
+        }
+        expect(whyOf('The login failed with PASSWORD="hunter. Two3 secret" [[failed]]')).toBe('The login failed with PASSWORD=[hidden]');
+        // the limit is on the redacted result
+        const long = whyOf(`${'word '.repeat(100)}PASSWORD="a. B ${'c '.repeat(200)}" ${'tail '.repeat(100)}[[failed]]`) ?? '';
+        expect(long.length).toBeLessThanOrEqual(300);
+        expect(long).not.toMatch(/PASSWORD="a/);
+    });
+
     it('is the last sentence before the failed marker', () => {
         expect(whyOf('I opened the form. The site stopped me at the passport upload and kept showing an error. [[failed]]')).toBe('The site stopped me at the passport upload and kept showing an error.');
         expect(whyOf('First line\nThe site is down [[failed]]')).toBe('The site is down');
@@ -1911,10 +1928,13 @@ describe('asking an address whether it is the relay', () => {
     });
 
     it('says "something else is there" only for a status that a service says it with: a 2xx, a 404 or a 5xx, whatever the body', async () => {
-        for (const status of [200, 204, 404, 500, 502, 503, 504, 520]) {
-            expect((await probeRelay('https://x.test', answer(status === 204 ? 200 : status, '<html>not the relay</html>'))).answer, `html ${status}`).toBe('wrong');
-            expect((await probeRelay('https://x.test', answer(status === 204 ? 200 : status, JSON.stringify({ hello: 'world' })))).answer, `json ${status}`).toBe('wrong');
+        for (const status of [200, 404, 500, 502, 503, 504, 520]) {
+            expect(await probeRelay('https://x.test', answer(status, '<html>not the relay</html>')), `html ${status}`).toEqual({ answer: 'wrong', status });
+            expect(await probeRelay('https://x.test', answer(status, JSON.stringify({ hello: 'world' }))), `json ${status}`).toEqual({ answer: 'wrong', status });
         }
+        // a 204 has no body at all (a real bodyless Response: the constructor does not take one for it)
+        expect(() => new Response('<html></html>', { status: 204 })).toThrow();
+        expect(await probeRelay('https://x.test', (async () => new Response(null, { status: 204 })) as never)).toEqual({ answer: 'wrong', status: 204 });
     });
 
     it('proves nothing either way for a redirect or a challenge in front of the relay (http to https, a WAF or proxy block, a rate limit): unknown, so Orbit’s own check from the machine decides', async () => {
@@ -2280,6 +2300,169 @@ describe('a turn stopped while its stream is being opened', () => {
             await running;
             poolBusyEnd(rig);
         });
+    });
+
+    /** A turn whose stream gives no event for `after` ms and then ends with its own terminal event; its last report to Orbit is slow. */
+    const endingAt = (rig: ReturnType<typeof rigged>, after: number) => {
+        rig.orbit.turn = async (_jobId, _input, signal) => {
+            rig.notes.record(JOB.botId, JOB.jobId, poolRefusal);
+            return opening(async function* (): AsyncGenerator<RunnerEvent> {
+                yield { type: 'created', id: 'r', sessionId: 's' };
+                await new Promise<void>((resolve) => setTimeout(resolve, after));
+                yield { type: 'completed', outputText: 'Done. [[done]]', usage: null };
+            })('', signal);
+        };
+        const original = rig.orbit.action;
+        // the report that follows the end of the turn takes a long time to be answered
+        rig.orbit.action = async (botId, jobId, body) => (body.action === 'progress' ? new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 200_000)) : original(botId, jobId, body));
+    };
+
+    it('gives up nothing on a turn that has ended by its own terminal event, even when the report that follows it is slow and the pool is still full: the give-up timer is put down at the event', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            endingAt(rig, 40_000);
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            // well past the give-up (95 s after the first check)
+            await vi.advanceTimersByTimeAsync(260_000);
+            await running;
+            expect(rig.seen.cancels).toBe(0);
+            expect(finished(rig.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
+    it('gives up nothing when the turn ends by its terminal event while the shared pool read is pending: it is looked at again after the read, before the job is cancelled', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            endingAt(rig, 100_000);
+            // the read of what the other servers took up begins at the give-up (95 s) and answers "none" at 115 s: the turn ended at 100 s
+            const runner = createComputerRunner({
+                orbit: rig.orbit,
+                relayUrl: RELAY,
+                sleep: sleeping,
+                log: { warn: rig.warn, error: vi.fn(), info: vi.fn() },
+                refusals: { ...rig.notes, acceptedAnywhereSince: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20_000)) },
+                runId: () => 'run1',
+                timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
+            });
+            const running = runner.tick().then(() => runner.idle());
+            await vi.advanceTimersByTimeAsync(320_000);
+            await running;
+            expect(rig.seen.cancels).toBe(0);
+            expect(finished(rig.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
+    it('still gives the turn up when it is still going and the pool is busy: a turn that never ends is cancelled as before', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            rig.orbit.turn = async (_jobId, _input, signal) => (rig.notes.record(JOB.botId, JOB.jobId, poolRefusal), opening(breaking)('', signal));
+            rig.orbit.stream = opening(breaking);
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            poolBusyEnd(rig);
+        });
+    });
+
+    /** The agent gives up in its own words; the refusal flush that comes before the failure is sent is the part under test. */
+    const failingTurn = (rig: ReturnType<typeof rigged>) => {
+        rig.orbit.turn = opening(async function* (): AsyncGenerator<RunnerEvent> {
+            yield { type: 'completed', outputText: 'The site is down. [[failed]]', usage: null };
+        });
+    };
+    const withFlush = (rig: ReturnType<typeof rigged>, flush: () => Promise<boolean>) =>
+        createComputerRunner({
+            orbit: rig.orbit,
+            relayUrl: RELAY,
+            sleep: sleeping,
+            log: { warn: rig.warn, error: vi.fn(), info: vi.fn() },
+            refusals: { ...rig.notes, flush },
+            runId: () => 'run1',
+            timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
+        });
+
+    it('sends no finish for a worker that was stopped while the refusal flush was going: the job is not ended for whoever has it now', async () => {
+        const rig = rigged();
+        failingTurn(rig);
+        let release!: () => void;
+        let entered!: () => void;
+        const inFlush = new Promise<void>((resolve) => (entered = resolve));
+        const runner = withFlush(rig, () => new Promise<boolean>((resolve) => ((entered(), (release = () => resolve(true))))));
+        const running = runner.tick().then(() => runner.idle());
+        await inFlush;
+        runner.stop();
+        release();
+        await running;
+        expect(finished(rig.seen)).toEqual([]);
+        expect(escaped(rig)).toEqual([]);
+    });
+
+    it('still sends the failure when the flush failed (it did not send its rows) and the worker is active: the cause stays Orbit’s only hint', async () => {
+        const rig = rigged();
+        failingTurn(rig);
+        const runner = withFlush(rig, async () => false);
+        await runner.tick().then(() => runner.idle());
+        expect(finished(rig.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', why: 'The site is down.' }]);
+        // and one whose flush throws
+        const again = rigged();
+        failingTurn(again);
+        const second = withFlush(again, () => Promise.reject(new Error('Orbit away')));
+        await second.tick().then(() => second.idle());
+        expect(finished(again.seen)).toHaveLength(1);
+    });
+
+    it('does not begin a turn before it is told to the other bot servers: the turn is sent to the machine only after the publication has settled, and a stop during it begins nothing', async () => {
+        const rig = rigged();
+        failingTurn(rig);
+        let sent = 0;
+        const original = rig.orbit.turn;
+        rig.orbit.turn = async (...args) => (sent++, original(...args));
+        let publish!: () => void;
+        const told: number[] = [];
+        const runner = createComputerRunner({
+            orbit: rig.orbit,
+            relayUrl: RELAY,
+            sleep: sleeping,
+            log: { warn: rig.warn, error: vi.fn(), info: vi.fn() },
+            refusals: {
+                ...rig.notes,
+                turn: (jobId, turn, run) => (told.push(turn), rig.notes.turn(jobId, turn, run)),
+                turnPublished: () => new Promise<void>((resolve) => (publish = resolve)),
+            },
+            runId: () => 'run1',
+            timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
+        });
+        const running = runner.tick().then(() => runner.idle());
+        await vi.waitFor(() => expect(told).toEqual([1]));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        // the publication is still going: no turn was sent
+        expect(sent).toBe(0);
+        publish();
+        await running;
+        expect(sent).toBe(1);
+        // a stop while the publication is going: nothing is begun
+        const stoppedRig = rigged();
+        failingTurn(stoppedRig);
+        let began = 0;
+        const first = stoppedRig.orbit.turn;
+        stoppedRig.orbit.turn = async (...args) => (began++, first(...args));
+        let late!: () => void;
+        const stopping = createComputerRunner({
+            orbit: stoppedRig.orbit,
+            relayUrl: RELAY,
+            sleep: sleeping,
+            log: { warn: stoppedRig.warn, error: vi.fn(), info: vi.fn() },
+            refusals: { ...stoppedRig.notes, turnPublished: () => new Promise<void>((resolve) => (late = resolve)) },
+            runId: () => 'run1',
+            timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
+        });
+        const stoppedRun = stopping.tick().then(() => stopping.idle());
+        await vi.waitFor(() => expect(late).toBeTypeOf('function'));
+        stopping.stop();
+        late();
+        await stoppedRun;
+        expect(began).toBe(0);
+        expect(finished(stoppedRig.seen)).toEqual([]);
     });
 
     it('ends as stopped, with no finish and no error, when the runner is stopped in the same window (waiting to reconnect, or opening)', async () => {

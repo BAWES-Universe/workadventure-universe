@@ -55,6 +55,8 @@ const messages = [{ role: 'user', content: 'Fill the form' }];
 const sunk: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
 let sinkAnswers = true;
 const notes = createRefusalNotes(Date.now, {
+    // one server: the runner of every job works here
+    runsHere: () => true,
     sink: async (botId, jobId, rows) => {
         if (!sinkAnswers) return false;
         sunk.push({ botId, jobId, rows });
@@ -2242,15 +2244,18 @@ describe('the shared record of a call, before the call goes on', () => {
     let base2: string;
     const reports: Array<[string, string]> = [];
     const written: string[] = [];
-    const state = { hold: undefined as Promise<void> | undefined, failWrites: 0, began: undefined as (() => void) | undefined, turns: [] as Array<{ turn: number; run?: string; at: number }>, turnsDown: false };
+    const state = { hold: undefined as Promise<void> | undefined, failWrites: 0, failAccept: 0, began: undefined as (() => void) | undefined, turns: [] as Array<{ turn: number; run?: string; at: number }>, turnsDown: false };
     const rowsB: Array<{ jobId: string; rows: CallRow[] }> = [];
     let own!: ReturnType<typeof createRefusalNotes>;
     /** The jobs whose runner is working on this server this moment. */
     const here = new Set<string>();
+    const moments: number[] = [];
+    const acceptedBy: Array<{ jobId: string; turn?: { turn: number; run?: string } }> = [];
     const shared = {
-        noteCalled: async (jobId: string) => {
+        noteCalled: async (jobId: string, at: number) => {
             // Said when the write of the call's record begins, so a test can wait for exactly that moment
             state.began?.();
+            moments.push(at);
             if (state.hold) await state.hold;
             if (state.failWrites > 0) {
                 state.failWrites -= 1;
@@ -2260,10 +2265,19 @@ describe('the shared record of a call, before the call goes on', () => {
         },
         noteUnrecorded: async (jobId: string) => void written.push(`unrecorded:${jobId}`),
         lastCalledByOthers: async () => null,
+        // The runner of the job takes note of a call that Orbit took up
+        noteAccepted: async (jobId: string, _at: number, turn?: { turn: number; run?: string }) => {
+            if (state.failAccept > 0) {
+                state.failAccept -= 1;
+                throw new Error('write lost');
+            }
+            acceptedBy.push({ jobId, ...(turn ? { turn } : {}) });
+        },
         // The turns the runner on the other server said
         turnsByOthers: async () => {
             if (state.turnsDown) throw new Error('shared store down');
-            return state.turns;
+            // the runner on the other server promises its list for a while longer (its clock is this one's here)
+            return state.turns.length === 0 ? [] : [{ turns: state.turns, until: Date.now() + 60_000 }];
         },
     };
 
@@ -2297,6 +2311,9 @@ describe('the shared record of a call, before the call goes on', () => {
         state.hold = undefined;
         state.began = undefined;
         state.failWrites = 0;
+        state.failAccept = 0;
+        moments.length = 0;
+        acceptedBy.length = 0;
         state.turns = [];
         state.turnsDown = false;
     });
@@ -2430,28 +2447,98 @@ describe('the shared record of a call, before the call goes on', () => {
             state.failWrites = 100;
             let release!: () => void;
             state.hold = new Promise<void>((resolve) => (release = resolve));
-            const controller = new AbortController();
-            const left = askHere(withTools, controller.signal).catch(() => undefined);
-            await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalled());
-            await new Promise((resolve) => setTimeout(resolve, 40));
-            controller.abort();
-            await left;
-            await new Promise((resolve) => setTimeout(resolve, 40));
-            release();
-            await vi.waitFor(() => expect(reports).toEqual([['called_unrecorded', GONE]]));
-            await own.flush(GONE);
-            await new Promise((resolve) => setTimeout(resolve, 60));
-            expect(rowsB).toEqual([]);
-            // a caller that stayed still gets its row
-            state.hold = undefined;
-            expect((await askHere(withTools)).status).toBe(503);
-            await vi.waitFor(() => expect(rowsB).toHaveLength(1));
-            expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
+            const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            try {
+                // the shared write has been entered, and the SERVER has seen the caller go, before the write is let go
+                const entered = new Promise<void>((resolve) => (state.began = resolve));
+                const serverSawClose = new Promise<void>((resolve) => app2.once('request', (_request, response) => void response.once('close', () => resolve())));
+                const controller = new AbortController();
+                const left = askHere(withTools, controller.signal).catch(() => undefined);
+                await entered;
+                controller.abort();
+                await left;
+                await serverSawClose;
+                release();
+                // the relay has decided to refuse (it logs the refusal when it does) before anything is flushed or asserted
+                await vi.waitFor(() => expect(warned.mock.calls.some((call) => String(call[0]).includes('could not be recorded for the server of its runner'))).toBe(true));
+                await vi.waitFor(() => expect(reports).toEqual([['called_unrecorded', GONE]]));
+                await own.flush(GONE);
+                expect(rowsB).toEqual([]);
+                expect(own.endedOnFault(GONE, 0)).toBe(false);
+                // a caller that stayed still gets its row (the positive control)
+                state.hold = undefined;
+                expect((await askHere(withTools)).status).toBe(503);
+                await vi.waitFor(() => expect(rowsB).toHaveLength(1));
+                expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
+            } finally {
+                warned.mockRestore();
+            }
+        });
+
+        it('writes the moment the call ARRIVED in the shared record, not the time the write was made: a slow identification does not make the call a later arrival', async () => {
+            const SLOW = 'job-slow-identify';
+            orbit.identify.mockImplementation(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 350));
+                return { ok: true, jobId: SLOW, botId: BOT };
+            });
+            const sentAt = Date.now();
+            expect((await askHere(withTools)).status).toBe(200);
+            expect(moments).toHaveLength(1);
+            // it arrived when the request came in, 350 ms or more before the record was written
+            expect(moments[0]).toBeGreaterThanOrEqual(sentAt - 5);
+            expect(Date.now() - moments[0]).toBeGreaterThanOrEqual(350);
         });
 
         it('refuses the model list the same way', async () => {
             state.failWrites = 100;
             expect((await fetch(`${base2}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status).toBe(503);
+        });
+    });
+
+    describe('the acceptance of a call is handed to the runner of the job before the provider is called', () => {
+        const ELSE = 'job-accept-elsewhere';
+        beforeEach(() => orbit.identify.mockResolvedValue({ ok: true, jobId: ELSE, botId: BOT }));
+
+        it('with the runner on another server: hands over the turn and run the call began in, then forwards it', async () => {
+            state.turns = [{ turn: 3, run: 'run-x', at: Date.now() - 30_000 }];
+            expect((await askHere(withTools)).status).toBe(200);
+            expect(acceptedBy).toEqual([{ jobId: ELSE, turn: { turn: 3, run: 'run-x' } }]);
+            expect(upstreamRequests).toHaveLength(1);
+        });
+
+        it('with the runner on another server and the handoff failing twice: nothing is sent to the provider, the room is released, and a fault of ours is recorded (503)', async () => {
+            const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            try {
+                state.failAccept = 2;
+                const answer = await askHere(withTools);
+                expect(answer.status).toBe(503);
+                expect((await answer.json()).error.code).toBe('service_unavailable');
+                expect(upstreamRequests).toHaveLength(0);
+                // Orbit took the room up, and it goes back with the call: settled as not sent
+                await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1));
+                expect(orbit.settle.mock.calls[0][0]).toMatchObject({ jobId: ELSE, sent: false });
+                await vi.waitFor(() => expect(rowsB).toHaveLength(1));
+                expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: 503 });
+                // the retry (the second write works) goes through
+                state.failAccept = 1;
+                expect((await askHere(withTools)).status).toBe(200);
+                expect(upstreamRequests).toHaveLength(1);
+            } finally {
+                warned.mockRestore();
+            }
+        });
+
+        it('a side call (no tools) is no acceptance for the runner: nothing is handed over, and it is forwarded as before', async () => {
+            expect((await askHere({ messages })).status).toBe(200);
+            expect(acceptedBy).toEqual([]);
+            expect(upstreamRequests).toHaveLength(1);
+        });
+
+        it('with the runner on this server nothing is waited for: a failing handoff to the other servers does not stop the call', async () => {
+            here.add(ELSE);
+            state.failAccept = 100;
+            expect((await askHere(withTools)).status).toBe(200);
+            expect(upstreamRequests).toHaveLength(1);
         });
     });
 

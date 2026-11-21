@@ -133,17 +133,36 @@ export interface SharedCalls {
     /** The latest moment (ms) another bot server saw a call of the job reach its relay (or could not record one), or null for none. Rejects when the shared store cannot be read. */
     lastCalledByOthers(jobId: string): Promise<number | null>;
     /**
-     * This server's runner says which turns of the job it has been on (the latest few, each with the moment it began, ms): so a call that reaches ANOTHER
-     * server is tied to the turn it belongs to, and its row is found by Orbit when it judges that turn. Fire and forget. Not an arrival.
+     * This server's runner says which turns of the job it has been on (the latest few, each with the moment it began, ms) and PROMISES that the list is the
+     * whole of it until `until` (ms, the runner server's clock): it renews the promise every few seconds while it works the job, and does not begin a turn that
+     * is not yet in a published list before the promise it gave has run out. So a call that reaches ANOTHER server is tied to its turn only while a promise
+     * covers it; its row is then found by Orbit when it judges that turn. Not an arrival.
      */
-    noteTurn?(jobId: string, turns: SharedTurn[]): Promise<void>;
-    /** The turns the other servers' runners said (merged), or an empty list for none. Rejects when the shared store cannot be read. */
-    turnsByOthers?(jobId: string): Promise<SharedTurn[]>;
-    /** This server took up a call of the job (the shared pool had room for it), at this moment (ms). Fire and forget. Not an arrival: `lastCalledByOthers` does not read it. */
-    noteAccepted?(jobId: string, at: number): Promise<void>;
-    /** The latest moment (ms) another bot server took up a call of the job, or null for none. Rejects when the shared store cannot be read. */
-    lastAcceptedByOthers?(jobId: string): Promise<number | null>;
+    noteTurn?(jobId: string, turns: SharedTurn[], until: number): Promise<void>;
+    /** The lists of turns the other servers' runners said, each with its promise (see `noteTurn`), or an empty list for none. Rejects when the shared store cannot be read. */
+    turnsByOthers?(jobId: string): Promise<SharedTurnList[]>;
+    /**
+     * This server took up a call of the job (the shared pool had room for it), at this moment (ms): `turn` is the turn (and run) the call began in, so the
+     * runner of ANOTHER turn does not count it. Not an arrival: `lastCalledByOthers` does not read it. The write is awaited (bounded) before the call goes on.
+     */
+    noteAccepted?(jobId: string, at: number, turn?: CallTurn): Promise<void>;
+    /**
+     * The latest moment (ms) another bot server took up a call of the job (of that turn and run, when given; a call whose turn was not known counts for every
+     * turn), or null for none. Rejects when the shared store cannot be read.
+     */
+    lastAcceptedByOthers?(jobId: string, turn?: CallTurn): Promise<number | null>;
 }
+
+/** A runner's list of turns and how long it promises the list to be the whole of it (see `SharedCalls.noteTurn`). */
+export interface SharedTurnList {
+    turns: SharedTurn[];
+    /** The runner server's clock, ms. */
+    until: number;
+}
+
+/** How long a runner's promise that its list of turns is complete lasts, and how often it renews it while it works the job. */
+export const SHARED_TURN_LEASE_MS = 6000;
+export const SHARED_TURN_RENEW_MS = 2000;
 
 /** How long the relay waits for the shared record of a call before it forwards the call anyway (each of its two tries). */
 export const SHARED_WRITE_BOUND_MS = 1000;
@@ -215,9 +234,10 @@ export interface RefusalNotes {
      * when it was recorded (and with no shared store). When both tries fail the operators are told once per job and: if this server's runner is working the
      * job NOW (`runsHere`) the call may go ahead, since the runner's own notes see it: the other servers are told apart that a call was not recorded
      * and it resolves false; if it is not (or nothing says so), no runner can ever see this call, so it must not be forwarded: resolves `'unservable'` (the relay answers 503
-     * and records a fault of ours for the call through the sink, which does not rest on the shared store). Never rejects.
+     * and records a fault of ours for the call through the sink, which does not rest on the shared store). Never rejects. `arrivedAt` is the moment the call ARRIVED
+     * (from `mark`): the shared record carries that moment in both tries and in the marker of a call that could not be recorded, never the time the write happens to be made.
      */
-    reached(jobId: string, at?: CallTurn): Promise<boolean | 'unservable'>;
+    reached(jobId: string, at?: CallTurn, arrivedAt?: number): Promise<boolean | 'unservable'>;
     /** Whether any call of this job reached the relay since this point (or at or after this moment, ms), as THIS server saw it. */
     calledSince(jobId: string, since: Since): boolean;
     /**
@@ -226,8 +246,15 @@ export interface RefusalNotes {
      * ours. Without a shared store it is `calledSince`.
      */
     calledAnywhereSince(jobId: string, since: Since): Promise<boolean>;
-    /** A call of this job got past Orbit's room check (the shared pool had room for it): it was taken up, whatever became of it after. */
-    accepted(jobId: string, at?: CallTurn): void;
+    /**
+     * A call of this job got past Orbit's room check (the shared pool had room for it): it was taken up, whatever became of it after. When the job's runner works
+     * on this server the note is made at once (nothing is returned). When it works on ANOTHER server this returns the handoff of the acceptance (bounded, two
+     * tries) for the relay to wait on BEFORE the provider is called: false when it could not be made, and the relay then releases the room and forwards nothing,
+     * so the runner never reads "no call was taken up" while a call of the turn is in flight.
+     */
+    accepted(jobId: string, at?: CallTurn): void | Promise<boolean>;
+    /** Waits until the turn the runner just began is in a list the other servers can read (bounded), or until the promise of the lists before it has run out. */
+    turnPublished?(jobId: string): Promise<void>;
     /** Whether any call of this job was taken up since this point (or at or after this moment, ms): `0` asks whether one ever was. */
     acceptedSince(jobId: string, since: Since): boolean;
     /**
@@ -627,20 +654,93 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         entry.later = timer;
     };
 
+    /** Whether this process's runner works the job right now (see `runsHere`). */
+    const runnerHere = (jobId: string): boolean => {
+        try {
+            return options.runsHere?.(jobId) === true;
+        } catch {
+            return false;
+        }
+    };
+    /** A write to the shared store, bounded: true when it was made, false when it failed or did not finish in time (it may still land). */
+    const bounded = (work: () => Promise<void>) =>
+        new Promise<boolean>((resolve) => {
+            let promise: Promise<void>;
+            try {
+                promise = work();
+            } catch {
+                resolve(false);
+                return;
+            }
+            const timer = setTimeout(() => resolve(false), SHARED_WRITE_BOUND_MS);
+            timer.unref?.();
+            promise.then(
+                () => {
+                    clearTimeout(timer);
+                    resolve(true);
+                },
+                () => {
+                    clearTimeout(timer);
+                    resolve(false);
+                }
+            );
+        });
+    // What this runner has told the other servers of its turns. `attempted`: the latest promise (`until`) of any list it tried to publish, landed or not (a write that
+    // timed out may still land), so it is never begun on a turn that no published list holds while such a promise could still be read as covering
+    const attempted = new Map<string, number>();
+    const publishing = new Map<string, { done: Promise<boolean>; before: number }>();
+    const beats = new Map<string, ReturnType<typeof setTimeout>>();
+    const publishTurns = (jobId: string): Promise<boolean> => {
+        const shared = options.shared;
+        if (!shared?.noteTurn) return Promise.resolve(true);
+        const history = turns.get(jobId) ?? [];
+        const until = now() + SHARED_TURN_LEASE_MS;
+        attempted.set(jobId, Math.max(until, attempted.get(jobId) ?? 0));
+        const list = history.slice(-SHARED_TURNS).map((one) => ({ turn: one.turn, ...(one.run ? { run: one.run } : {}), at: one.at }));
+        return bounded(() => shared.noteTurn!(jobId, list, until));
+    };
+    /** While the runner works the job its promise is renewed (the full list again), so a call well inside a turn is covered; it lapses when the runner stops. */
+    const keepPromise = (jobId: string) => {
+        if (beats.has(jobId)) return;
+        const timer = setTimeout(() => {
+            beats.delete(jobId);
+            if (!runnerHere(jobId)) return;
+            void publishTurns(jobId);
+            keepPromise(jobId);
+        }, SHARED_TURN_RENEW_MS);
+        timer.unref?.();
+        beats.set(jobId, timer);
+    };
+
     return {
         turn(jobId, turn, run) {
             forget();
             const history = turns.get(jobId) ?? [];
-            history.push({ turn, ...(run ? { run } : {}), at: now(), order: ++count });
-            if (history.length > TURN_HISTORY) history.shift();
+            // The same turn said again (a reconnect to it) is the same turn: it keeps the moment it began
+            const latest = history.at(-1);
+            if (!latest || latest.turn !== turn || latest.run !== run) {
+                history.push({ turn, ...(run ? { run } : {}), at: now(), order: ++count });
+                if (history.length > TURN_HISTORY) history.shift();
+            }
             turns.set(jobId, history);
-            // The other servers learn which turn the runner is on, for the calls of the machine that reach them
+            // The other servers learn which turn the runner is on, for the calls of the machine that reach them (see `turnPublished`)
             if (options.shared?.noteTurn) {
-                try {
-                    options.shared.noteTurn(jobId, history.slice(-SHARED_TURNS).map((one) => ({ turn: one.turn, ...(one.run ? { run: one.run } : {}), at: one.at }))).catch(() => undefined);
-                } catch {
-                    /* telling the other servers never holds the runner */
-                }
+                const before = attempted.get(jobId) ?? 0;
+                publishing.set(jobId, { done: publishTurns(jobId), before });
+                keepPromise(jobId);
+            }
+        },
+        async turnPublished(jobId) {
+            const shared = options.shared;
+            const entry = publishing.get(jobId);
+            if (!shared?.noteTurn || !entry) return;
+            let ok = await entry.done;
+            // The turn is in no list the others can read. The lists before it still promise to be complete until `before`: a call that arrives while one covers it
+            // would be put in the turn before, so this turn is not begun until those promises have run out (with the store failing, no list is read as covering
+            // then). Tried again meanwhile; the wait is the length of one promise at most
+            for (let tries = 0; !ok && now() < entry.before && tries < 2 * Math.ceil(SHARED_TURN_LEASE_MS / 250); tries++) {
+                await sleep(250);
+                ok = await publishTurns(jobId);
             }
         },
         turnOf: (jobId) => lastTurn(jobId)?.turn ?? 0,
@@ -654,17 +754,12 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             // Without a shared store there is one server; and when the runner of the job works here, this server's own notes are the history of its turns
             const shared = options.shared;
             if (!shared?.turnsByOthers) return here();
-            let runnerHere = false;
-            try {
-                runnerHere = options.runsHere?.(jobId) === true;
-            } catch {
-                runnerHere = false;
-            }
-            if (runnerHere) return here();
+            if (runnerHere(jobId)) return here();
             // The runner is on another server: the turn that had begun when the call arrived, by the moments the servers keep (this server's turns of the job, if
-            // it ran it before, are old history and say nothing of now)
+            // it ran it before, are old history and say nothing of now). Only from a list whose runner promises that it is the whole of its turns at that
+            // moment: a successful read does not say the latest write was made, and a list from before a lost write would give a call the turn before its own
             try {
-                const said = await new Promise<SharedTurn[]>((resolve, reject) => {
+                const lists = await new Promise<SharedTurnList[]>((resolve, reject) => {
                     const timer = setTimeout(() => reject(new Error('slow')), SHARED_WRITE_BOUND_MS);
                     timer.unref?.();
                     shared.turnsByOthers!(jobId).then(
@@ -673,6 +768,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     );
                 });
                 const arrivedAt = arrived?.at ?? now();
+                // The promise is the runner server's clock and the arrival is this server's: the arrival must be inside the promise by more than the clocks can differ.
+                // Exactly one runner's promise covers it: none (the runner stopped, the store lost its write) or two (a job taken over) cannot tell
+                const covering = lists.filter((one) => Number.isFinite(one.until) && arrivedAt < one.until - SHARED_CALL_SKEW_MS);
+                if (covering.length !== 1) return { turn: null };
+                const said = covering[0].turns;
                 // The turns' moments are the runner server's clock and the arrival is this server's: the clocks of two servers differ a little, so a call that arrived
                 // near the moment ANY turn began could be put in the turn before or after the one it belongs to. Its turn cannot be told; the row is then read by
                 // Orbit with every turn it judges
@@ -836,55 +936,30 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         called(jobId, at) {
             if (!staleCall(jobId, at)) mark(jobId, 'called', false, true);
         },
-        async reached(jobId, at) {
-            if (staleCall(jobId, at)) return true;
-            const moment = now();
+        async reached(jobId, at, arrivedAt) {
+            // A call of a turn the runner of THIS server has left says nothing of the turn it is on now. Only when the runner works here: a server that ran the job
+            // before and no longer does holds an old history, which says nothing of a call that belongs to the runner on another server
+            if (runnerHere(jobId) && staleCall(jobId, at)) return true;
+            // The moment the call ARRIVED, in both tries and in the marker of a call that could not be recorded: a write made later must not look like a later arrival
+            const moment = arrivedAt ?? now();
             mark(jobId, 'called');
             const shared = options.shared;
             if (!shared) return true;
             // Each try is bounded: the call it stands in front of is not held for a store that is slow. The same moment both times (the write keeps the
             // latest, so a try that did land after all is no harm)
-            const bounded = (work: Promise<void>) =>
-                new Promise<boolean>((resolve) => {
-                    const timer = setTimeout(() => resolve(false), SHARED_WRITE_BOUND_MS);
-                    timer.unref?.();
-                    work.then(
-                        () => {
-                            clearTimeout(timer);
-                            resolve(true);
-                        },
-                        () => {
-                            clearTimeout(timer);
-                            resolve(false);
-                        }
-                    );
-                });
-            const attempt = (what: 'call' | 'unrecorded') => {
-                try {
-                    return bounded(what === 'call' ? shared.noteCalled(jobId, moment) : shared.noteUnrecorded(jobId, moment));
-                } catch {
-                    return Promise.resolve(false);
-                }
-            };
+            const attempt = (what: 'call' | 'unrecorded') => bounded(() => (what === 'call' ? shared.noteCalled(jobId, moment) : shared.noteUnrecorded(jobId, moment)));
             if ((await attempt('call')) || (await attempt('call'))) return true;
             if (!unrecordedTold.has(jobId)) {
-                unrecordedTold.set(jobId, moment);
+                unrecordedTold.set(jobId, now());
                 tell('called_unrecorded', jobId, '');
             }
             // The runner of the job is not working it here now (a turn in the notes proves nothing: the job may have been taken over by another server), so it can never see this call, and the record it would have read could
             // not be written: the call is not forwarded. Saying so apart would not help (the store is failing for this server, and the runner reads a store that
             // may be well): the refusal is the fact, and it is a fault of ours that Orbit hears of through the sink
-            const runnerHere = (): boolean => {
-                try {
-                    return options.runsHere?.(jobId) === true;
-                } catch {
-                    return false;
-                }
-            };
-            if (!runnerHere()) return 'unservable';
+            if (!runnerHere(jobId)) return 'unservable';
             // The runner is here: its own notes see the call. The other servers are told apart that a call was not recorded, all the same. Waiting for that
             // takes a moment, in which this process may stop the job: when the write failed too, whoever runs the job now has no way to see the call
-            if (!(await attempt('unrecorded')) && !runnerHere()) return 'unservable';
+            if (!(await attempt('unrecorded')) && !runnerHere(jobId)) return 'unservable';
             return false;
         },
         calledSince(jobId, since) {
@@ -909,17 +984,27 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             }
         },
         accepted(jobId, at) {
-            // Taken up in the turn that made the call: one taken up after the runner moved on belongs to the turn it began in, not to the one that is going now
-            if (staleCall(jobId, at)) return;
+            const owner = runnerHere(jobId);
+            // Taken up in the turn that made the call: one taken up after the runner of THIS server moved on belongs to the turn it began in, not to the one that is
+            // going now. (A server that no longer runs the job has an old history that says nothing of a call of the runner elsewhere.)
+            if (owner && staleCall(jobId, at)) return;
             mark(jobId, 'accepted');
-            // The other servers are told, for the runner of the job that may live on one of them and judges the turn by what the pool answered
-            if (options.shared?.noteAccepted) {
+            const shared = options.shared;
+            if (!shared?.noteAccepted) return;
+            const moment = now();
+            // The other servers are told, for the runner of the job that may live on one of them and judges the turn by what the pool answered: with the turn and
+            // run the call began in, so a runner of ANOTHER turn does not count it
+            if (owner) {
                 try {
-                    options.shared.noteAccepted(jobId, now()).catch(() => undefined);
+                    shared.noteAccepted(jobId, moment, at).catch(() => undefined);
                 } catch {
                     /* telling the other servers never holds a call */
                 }
+                return;
             }
+            // The runner is on another server: the relay waits for the handoff (two tries, each bounded) before the provider is called, so the runner never reads
+            // "no call was taken up" while a call of the turn is in flight and gives the turn up on it
+            return (async () => (await bounded(() => shared.noteAccepted!(jobId, moment, at))) || (await bounded(() => shared.noteAccepted!(jobId, moment, at))))();
         },
         async acceptedAnywhereSince(jobId, since) {
             const seen = calls.get(jobId)?.accepted;
@@ -928,7 +1013,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             const from = typeof since === 'number' ? since : since.at;
             if (from === undefined) return true;
             try {
-                const other = await options.shared.lastAcceptedByOthers(jobId);
+                // Only an acceptance of the turn (and run) the runner is on now counts: one taken up for a call of an earlier turn is no room found for this one
+                const current = lastTurn(jobId);
+                const other = await options.shared.lastAcceptedByOthers(jobId, current ? { turn: current.turn, ...(current.run ? { run: current.run } : {}) } : undefined);
                 if (other !== null && other >= from - SHARED_CALL_SKEW_MS) return true;
                 // A call taken up HERE while the read was pending is not in what it returned
                 const meanwhile = calls.get(jobId)?.accepted;

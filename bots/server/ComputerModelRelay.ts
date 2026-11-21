@@ -553,7 +553,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
      * A call reached the relay: noted for the runner here, and recorded for the runner of the job on another bot server before the call goes on (it waits a
      * moment for that, bounded; when it cannot be recorded the call still goes ahead, and the notes tell the operators and the other servers).
      */
-    async function reachedRelay(jobId: string, at?: { turn: number; run?: string }): Promise<'forward' | 'unservable'> {
+    async function reachedRelay(jobId: string, at?: { turn: number; run?: string }, arrivedAt?: number): Promise<'forward' | 'unservable'> {
         const notes = deps.refusals;
         if (!notes) return 'forward';
         if (!notes.reached) {
@@ -561,7 +561,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             return 'forward';
         }
         try {
-            const recorded = await notes.reached(jobId, at);
+            // The shared record says when the call ARRIVED, not when the write happens to be made
+            const recorded = await notes.reached(jobId, at, arrivedAt);
             if (recorded === 'unservable') {
                 // The runner of this job is on another server and this call cannot be recorded for it: it is refused here, so the machine tries again (and the
                 // load balancer may send the retry to the server that has the runner)
@@ -635,7 +636,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
         // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
         // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
-        const reachedAnswer = await reachedRelay(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+        const reachedAnswer = await reachedRelay(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) }, arrived?.at);
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
@@ -732,10 +733,21 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             }
 
             // Orbit found room for this call: it is taken up (a turn whose calls were all refused for room is a different thing from one with a call taken)
-            if (agentCall && !gone && !res.destroyed) deps.refusals?.accepted?.(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+            // When the runner of the job is on another server the acceptance is handed over to it first (bounded): a call that is forwarded without the runner being
+            // able to see that it was taken up could be given up on for want of room while it is being answered. When that fails nothing is forwarded and the room goes back
+            let handedOver = true;
+            if (agentCall && !gone && !res.destroyed) {
+                const handoff = deps.refusals?.accepted?.(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+                if (handoff) handedOver = (await handoff.catch(() => false)) !== false;
+            }
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
-                else {
+                else if (!handedOver) {
+                    // A fault of ours (the machine tries again): nothing was sent to the provider, so the room is released with the call
+                    console.warn('[ComputerRelay] A call that Orbit took up could not be handed to the server of its runner; it was refused (503).');
+                    fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
+                    ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
+                } else {
                     const timing = { timedOut: false };
                     ended = await callProvider({ body, config, streaming, outputCap, res, timing });
                     // The relay's own time limit ran out: unresolved either way (a stream that wrote nothing in time may be a provider that hung, one that

@@ -555,3 +555,27 @@ describe('what leaves the runner', () => {
         noSecret(JSON.stringify(failed));
     });
 });
+
+describe('an assignment that keeps its name', () => {
+    it('hides the whole part when the name is itself a known secret: a key, a token or a login that is used as a variable name', () => {
+        for (const [text, secret] of [
+            ['ghp_abcdefghijklmnopqrstuvwxyz0123456789=hello world', 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'],
+            ['cjt_abcdefghij=1 tail', 'cjt_abcdefghij'],
+            ['run sk_live=1 xoxb-1234567890-abcdef2=value', 'xoxb-1234567890-abcdef2'],
+        ] as const) {
+            const out = redactSecrets(text);
+            expect(out, text).not.toContain(secret);
+            expect(out, text).toContain(HIDDEN);
+        }
+        expect(redactSecrets('ghp_abcdefghijklmnopqrstuvwxyz0123456789=hello world')).toBe(`${HIDDEN} world`);
+        expect(redactSecrets('cjt_abcdefghij=1 tail')).toBe(`${HIDDEN} tail`);
+    });
+
+    it('keeps the name of an ordinary assignment (a plain name, a secret only in its value)', () => {
+        expect(redactSecrets('TOKEN=abc next')).toBe(`TOKEN=${HIDDEN} next`);
+        expect(redactSecrets('PASSWORD=hunter2 next')).toBe(`PASSWORD=${HIDDEN} next`);
+        // a known secret in the VALUE: the name stays, the value goes
+        expect(redactSecrets('X=ghp_abcdefghijklmnopqrstuvwxyz0123456789 next')).toBe(`X=${HIDDEN} next`);
+        expect(redactSecrets('curl -H "Cookie: a=b" -d MODE=fast url')).toContain('MODE=');
+    });
+});

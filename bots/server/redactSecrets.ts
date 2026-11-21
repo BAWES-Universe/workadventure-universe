@@ -218,6 +218,8 @@ interface Span {
     text: string;
     /** An assignment: the one to give way when another pass found the same part (a base64 run that ends in `=` reads as an assignment, and its name is the secret). */
     weak?: true;
+    /** An assignment: where its value begins in the original text (what is before it, the name, is kept when the assignment says the part). */
+    valueAt?: number;
 }
 
 /**
@@ -274,7 +276,7 @@ function assignmentSpans(text: string): Span[] {
         const nameStart = found.index + found[1].length;
         const valueStart = found.index + found[0].length;
         const end = endOfShellWord(logical, valueStart, at);
-        spans.push({ start: at[nameStart], end: at[end], text: `${found[2]}=${HIDDEN}`, weak: true });
+        spans.push({ start: at[nameStart], end: at[end], text: `${found[2]}=${HIDDEN}`, weak: true, valueAt: at[valueStart] });
         ASSIGNMENT_START.lastIndex = Math.max(end, valueStart);
     }
     return spans;
@@ -345,7 +347,10 @@ export function redactSecrets(text: string): string {
         if (unionStart >= at) {
             // All of the union goes. The longest span says it, unless it begins later than the union does (a header that begins inside a URL's login and goes
             // on past it): then what it says would leave the front of the union showing, and the union is hidden as a whole
-            out += text.slice(at, unionStart) + (chosen.start === unionStart ? chosen.text : HIDDEN);
+            // A shape that is known to be a secret (a key, a long opaque run, a header) that begins before the value of the assignment is in the part the assignment
+            // keeps (its name): saying the part as the assignment does would leave that secret showing, so it is hidden as a whole. An ordinary assignment keeps its name
+            const keepsSecret = chosen.weak === true && chosen.valueAt !== undefined && spans.slice(i, j).some((one) => !one.weak && one.start < (chosen.valueAt as number));
+            out += text.slice(at, unionStart) + (chosen.start === unionStart && !keepsSecret ? chosen.text : HIDDEN);
             at = end;
         }
         i = j;

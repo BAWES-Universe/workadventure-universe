@@ -213,6 +213,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                 // The answer was slow and nobody can tell whether THIS job was made. Not a failure (it may be running): the person must not be told it failed,
                 // or they ask again and a second job is paid for behind the first
                 return { started: false, unknown: true, note: 'It is not known whether this job started. Say in one short sentence that you couldn\'t confirm it, and ask them to look at the bar above this chat before asking again. Do not say it failed or that it started.' };
+            case 'ended':
+                // The answer was slow, and Orbit shows that the job THIS start made has already failed or been stopped: it was made, so it is no connection failure
+                return { started: false, ended: true, note: 'Orbit found this job and it has already ended (it failed or was stopped). Say in one short sentence that the job was found but has already ended, and that the bar above this chat shows how. Do not say your computer could not be reached or that it is running. Do not start it again unless they ask you to.' };
             case 'off':
                 return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
             case 'broken_start':

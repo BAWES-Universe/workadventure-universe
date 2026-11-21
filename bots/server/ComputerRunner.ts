@@ -135,13 +135,15 @@ export function whyOf(words: string): string | null {
     for (let match = marker.exec(words); match; match = marker.exec(words)) at = match.index;
     if (at < 0) return null;
     // A line of its own ends a sentence too, so it is split before the spaces are made one
-    const before = words.slice(0, at).replace(/\[\[[^\]]*\]\]/g, ' ');
+    // The text is redacted BEFORE it is split: a stop or a line break inside a quoted secret value is no end of a sentence, and a fragment of the value must never
+    // be left to stand as the sentence
+    const before = redactSecrets(words.slice(0, at).replace(/\[\[[^\]]*\]\]/g, ' '));
     // A stop inside a name or number ("passport.pdf", "3.5", "e.g. the form") is no end of a sentence: only a stop followed by a space and a capital, a digit or an opening quote is
     const sentences = before.split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9“"'(])/).map((one) => one.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const last = sentences[sentences.length - 1] ?? '';
-    // The computer's own sentence may quote a command it ran: nothing secret goes on to Orbit or the person
-    // (the whole sentence is redacted first: a cut at 300 characters through `PASSWORD=hunter2` would leave a value no pattern can tell from a word)
-    return last ? redactSecrets(last).slice(-300) : null;
+    // The computer's own sentence may quote a command it ran: nothing secret goes on to Orbit or the person (redacted before the cut: a cut at 300 characters
+    // through `PASSWORD=hunter2` would leave a value no pattern can tell from a word, so the limit is kept on the redacted result)
+    return last ? last.slice(-300) : null;
 }
 
 /**
@@ -190,7 +192,7 @@ export interface RunnerDeps {
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
     /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
     runId?: () => string;
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'turnPublished' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince'>>;
     /**
      * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
      * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
@@ -336,13 +338,16 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function finish(
         job: RunnableJob,
         outcome: 'done' | 'failed',
-        options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[]; run?: string } = {}
-    ): Promise<'ended' | 'stale'> {
-        const { cause, generation, why, turns, run } = options;
+        options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[]; run?: string; signal?: AbortSignal } = {}
+    ): Promise<'ended' | 'stale' | 'stopped'> {
+        const { cause, generation, why, turns, run, signal } = options;
         let stale = false;
         // Orbit judges a failure from the call rows it holds, so what the relay recorded for this job reaches it BEFORE the finish does (a moment of
         // retry at most: a record that cannot be sent never keeps a job from ending, and Orbit then has the cause below as its only hint)
         if (outcome === 'failed') await deps.refusals?.flush?.(job.jobId)?.catch(() => false);
+        // The flush can take a while: a worker that was stopped meanwhile (the job was taken over, the person took the machine, the server is stopping) does not end the
+        // job for whoever has it now. A flush that failed with the worker still active still sends the failure
+        if (signal?.aborted) return 'stopped';
         const body = {
             action: 'finish',
             outcome,
@@ -442,13 +447,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let poolTimer: ReturnType<typeof setTimeout> | undefined;
         let poolWatch: ReturnType<typeof setTimeout> | undefined;
         let gaveUp = false;
+        // The turn's own end was read (a terminal event that needs no reconnection): nothing is given up on after it, whatever the pool answers
+        let turnOver = false;
         // Only for a turn this process saw from its beginning: after a restart the notes know nothing of a call that was taken up before it, so a turn taken up
         // by reconnecting is not judged pool-only from the refusals seen since (the turns it starts itself, and Orbit's own record, still are)
         const poolBusy = () => since !== null && seenFromStart() && deps.refusals?.onlyPoolBusySince?.(job.jobId, since) === true;
         // Looked at again at the end of the wait: a call taken up meanwhile means the pool has room again, and that includes a call taken up by the relay of
         // ANOTHER bot server (the machine's calls reach whichever one the load balancer picks, and this server's own notes know only its own)
         const giveUpIfStill = async () => {
-            if (turnController.signal.aborted || !poolBusy()) return;
+            if (turnOver || turnController.signal.aborted || !poolBusy()) return;
             if (since !== null && deps.refusals?.acceptedAnywhereSince) {
                 let taken = true;
                 try {
@@ -457,15 +464,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     taken = true;
                 }
                 if (taken) return;
-                // The read took a moment: the turn may have ended, or a call been taken up here, meanwhile
-                if (turnController.signal.aborted || !poolBusy()) return;
+                // The read took a moment: the turn may have ended (its terminal event was read, or it was stopped), or a call been taken up here, meanwhile
+                if (turnOver || turnController.signal.aborted || !poolBusy()) return;
             }
             gaveUp = true;
             turnController.abort();
             void orbit.cancel(job.jobId).catch(() => undefined);
         };
         const watchPool = () => {
-            if (turnController.signal.aborted) return;
+            if (turnOver || turnController.signal.aborted) return;
             if (poolBusy()) {
                 poolTimer ??= setTimeout(() => {
                     poolTimer = undefined;
@@ -476,6 +483,14 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 poolTimer = undefined;
             }
             poolWatch = setTimeout(watchPool, timing.poolCheckMs ?? RUNNER_TIMING.poolCheckMs);
+        };
+        // The turn ended by its own terminal event: the give-up timer and the pool watch are put down at once, and a give-up that is waiting on its read stands down
+        const overNow = () => {
+            turnOver = true;
+            if (poolTimer) clearTimeout(poolTimer);
+            if (poolWatch) clearTimeout(poolWatch);
+            poolTimer = undefined;
+            poolWatch = undefined;
         };
         if (since !== null && deps.refusals?.onlyPoolBusySince) watchPool();
         const renew = async () => {
@@ -580,8 +595,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                         } else if (event.type === 'completed') {
                             words = event.outputText ? event.outputText.slice(-RUNNER_GUARDS.maxWords) : words;
                             terminal = { failed: false, fenced: false, code: '' };
+                            overNow();
                         } else if (event.type === 'failed') {
                             terminal = { failed: true, fenced: event.code === 'fenced', code: event.code };
+                            // A failure that is a broken stream is read again after a reconnection: the turn is not over then
+                            if (terminal.code !== 'stream_broke' && terminal.code !== 'stream_ended') overNow();
                         }
                     }
                 } catch (error) {
@@ -657,7 +675,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function work(job: RunnableJob, signal: AbortSignal): Promise<void> {
         if (!deps.relayUrl) {
             log.error('[ComputerRunner] A job cannot run: no address is set for the model relay (COMPUTER_RELAY_URL or BOT_SERVER_URL).');
-            await finish(job, 'failed', { cause: 'ours' });
+            await finish(job, 'failed', { signal, cause: 'ours' });
             return;
         }
         // The job's own first words stay the ones to send until the agent has taken a turn: a turn that could not be started, or a take-over
@@ -729,7 +747,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             };
             if (++turns > RUNNER_GUARDS.maxTurns) {
                 say('A job took more turns than allowed and was ended.');
-                if ((await finish(job, 'failed', { cause: 'agent', generation })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'agent', generation })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -744,7 +762,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             if (ready === 'failed') {
-                if ((await finish(job, 'failed', { cause: 'ours', generation })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'ours', generation })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -757,7 +775,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 deps.refusals?.turn?.(job.jobId, turnNo, run);
                 say('A job ended: the machine could not reach the model relay (check COMPUTER_RELAY_URL).');
                 noteNoRelay(job, turnNo, run, 'prepare');
-                if ((await finish(job, 'failed', { cause: 'ours', generation, turns: [turnNo], run, why: RELAY_UNREACHABLE_WHY })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, why: RELAY_UNREACHABLE_WHY })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -775,6 +793,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 seenFromStart = true;
             }
             deps.refusals?.turn?.(job.jobId, turnNo, run);
+            // The turn is told to the other bot servers before it is worked: a call of it that reaches another server is then tied to it, never to the turn before
+            // (bounded: with the store failing it waits out the promise of the lists before it, a few seconds at most)
+            await deps.refusals?.turnPublished?.(job.jobId)?.catch(() => undefined);
+            if (signal.aborted) return;
             accepted.joined = false;
             const result = await oneTurn(job, input, signal, renewing, accepted, generation, turnStartedAt, () => seenFromStart && !(freshWindow && accepted.joined));
             if (freshWindow && accepted.joined) seenFromStart = false;
@@ -786,7 +808,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 turnStartedAt = null;
                 say('A job ended: every model call of its turn was refused for want of room in the shared pool.');
                 notePoolBusy(job, turnNo, run);
-                if ((await finish(job, 'failed', { cause: 'ours', generation, turns: [turnNo], run, why: POOL_BUSY_WHY })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, why: POOL_BUSY_WHY })) === 'stale') {
                     input = follow(RESUME_PROMPT);
                     await sleep(timing.waitMs, signal);
                     continue;
@@ -854,7 +876,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
             const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
             if (ending.kind === 'done' || ending.kind === 'failed') {
-                const ended = ending.kind === 'done' ? await finish(job, 'done', { generation }) : await finish(job, 'failed', { cause: 'agent', generation, why: whyOf(result.words) });
+                const ended = ending.kind === 'done' ? await finish(job, 'done', { generation, signal }) : await finish(job, 'failed', { signal, cause: 'agent', generation, why: whyOf(result.words) });
                 if (ended === 'stale') {
                     await readAgain();
                     continue;
@@ -910,7 +932,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     continue;
                 }
                 if (!handed) {
-                    if ((await finish(job, 'failed', { cause: refusedHandover ? 'agent' : 'ours', generation })) === 'stale') {
+                    if ((await finish(job, 'failed', { signal, cause: refusedHandover ? 'agent' : 'ours', generation })) === 'stale') {
                         await readAgain();
                         continue;
                     }
@@ -968,7 +990,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 // The cause is a hint: Orbit reads the call rows of each turn named here. A confirmed fault anywhere in the streak is ours; else the person's
                 // side (a silent turn, their allowance or a rule) makes it the agent's; else it is unresolved, for Orbit's bounded goodwill
                 const cause: FinishCause = confirmed ? 'ours' : notOurs ? 'agent' : 'ours';
-                if ((await finish(job, 'failed', { cause, generation, turns: badTurns, run })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause, generation, turns: badTurns, run })) === 'stale') {
                     await readAgain();
                     continue;
                 }

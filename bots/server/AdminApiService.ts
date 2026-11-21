@@ -1519,8 +1519,11 @@ export class AdminApiService {
      * is asked again (after one second, then after two), and when it is still not answered it is `'unknown'`: the job is not started a second time.
      */
     async computerJobStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; originRef: string; title: string; sinceSeconds: number }): Promise<{ id: string; status: string } | 'none' | 'unknown'> {
+        // `find.sinceSeconds` is the elapsed time from the start's own beginning to NOW: each asking after a wait is for the longer elapsed time it then is, or a
+        // job that was made when the start began would fall out of the window of the later askings (and read as "no job")
+        const askedAt = Date.now();
         for (let attempt = 0; ; attempt++) {
-            const answer = await this.lookAtStarted(viaBotId, userId, find);
+            const answer = await this.lookAtStarted(viaBotId, userId, { ...find, sinceSeconds: find.sinceSeconds + (Date.now() - askedAt) / 1000 });
             if (answer !== 'retry') return answer;
             if (attempt >= COMPUTER_STARTED_RETRY_MS.length) return 'unknown';
             await new Promise((resolve) => setTimeout(resolve, COMPUTER_STARTED_RETRY_MS[attempt]));
@@ -1705,7 +1708,7 @@ export class AdminApiService {
      * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. A start that takes longer than we wait (or that a gateway
      * cut) is not a failure of the computer when Orbit PROVES that this start made a job (one for this person, from this conversation, with this title, begun
      * since the ask went out, running or waiting): the machine is being made, and it answers `starting`. That the person has some other job going proves
-     * nothing about this one. When Orbit says the job it made has failed or stopped the start throws as any failure does (it was made and is over). When it
+     * nothing about this one. When Orbit says the job it made has failed or stopped the answer is `ended` (it was made and is over: not a failure to reach the computer). When it
      * CANNOT say (no origin to ask by, an Orbit without the read, a damaged answer, the read failing) or finds no such job YET (`started: null`: the POST
      * may still be processed and commit after this one read) the answer is `unknown`: the slow start may well make a job, and telling the person it failed
      * would have them ask again and pay for a second one.
@@ -1732,8 +1735,9 @@ export class AdminApiService {
                 // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
                 if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };
                 if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
-                // A job that failed or stopped: it was made and is over, which is what a failed start says too
-                if (COMPUTER_JOB_OVER.includes(made.status)) throw error;
+                // A job that failed or stopped: it WAS made and is over. That is no connection failure of the start (nothing was unreachable), and the person is
+                // told what is true of it: `ended`
+                if (COMPUTER_JOB_OVER.includes(made.status)) return { ok: false, reason: 'ended' };
                 // A state this server does not know: nothing can be said of it
                 return { ok: false, reason: 'unknown' };
             }
@@ -1813,7 +1817,8 @@ export class AdminApiService {
     async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected' | 'missing'> {
         try {
             const response = await this.brickCall<{ ok?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
-            return response.status === 200 && response.data?.ok !== false;
+            // Only Orbit's own positive answer (200 with `ok: true`) says it took the rows: a 200 from something on the way, or a body without it, does not
+            return response.status === 200 && response.data?.ok === true;
         } catch (error) {
             // Only Orbit's own answer for an unknown job is final; a missing route answers 404 or 405 with something else
             if (axios.isAxiosError(error) && error.response?.status === 404 && (error.response.data as { error?: unknown } | undefined)?.error === 'Job not found') return 'missing';

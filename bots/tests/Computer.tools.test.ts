@@ -122,6 +122,17 @@ describe('use_computer (#2000)', () => {
         expect(String(unknown.note)).toMatch(/Do not say it failed or that it started/);
     });
 
+    it('says the job was found and has already ended (not a connection failure, not running) when a slow start was matched to a job that failed or was stopped', async () => {
+        const ended = await run(asking({ ok: false, reason: 'ended' }));
+        expect(ended).toMatchObject({ started: false, ended: true });
+        expect(ended).not.toHaveProperty('success');
+        expect(String(ended.note)).toMatch(/already ended/);
+        expect(String(ended.note)).toMatch(/bar above this chat/);
+        // the generic connection failure says the computer could not be reached: this one must not
+        expect(String(ended.note)).toMatch(/Do not say your computer could not be reached/);
+        expect(String(ended.note)).not.toMatch(/could not be reached just now/);
+    });
+
     it('says that Orbit found the job, not that the computer is starting, when a slow start was matched to a queued, waiting or running job', async () => {
         const found = await run(asking({ ok: false, reason: 'starting' }));
         expect(found).toMatchObject({ started: false, found: true });

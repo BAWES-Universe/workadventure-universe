@@ -114,10 +114,27 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
                     return { data: { started: { id: 'job-new', status: 'running' } } };
                 });
                 const answer = orbit.startComputerJob('b', 'u', ASK);
-                await vi.advanceTimersByTimeAsync(3100);
+                // the timers move in one-second steps: the second asking is not made before one second has passed, the third not before two more
+                await vi.advanceTimersByTimeAsync(0);
+                expect(reads).toBe(1);
+                await vi.advanceTimersByTimeAsync(999);
+                expect(reads).toBe(1);
+                await vi.advanceTimersByTimeAsync(1);
+                expect(reads).toBe(2);
+                await vi.advanceTimersByTimeAsync(1000);
+                expect(reads).toBe(2);
+                await vi.advanceTimersByTimeAsync(999);
+                expect(reads).toBe(2);
+                await vi.advanceTimersByTimeAsync(1);
+                expect(reads).toBe(3);
                 expect(await answer).toEqual({ ok: false, reason: 'starting' });
                 // one start, three questions about it
                 expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get', 'get', 'get']);
+                // each asking is for the time that has passed since the start began (the job made at its beginning stays inside the window), never the first number again
+                const since = call.mock.calls.filter((one) => one[0] === 'get').map((one) => Number(((one as unknown[])[3] as { sinceSeconds: string }).sinceSeconds));
+                expect(since[1] - since[0]).toBeGreaterThanOrEqual(1);
+                expect(since[2] - since[1]).toBeGreaterThanOrEqual(2);
+                expect(since[2] - since[0]).toBeGreaterThanOrEqual(3);
             } finally {
                 vi.useRealTimers();
             }
@@ -166,11 +183,15 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         });
     });
 
-    it('throws when the job it made has failed or stopped: it was made and is over, as a failed start says', async () => {
+    it('answers `ended`, never the timeout, when the job it made has failed or stopped: it was made and is over, which is no failure to reach the computer', async () => {
         for (const status of ['failed', 'stopped']) {
-            const { orbit } = slowStart(() => ({ data: { started: { id: 'j', status } } }));
-            await expect(orbit.startComputerJob('b', 'u', ASK), status).rejects.toThrow('timeout');
+            const { orbit, call } = slowStart(() => ({ data: { started: { id: 'j', status } } }));
+            expect(await orbit.startComputerJob('b', 'u', ASK), status).toEqual({ ok: false, reason: 'ended' });
+            // the one start, one question about it
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
         }
+        // a start that failed by itself (not slow) still throws
+        await expect(service(async () => { throw new Error('503'); }).orbit.startComputerJob('b', 'u', { title: 'x' })).rejects.toThrow('503');
     });
 
     it('says "unknown", not that it failed, when nobody can tell whether the start made a job (and not a null, tested apart): an Orbit without the read, a damaged answer, the read failing, no conversation to ask by', async () => {
