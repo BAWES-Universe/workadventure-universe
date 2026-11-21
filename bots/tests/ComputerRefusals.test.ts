@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RedisSharedCalls, type EvidenceRedis } from '../server/ComputerEvidenceStore';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow, type EvidenceStore, type SharedCalls } from '../server/ComputerRefusals';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, type CallRow, type EvidenceStore, type SharedCalls } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -478,8 +478,23 @@ describe('the evidence kept before the money decision is final, and delivered af
     const memoryStore = () => {
         const held = new Map<string, { botId: string; jobId: string; row: CallRow }>();
         const log: string[] = [];
-        const state = { failSaves: 0, down: false, failLoad: false, gate: undefined as Promise<void> | undefined };
+        const dead = new Map<string, { botId: string; jobId: string; row: CallRow }>();
+        const state = { failSaves: 0, down: false, failLoad: false, failDead: false, gate: undefined as Promise<void> | undefined };
         const store: EvidenceStore = {
+            deadLetter: async (botId, jobId, row) => {
+                if (state.failDead) return false;
+                dead.set(`${jobId}|${row.callId}`, { botId, jobId, row: { ...row } });
+                return true;
+            },
+            loadDead: async () => {
+                const byJob = new Map<string, { botId: string; jobId: string; rows: CallRow[] }>();
+                for (const one of dead.values()) {
+                    const entry = byJob.get(one.jobId) ?? { botId: one.botId, jobId: one.jobId, rows: [] };
+                    entry.rows.push({ ...one.row });
+                    byJob.set(one.jobId, entry);
+                }
+                return [...byJob.values()];
+            },
             save: async (botId, jobId, row) => {
                 if (state.gate) await state.gate;
                 if (state.down) return false;
@@ -510,9 +525,9 @@ describe('the evidence kept before the money decision is final, and delivered af
                 return [...byJob.values()];
             },
         };
-        return { store, held, log, state };
+        return { store, held, dead, log, state };
     };
-    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: 'not_durable' | 'unacked' | 'dead_letter', info: { jobId: string; callId: string }) => void } = {}) => {
+    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused', info: { jobId: string; callId: string }) => void } = {}) => {
         const sent: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
         let at = 1000;
         const notes = createRefusalNotes(() => at, {
@@ -808,7 +823,7 @@ describe('the evidence kept before the money decision is final, and delivered af
             return { state, taken, calls, sink, open };
         };
 
-        it('splits the batch so the good rows get through, and drops the row that is refused alone from the queue and the store, telling the operators once with its ids', async () => {
+        it('splits the batch so the good rows get through, and sets the row that is refused alone aside (out of the queue and the pending store, kept apart), telling the operators once with its ids', async () => {
             const mem = memoryStore();
             const o = orbit(new Set(['bad']));
             const told: Array<[string, { jobId: string; callId: string }]> = [];
@@ -820,6 +835,8 @@ describe('the evidence kept before the money decision is final, and delivered af
             expect([...o.taken].sort()).toEqual(['a', 'b', 'c', 'd']);
             expect(told).toEqual([['dead_letter', { jobId: 'job', callId: 'bad' }]]);
             await vi.waitFor(() => expect(mem.held.size).toBe(0));
+            // set aside, not lost: kept apart under its own id
+            expect([...mem.dead.keys()]).toEqual(['job|bad']);
             // it is not sent again, and the operators are not told again
             const before = o.calls.length;
             expect(await notes.flush('job')).toBe(true);
@@ -908,6 +925,141 @@ describe('the evidence kept before the money decision is final, and delivered af
             await vi.waitFor(() => expect(taken.map((row) => row.kind)).toEqual(['fault']));
             expect(told).toEqual(['dead_letter']);
             await vi.waitFor(() => expect(mem.held.size).toBe(0));
+        });
+
+        describe('when Orbit refuses every row, it is treated like Orbit being away', () => {
+            it('keeps every row and sends it again, tells the operators once, and sets nothing aside', async () => {
+                const mem = memoryStore();
+                const o = orbit(new Set(['x', 'y', 'z']));
+                const told: Array<[string, string]> = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0, 0], laterMs: [], store: mem.store, sink: o.sink, report: (what, info) => told.push([what, info.callId]) });
+                for (const id of ['x', 'y', 'z']) notes.record('bot', 'job', call(id));
+                o.open();
+                expect(await notes.flush('job')).toBe(false);
+                expect(await notes.flush('job')).toBe(false);
+                expect(o.taken).toEqual([]);
+                expect(mem.dead.size).toBe(0);
+                expect([...mem.held.keys()].sort()).toEqual(['job|x', 'job|y', 'job|z']);
+                expect(told.map(([what]) => what)).toEqual(['all_refused']);
+            });
+
+            it('sets the refused rows aside once Orbit is taking others: the same rows, under the same ids, nothing lost', async () => {
+                const mem = memoryStore();
+                const o = orbit(new Set(['x']));
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what) => told.push(what) });
+                notes.record('bot', 'job', call('x'));
+                o.open();
+                // a job whose only row Orbit refuses, while Orbit has taken nothing: kept
+                expect(await notes.flush('job')).toBe(false);
+                expect(mem.dead.size).toBe(0);
+                // Orbit takes the rows of another job: it works, so the row is its own fault
+                notes.record('bot', 'other', call('fine'));
+                expect(await notes.flush('other')).toBe(true);
+                expect(await notes.flush('job')).toBe(true);
+                expect([...mem.dead.keys()]).toEqual(['job|x']);
+                expect(mem.dead.get('job|x')?.row).toMatchObject({ callId: 'x', kind: 'fault', reason: 'relay_down' });
+                expect(mem.held.size).toBe(0);
+                expect(told).toEqual(['all_refused', 'dead_letter']);
+            });
+
+            it('does not take a row Orbit took long ago as proof that it takes rows now', async () => {
+                let at = 1000;
+                const o = orbit(new Set(['x']));
+                const notes = createRefusalNotes(() => at, { retryMs: [0], laterMs: [], sink: o.sink });
+                o.open();
+                notes.record('bot', 'other', call('fine'));
+                expect(await notes.flush('other')).toBe(true);
+                at += ORBIT_TAKING_ROWS_MS + 1;
+                notes.record('bot', 'job', call('x'));
+                expect(await notes.flush('job')).toBe(false);
+                at += 1;
+                notes.record('bot', 'other', call('fine2'));
+                expect(await notes.flush('other')).toBe(true);
+                expect(await notes.flush('job')).toBe(true);
+            });
+
+            it('tells the operators once for each time Orbit stops taking rows: again after it took some and then refused every one', async () => {
+                let at = 1000;
+                const o = orbit(new Set(['x', 'y']));
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => at, { retryMs: [], laterMs: [], sink: o.sink, report: (what) => told.push(what) });
+                o.open();
+                notes.record('bot', 'j1', call('x'));
+                expect(await notes.flush('j1')).toBe(false);
+                expect(await notes.flush('j1')).toBe(false);
+                expect(told).toEqual(['all_refused']);
+                notes.record('bot', 'j2', call('fine'));
+                expect(await notes.flush('j2')).toBe(true);
+                expect(await notes.flush('j1')).toBe(true);
+                expect(told).toEqual(['all_refused', 'dead_letter']);
+                // Orbit stops taking rows again (nothing taken for longer than the proof lasts)
+                at += ORBIT_TAKING_ROWS_MS + 1;
+                notes.record('bot', 'j3', call('y'));
+                expect(await notes.flush('j3')).toBe(false);
+                expect(told).toEqual(['all_refused', 'dead_letter', 'all_refused']);
+            });
+        });
+
+        it('keeps the row where it is, and tells nothing of it, when the dead letters could not be kept: it is sent again later', async () => {
+            const mem = memoryStore();
+            mem.state.failDead = true;
+            const o = orbit(new Set(['bad']));
+            const told: string[] = [];
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what) => told.push(what) });
+            for (const id of ['a', 'bad']) notes.record('bot', 'job', call(id));
+            o.open();
+            expect(await notes.flush('job')).toBe(false);
+            expect(told).toEqual([]);
+            expect(mem.held.has('job|bad')).toBe(true);
+            mem.state.failDead = false;
+            expect(await notes.flush('job')).toBe(true);
+            expect(told).toEqual(['dead_letter']);
+            expect([...mem.dead.keys()]).toEqual(['job|bad']);
+        });
+
+        it('replays the dead letters under their own ids once Orbit takes them, and keeps them kept', async () => {
+            const mem = memoryStore();
+            const bad = new Set(['bad']);
+            const o = orbit(bad);
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink });
+            for (const id of ['a', 'bad']) notes.record('bot', 'job', call(id));
+            o.open();
+            expect(await notes.flush('job')).toBe(true);
+            expect(o.taken).toEqual(['a']);
+            // the cause is mended (an upgraded Orbit)
+            bad.clear();
+            expect(await notes.replayDeadLetters()).toBe(1);
+            expect(await notes.flush('job')).toBe(true);
+            expect(o.taken).toEqual(['a', 'bad']);
+            expect(mem.held.size).toBe(0);
+            // never deleted
+            expect([...mem.dead.keys()]).toEqual(['job|bad']);
+            // a replay that Orbit refuses again sets it aside again, under the same id
+            bad.add('bad');
+            expect(await notes.replayDeadLetters()).toBe(1);
+            notes.record('bot', 'job', call('b'));
+            expect(await notes.flush('job')).toBe(true);
+            expect([...mem.dead.keys()]).toEqual(['job|bad']);
+        });
+
+        it('says null when the dead letters cannot be read, and with no store keeps them in memory, replayable', async () => {
+            const mem = memoryStore();
+            mem.store.loadDead = async () => {
+                throw new Error('store down');
+            };
+            const down = createRefusalNotes(() => 1000, { store: mem.store, sink: async () => true });
+            expect(await down.replayDeadLetters()).toBeNull();
+            const bad = new Set(['bad']);
+            const o = orbit(bad);
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: o.sink });
+            for (const id of ['a', 'bad']) notes.record('bot', 'job', call(id));
+            o.open();
+            expect(await notes.flush('job')).toBe(true);
+            bad.clear();
+            expect(await notes.replayDeadLetters()).toBe(1);
+            expect(await notes.flush('job')).toBe(true);
+            expect(o.taken).toEqual(['a', 'bad']);
         });
 
         it('does not let a report that throws hold the rows', async () => {

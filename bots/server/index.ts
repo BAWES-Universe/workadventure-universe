@@ -96,6 +96,12 @@ const aiService = botManager.getAIService();
 // and records how each model call ended in Orbit's durable fault record, which Orbit judges a failed job's refund by (never held up for it)
 // The rows Orbit has not taken yet are also kept in the shared store (Redis), so a restart of this server does not lose the evidence a failed job's
 // refund rests on: they are sent again, unchanged, when the server is back (see resumeEvidence)
+const FAULT_EVIDENCE_MESSAGES = {
+    not_durable: 'Fault evidence not durable',
+    unacked: 'Fault evidence not acknowledged by Orbit for an hour',
+    dead_letter: 'Fault evidence row refused by Orbit alone and set aside (kept 30 days)',
+    all_refused: 'Orbit refuses every fault evidence row it is sent: kept and sent again',
+} as const;
 const computerRefusals = createRefusalNotes(Date.now, {
     sink: (botId, jobId, rows) => adminApiService.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
     store: new RedisEvidenceStore(() => botRegistry.evidenceClient()),
@@ -103,9 +109,9 @@ const computerRefusals = createRefusalNotes(Date.now, {
     // the servers tell each other where a call arrived, so a runner never concludes "no call reached the relay" from its own notes alone
     shared: new RedisSharedCalls(() => botRegistry.evidenceClient(), randomUUID()),
     // Told once: a row the shared store could not keep (it is still in memory and still sent), a row Orbit has not taken for an hour, and a row Orbit
-    // refused alone (dropped: sending it again cannot change the answer). Ids only.
+    // refused alone while it took others (set aside, kept 30 days), and one Orbit refused with none taken lately (kept, sent again). Ids only.
     report: (what, info) =>
-        Sentry.captureMessage(what === 'not_durable' ? 'Fault evidence not durable' : what === 'dead_letter' ? 'Fault evidence row refused by Orbit and dropped' : 'Fault evidence not acknowledged by Orbit for an hour', {
+        Sentry.captureMessage(FAULT_EVIDENCE_MESSAGES[what], {
             level: 'warning',
             tags: { area: 'computer-fault-evidence', what },
             extra: info,

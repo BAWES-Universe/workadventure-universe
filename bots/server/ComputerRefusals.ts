@@ -76,7 +76,19 @@ export interface EvidenceStore {
     drop(botId: string, jobId: string, rows: CallRow[]): Promise<void>;
     /** Every row kept and not yet taken, by job. Throws when the store cannot be reached (an empty store is an empty answer). */
     load(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>>;
+    /**
+     * Keeps a row Orbit refused ALONE while it took others (a dead letter): apart from the rows waiting for Orbit, for `DEAD_LETTER_KEEP_MS`, under the id it
+     * had, never deleted by this server. Resolves false when it could not be kept (the row then stays where it is, and is sent again).
+     */
+    deadLetter?(botId: string, jobId: string, row: CallRow): Promise<boolean>;
+    /** The dead letters kept, by job. Throws when the store cannot be reached. */
+    loadDead?(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>>;
 }
+
+/** A row Orbit refused alone is kept this long, apart, to be sent again once the cause is mended: 30 days. */
+export const DEAD_LETTER_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+/** Orbit has proved it takes rows when it took one within this long: a row refused alone then is the row's own fault, not Orbit's. */
+export const ORBIT_TAKING_ROWS_MS = 10 * 60 * 1000;
 
 export type CallInput = Omit<CallRow, 'turn' | 'run' | 'at' | 'kind'> & {
     kind: CallKind;
@@ -136,6 +148,12 @@ export interface RefusalNotes {
      * when it was read, or there is no store.
      */
     resume(): Promise<boolean>;
+    /**
+     * Puts the dead letters (rows Orbit refused alone while it took others) back among the rows waiting for Orbit, under the ids they had, and sends them. They
+     * are never deleted: they stay kept (for `DEAD_LETTER_KEEP_MS`) and a row refused alone again is kept again. Answers how many rows were put back, or null
+     * when the store could not be read.
+     */
+    replayDeadLetters(): Promise<number | null>;
     /** The point in the order of events from which a turn's window starts: what is noted after this call, and only that, is in the window. */
     mark(): { order: number; at: number };
     /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job since this point (or at or after this moment, ms). */
@@ -200,10 +218,12 @@ export interface RefusalOptions {
     storeLaterMs?: number;
     /**
      * Tells the operators (Sentry) once: `not_durable` when a row could not be kept in the store (once until a write succeeds again), `unacked` when
-     * a row has waited for Orbit longer than `EVIDENCE_UNACKED_MS` (once per row), `dead_letter` when Orbit refused a row ALONE (its own 400: sending it
-     * again cannot change that), so the row was dropped from the queue and the store. Carries ids only. Never throws into the caller's way.
+     * a row has waited for Orbit longer than `EVIDENCE_UNACKED_MS` (once per row), `dead_letter` when Orbit refused a row ALONE (its own 400) while it took
+     * others: the row was moved to the dead letters (kept 30 days, never deleted, replayable under its id) and is no longer sent, `all_refused` when Orbit
+     * refused a row and has taken none lately (a contract or version mismatch, or Orbit broken: the rows are kept and sent again like when Orbit is away;
+     * once until Orbit takes a row again). Carries ids only. Never throws into the caller's way.
      */
-    report?: (what: 'not_durable' | 'unacked' | 'dead_letter', info: { jobId: string; callId: string }) => void;
+    report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused', info: { jobId: string; callId: string }) => void;
 }
 
 /** How long a row that Orbit has not taken is kept and sent again, in the store and in memory: 7 days. */
@@ -258,7 +278,12 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const queued = new Map<string, Queue>();
     let notDurableTold = false;
     const unackedTold = new Set<string>();
-    const tell = (what: 'not_durable' | 'unacked' | 'dead_letter', jobId: string, callId: string) => {
+    /** When Orbit last took a row (any job): a refusal of one row alone counts as the row's own only while Orbit is taking others. */
+    let orbitTookAt: number | null = null;
+    let allRefusedTold = false;
+    /** Dead letters when there is no store to keep them in (kept as long as the process lives: never deleted). */
+    const deadInMemory = new Map<string, { botId: string; jobId: string; row: CallRow }>();
+    const tell = (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused', jobId: string, callId: string) => {
         try {
             options.report?.(what, { jobId, callId });
         } catch {
@@ -363,11 +388,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     };
 
     /**
-     * Gets one batch to Orbit. True when every row of it was dealt with, false when Orbit could not be reached or failed (the rest waits for the next
-     * try, with the same call ids). When Orbit refuses the batch for what is in it (a 400 rejects all of a batch for one bad row), the batch is split in
-     * halves so the good rows get through; a row refused ALONE can never be taken, so it is dropped (queue and store) and the operators are told once.
+     * Gets one batch to Orbit. True when every row of it was dealt with (taken, or refused alone: those wait in `pass.suspects`), false when Orbit could
+     * not be reached or failed (the rest waits for the next try, with the same call ids). When Orbit refuses the batch for what is in it (a 400 rejects all of
+     * a batch for one bad row), the batch is split in halves so the good rows get through.
      */
-    const deliver = async (entry: Queue, jobId: string, batch: CallRow[], sink: NonNullable<RefusalOptions['sink']>): Promise<boolean> => {
+    const deliver = async (entry: Queue, jobId: string, batch: CallRow[], sink: NonNullable<RefusalOptions['sink']>, pass: { suspects: Set<CallRow> }): Promise<boolean> => {
         let answer: boolean | 'rejected' = false;
         try {
             answer = await sink(entry.botId, jobId, batch);
@@ -375,17 +400,58 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             answer = false;
         }
         if (answer === true) {
+            orbitTookAt = now();
+            allRefusedTold = false;
             settle(entry, jobId, batch);
             return true;
         }
         if (answer !== 'rejected') return false;
         if (batch.length === 1) {
-            settle(entry, jobId, batch);
-            tell('dead_letter', jobId, batch[0].callId);
+            pass.suspects.add(batch[0]);
             return true;
         }
         const half = Math.ceil(batch.length / 2);
-        return (await deliver(entry, jobId, batch.slice(0, half), sink)) && (await deliver(entry, jobId, batch.slice(half), sink));
+        return (await deliver(entry, jobId, batch.slice(0, half), sink, pass)) && (await deliver(entry, jobId, batch.slice(half), sink, pass));
+    };
+
+    /** Keeps a dead letter where it survives (the store, or memory without one). False when the store could not keep it. */
+    const keepDead = async (botId: string, jobId: string, row: CallRow): Promise<boolean> => {
+        if (!store?.deadLetter) {
+            deadInMemory.set(`${jobId}|${row.callId}`, { botId, jobId, row });
+            return true;
+        }
+        try {
+            return await store.deadLetter(botId, jobId, row);
+        } catch {
+            return false;
+        }
+    };
+
+    /**
+     * What to do with the rows Orbit refused alone, once the pass is over. When Orbit has taken rows lately (in this pass or just before) the contract works
+     * and the row is its own fault: it is moved to the dead letters (kept, never deleted, replayable under its id) and told once. When Orbit has taken none
+     * it is treated like Orbit being away: the rows stay, are sent again with backoff, and the operators are told once. False while a row is left.
+     */
+    const resolveSuspects = async (entry: Queue, jobId: string, suspects: Set<CallRow>): Promise<boolean> => {
+        if (suspects.size === 0) return true;
+        if (orbitTookAt === null || now() - orbitTookAt > ORBIT_TAKING_ROWS_MS) {
+            if (!allRefusedTold) {
+                allRefusedTold = true;
+                tell('all_refused', jobId, [...suspects][0].callId);
+            }
+            return false;
+        }
+        let all = true;
+        for (const row of suspects) {
+            // Kept apart first: only then does the row leave the rows waiting for Orbit
+            if (!(await keepDead(entry.botId, jobId, row))) {
+                all = false;
+                continue;
+            }
+            settle(entry, jobId, [row]);
+            tell('dead_letter', jobId, row.callId);
+        }
+        return all;
     };
 
     /** Sends the job's queued rows, a batch at a time; a batch Orbit did not take waits for the next try. One sender per job at a time. */
@@ -400,10 +466,18 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 // Rows the store could not keep are written again with each try, the later ones in the background included: Redis may be back while Orbit is
                 // still away, and the row is the only copy that survives a restart (one Orbit has taken is not written again: it is no longer in `unsaved`)
                 for (const row of [...entry.unsaved.values()]) if (entry.rows.get(row.callId) === row) keep(entry, jobId, row);
-                while (entry.rows.size > 0) {
-                    const batch = [...entry.rows.values()].slice(0, FAULT_ROWS_PER_CALL);
-                    if (!(await deliver(entry, jobId, batch, sink))) break;
+                // Rows Orbit refuses alone are set aside for this pass: the rows after them are sent
+                const pass = { suspects: new Set<CallRow>() };
+                let reached = true;
+                for (;;) {
+                    const batch = [...entry.rows.values()].filter((row) => !pass.suspects.has(row)).slice(0, FAULT_ROWS_PER_CALL);
+                    if (batch.length === 0) break;
+                    if (!(await deliver(entry, jobId, batch, sink, pass))) {
+                        reached = false;
+                        break;
+                    }
                 }
+                if (reached && pass.suspects.size > 0) await resolveSuspects(entry, jobId, pass.suspects);
                 if (entry.rows.size === 0) {
                     // Everything was taken: the budget of later tries starts again for rows that come next, and a try still waiting has nothing to send
                     entry.laterTries = 0;
@@ -551,6 +625,35 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 void send(jobId);
             }
             return true;
+        },
+        async replayDeadLetters() {
+            let kept: Array<{ botId: string; jobId: string; rows: CallRow[] }>;
+            try {
+                kept = store?.loadDead ? await store.loadDead() : [];
+            } catch {
+                return null;
+            }
+            for (const one of deadInMemory.values()) {
+                const found = kept.find((entry) => entry.jobId === one.jobId);
+                if (found) found.rows.push(one.row);
+                else kept.push({ botId: one.botId, jobId: one.jobId, rows: [one.row] });
+            }
+            let put = 0;
+            for (const { botId, jobId, rows } of kept) {
+                const entry = queued.get(jobId) ?? newQueue(botId);
+                entry.at = now();
+                for (const row of rows) {
+                    // A row made in this process since is newer than the one that was kept: it stays
+                    if (entry.rows.has(row.callId)) continue;
+                    entry.rows.set(row.callId, row);
+                    keep(entry, jobId, row);
+                    put += 1;
+                }
+                if (entry.rows.size === 0) continue;
+                queued.set(jobId, entry);
+                void send(jobId);
+            }
+            return put;
         },
         mark: () => ({ order: count, at: now() }),
         confirmedSince(jobId, since) {

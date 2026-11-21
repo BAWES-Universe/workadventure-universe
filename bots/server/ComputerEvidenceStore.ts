@@ -7,7 +7,7 @@
  * stops the bot server starting); an entry older than the time rows are kept is removed.
  */
 import type { CallRow, EvidenceStore, SharedCalls } from './ComputerRefusals';
-import { EVIDENCE_KEEP_MS, REFUSAL_NOTE_KEEP_MS } from './ComputerRefusals';
+import { DEAD_LETTER_KEEP_MS, EVIDENCE_KEEP_MS, REFUSAL_NOTE_KEEP_MS } from './ComputerRefusals';
 
 /** The few Redis commands used (a node-redis v4 client has them all). */
 export interface EvidenceRedis {
@@ -21,6 +21,9 @@ export interface EvidenceRedis {
 }
 
 export const EVIDENCE_PREFIX = 'computer:faults:pending:';
+/** Rows Orbit refused alone while it took others, kept apart: same layout as the pending ones, 30 days from the last write, never deleted by this server. */
+export const DEAD_PREFIX = 'computer:faults:dead:';
+export const DEAD_TTL_SECONDS = Math.round(DEAD_LETTER_KEEP_MS / 1000);
 
 /**
  * Deletes fields of the hash KEYS[1] only where each still holds the value it was given (ARGV: field, value, field, value...): a field that was written
@@ -107,6 +110,57 @@ export class RedisEvidenceStore implements EvidenceStore {
         } catch {
             /* a row left behind is only sent again, and Orbit keeps one per job and call */
         }
+    }
+
+    async deadLetter(botId: string, jobId: string, row: CallRow): Promise<boolean> {
+        try {
+            const client = this.client();
+            const key = DEAD_PREFIX + jobId;
+            await this.within(client.hSet(key, row.callId, JSON.stringify({ botId, row })));
+            await this.within(client.expire(key, DEAD_TTL_SECONDS));
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async loadDead(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>> {
+        const client = this.client();
+        const keys = new Set<string>();
+        let cursor = 0;
+        do {
+            const page = await this.within(client.scan(cursor, { MATCH: `${DEAD_PREFIX}*`, COUNT: 100 }));
+            cursor = page.cursor;
+            for (const key of page.keys) keys.add(key);
+        } while (cursor !== 0);
+        const jobs: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
+        for (const key of keys) {
+            const jobId = key.slice(DEAD_PREFIX.length);
+            if (jobId === '') continue;
+            let all: Record<string, string>;
+            try {
+                all = await this.within(client.hGetAll(key));
+            } catch (error) {
+                if (wrongType(error)) continue;
+                throw error;
+            }
+            const rows: CallRow[] = [];
+            let botId: string | undefined;
+            for (const [field, value] of Object.entries(all)) {
+                let entry: { botId?: unknown; row?: unknown } | null = null;
+                try {
+                    entry = JSON.parse(value) as typeof entry;
+                } catch {
+                    entry = null;
+                }
+                const row = validRow(entry?.row);
+                if (!entry || !row || !text(entry.botId) || row.callId !== field) continue;
+                botId = entry.botId;
+                rows.push(row);
+            }
+            if (botId && rows.length > 0) jobs.push({ botId, jobId, rows });
+        }
+        return jobs;
     }
 
     private async deleteIfUnchanged(key: string, fields: Array<[string, string]>): Promise<void> {

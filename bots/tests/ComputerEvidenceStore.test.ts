@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DELETE_IF_UNCHANGED, EVIDENCE_PREFIX, EVIDENCE_TTL_SECONDS, RedisEvidenceStore, type EvidenceRedis } from '../server/ComputerEvidenceStore';
+import { DEAD_PREFIX, DEAD_TTL_SECONDS, DELETE_IF_UNCHANGED, EVIDENCE_PREFIX, EVIDENCE_TTL_SECONDS, RedisEvidenceStore, type EvidenceRedis } from '../server/ComputerEvidenceStore';
 import { createRefusalNotes, EVIDENCE_KEEP_MS, type CallRow } from '../server/ComputerRefusals';
 
 const row = (callId: string, over: Partial<CallRow> = {}): CallRow => ({
@@ -187,6 +187,47 @@ describe('the evidence kept for Orbit in the shared store', () => {
         // a replay with nothing pending sends nothing
         expect(await second.resume()).toBe(true);
         expect(delivered).toHaveLength(1);
+    });
+});
+
+describe('the dead letters: rows Orbit refused alone while it took others', () => {
+    it('keeps a row apart from the pending ones for 30 days under its call id, and brings it back unchanged with its bot', async () => {
+        const redis = fakeRedis();
+        const store = new RedisEvidenceStore(() => redis.client, () => NOW);
+        expect(DEAD_TTL_SECONDS).toBe(30 * 24 * 60 * 60);
+        expect(await store.deadLetter('bot-1', 'job-1', row('c1'))).toBe(true);
+        expect(await store.deadLetter('bot-1', 'job-1', row('c2', { kind: 'uncertain', providerStatus: null }))).toBe(true);
+        expect(await store.deadLetter('bot-2', 'job-2', row('c3'))).toBe(true);
+        expect(redis.keys()).toEqual([`${DEAD_PREFIX}job-1`, `${DEAD_PREFIX}job-2`]);
+        expect(redis.ttl.get(`${DEAD_PREFIX}job-1`)).toBe(DEAD_TTL_SECONDS);
+        // not among the rows that wait for Orbit: a restart does not send them again by itself
+        expect(await store.load()).toEqual([]);
+        const dead = await store.loadDead();
+        expect(dead.map((job) => [job.botId, job.jobId, job.rows.map((one) => one.callId).sort()]).sort()).toEqual([
+            ['bot-1', 'job-1', ['c1', 'c2']],
+            ['bot-2', 'job-2', ['c3']],
+        ]);
+        expect(dead.find((job) => job.jobId === 'job-1')?.rows.find((one) => one.callId === 'c1')).toEqual(row('c1'));
+    });
+
+    it('never deletes one: dropping the pending row of the same call leaves it, and a damaged entry is skipped', async () => {
+        const redis = fakeRedis();
+        const store = new RedisEvidenceStore(() => redis.client, () => NOW);
+        await store.save('bot-1', 'job-1', row('c1'));
+        await store.deadLetter('bot-1', 'job-1', row('c1'));
+        await store.drop('bot-1', 'job-1', [row('c1')]);
+        expect(redis.keys()).toEqual([`${DEAD_PREFIX}job-1`]);
+        await redis.client.hSet(`${DEAD_PREFIX}job-1`, 'junk', 'not json');
+        expect((await store.loadDead()).map((job) => job.rows.map((one) => one.callId))).toEqual([['c1']]);
+    });
+
+    it('says false for a row it could not keep, and rejects a read it could not make', async () => {
+        const redis = fakeRedis();
+        const store = new RedisEvidenceStore(() => redis.client, () => NOW, 50);
+        redis.state.down = true;
+        expect(await store.deadLetter('b', 'j', row('c1'))).toBe(false);
+        await expect(store.loadDead()).rejects.toThrow();
+        expect(await new RedisEvidenceStore(() => null).deadLetter('b', 'j', row('c1'))).toBe(false);
     });
 });
 
