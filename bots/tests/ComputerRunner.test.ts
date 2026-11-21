@@ -1534,6 +1534,15 @@ describe('a machine that cannot reach our own model service', () => {
     };
     const unreachable = () => ({ ok: false as const, reason: 'relay_unreachable' });
 
+    it('does not end the job as relay_down when the address answers with a challenge: the machine side check (Orbit prepare) decides', async () => {
+        const { seen, rows, run } = rig([done('[[done]]')], { probe: (relay) => probeRelay(relay, (async () => new Response('<html>Checking your browser</html>', { status: 403 })) as never) });
+        await run();
+        // a probe that reads "unknown" asks Orbit to prepare the machine, and the job runs
+        expect(seen.prepares.length).toBeGreaterThan(0);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(rows).toEqual([]);
+    });
+
     it('ends the job as a confirmed fault of ours, said in plain words, when Orbit says the machine could not reach the relay', async () => {
         const { seen, setPrepare, rows, run } = rig([]);
         setPrepare(unreachable);
@@ -1899,6 +1908,23 @@ describe('asking an address whether it is the relay', () => {
         expect(await probeRelay('https://x.test', answer(200, 'ok'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
         expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ hello: 'world' })))).toEqual(expect.objectContaining({ answer: 'wrong' }));
         expect(await probeRelay('https://x.test', answer(200, 'null'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+    });
+
+    it('says "something else is there" only for a status that a service says it with: a 2xx, a 404 or a 5xx, whatever the body', async () => {
+        for (const status of [200, 204, 404, 500, 502, 503, 504, 520]) {
+            expect((await probeRelay('https://x.test', answer(status === 204 ? 200 : status, '<html>not the relay</html>'))).answer, `html ${status}`).toBe('wrong');
+            expect((await probeRelay('https://x.test', answer(status === 204 ? 200 : status, JSON.stringify({ hello: 'world' })))).answer, `json ${status}`).toBe('wrong');
+        }
+    });
+
+    it('proves nothing either way for a redirect or a challenge in front of the relay (http to https, a WAF or proxy block, a rate limit): unknown, so Orbit’s own check from the machine decides', async () => {
+        for (const status of [301, 302, 307, 308, 401, 403, 429]) {
+            expect(await probeRelay('https://x.test', answer(status, '<html>Just a moment...</html>')), `html ${status}`).toEqual({ answer: 'unknown', status });
+            expect(await probeRelay('https://x.test', answer(status, '')), `empty ${status}`).toEqual({ answer: 'unknown', status });
+            expect(await probeRelay('https://x.test', answer(status, JSON.stringify({ blocked: true }))), `json ${status}`).toEqual({ answer: 'unknown', status });
+        }
+        // the relay's own 401 is still the relay, and so is its 429-free error shape
+        expect((await probeRelay('https://x.test', answer(401, JSON.stringify({ error: { code: 'invalid_api_key' } })))).answer).toBe('relay');
     });
 
     it('says it could not be asked when nothing answers, and asks the model list with no key', async () => {

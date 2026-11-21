@@ -6,7 +6,7 @@
  * last write. A row holds ids, a reason, a source, a route and times: nothing anyone said, no key. A damaged or foreign entry is skipped (and never
  * stops the bot server starting); an entry older than the time rows are kept is removed.
  */
-import type { CallRow, EvidenceStore, SharedCalls } from './ComputerRefusals';
+import type { CallRow, EvidenceStore, SharedCalls, SharedTurn } from './ComputerRefusals';
 import { DEAD_LETTER_KEEP_MS, EVIDENCE_KEEP_MS, REFUSAL_NOTE_KEEP_MS } from './ComputerRefusals';
 
 /** The few Redis commands used (a node-redis v4 client has them all). */
@@ -63,7 +63,8 @@ function validRow(value: unknown): CallRow | null {
     const row = value as Record<string, unknown>;
     if (!text(row.callId) || row.callId.length > 120 || !text(row.reason) || typeof row.kind !== 'string' || !KINDS.has(row.kind)) return null;
     if (typeof row.source !== 'string' || !SOURCES.has(row.source) || !text(row.route) || !text(row.at)) return null;
-    if (typeof row.turn !== 'number' || !Number.isInteger(row.turn) || row.turn < 0) return null;
+    // A turn the server that saw the call could not tell is `null`: Orbit reads such a row with every turn it judges
+    if (row.turn !== null && (typeof row.turn !== 'number' || !Number.isInteger(row.turn) || row.turn < 0)) return null;
     if (row.providerStatus !== null && typeof row.providerStatus !== 'number') return null;
     if (row.run !== undefined && !text(row.run)) return null;
     return row as unknown as CallRow;
@@ -239,6 +240,8 @@ export const CALLED_PREFIX = 'computer:called:';
 export const UNRECORDED_FIELD = 'unsure:';
 /** The field a server writes when it took up a call of a job (the shared pool had room for it): `accepted:<server>`. Not a call's arrival: never read as one. */
 export const ACCEPTED_FIELD = 'accepted:';
+/** The field a server's runner writes to say which turns of a job it has been on: `turn:<server>`, a JSON list. Not a call's arrival: never read as one. */
+export const TURN_FIELD = 'turn:';
 /** Sets the field of the hash KEYS[1] (ARGV[1]) to the moment ARGV[2] unless it already holds a later one, and gives the hash a life of ARGV[3] seconds. */
 export const KEEP_LATER = `
 local current = tonumber(redis.call('HGET', KEYS[1], ARGV[1]))
@@ -289,6 +292,33 @@ export class RedisSharedCalls implements SharedCalls {
         await this.write(jobId, UNRECORDED_FIELD + this.instanceId, at);
     }
 
+    async noteTurn(jobId: string, turns: SharedTurn[]): Promise<void> {
+        const client = this.client();
+        // The list replaces the one before it (the runner's own latest few), with the hash's life renewed in the same step
+        await this.within(client.eval(SET_AND_RENEW, { keys: [CALLED_PREFIX + jobId], arguments: [TURN_FIELD + this.instanceId, JSON.stringify(turns), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000))] }));
+    }
+
+    async turnsByOthers(jobId: string): Promise<SharedTurn[]> {
+        const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
+        const out: SharedTurn[] = [];
+        for (const [field, value] of Object.entries(all)) {
+            if (!field.startsWith(TURN_FIELD) || field.slice(TURN_FIELD.length) === this.instanceId) continue;
+            try {
+                const list: unknown = JSON.parse(value);
+                if (!Array.isArray(list)) continue;
+                for (const one of list) {
+                    if (typeof one === 'object' && one !== null && Number.isInteger((one as SharedTurn).turn) && (one as SharedTurn).turn >= 0 && Number.isFinite((one as SharedTurn).at)) {
+                        const run = (one as SharedTurn).run;
+                        out.push({ turn: (one as SharedTurn).turn, ...(typeof run === 'string' && run !== '' ? { run } : {}), at: (one as SharedTurn).at });
+                    }
+                }
+            } catch {
+                /* a damaged field is skipped */
+            }
+        }
+        return out;
+    }
+
     async noteAccepted(jobId: string, at: number): Promise<void> {
         await this.write(jobId, ACCEPTED_FIELD + this.instanceId, at);
     }
@@ -315,8 +345,8 @@ export class RedisSharedCalls implements SharedCalls {
         const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
         let latest: number | null = null;
         for (const [field, value] of Object.entries(all)) {
-            // That a server took a call up is not that a call arrived
-            if (field.startsWith(ACCEPTED_FIELD)) continue;
+            // That a server took a call up, or which turn its runner is on, is not that a call arrived
+            if (field.startsWith(ACCEPTED_FIELD) || field.startsWith(TURN_FIELD)) continue;
             // A server's own writes are known to its own notes exactly; a call it could not record counts like one it did
             const instance = field.startsWith(UNRECORDED_FIELD) ? field.slice(UNRECORDED_FIELD.length) : field;
             if (instance === this.instanceId) continue;

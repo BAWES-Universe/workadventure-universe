@@ -43,8 +43,12 @@ export type FaultReason =
 
 /** One call's row for Orbit: ids, the reason, where the money came from and when. Nothing anyone said. */
 export interface CallRow {
-    /** The runner's turn the call was made in (0 when no turn was known). */
-    turn: number;
+    /**
+     * The runner's turn the call was made in (0 when no turn was known on the server that runs the job). `null` when the server that saw the call does
+     * not run the job's runner and could not tell which turn it was in (the shared record of the turns could not be read): Orbit reads a row with no turn
+     * with every turn it judges, so a fault of ours seen on such a server is never missed for want of a turn number.
+     */
+    turn: number | null;
     /**
      * The run of the runner the turn belongs to (see `turn`): turns are numbered from 1 in each run of a job, and a run starts again after a restart
      * of the bot server, so the turn alone names two turns. Left out when no run was known.
@@ -94,8 +98,8 @@ export const ORBIT_TAKING_ROWS_MS = 10 * 60 * 1000;
 
 export type CallInput = Omit<CallRow, 'turn' | 'run' | 'at' | 'kind'> & {
     kind: CallKind;
-    /** The turn the call STARTED in (see `turnOf`): a call that ends after the runner moved on still belongs to the turn it began in. */
-    turn?: number;
+    /** The turn the call STARTED in (see `turnOf`): a call that ends after the runner moved on still belongs to the turn it began in. `null`: not known (see `CallRow`). */
+    turn?: number | null;
     /** The run that turn was in (see `runOf`), read when the call started. */
     run?: string;
 };
@@ -111,6 +115,13 @@ export type Since = number | { order: number; at?: number };
  * rolling deploy keeps the old one up while the new one takes traffic), while the runner of the job lives on one of them: its own notes know only the calls
  * that arrived at it.
  */
+/** A turn of a job's runner as the bot servers tell each other: its number, its run, and when it began (ms). */
+export interface SharedTurn {
+    turn: number;
+    run?: string;
+    at: number;
+}
+
 export interface SharedCalls {
     /** This server saw a call of the job reach the relay, at this moment (ms). Fire and forget: never held up for it. */
     noteCalled(jobId: string, at: number): Promise<void>;
@@ -121,6 +132,13 @@ export interface SharedCalls {
     noteUnrecorded(jobId: string, at: number): Promise<void>;
     /** The latest moment (ms) another bot server saw a call of the job reach its relay (or could not record one), or null for none. Rejects when the shared store cannot be read. */
     lastCalledByOthers(jobId: string): Promise<number | null>;
+    /**
+     * This server's runner says which turns of the job it has been on (the latest few, each with the moment it began, ms): so a call that reaches ANOTHER
+     * server is tied to the turn it belongs to, and its row is found by Orbit when it judges that turn. Fire and forget. Not an arrival.
+     */
+    noteTurn?(jobId: string, turns: SharedTurn[]): Promise<void>;
+    /** The turns the other servers' runners said (merged), or an empty list for none. Rejects when the shared store cannot be read. */
+    turnsByOthers?(jobId: string): Promise<SharedTurn[]>;
     /** This server took up a call of the job (the shared pool had room for it), at this moment (ms). Fire and forget. Not an arrival: `lastCalledByOthers` does not read it. */
     noteAccepted?(jobId: string, at: number): Promise<void>;
     /** The latest moment (ms) another bot server took up a call of the job, or null for none. Rejects when the shared store cannot be read. */
@@ -146,6 +164,13 @@ export interface RefusalNotes {
     turnAt(jobId: string, at: { order: number }): { turn: number; run?: string };
     /** The turn the runner says this job is on now (0 when none is known): read when a call starts, so its row names the turn it began in. */
     turnOf(jobId: string): number;
+    /**
+     * The turn (and run) a call that reached the relay at `arrived` belongs to. When the job's runner works on this server it is what `turnAt` says. When it works
+     * on ANOTHER server (the machine's calls reach whichever server the load balancer picks) this server has no history of the job's turns, so the runner's
+     * server is asked through the shared record: the turn that had begun by the time the call arrived. `turn: null` when that cannot be told (nothing was said,
+     * or the store cannot be read): the row is then read by Orbit with every turn it judges. Never rejects.
+     */
+    turnOfCall(jobId: string, arrived?: { order: number; at: number }): Promise<{ turn: number | null; run?: string }>;
     /**
      * How one model call of the job ended, noted for the runner of the same process AND queued for Orbit's durable fault record (best effort, with
      * retry): `fault` and `uncertain` count as a fault of Universe's for the runner, `not_ours` as the person's side, `answered` as an answer.
@@ -274,6 +299,9 @@ export const FAULT_EVIDENCE_MESSAGES = {
     all_refused: 'Orbit refuses every fault evidence row it is sent: kept and sent again',
     called_unrecorded: 'A computer model call could not be recorded for the other bot servers (the call may have been refused with a 503 or have gone ahead: the relay log of the job says which)',
 } as const;
+
+/** How many of the latest turns a runner tells the other servers (a call that began before the latest turn began is tied to the one before). */
+const SHARED_TURNS = 6;
 
 /** How long a row that Orbit has not taken is kept and sent again, in the store and in memory: 7 days. */
 export const EVIDENCE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
@@ -407,7 +435,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             queued.delete(jobId);
         }
     };
-    const mark = (jobId: string, kind: 'fault' | 'answered' | 'called' | 'accepted' | 'pooled' | 'other', confirmed = false, tellOthers = true) => {
+    // The other servers are told only when the caller says so (`tellOthers`), and only for an ARRIVAL: the one place that does is `called()`. Everything else
+    // is how a call ended, which is local: a default of telling would publish the end of a call as a new arrival
+    const mark = (jobId: string, kind: 'fault' | 'answered' | 'called' | 'accepted' | 'pooled' | 'other', confirmed = false, tellOthers = false) => {
         forget();
         const seen = calls.get(jobId) ?? {};
         seen[kind] = { at: now(), order: ++count };
@@ -604,8 +634,52 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             history.push({ turn, ...(run ? { run } : {}), at: now(), order: ++count });
             if (history.length > TURN_HISTORY) history.shift();
             turns.set(jobId, history);
+            // The other servers learn which turn the runner is on, for the calls of the machine that reach them
+            if (options.shared?.noteTurn) {
+                try {
+                    options.shared.noteTurn(jobId, history.slice(-SHARED_TURNS).map((one) => ({ turn: one.turn, ...(one.run ? { run: one.run } : {}), at: one.at }))).catch(() => undefined);
+                } catch {
+                    /* telling the other servers never holds the runner */
+                }
+            }
         },
         turnOf: (jobId) => lastTurn(jobId)?.turn ?? 0,
+        async turnOfCall(jobId, arrived) {
+            const here = (): { turn: number; run?: string } => {
+                const at = arrived !== undefined ? this.turnAt(jobId, arrived) : undefined;
+                const turn = at ? at.turn : lastTurn(jobId)?.turn ?? 0;
+                const run = at ? at.run : lastTurn(jobId)?.run;
+                return { turn, ...(run ? { run } : {}) };
+            };
+            // Without a shared store there is one server; and when the runner of the job works here, this server's own notes are the history of its turns
+            const shared = options.shared;
+            if (!shared?.turnsByOthers) return here();
+            let runnerHere = false;
+            try {
+                runnerHere = options.runsHere?.(jobId) === true;
+            } catch {
+                runnerHere = false;
+            }
+            if (runnerHere) return here();
+            // The runner is on another server: the turn that had begun when the call arrived, by the moments the servers keep (this server's turns of the job, if
+            // it ran it before, are old history and say nothing of now)
+            try {
+                const said = await new Promise<SharedTurn[]>((resolve, reject) => {
+                    const timer = setTimeout(() => reject(new Error('slow')), SHARED_WRITE_BOUND_MS);
+                    timer.unref?.();
+                    shared.turnsByOthers!(jobId).then(
+                        (found) => (clearTimeout(timer), resolve(found)),
+                        (error) => (clearTimeout(timer), reject(error))
+                    );
+                });
+                const arrivedAt = arrived?.at ?? now();
+                let chosen: SharedTurn | undefined;
+                for (const one of said) if (one.at <= arrivedAt && (chosen === undefined || one.at > chosen.at)) chosen = one;
+                return chosen ? { turn: chosen.turn, ...(chosen.run ? { run: chosen.run } : {}) } : { turn: null };
+            } catch {
+                return { turn: null };
+            }
+        },
         runOf: (jobId) => lastTurn(jobId)?.run,
         turnAt(jobId, at) {
             // The last turn said at or before that point (a turn said after it is a later one)
@@ -615,7 +689,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         record(botId, jobId, call) {
             // A call that belongs to a turn (or a run) the runner has left says nothing of the turn it is on now: its row is still sent under its own
             // turn and run, but the notes the runner reads for the turn in progress are not changed by it
-            const stale = staleCall(jobId, call.turn !== undefined ? { turn: call.turn, run: call.run } : undefined);
+            const stale = staleCall(jobId, call.turn !== undefined && call.turn !== null ? { turn: call.turn, run: call.run } : undefined);
             if (call.kind === 'answered') return stale ? undefined : mark(jobId, 'answered');
             if (!stale) {
                 if (call.kind === 'not_ours') {
@@ -639,9 +713,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             // Orbit keeps ids up to 120 characters: the row is kept under the id it is sent with
             const callId = call.callId.slice(0, 120);
             // A call that carries its turn carries that turn's run, and one that does not takes both from where the runner is now: never one of each
-            const runOfRow = call.turn !== undefined ? call.run : lastTurn(jobId)?.run;
+            const runOfRow = call.turn === undefined ? lastTurn(jobId)?.run : call.turn === null ? undefined : call.run;
             const row: CallRow = {
-                turn: call.turn ?? lastTurn(jobId)?.turn ?? 0,
+                turn: call.turn === null ? null : call.turn ?? lastTurn(jobId)?.turn ?? 0,
                 ...(runOfRow ? { run: runOfRow } : {}),
                 callId,
                 kind: call.kind,
@@ -756,12 +830,12 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         fault: (jobId) => mark(jobId, 'fault'),
         answered: (jobId) => mark(jobId, 'answered'),
         called(jobId, at) {
-            if (!staleCall(jobId, at)) mark(jobId, 'called');
+            if (!staleCall(jobId, at)) mark(jobId, 'called', false, true);
         },
         async reached(jobId, at) {
             if (staleCall(jobId, at)) return true;
             const moment = now();
-            mark(jobId, 'called', false, false);
+            mark(jobId, 'called');
             const shared = options.shared;
             if (!shared) return true;
             // Each try is bounded: the call it stands in front of is not held for a store that is slow. The same moment both times (the write keeps the

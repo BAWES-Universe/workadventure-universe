@@ -217,23 +217,28 @@ export const POOL_BUSY_WHY = "Computers are busy right now, so we stopped this a
 
 /**
  * Asks an address for the relay's model list WITHOUT a key and reads who answers: the relay answers with a JSON error (401 `invalid_api_key`, or 503
- * while Orbit is away) or the list; an error page (an HTML 404 from the wrong host, a proxy's 502) or any other body is not the relay. An address that
- * does not answer at all is `unknown`: from the bot server's own side that proves nothing about the machine's way in (a server cannot always reach
- * its own public name), so only an answer from something else counts against the address.
+ * while Orbit is away) or the list. An error page (an HTML 404 from the wrong host, a proxy's 502) or a body that is not the relay's is `wrong`, but only
+ * with a status that says something else is THERE: a 2xx, a 404 or a 5xx. A redirect (http to https) and a challenge or block (401, 403, 429 from a WAF or
+ * a proxy) are what an address in front of the relay may answer a caller that is not the machine: they prove nothing either way, so they are `unknown`
+ * and Orbit's own check from the machine decides. An address that does not answer at all is `unknown` too: from the bot server's own side that proves
+ * nothing about the machine's way in (a server cannot always reach its own public name), so only an answer from something else counts against the address.
  */
 export async function probeRelay(relay: string, fetcher: typeof fetch = fetch, timeoutMs = 5000): Promise<RelayProbeResult> {
     try {
         const answer = await fetcher(`${relay}/v1/models`, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
         const status = answer.status;
         const text = (await answer.text()).slice(0, 4000);
+        // What is not the relay's way of answering says "something else is there" only with a status that a service says it with
+        const elseIsThere = (status >= 200 && status < 300) || status === 404 || status >= 500;
         let body: unknown;
         try {
             body = JSON.parse(text);
         } catch {
-            return { answer: 'wrong', status };
+            return { answer: elseIsThere ? 'wrong' : 'unknown', status };
         }
         const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null;
-        return { answer: record && (typeof record.error === 'object' || record.object === 'list') ? 'relay' : 'wrong', status };
+        if (record && (typeof record.error === 'object' || record.object === 'list')) return { answer: 'relay', status };
+        return { answer: elseIsThere ? 'wrong' : 'unknown', status };
     } catch {
         return { answer: 'unknown', status: null };
     }

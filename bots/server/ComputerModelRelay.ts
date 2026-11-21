@@ -600,7 +600,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
     };
     router.post('/v1/chat/completions', arrival, json, async (req: Request, res: Response) => {
         const token = bearerOf(req);
-        const arrived = res.locals.arrived as { order: number } | undefined;
+        const arrived = res.locals.arrived as { order: number; at: number } | undefined;
         let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
         try {
             who = token ? await deps.orbit.identify(token) : null;
@@ -620,12 +620,22 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // The turn the call starts in: its row names that turn even when the runner has moved on by the time the call ends
         // (the turn current when it ARRIVED, not when its caller was identified), and the run of the runner that turn was in: turn numbers start
         // again from 1 after a restart, so the number alone is not the turn
-        const at = arrived !== undefined && deps.refusals?.turnAt ? deps.refusals.turnAt(jobId, arrived) : undefined;
-        const startedTurn = at ? at.turn : deps.refusals?.turnOf?.(jobId) ?? 0;
-        const startedRun = at ? at.run : deps.refusals?.runOf?.(jobId);
+        // The turn is the runner's: when the runner works on another bot server this one asks the shared record which turn had begun when the call arrived
+        // (`null` when that cannot be told: Orbit reads such a row with every turn it judges)
+        let startedTurn: number | null;
+        let startedRun: string | undefined;
+        if (deps.refusals?.turnOfCall) {
+            const there = await deps.refusals.turnOfCall(jobId, arrived).catch(() => ({ turn: null as number | null }));
+            startedTurn = there.turn;
+            startedRun = (there as { run?: string }).run;
+        } else {
+            const at = arrived !== undefined && deps.refusals?.turnAt ? deps.refusals.turnAt(jobId, arrived) : undefined;
+            startedTurn = at ? at.turn : deps.refusals?.turnOf?.(jobId) ?? 0;
+            startedRun = at ? at.run : deps.refusals?.runOf?.(jobId);
+        }
         // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
         // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
-        const reachedAnswer = await reachedRelay(jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+        const reachedAnswer = await reachedRelay(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
@@ -722,7 +732,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             }
 
             // Orbit found room for this call: it is taken up (a turn whose calls were all refused for room is a different thing from one with a call taken)
-            if (agentCall && !gone && !res.destroyed) deps.refusals?.accepted?.(jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+            if (agentCall && !gone && !res.destroyed) deps.refusals?.accepted?.(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
                 else {

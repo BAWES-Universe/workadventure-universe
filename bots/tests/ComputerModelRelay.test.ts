@@ -2242,7 +2242,7 @@ describe('the shared record of a call, before the call goes on', () => {
     let base2: string;
     const reports: Array<[string, string]> = [];
     const written: string[] = [];
-    const state = { hold: undefined as Promise<void> | undefined, failWrites: 0, began: undefined as (() => void) | undefined };
+    const state = { hold: undefined as Promise<void> | undefined, failWrites: 0, began: undefined as (() => void) | undefined, turns: [] as Array<{ turn: number; run?: string; at: number }>, turnsDown: false };
     const rowsB: Array<{ jobId: string; rows: CallRow[] }> = [];
     let own!: ReturnType<typeof createRefusalNotes>;
     /** The jobs whose runner is working on this server this moment. */
@@ -2260,6 +2260,11 @@ describe('the shared record of a call, before the call goes on', () => {
         },
         noteUnrecorded: async (jobId: string) => void written.push(`unrecorded:${jobId}`),
         lastCalledByOthers: async () => null,
+        // The turns the runner on the other server said
+        turnsByOthers: async () => {
+            if (state.turnsDown) throw new Error('shared store down');
+            return state.turns;
+        },
     };
 
     beforeAll(async () => {
@@ -2292,6 +2297,8 @@ describe('the shared record of a call, before the call goes on', () => {
         state.hold = undefined;
         state.began = undefined;
         state.failWrites = 0;
+        state.turns = [];
+        state.turnsDown = false;
     });
     // The agent's own calls carry its tools; a side call (a title, a summary) does not
     const withTools = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
@@ -2358,6 +2365,23 @@ describe('the shared record of a call, before the call goes on', () => {
             state.failWrites = 0;
             expect((await askHere(withTools)).status).toBe(200);
             expect(upstreamRequests).toHaveLength(1);
+        });
+
+        it('names the turn and run of the runner on the other server in the fault row, so Orbit finds the row when it judges that turn; with no turn told it sends none (read with every turn)', async () => {
+            const ELSEWHERE = 'job-turn-elsewhere';
+            orbit.identify.mockResolvedValue({ ok: true, jobId: ELSEWHERE, botId: BOT });
+            state.failWrites = 100;
+            state.turns = [{ turn: 1, run: 'run-x', at: Date.now() - 60_000 }, { turn: 2, run: 'run-x', at: Date.now() - 30_000 }];
+            expect((await askHere(withTools)).status).toBe(503);
+            await vi.waitFor(() => expect(rowsB).toHaveLength(1));
+            expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', turn: 2, run: 'run-x' });
+            // the shared record cannot be read: the row says no turn, and no run (never this server's own, unrelated, history)
+            rowsB.length = 0;
+            state.turnsDown = true;
+            expect((await askHere(withTools)).status).toBe(503);
+            await vi.waitFor(() => expect(rowsB).toHaveLength(1));
+            expect(rowsB[0].rows[0].turn).toBeNull();
+            expect('run' in rowsB[0].rows[0]).toBe(false);
         });
 
         it('refuses the call when this server ran the job a minute ago but the runner has since stopped it and another server took it over', async () => {

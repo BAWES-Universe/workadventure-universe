@@ -167,6 +167,18 @@ describe('the evidence kept for Orbit in the shared store', () => {
         expect(redis.fields('j')).not.toContain('good');
     });
 
+    it('keeps a row whose turn was not known (turn null) across a restart and sends it again unchanged, and still drops a damaged turn', async () => {
+        const redis = fakeRedis();
+        redis.state.pageSize = 100;
+        const first = createRefusalNotes(() => NOW, { retryMs: [], laterMs: [], sink: async () => false, store: new RedisEvidenceStore(() => redis.client, () => NOW) });
+        first.record('b', 'job-1', { callId: 'c-null', kind: 'fault', reason: 'relay_down', source: 'universe-ai', route: 'r', providerStatus: 503, turn: null });
+        await first.flush('job-1');
+        redis.raw('job-1', 'badturn', JSON.stringify({ botId: 'b', row: { ...row('badturn'), turn: 'x' } }));
+        const loaded = await new RedisEvidenceStore(() => redis.client, () => NOW).load();
+        expect(loaded).toHaveLength(1);
+        expect(loaded[0].rows.map((one) => [one.callId, one.turn, 'run' in one])).toEqual([['c-null', null, false]]);
+    });
+
     it('kill the process with rows pending, start another on the same Redis: the rows are replayed under the same call, run and turn, and only then removed', async () => {
         const redis = fakeRedis();
         redis.state.pageSize = 100;

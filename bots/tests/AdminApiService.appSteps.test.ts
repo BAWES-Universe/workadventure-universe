@@ -101,6 +101,71 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
     });
 
+    describe('when Orbit could not look up who the question is about (HTTP 503, retry: true, no `started`)', () => {
+        const unavailable = () => Object.assign(new Error('Request failed with status code 503'), { isAxiosError: true, response: { status: 503, data: { error: 'Try again', retry: true } } });
+
+        it('asks again, after one second and then after two, and never starts the job again: the job it finds is "starting"', async () => {
+            vi.useFakeTimers();
+            try {
+                let reads = 0;
+                const { orbit, call } = slowStart(() => {
+                    reads += 1;
+                    if (reads < 3) throw unavailable();
+                    return { data: { started: { id: 'job-new', status: 'running' } } };
+                });
+                const answer = orbit.startComputerJob('b', 'u', ASK);
+                await vi.advanceTimersByTimeAsync(3100);
+                expect(await answer).toEqual({ ok: false, reason: 'starting' });
+                // one start, three questions about it
+                expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get', 'get', 'get']);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('answers "unknown" when it is still not answered after the last asking (never "no job"), and starts nothing again', async () => {
+            vi.useFakeTimers();
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            try {
+                const { orbit, call } = slowStart(() => {
+                    throw unavailable();
+                });
+                const answer = orbit.startComputerJob('b', 'u', ASK);
+                await vi.advanceTimersByTimeAsync(3100);
+                expect(await answer).toEqual({ ok: false, reason: 'unknown' });
+                expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get', 'get', 'get']);
+                // read on its own, it is unknown too (not 'none')
+                const read = orbit.computerJobStarted('b', 'u', { originRef: 'r', title: 't', sinceSeconds: 5 });
+                await vi.advanceTimersByTimeAsync(3100);
+                expect(await read).toBe('unknown');
+            } finally {
+                warn.mockRestore();
+                vi.useRealTimers();
+            }
+        });
+
+        it('reads a 200 that carries `retry: true` and no `started` the same way, and a bare 503 from a gateway is asked again too', async () => {
+            vi.useFakeTimers();
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            try {
+                for (const read of [() => ({ data: { retry: true } }), () => { throw Object.assign(new Error('503'), { isAxiosError: true, response: { status: 503, data: '<html>' } }); }]) {
+                    const { orbit, call } = slowStart(read as () => unknown);
+                    const answer = orbit.computerJobStarted('b', 'u', { originRef: 'r', title: 't', sinceSeconds: 5 });
+                    await vi.advanceTimersByTimeAsync(3100);
+                    expect(await answer).toBe('unknown');
+                    expect(call.mock.calls.filter((one) => one[0] === 'get')).toHaveLength(3);
+                }
+                // a read that answers `started: null` is not asked again
+                const { orbit, call } = slowStart(() => ({ data: { started: null } }));
+                expect(await orbit.computerJobStarted('b', 'u', { originRef: 'r', title: 't', sinceSeconds: 5 })).toBe('none');
+                expect(call).toHaveBeenCalledTimes(1);
+            } finally {
+                warn.mockRestore();
+                vi.useRealTimers();
+            }
+        });
+    });
+
     it('throws when the job it made has failed or stopped: it was made and is over, as a failed start says', async () => {
         for (const status of ['failed', 'stopped']) {
             const { orbit } = slowStart(() => ({ data: { started: { id: 'j', status } } }));

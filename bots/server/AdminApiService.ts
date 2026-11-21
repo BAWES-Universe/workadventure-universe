@@ -542,6 +542,8 @@ export const COMPUTER_START_TIMEOUT_MS = 6 * 60_000;
 /** How far back Orbit is asked to look for the job a slow start made, at most (its own limit), and the seconds added to the wait itself. */
 const COMPUTER_STARTED_LOOK_MAX_SECONDS = 600;
 const COMPUTER_STARTED_LOOK_SLACK_SECONDS = 5;
+/** When Orbit cannot look up who the question is about it answers 503 `retry: true`: the question is asked again after each of these waits (ms), then it is unknown. */
+const COMPUTER_STARTED_RETRY_MS = [1000, 2000];
 /** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
 const COMPUTER_JOB_LIVE = ['running', 'waiting', 'queued'];
 /** The states of a job that was made and is over. */
@@ -1513,8 +1515,20 @@ export class AdminApiService {
      * this Brick for this person that began in this conversation (`originRef`, the direct chat), with this title, in the last `sinceSeconds` (an elapsed time:
      * the two servers' clocks are never compared). `'none'` when Orbit answers that there is none (`started: null`). `'unknown'` when it does not say (an Orbit
      * without this read answers without `started`, a damaged answer) or cannot be asked: the start may well have made a job, which nobody can tell.
+     * An Orbit that could not look up who the question is about answers HTTP 503 with `retry: true` and no `started`: that is never "no job", so the question
+     * is asked again (after one second, then after two), and when it is still not answered it is `'unknown'`: the job is not started a second time.
      */
     async computerJobStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; originRef: string; title: string; sinceSeconds: number }): Promise<{ id: string; status: string } | 'none' | 'unknown'> {
+        for (let attempt = 0; ; attempt++) {
+            const answer = await this.lookAtStarted(viaBotId, userId, find);
+            if (answer !== 'retry') return answer;
+            if (attempt >= COMPUTER_STARTED_RETRY_MS.length) return 'unknown';
+            await new Promise((resolve) => setTimeout(resolve, COMPUTER_STARTED_RETRY_MS[attempt]));
+        }
+    }
+
+    /** One asking of `computerJobStarted`; `'retry'` when Orbit says it could not look up the person (503, or `retry: true`) and the question can be asked again. */
+    private async lookAtStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; originRef: string; title: string; sinceSeconds: number }): Promise<{ id: string; status: string } | 'none' | 'unknown' | 'retry'> {
         try {
             const response = await this.brickCall<{ started?: { id?: unknown; status?: unknown } | null }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, {
                 userId,
@@ -1524,13 +1538,18 @@ export class AdminApiService {
                 sinceSeconds: String(Math.max(1, Math.min(COMPUTER_STARTED_LOOK_MAX_SECONDS, Math.ceil(find.sinceSeconds)))),
             });
             const data = response.data;
-            // No `started` at all is an Orbit that does not have this read: it says nothing. Only its own `null` says there is no such job.
+            // No `started` at all is an Orbit that does not have this read: it says nothing. Only its own `null` says there is no such job. One that says to
+            // try again (`retry: true`) could not look the person up
+            if (data && typeof data === 'object' && (data as { retry?: unknown }).retry === true && !(data as { started?: unknown }).started) return 'retry';
             if (!data || typeof data !== 'object' || !('started' in data) || data.started === undefined) return 'unknown';
             const started = data.started;
             if (started === null) return 'none';
             return typeof started === 'object' && typeof started.id === 'string' && started.id !== '' && typeof started.status === 'string' ? { id: started.id, status: started.status } : 'unknown';
         } catch (error) {
             console.warn("[AdminApiService] Could not read whether a Brick's computer job was started:", error instanceof Error ? error.message : error);
+            // Orbit's own "could not look the person up": 503, with `retry: true` in its answer. A bare 503 (a gateway) is a failed read, asked again the same way
+            const response = axios.isAxiosError(error) ? error.response : undefined;
+            if (response && (response.status === 503 || (response.data as { retry?: unknown } | undefined)?.retry === true)) return 'retry';
             return 'unknown';
         }
     }
