@@ -1517,10 +1517,10 @@ export class AdminApiService {
     }
 
     /** That a report was said, or can never be: Orbit does not offer it again. False when Orbit did not take it (it is offered again and said as the same message). Never throws. */
-    async keepComputerReportTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>): Promise<boolean> {
+    async keepComputerReportTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'> & { through?: string | null }): Promise<boolean> {
         try {
             // The late follow-up says outright that it was delivered (Orbit stops offering it either way); every other kind is told as before
-            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }), ...(report.kind === 'late' ? { outcome: 'delivered' } : {}) });
+            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }), ...(report.kind === 'late' ? { outcome: 'delivered' } : {}), ...(report.through ? { through: report.through } : {}) });
             return true;
         } catch (error) {
             // A job that is gone has nothing left to be told: that is an answer, not a failure
@@ -1534,9 +1534,9 @@ export class AdminApiService {
      * That a report can never reach the chat, and why: Orbit does not offer it again, does NOT record it as told, and what the job made stays with the person in
      * Files. False when Orbit did not take it (it is offered again). Never throws.
      */
-    async keepComputerReportUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>, why: UndeliverableWhy): Promise<boolean> {
+    async keepComputerReportUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'> & { through?: string | null }, why: UndeliverableWhy): Promise<boolean> {
         try {
-            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }), outcome: 'undeliverable', why });
+            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }), outcome: 'undeliverable', why, ...(report.through ? { through: report.through } : {}) });
             return true;
         } catch (error) {
             if (axios.isAxiosError(error) && error.response?.status === 404) return true;

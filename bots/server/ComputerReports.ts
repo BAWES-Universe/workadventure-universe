@@ -13,7 +13,7 @@
  * The person's own Stop, a computer turned off and a Brick deleted are never offered: they just did it.
  *
  * The late follow-up (`late`): an App that was let go unconfirmed (so its hold was released and nothing was charged) may be confirmed later by the provider's log. Orbit then offers
- * one more message for the job, once per batch of Apps confirmed together (its key ends in the batch's number, which only goes up for a job, and `seq` carries it, told back like a wait's), in the same conversation: "Update: <App> did go out after all. We couldn't confirm it earlier. You weren't charged for it." ("for them" for several Apps). The game only says
+ * one more message for the job, once per batch of Apps confirmed together (its key ends in the time the batch covers up to, `through`, which is said back in the acknowledgement), in the same conversation: "Update: <App> did go out after all. We couldn't confirm it earlier. You weren't charged for it." ("for them" for several Apps). The game only says
  * it, from Orbit's facts: it never charges, refunds or decides anything. Orbit offers it only to a game that asks for it (`accepts=late`), so an older game never meets the kind.
  *
  * The file card: the files a finished job made come as `handed`: they are the person's own, kept by Orbit (and shown in their Files) whether or not the chat took them.
@@ -68,6 +68,8 @@ export interface ComputerReport {
     refundPendingMicros: number;
     /** Only for `late`: the Apps (display names, in the order they were confirmed) that went out after all. Empty for every other kind. */
     apps: string[];
+    /** Only for `late`: the time of the latest confirmation this batch covers, exactly as Orbit gave it (a time), said back in the acknowledgement so an App confirmed between the offer and the mark is not marked. Null for every other kind, or from an Orbit that sends none. */
+    through: string | null;
     /** Only for `late`: Orbit let the Apps go unconfirmed, released their hold and was never paid for them: the one fact "you weren't charged" rests on. False for every other kind. */
     holdReleased: boolean;
 }
@@ -160,6 +162,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         refundPendingMicros: typeof report.refundPendingMicros === 'number' && Number.isFinite(report.refundPendingMicros) && report.refundPendingMicros > 0 ? Math.round(report.refundPendingMicros) : 0,
         apps,
         holdReleased: kind === 'late' && report.holdReleased === true,
+        through: kind === 'late' && typeof report.through === 'string' && Number.isFinite(Date.parse(report.through)) ? report.through : null,
     };
 }
 
@@ -306,9 +309,9 @@ export interface ComputerReportsApi {
     /** What is to be told now; throws when Orbit cannot be asked (nothing is lost: it is offered again). */
     reports(): Promise<ComputerReport[]>;
     /** Orbit is told it reached the chat. False when Orbit did not take it: it is offered again and said again as the same message. */
-    keepTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>): Promise<boolean>;
+    keepTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'> & { through?: string | null }): Promise<boolean>;
     /** Orbit is told it can never reach the chat, and why: it is not offered again and is not "told"; what the job made stays in Files. False when Orbit did not take it. */
-    keepUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>, why: UndeliverableWhy): Promise<boolean>;
+    keepUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'> & { through?: string | null }, why: UndeliverableWhy): Promise<boolean>;
     /** Orbit is told this file is in the chat, so a restart never sends it again and Files shows it as delivered. False when Orbit did not take it. */
     keepFileDelivered(jobId: string, fileId: string): Promise<boolean>;
     /** The bytes of one handed-over file, or null when Orbit no longer has it. Throws when Orbit cannot be asked (it is asked again). */
