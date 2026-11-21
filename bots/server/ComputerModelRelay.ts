@@ -549,6 +549,24 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
     }
 
+    /**
+     * A call reached the relay: noted for the runner here, and recorded for the runner of the job on another bot server before the call goes on (it waits a
+     * moment for that, bounded; when it cannot be recorded the call still goes ahead, and the notes tell the operators and the other servers).
+     */
+    async function reachedRelay(jobId: string, at?: { turn: number; run?: string }): Promise<void> {
+        const notes = deps.refusals;
+        if (!notes) return;
+        if (!notes.reached) {
+            notes.called?.(jobId, at);
+            return;
+        }
+        try {
+            if (!(await notes.reached(jobId, at))) console.warn('[ComputerRelay] A call of a job could not be recorded for the other bot servers; it went ahead.');
+        } catch {
+            /* the call is never held for it */
+        }
+    }
+
     router.get('/v1/models', async (req: Request, res: Response) => {
         const token = bearerOf(req);
         let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
@@ -560,7 +578,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
         if (!who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         // The machine of this job reached the relay (the runner reads that: a turn that failed with no call at all never got here)
-        deps.refusals?.called?.(who.jobId);
+        await reachedRelay(who.jobId);
         // One name: Hermes never chooses the model, the Brick's own AI does
         res.json({ object: 'list', data: [{ id: 'universe-ai', object: 'model', created: 0, owned_by: 'universe' }] });
     });
@@ -597,7 +615,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         const startedRun = at ? at.run : deps.refusals?.runOf?.(jobId);
         // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
         // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
-        deps.refusals?.called?.(jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+        await reachedRelay(jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.

@@ -221,6 +221,21 @@ describe('the dead letters: rows Orbit refused alone while it took others', () =
         expect((await store.loadDead()).map((job) => job.rows.map((one) => one.callId))).toEqual([['c1']]);
     });
 
+    it('takes a dead letter out once Orbit took it, only while it is still exactly that row', async () => {
+        const redis = fakeRedis();
+        const store = new RedisEvidenceStore(() => redis.client, () => NOW);
+        await store.deadLetter('bot-1', 'job-1', row('c1'));
+        await store.deadLetter('bot-1', 'job-1', row('c2'));
+        // a newer row of the same call was set aside since: it stays
+        await store.dropDead('bot-1', 'job-1', [row('c1', { providerStatus: 500 }), row('c2')]);
+        expect((await store.loadDead())[0].rows.map((one) => one.callId)).toEqual(['c1']);
+        await store.dropDead('bot-1', 'job-1', [row('c1')]);
+        expect(await store.loadDead()).toEqual([]);
+        await store.dropDead('bot-1', 'job-1', []);
+        redis.state.down = true;
+        await expect(store.dropDead('bot-1', 'job-1', [row('c1')])).resolves.toBeUndefined();
+    });
+
     it('says false for a row it could not keep, and rejects a read it could not make', async () => {
         const redis = fakeRedis();
         const store = new RedisEvidenceStore(() => redis.client, () => NOW, 50);

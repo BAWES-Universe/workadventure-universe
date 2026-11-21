@@ -2236,3 +2236,80 @@ describe('a model of the person’s own key that the provider says it does not h
         expect((await rowsSent('job-ours-model'))[0]).toMatchObject({ kind: 'fault', reason: 'provider_key_ours', source: 'universe-ai' });
     });
 });
+
+describe('the shared record of a call, before the call goes on', () => {
+    let app2: Server;
+    let base2: string;
+    const reports: Array<[string, string]> = [];
+    const written: string[] = [];
+    const state = { hold: undefined as Promise<void> | undefined, failWrites: 0 };
+    const shared = {
+        noteCalled: async (jobId: string) => {
+            if (state.hold) await state.hold;
+            if (state.failWrites > 0) {
+                state.failWrites -= 1;
+                throw new Error('write lost');
+            }
+            written.push(`called:${jobId}`);
+        },
+        noteUnrecorded: async (jobId: string) => void written.push(`unrecorded:${jobId}`),
+        lastCalledByOthers: async () => null,
+    };
+
+    beforeAll(async () => {
+        const own = createRefusalNotes(Date.now, { shared, report: (what, info) => reports.push([what, info.jobId]) });
+        const app = express();
+        app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], refusals: own }));
+        app2 = await listen(app);
+        base2 = urlOf(app2);
+    });
+    afterAll(async () => {
+        await new Promise<void>((resolve) => {
+            app2.closeAllConnections?.();
+            app2.close(() => resolve());
+        });
+    });
+    beforeEach(() => {
+        reports.length = 0;
+        written.length = 0;
+        state.hold = undefined;
+        state.failWrites = 0;
+    });
+    const askHere = () => fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ messages }) });
+
+    it('waits for the record of the call before it asks the provider, and goes on once it is written', async () => {
+        let release!: () => void;
+        state.hold = new Promise<void>((resolve) => (release = resolve));
+        const answer = askHere();
+        await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalled());
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        // the call is held at the record: nothing was reserved or sent yet
+        expect(orbit.authorize).not.toHaveBeenCalled();
+        expect(upstreamRequests).toHaveLength(0);
+        release();
+        expect((await answer).status).toBe(200);
+        expect(written).toEqual([`called:${JOB}`]);
+        expect(upstreamRequests).toHaveLength(1);
+    });
+
+    it('tries the record again when a write is lost, and the call goes on with nothing told', async () => {
+        state.failWrites = 1;
+        expect((await askHere()).status).toBe(200);
+        expect(written).toEqual([`called:${JOB}`]);
+        expect(reports).toEqual([]);
+    });
+
+    it('lets the call go ahead when the record cannot be written twice, says so apart, and tells the operators once for the job', async () => {
+        state.failWrites = 4;
+        expect((await askHere()).status).toBe(200);
+        expect((await askHere()).status).toBe(200);
+        expect(upstreamRequests).toHaveLength(2);
+        expect(written).toEqual([`unrecorded:${JOB}`, `unrecorded:${JOB}`]);
+        expect(reports).toEqual([['called_unrecorded', JOB]]);
+    });
+
+    it('records the model list asked with the job’s key too', async () => {
+        expect((await fetch(`${base2}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status).toBe(200);
+        expect(written).toEqual([`called:${JOB}`]);
+    });
+});

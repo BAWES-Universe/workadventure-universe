@@ -83,6 +83,8 @@ export interface EvidenceStore {
     deadLetter?(botId: string, jobId: string, row: CallRow): Promise<boolean>;
     /** The dead letters kept, by job. Throws when the store cannot be reached. */
     loadDead?(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>>;
+    /** Takes dead letters out once Orbit has TAKEN them (a replay worked), each only while it is still exactly the row that was sent. Never throws. */
+    dropDead?(botId: string, jobId: string, rows: CallRow[]): Promise<void>;
 }
 
 /** A row Orbit refused alone is kept this long, apart, to be sent again once the cause is mended: 30 days. */
@@ -112,9 +114,17 @@ export type Since = number | { order: number; at?: number };
 export interface SharedCalls {
     /** This server saw a call of the job reach the relay, at this moment (ms). Fire and forget: never held up for it. */
     noteCalled(jobId: string, at: number): Promise<void>;
-    /** The latest moment (ms) another bot server saw a call of the job reach its relay, or null for none. Rejects when the shared store cannot be read. */
+    /**
+     * This server could not record a call of the job (its two writes failed) and says so apart, so a runner on another server does not conclude that no
+     * call arrived. Counts like a call, for the runner that reads it.
+     */
+    noteUnrecorded(jobId: string, at: number): Promise<void>;
+    /** The latest moment (ms) another bot server saw a call of the job reach its relay (or could not record one), or null for none. Rejects when the shared store cannot be read. */
     lastCalledByOthers(jobId: string): Promise<number | null>;
 }
+
+/** How long the relay waits for the shared record of a call before it forwards the call anyway (each of its two tries). */
+export const SHARED_WRITE_BOUND_MS = 1000;
 
 /** The bot servers' clocks can differ a little: a call of another server counts for a turn that began up to this long after it. */
 export const SHARED_CALL_SKEW_MS = 2000;
@@ -149,11 +159,11 @@ export interface RefusalNotes {
      */
     resume(): Promise<boolean>;
     /**
-     * Puts the dead letters (rows Orbit refused alone while it took others) back among the rows waiting for Orbit, under the ids they had, and sends them. They
-     * are never deleted: they stay kept (for `DEAD_LETTER_KEEP_MS`) and a row refused alone again is kept again. Answers how many rows were put back, or null
-     * when the store could not be read.
+     * Puts the dead letters (rows Orbit refused alone while it took others) back among the rows waiting for Orbit, under the ids they had, and sends them (the
+     * ones of one job, or all). A row Orbit takes leaves the dead letters; a row it refuses alone again stays there, with nothing told again; none is
+     * deleted otherwise (they are kept `DEAD_LETTER_KEEP_MS`). Answers how many rows were put back, or null when the store could not be read.
      */
-    replayDeadLetters(): Promise<number | null>;
+    replayDeadLetters(jobId?: string): Promise<number | null>;
     /** The point in the order of events from which a turn's window starts: what is noted after this call, and only that, is in the window. */
     mark(): { order: number; at: number };
     /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job since this point (or at or after this moment, ms). */
@@ -170,6 +180,13 @@ export interface RefusalNotes {
     endedOnFault(jobId: string, since: Since): boolean;
     /** A call of this job REACHED the relay (its key was known to Orbit): whatever became of the call, the machine can reach the relay. */
     called(jobId: string, at?: CallTurn): void;
+    /**
+     * `called`, for a relay about to forward a call: the call is also recorded for the other bot servers and this WAITS for that (each of two tries bounded at
+     * `SHARED_WRITE_BOUND_MS`, the same moment both times), so a runner on another server never reads "no call" for a call that did arrive. When both fail the
+     * other servers are told apart that a call was not recorded, and the operators once per job. Resolves false when the call could not be recorded (it
+     * must still go ahead), true otherwise (and with no shared store). Never rejects.
+     */
+    reached(jobId: string, at?: CallTurn): Promise<boolean>;
     /** Whether any call of this job reached the relay since this point (or at or after this moment, ms), as THIS server saw it. */
     calledSince(jobId: string, since: Since): boolean;
     /**
@@ -221,9 +238,10 @@ export interface RefusalOptions {
      * a row has waited for Orbit longer than `EVIDENCE_UNACKED_MS` (once per row), `dead_letter` when Orbit refused a row ALONE (its own 400) while it took
      * others: the row was moved to the dead letters (kept 30 days, never deleted, replayable under its id) and is no longer sent, `all_refused` when Orbit
      * refused a row and has taken none lately (a contract or version mismatch, or Orbit broken: the rows are kept and sent again like when Orbit is away;
-     * once until Orbit takes a row again). Carries ids only. Never throws into the caller's way.
+     * once until Orbit takes a row again), `called_unrecorded` when the shared record of a call of a job could not be written twice (once per job; the call
+     * still went ahead). Carries ids only (callId is empty for that one). Never throws into the caller's way.
      */
-    report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused', info: { jobId: string; callId: string }) => void;
+    report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded', info: { jobId: string; callId: string }) => void;
 }
 
 /** How long a row that Orbit has not taken is kept and sent again, in the store and in memory: 7 days. */
@@ -274,6 +292,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         writes: Map<string, Promise<boolean>>;
         /** Rows the store could not keep: written again when the job is about to end, so what the money decision rests on is kept before it is final. */
         unsaved: Map<string, CallRow>;
+        /** Rows put back from the dead letters by a replay (still kept there until Orbit takes them). */
+        fromDead: Set<CallRow>;
     };
     const queued = new Map<string, Queue>();
     let notDurableTold = false;
@@ -281,9 +301,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     /** When Orbit last took a row (any job): a refusal of one row alone counts as the row's own only while Orbit is taking others. */
     let orbitTookAt: number | null = null;
     let allRefusedTold = false;
+    /** Jobs whose call the shared record could not hold (told to the operators once each; forgotten with the notes). */
+    const unrecordedTold = new Map<string, number>();
     /** Dead letters when there is no store to keep them in (kept as long as the process lives: never deleted). */
     const deadInMemory = new Map<string, { botId: string; jobId: string; row: CallRow }>();
-    const tell = (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused', jobId: string, callId: string) => {
+    const tell = (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded', jobId: string, callId: string) => {
         try {
             options.report?.(what, { jobId, callId });
         } catch {
@@ -302,7 +324,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             }
         }
     };
-    const newQueue = (botId: string): Queue => ({ botId, rows: new Map(), at: now(), laterTries: 0, writes: new Map(), unsaved: new Map() });
+    const newQueue = (botId: string): Queue => ({ botId, rows: new Map(), at: now(), laterTries: 0, writes: new Map(), unsaved: new Map(), fromDead: new Set() });
     /** Keeps a row in the store; the write is tracked so a flush can wait for it and a removal can follow it. Never throws. */
     const keep = (entry: Queue, jobId: string, row: CallRow) => {
         if (!store) return;
@@ -344,6 +366,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         for (const [jobId, seen] of last) if (seen.at < cutoff) last.delete(jobId);
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0, seen.called?.at ?? 0, seen.accepted?.at ?? 0, seen.pooled?.at ?? 0, seen.other?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
+        for (const [jobId, at] of unrecordedTold) if (at < cutoff) unrecordedTold.delete(jobId);
         // With a store, rows Orbit has not taken are kept (and sent again) as long as in the store
         const queueCutoff = store ? now() - EVIDENCE_KEEP_MS : cutoff;
         for (const [jobId, entry] of queued) {
@@ -353,7 +376,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             queued.delete(jobId);
         }
     };
-    const mark = (jobId: string, kind: 'fault' | 'answered' | 'called' | 'accepted' | 'pooled' | 'other', confirmed = false) => {
+    const mark = (jobId: string, kind: 'fault' | 'answered' | 'called' | 'accepted' | 'pooled' | 'other', confirmed = false, tellOthers = true) => {
         forget();
         const seen = calls.get(jobId) ?? {};
         seen[kind] = { at: now(), order: ++count };
@@ -361,7 +384,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         // A call that ended in any way reached the relay
         if (kind !== 'called') seen.called = { at: now(), order: count };
         // The other bot servers are told (a call of a turn the runner here has left is not noted by anything above, so it is not told either)
-        if (options.shared) {
+        if (options.shared && tellOthers) {
             try {
                 options.shared.noteCalled(jobId, now()).catch(() => undefined);
             } catch {
@@ -387,6 +410,14 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         release(entry, jobId, rows);
     };
 
+    /** Rows put back from the dead letters leave them once Orbit has TAKEN them (a refusal alone leaves them where they are). */
+    const leaveDead = (entry: Queue, jobId: string, rows: CallRow[]) => {
+        const back = rows.filter((row) => entry.fromDead.delete(row));
+        if (back.length === 0) return;
+        for (const row of back) deadInMemory.delete(`${jobId}|${row.callId}`);
+        if (store?.dropDead) void store.dropDead(entry.botId, jobId, back).catch(() => undefined);
+    };
+
     /**
      * Gets one batch to Orbit. True when every row of it was dealt with (taken, or refused alone: those wait in `pass.suspects`), false when Orbit could
      * not be reached or failed (the rest waits for the next try, with the same call ids). When Orbit refuses the batch for what is in it (a 400 rejects all of
@@ -403,6 +434,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             orbitTookAt = now();
             allRefusedTold = false;
             settle(entry, jobId, batch);
+            leaveDead(entry, jobId, batch);
             return true;
         }
         if (answer !== 'rejected') return false;
@@ -443,6 +475,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         }
         let all = true;
         for (const row of suspects) {
+            // A row put back by a replay is still kept among the dead letters: refused alone again it goes back to waiting there, and nothing is told again
+            if (entry.fromDead.delete(row)) {
+                settle(entry, jobId, [row]);
+                continue;
+            }
             // Kept apart first: only then does the row leave the rows waiting for Orbit
             if (!(await keepDead(entry.botId, jobId, row))) {
                 all = false;
@@ -626,7 +663,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             }
             return true;
         },
-        async replayDeadLetters() {
+        async replayDeadLetters(onlyJob?: string) {
             let kept: Array<{ botId: string; jobId: string; rows: CallRow[] }>;
             try {
                 kept = store?.loadDead ? await store.loadDead() : [];
@@ -635,18 +672,21 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             }
             for (const one of deadInMemory.values()) {
                 const found = kept.find((entry) => entry.jobId === one.jobId);
-                if (found) found.rows.push(one.row);
-                else kept.push({ botId: one.botId, jobId: one.jobId, rows: [one.row] });
+                if (found) {
+                    if (!found.rows.some((row) => row.callId === one.row.callId)) found.rows.push(one.row);
+                } else kept.push({ botId: one.botId, jobId: one.jobId, rows: [one.row] });
             }
             let put = 0;
             for (const { botId, jobId, rows } of kept) {
+                if (onlyJob !== undefined && jobId !== onlyJob) continue;
                 const entry = queued.get(jobId) ?? newQueue(botId);
                 entry.at = now();
                 for (const row of rows) {
-                    // A row made in this process since is newer than the one that was kept: it stays
+                    // A row made in this process since is newer than the one that was kept: it stays. A row already back from the dead letters is not put twice.
                     if (entry.rows.has(row.callId)) continue;
                     entry.rows.set(row.callId, row);
-                    keep(entry, jobId, row);
+                    // Not written to the pending store: the dead letter is the copy that survives (a restart replays it again, and Orbit keeps one row per call)
+                    entry.fromDead.add(row);
                     put += 1;
                 }
                 if (entry.rows.size === 0) continue;
@@ -676,6 +716,45 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         answered: (jobId) => mark(jobId, 'answered'),
         called(jobId, at) {
             if (!staleCall(jobId, at)) mark(jobId, 'called');
+        },
+        async reached(jobId, at) {
+            if (staleCall(jobId, at)) return true;
+            const moment = now();
+            mark(jobId, 'called', false, false);
+            const shared = options.shared;
+            if (!shared) return true;
+            // Each try is bounded: the call it stands in front of is not held for a store that is slow. The same moment both times (the write keeps the
+            // latest, so a try that did land after all is no harm)
+            const bounded = (work: Promise<void>) =>
+                new Promise<boolean>((resolve) => {
+                    const timer = setTimeout(() => resolve(false), SHARED_WRITE_BOUND_MS);
+                    timer.unref?.();
+                    work.then(
+                        () => {
+                            clearTimeout(timer);
+                            resolve(true);
+                        },
+                        () => {
+                            clearTimeout(timer);
+                            resolve(false);
+                        }
+                    );
+                });
+            const attempt = (what: 'call' | 'unrecorded') => {
+                try {
+                    return bounded(what === 'call' ? shared.noteCalled(jobId, moment) : shared.noteUnrecorded(jobId, moment));
+                } catch {
+                    return Promise.resolve(false);
+                }
+            };
+            if ((await attempt('call')) || (await attempt('call'))) return true;
+            // Both failed: the runner of the job may be on another server, so that is said apart (a runner that reads nothing at all concludes nothing)
+            await attempt('unrecorded');
+            if (!unrecordedTold.has(jobId)) {
+                unrecordedTold.set(jobId, moment);
+                tell('called_unrecorded', jobId, '');
+            }
+            return false;
         },
         calledSince(jobId, since) {
             const seen = calls.get(jobId)?.called;

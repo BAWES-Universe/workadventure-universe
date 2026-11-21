@@ -124,6 +124,15 @@ export class RedisEvidenceStore implements EvidenceStore {
         }
     }
 
+    async dropDead(botId: string, jobId: string, rows: CallRow[]): Promise<void> {
+        if (rows.length === 0) return;
+        try {
+            await this.deleteIfUnchanged(DEAD_PREFIX + jobId, rows.map((row) => [row.callId, JSON.stringify({ botId, row })] as [string, string]));
+        } catch {
+            /* a dead letter left behind is only offered again, and Orbit keeps one row per job and call */
+        }
+    }
+
     async loadDead(): Promise<Array<{ botId: string; jobId: string; rows: CallRow[] }>> {
         const client = this.client();
         const keys = new Set<string>();
@@ -217,6 +226,17 @@ export class RedisEvidenceStore implements EvidenceStore {
 }
 
 export const CALLED_PREFIX = 'computer:called:';
+/** The field a server writes when it could not record a call of a job: `unsure:<server>`. */
+export const UNRECORDED_FIELD = 'unsure:';
+/** Sets the field of the hash KEYS[1] (ARGV[1]) to the moment ARGV[2] unless it already holds a later one, and gives the hash a life of ARGV[3] seconds. */
+export const KEEP_LATER = `
+local current = tonumber(redis.call('HGET', KEYS[1], ARGV[1]))
+if current == nil or current < tonumber(ARGV[2]) then
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+end
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return 1
+`;
 
 /**
  * Where the bot servers say to each other that a call of a job reached their relay (the runner of a job lives on one server, its machine's calls may land on
@@ -251,16 +271,26 @@ export class RedisSharedCalls implements SharedCalls {
     }
 
     async noteCalled(jobId: string, at: number): Promise<void> {
+        await this.write(jobId, this.instanceId, at);
+    }
+
+    async noteUnrecorded(jobId: string, at: number): Promise<void> {
+        await this.write(jobId, UNRECORDED_FIELD + this.instanceId, at);
+    }
+
+    /** Keeps the later of two moments, so the same moment written twice, or a late write, never takes a later one back. */
+    private async write(jobId: string, field: string, at: number): Promise<void> {
         const client = this.client();
         const key = CALLED_PREFIX + jobId;
-        await this.within(client.hSet(key, this.instanceId, String(at)));
-        await this.within(client.expire(key, Math.round(REFUSAL_NOTE_KEEP_MS / 1000)));
+        await this.within(client.eval(KEEP_LATER, { keys: [key], arguments: [field, String(at), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000))] }));
     }
 
     async lastCalledByOthers(jobId: string): Promise<number | null> {
         const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
         let latest: number | null = null;
-        for (const [instance, value] of Object.entries(all)) {
+        for (const [field, value] of Object.entries(all)) {
+            // A server's own writes are known to its own notes exactly; a call it could not record counts like one it did
+            const instance = field.startsWith(UNRECORDED_FIELD) ? field.slice(UNRECORDED_FIELD.length) : field;
             if (instance === this.instanceId) continue;
             const at = Number(value);
             if (Number.isFinite(at) && (latest === null || at > latest)) latest = at;

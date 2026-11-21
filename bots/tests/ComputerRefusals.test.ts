@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RedisSharedCalls, type EvidenceRedis } from '../server/ComputerEvidenceStore';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, type CallRow, type EvidenceStore, type SharedCalls } from '../server/ComputerRefusals';
+import { KEEP_LATER, RedisSharedCalls, type EvidenceRedis } from '../server/ComputerEvidenceStore';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, type CallRow, type EvidenceStore, type SharedCalls } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -486,6 +486,12 @@ describe('the evidence kept before the money decision is final, and delivered af
                 dead.set(`${jobId}|${row.callId}`, { botId, jobId, row: { ...row } });
                 return true;
             },
+            dropDead: async (botId, jobId, rows) => {
+                for (const row of rows) {
+                    const kept = dead.get(`${jobId}|${row.callId}`);
+                    if (kept && kept.botId === botId && JSON.stringify(kept.row) === JSON.stringify(row)) dead.delete(`${jobId}|${row.callId}`);
+                }
+            },
             loadDead: async () => {
                 const byJob = new Map<string, { botId: string; jobId: string; rows: CallRow[] }>();
                 for (const one of dead.values()) {
@@ -527,7 +533,7 @@ describe('the evidence kept before the money decision is final, and delivered af
         };
         return { store, held, dead, log, state };
     };
-    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused', info: { jobId: string; callId: string }) => void } = {}) => {
+    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded', info: { jobId: string; callId: string }) => void } = {}) => {
         const sent: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
         let at = 1000;
         const notes = createRefusalNotes(() => at, {
@@ -1033,14 +1039,48 @@ describe('the evidence kept before the money decision is final, and delivered af
             expect(await notes.flush('job')).toBe(true);
             expect(o.taken).toEqual(['a', 'bad']);
             expect(mem.held.size).toBe(0);
-            // never deleted
-            expect([...mem.dead.keys()]).toEqual(['job|bad']);
-            // a replay that Orbit refuses again sets it aside again, under the same id
-            bad.add('bad');
+            // a row Orbit took leaves the dead letters
+            await vi.waitFor(() => expect(mem.dead.size).toBe(0));
+        });
+
+        it('keeps a dead letter a replay did not get taken, with nothing told again', async () => {
+            const mem = memoryStore();
+            const o = orbit(new Set(['bad']));
+            const told: string[] = [];
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what) => told.push(what) });
+            for (const id of ['a', 'bad']) notes.record('bot', 'job', call(id));
+            o.open();
+            expect(await notes.flush('job')).toBe(true);
+            expect(told).toEqual(['dead_letter']);
+            // offered again while the cause stands, with Orbit taking other rows: refused alone again, it stays where it is
             expect(await notes.replayDeadLetters()).toBe(1);
             notes.record('bot', 'job', call('b'));
             expect(await notes.flush('job')).toBe(true);
             expect([...mem.dead.keys()]).toEqual(['job|bad']);
+            expect(mem.held.size).toBe(0);
+            expect(told).toEqual(['dead_letter']);
+            expect(o.taken).toEqual(['a', 'b']);
+        });
+
+        it('replays the dead letters of one job only, or of all', async () => {
+            const mem = memoryStore();
+            const bad = new Set(['bad1', 'bad2']);
+            const o = orbit(bad);
+            const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink });
+            for (const [job, id] of [['j1', 'bad1'], ['j1', 'ok1'], ['j2', 'bad2'], ['j2', 'ok2']]) notes.record('bot', job, call(id));
+            o.open();
+            await notes.flush('j1');
+            await notes.flush('j2');
+            expect([...mem.dead.keys()].sort()).toEqual(['j1|bad1', 'j2|bad2']);
+            bad.clear();
+            expect(await notes.replayDeadLetters('j1')).toBe(1);
+            await notes.flush('j1');
+            await vi.waitFor(() => expect([...mem.dead.keys()]).toEqual(['j2|bad2']));
+            expect(await notes.replayDeadLetters('nothing')).toBe(0);
+            expect(await notes.replayDeadLetters()).toBe(1);
+            await notes.flush('j2');
+            await vi.waitFor(() => expect(mem.dead.size).toBe(0));
+            expect(o.taken.filter((id) => id.startsWith('bad')).sort()).toEqual(['bad1', 'bad2']);
         });
 
         it('says null when the dead letters cannot be read, and with no store keeps them in memory, replayable', async () => {
@@ -1130,18 +1170,35 @@ describe('whether any call of a job reached the relay', () => {
 /** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
 const sharedStore = () => {
     const seen = new Map<string, Map<string, number>>();
-    const state = { down: false, told: [] as string[] };
+    const state = { down: false, failCalled: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
+    const put = (jobId: string, field: string, at: number) => {
+        const byServer = seen.get(jobId) ?? new Map<string, number>();
+        byServer.set(field, Math.max(at, byServer.get(field) ?? 0));
+        seen.set(jobId, byServer);
+    };
     const forServer = (id: string): SharedCalls => ({
         noteCalled: async (jobId, at) => {
+            if (state.hold) await state.hold;
+            if (state.down) throw new Error('shared store down');
+            if (state.failCalled > 0) {
+                state.failCalled -= 1;
+                throw new Error('write lost');
+            }
             state.told.push(`${id}:${jobId}`);
-            const byServer = seen.get(jobId) ?? new Map<string, number>();
-            byServer.set(id, at);
-            seen.set(jobId, byServer);
+            put(jobId, id, at);
+        },
+        noteUnrecorded: async (jobId, at) => {
+            if (state.down || state.failUnrecorded) throw new Error('shared store down');
+            state.unrecorded.push(`${id}:${jobId}`);
+            put(jobId, `unsure:${id}`, at);
         },
         lastCalledByOthers: async (jobId) => {
             if (state.down) throw new Error('shared store down');
             let latest: number | null = null;
-            for (const [server, at] of seen.get(jobId) ?? []) if (server !== id && (latest === null || at > latest)) latest = at;
+            for (const [field, at] of seen.get(jobId) ?? []) {
+                const server = field.startsWith('unsure:') ? field.slice('unsure:'.length) : field;
+                if (server !== id && (latest === null || at > latest)) latest = at;
+            }
             return latest;
         },
     });
@@ -1234,13 +1291,94 @@ describe('calls of a job that arrive at another bot server', () => {
                 noteCalled: () => {
                     throw new Error('sync');
                 },
+                noteUnrecorded: async () => undefined,
                 lastCalledByOthers: async () => null,
             },
         });
         expect(() => notes.called('j')).not.toThrow();
-        const rejecting = createRefusalNotes(() => 1000, { shared: { noteCalled: async () => Promise.reject(new Error('async')), lastCalledByOthers: async () => null } });
+        const rejecting = createRefusalNotes(() => 1000, { shared: { noteCalled: async () => Promise.reject(new Error('async')), noteUnrecorded: async () => undefined, lastCalledByOthers: async () => null } });
         expect(() => rejecting.called('j')).not.toThrow();
         await Promise.resolve();
+    });
+
+    describe('a call the relay is about to forward (reached)', () => {
+        it('records the call for the other servers before it resolves, and a write that fails once is tried again with the same moment', async () => {
+            const { a, b, store } = rig();
+            store.state.failCalled = 1;
+            a.turn('j', 1);
+            const mark = a.mark();
+            // the call lands on B; B's first write is lost and its retry lands
+            expect(await b.reached('j')).toBe(true);
+            expect(store.state.told).toEqual(['B:j']);
+            expect(await a.calledAnywhereSince('j', mark)).toBe(true);
+        });
+
+        it('tells the other servers apart, and the operators once per job, when both writes fail; the call is not held and A concludes nothing', async () => {
+            const told: Array<[string, string]> = [];
+            const store = sharedStore();
+            let at = 100_000;
+            const a = createRefusalNotes(() => at, { shared: store.forServer('A') });
+            const b = createRefusalNotes(() => at, { shared: store.forServer('B'), report: (what, info) => told.push([what, info.jobId]) });
+            const mark = a.mark();
+            at += 10;
+            store.state.failCalled = 2;
+            expect(await b.reached('j')).toBe(false);
+            expect(store.state.unrecorded).toEqual(['B:j']);
+            expect(told).toEqual([['called_unrecorded', 'j']]);
+            // A reads the other field: a call may have arrived, so no_call is not concluded
+            expect(a.calledSince('j', mark)).toBe(false);
+            expect(await a.calledAnywhereSince('j', mark)).toBe(true);
+            // told once for the job, though another call fails the same way; another job is told too
+            store.state.failCalled = 4;
+            expect(await b.reached('j')).toBe(false);
+            expect(await b.reached('other')).toBe(false);
+            expect(told).toEqual([['called_unrecorded', 'j'], ['called_unrecorded', 'other']]);
+        });
+
+        it('when even the apart note cannot be written the store is failing: A’s read fails too, and nothing is concluded', async () => {
+            const { a, b, store } = rig();
+            const mark = a.mark();
+            store.state.down = true;
+            expect(await b.reached('j')).toBe(false);
+            expect(store.state.unrecorded).toEqual([]);
+            expect(await a.calledAnywhereSince('j', mark)).toBe(true);
+        });
+
+        it('does not hold the call for a store that does not answer: each try is bounded, and the call goes on', async () => {
+            vi.useFakeTimers();
+            try {
+                const { b, store } = rig();
+                store.state.hold = new Promise<void>(() => undefined);
+                let done = false;
+                const reached = b.reached('j').then((recorded) => {
+                    done = true;
+                    return recorded;
+                });
+                await vi.advanceTimersByTimeAsync(SHARED_WRITE_BOUND_MS - 1);
+                expect(done).toBe(false);
+                // the second try, then the note apart
+                await vi.advanceTimersByTimeAsync(SHARED_WRITE_BOUND_MS * 2 + 10);
+                expect(await reached).toBe(false);
+                expect(store.state.unrecorded).toEqual(['B:j']);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('notes the call for this server as `called` does, leaves a call of a turn the runner has left alone, and is true with no shared store', async () => {
+            const { a, store } = rig();
+            a.turn('j', 2);
+            const mark = a.mark();
+            expect(await a.reached('j', { turn: 1 })).toBe(true);
+            expect(a.calledSince('j', mark)).toBe(false);
+            expect(store.state.told).toEqual([]);
+            expect(await a.reached('j', { turn: 2 })).toBe(true);
+            expect(a.calledSince('j', mark)).toBe(true);
+            expect(store.state.told).toEqual(['A:j']);
+            const alone = createRefusalNotes(() => 1000);
+            expect(await alone.reached('j')).toBe(true);
+            expect(alone.calledSince('j', 0)).toBe(true);
+        });
     });
 
     describe('in Redis', () => {
@@ -1251,6 +1389,15 @@ describe('calls of a job that arrive at another bot server', () => {
                 hSet: async (key: string, field: string, value: string) => void (hashes.set(key, { ...(hashes.get(key) ?? {}), [field]: value })),
                 expire: async (key: string, seconds: number) => void ttl.set(key, seconds),
                 hGetAll: async (key: string) => ({ ...(hashes.get(key) ?? {}) }),
+                // the one script the shared calls run: keep the later moment, and give the hash its life
+                eval: async (script: string, options: { keys: string[]; arguments: string[] }) => {
+                    if (script !== KEEP_LATER) throw new Error('an unknown script');
+                    const [field, moment, seconds] = options.arguments;
+                    const current = Number(hashes.get(options.keys[0])?.[field]);
+                    if (Number.isNaN(current) || current < Number(moment)) hashes.set(options.keys[0], { ...(hashes.get(options.keys[0]) ?? {}), [field]: moment });
+                    ttl.set(options.keys[0], Number(seconds));
+                    return 1;
+                },
             } as unknown as EvidenceRedis;
             return { client, hashes, ttl };
         };
@@ -1271,14 +1418,36 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(Object.keys(r.hashes.get('computer:called:j') ?? {}).sort()).toEqual(['A', 'B']);
         });
 
+        it('keeps the later of two moments: the same moment twice, or a late write, never takes a later one back', async () => {
+            const r = redis();
+            const a = new RedisSharedCalls(() => r.client, 'A');
+            const b = new RedisSharedCalls(() => r.client, 'B');
+            await a.noteCalled('j', 9000);
+            await a.noteCalled('j', 9000);
+            await a.noteCalled('j', 8000);
+            expect(await b.lastCalledByOthers('j')).toBe(9000);
+        });
+
+        it('says apart that a call could not be recorded, and the others read it like a call, never their own', async () => {
+            const r = redis();
+            const a = new RedisSharedCalls(() => r.client, 'A');
+            const b = new RedisSharedCalls(() => r.client, 'B');
+            await a.noteUnrecorded('j', 12_000);
+            expect(Object.keys(r.hashes.get('computer:called:j') ?? {})).toEqual(['unsure:A']);
+            expect(await b.lastCalledByOthers('j')).toBe(12_000);
+            expect(await a.lastCalledByOthers('j')).toBeNull();
+            expect(r.ttl.get('computer:called:j')).toBe(3600);
+        });
+
         it('ignores a damaged field, and rejects when the store is not connected or does not answer', async () => {
             const r = redis();
             r.hashes.set('computer:called:j', { X: 'not a number', Y: '4000' });
             expect(await new RedisSharedCalls(() => r.client, 'A').lastCalledByOthers('j')).toBe(4000);
             await expect(new RedisSharedCalls(() => null, 'A').lastCalledByOthers('j')).rejects.toThrow();
             await expect(new RedisSharedCalls(() => null, 'A').noteCalled('j', 1)).rejects.toThrow();
-            const silent = { hGetAll: () => new Promise(() => undefined) } as unknown as EvidenceRedis;
+            const silent = { hGetAll: () => new Promise(() => undefined), eval: () => new Promise(() => undefined) } as unknown as EvidenceRedis;
             await expect(new RedisSharedCalls(() => silent, 'A', 20).lastCalledByOthers('j')).rejects.toThrow(/in time/);
+            await expect(new RedisSharedCalls(() => silent, 'A', 20).noteCalled('j', 1)).rejects.toThrow(/in time/);
         });
     });
 });

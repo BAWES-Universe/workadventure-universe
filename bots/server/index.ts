@@ -35,6 +35,7 @@ import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
+import { createFaultReplayRoute } from './ComputerFaultReplayRoute';
 import { createRefusalNotes } from './ComputerRefusals';
 import { RedisEvidenceStore, RedisSharedCalls } from './ComputerEvidenceStore';
 import { createComputerRunner, probeRelay, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
@@ -101,6 +102,7 @@ const FAULT_EVIDENCE_MESSAGES = {
     unacked: 'Fault evidence not acknowledged by Orbit for an hour',
     dead_letter: 'Fault evidence row refused by Orbit alone and set aside (kept 30 days)',
     all_refused: 'Orbit refuses every fault evidence row it is sent: kept and sent again',
+    called_unrecorded: 'A computer model call could not be recorded for the other bot servers (it went ahead)',
 } as const;
 const computerRefusals = createRefusalNotes(Date.now, {
     sink: (botId, jobId, rows) => adminApiService.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
@@ -118,6 +120,8 @@ const computerRefusals = createRefusalNotes(Date.now, {
         }),
 });
 preRouters.push(createComputerModelRelay({ orbit: relayOrbitFor(adminApiService), routeFor: (botId) => aiService.relayRoute(botId), refusals: computerRefusals }));
+// The operator's way to send the dead letters of the fault record again now (bot service token; counts only)
+preRouters.push(createFaultReplayRoute({ token: () => process.env.BOT_SERVICE_TOKEN, replay: (jobId) => computerRefusals.replayDeadLetters(jobId) }));
 // Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
 // replies before it is heard, and what the hearing provider still holds is deleted until it confirms
 {
@@ -229,6 +233,8 @@ const COMPUTER_REPORTS_EVERY_MS = 10 * 1000;
 /** Real computers: Orbit's sweep, and the runner that works the jobs Orbit says are running. They need no Matrix, so they start whether or not direct messages are set up. */
 /** Replays the evidence of failed computer jobs that Orbit has not taken, kept in the shared store, every 5 minutes (and at start). */
 const EVIDENCE_REPLAY_EVERY_MS = 5 * 60 * 1000;
+/** Dead letters are offered again once a day. */
+const DEAD_LETTER_REPLAY_EVERY_MS = 24 * 60 * 60 * 1000;
 /** Sends again the evidence of failed computer jobs that was kept when this server stopped. The shared store may not be up yet: it is asked again a few times. */
 function resumeEvidence(attempt = 0): void {
     const delays = [0, 2000, 10_000, 30_000, 120_000, 300_000];
@@ -247,6 +253,9 @@ function startComputers(): void {
     // Again every 5 minutes: only evidence is sent (under the same call ids, Orbit keeps one row per job and call); nothing is ever run again
     const evidenceReplay = setInterval(() => void computerRefusals.resume(), EVIDENCE_REPLAY_EVERY_MS);
     evidenceReplay.unref?.();
+    // The dead letters (rows Orbit refused alone) are offered again once a day under the same ids: one Orbit takes leaves them, one it refuses again stays
+    const deadLetterReplay = setInterval(() => void computerRefusals.replayDeadLetters(), DEAD_LETTER_REPLAY_EVERY_MS);
+    deadLetterReplay.unref?.();
     computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
     computerSweepInterval.unref?.();
     // A development server that pretends (COMPUTER_PRETEND_RUNNER=yes) has no runner

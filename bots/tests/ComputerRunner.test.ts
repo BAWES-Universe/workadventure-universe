@@ -1702,18 +1702,35 @@ describe('a machine that cannot reach our own model service', () => {
 /** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
     const sharedStore = () => {
         const seen = new Map<string, Map<string, number>>();
-        const state = { down: false, told: [] as string[] };
+        const state = { down: false, failCalled: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
+        const put = (jobId: string, field: string, at: number) => {
+            const byServer = seen.get(jobId) ?? new Map<string, number>();
+            byServer.set(field, Math.max(at, byServer.get(field) ?? 0));
+            seen.set(jobId, byServer);
+        };
         const forServer = (id: string): SharedCalls => ({
             noteCalled: async (jobId, at) => {
+                if (state.hold) await state.hold;
+                if (state.down) throw new Error('shared store down');
+                if (state.failCalled > 0) {
+                    state.failCalled -= 1;
+                    throw new Error('write lost');
+                }
                 state.told.push(`${id}:${jobId}`);
-                const byServer = seen.get(jobId) ?? new Map<string, number>();
-                byServer.set(id, at);
-                seen.set(jobId, byServer);
+                put(jobId, id, at);
+            },
+            noteUnrecorded: async (jobId, at) => {
+                if (state.down || state.failUnrecorded) throw new Error('shared store down');
+                state.unrecorded.push(`${id}:${jobId}`);
+                put(jobId, `unsure:${id}`, at);
             },
             lastCalledByOthers: async (jobId) => {
                 if (state.down) throw new Error('shared store down');
                 let latest: number | null = null;
-                for (const [server, at] of seen.get(jobId) ?? []) if (server !== id && (latest === null || at > latest)) latest = at;
+                for (const [field, at] of seen.get(jobId) ?? []) {
+                    const server = field.startsWith('unsure:') ? field.slice('unsure:'.length) : field;
+                    if (server !== id && (latest === null || at > latest)) latest = at;
+                }
                 return latest;
             },
         });
@@ -1747,6 +1764,32 @@ describe('a machine that cannot reach our own model service', () => {
                 [3, 'fault', 'relay_down'],
             ]);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        });
+
+        it('writes no fault when the other server’s first write of its call was lost and its retry landed (the record has the call)', async () => {
+            const store = sharedStore();
+            let other!: ReturnType<typeof createRefusalNotes>;
+            const { seen, rows, clock, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 1), void other.reached(JOB.jobId), silent())),
+                { shared: store.forServer('A') }
+            );
+            other = createRefusalNotes(clock, { shared: store.forServer('B') });
+            await run();
+            expect(rows).toEqual([]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('writes no fault when the other server could not record its call at all, but said so apart', async () => {
+            const store = sharedStore();
+            let other!: ReturnType<typeof createRefusalNotes>;
+            const { seen, rows, clock, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 2), void other.reached(JOB.jobId), silent())),
+                { shared: store.forServer('A') }
+            );
+            other = createRefusalNotes(clock, { shared: store.forServer('B') });
+            await run();
+            expect(rows).toEqual([]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
         });
 
         it('writes no fault when the shared store cannot be read: a call may have arrived elsewhere, and nothing is concluded', async () => {
