@@ -172,7 +172,7 @@ export class RedisEvidenceStore implements EvidenceStore {
             for (const [field, value] of Object.entries(all)) {
                 let entry: { botId?: unknown; row?: unknown } | null = null;
                 try {
-                    entry = JSON.parse(value) as typeof entry;
+                    entry = JSON.parse(value) as { botId?: unknown; row?: unknown } | null;
                 } catch {
                     entry = null;
                 }
@@ -217,7 +217,7 @@ export class RedisEvidenceStore implements EvidenceStore {
             for (const [field, value] of Object.entries(all)) {
                 let entry: { botId?: unknown; row?: unknown } | null = null;
                 try {
-                    entry = JSON.parse(value) as typeof entry;
+                    entry = JSON.parse(value) as { botId?: unknown; row?: unknown } | null;
                 } catch {
                     entry = null;
                 }
