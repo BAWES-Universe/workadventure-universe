@@ -205,8 +205,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             case 'cheaper_route':
                 return { started: false, success: false, note: `${started.app ?? 'An app you have'} can do this job: do it through ${started.app ?? 'that app'}. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
             case 'starting':
-                // The answer was slow and the computer is busy, which says the machine is being made. It does not say THIS job was taken: the busy
-                // read is about the person's jobs, not this one. So nothing is promised: only what is known is said, and they can ask again
+                // The answer was slow and Orbit says it made THIS job (one for this person, from this chat, with this title, begun since the ask went out):
+                // the machine is being made. Nothing about its progress is known, so nothing is promised: only what is known is said, and they can ask again
                 return { started: false, starting: true, note: 'Your computer is starting. It is not known yet whether this job has been taken. Say in one short sentence that your computer is starting and that if the job does not show in the bar above this chat in a minute or two, they can ask you again. Do not say the job has begun, or will begin by itself. Do not say how long it will take.' };
             case 'off':
                 return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };

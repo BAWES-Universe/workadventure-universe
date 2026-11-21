@@ -539,6 +539,11 @@ const COMPUTER_FINISH_TIMEOUT_MS = 6 * 60_000;
  * ready (READY_WITHIN_MS), so the start call waits longer than that, and the answer is never cut while the machine is still being made.
  */
 export const COMPUTER_START_TIMEOUT_MS = 6 * 60_000;
+/** How far back Orbit is asked to look for the job a slow start made, at most (its own limit), and the seconds added to the wait itself. */
+const COMPUTER_STARTED_LOOK_MAX_SECONDS = 600;
+const COMPUTER_STARTED_LOOK_SLACK_SECONDS = 5;
+/** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
+const COMPUTER_JOB_LIVE = ['running', 'waiting', 'queued'];
 
 /** Whether a call failed because it took too long (our own timeout, or a gateway in front of Orbit that gave up): the work may be going on behind it. */
 export function isSlowAnswer(error: unknown): boolean {
@@ -1501,14 +1506,26 @@ export class AdminApiService {
         }
     }
 
-    /** Does this Brick have a job running or waiting for this person (#2000)? Read only. False when Orbit cannot be asked: nothing is then known to be going on. */
-    async computerIsBusy(viaBotId: string, userId: string): Promise<boolean> {
+    /**
+     * The job this very start made, when Orbit can prove it (#2000): read only, asked after a start whose answer was slow. Orbit looks for the newest job of
+     * this Brick for this person that began in this conversation (`originRef`, the direct chat), with this title, in the last `sinceSeconds` (an elapsed time:
+     * the two servers' clocks are never compared). Null when there is none, when Orbit does not say (an Orbit without this read answers without `started`),
+     * or when it cannot be asked: nothing is then known to have started.
+     */
+    async computerJobStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; originRef: string; title: string; sinceSeconds: number }): Promise<{ id: string; status: string } | null> {
         try {
-            const response = await this.brickCall<{ busy?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId });
-            return response.data?.busy === true;
+            const response = await this.brickCall<{ started?: { id?: unknown; status?: unknown } | null }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, {
+                userId,
+                ...(typeof find.isGuest === 'boolean' ? { isGuest: String(find.isGuest) } : {}),
+                originRef: find.originRef,
+                title: find.title,
+                sinceSeconds: String(Math.max(1, Math.min(COMPUTER_STARTED_LOOK_MAX_SECONDS, Math.ceil(find.sinceSeconds)))),
+            });
+            const started = response.data?.started;
+            return started && typeof started.id === 'string' && started.id !== '' && typeof started.status === 'string' ? { id: started.id, status: started.status } : null;
         } catch (error) {
-            console.warn("[AdminApiService] Could not read whether a Brick's computer is busy:", error instanceof Error ? error.message : error);
-            return false;
+            console.warn("[AdminApiService] Could not read whether a Brick's computer job was started:", error instanceof Error ? error.message : error);
+            return null;
         }
     }
 
@@ -1661,17 +1678,29 @@ export class AdminApiService {
 
     /**
      * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. A start that takes longer than we wait (or that a gateway
-     * cut) is not a failure of the computer when Orbit now has a job running or waiting for this person: the machine is being made, and it answers `starting`.
+     * cut) is not a failure of the computer when Orbit PROVES that this start made a job (one for this person, from this conversation, with this title, begun
+     * since the ask went out, running or waiting): the machine is being made, and it answers `starting`. That the person has some other job going proves
+     * nothing about this one: with nothing proven, no origin to prove it by, or an Orbit that cannot say, the start throws as any failure does.
      */
     async startComputerJob(
         viaBotId: string,
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
+        const began = Date.now();
         try {
             return await this.sendComputerJob(viaBotId, userId, ask);
         } catch (error) {
-            if (isSlowAnswer(error) && (await this.computerIsBusy(viaBotId, userId))) return { ok: false, reason: 'starting' };
+            if (isSlowAnswer(error) && ask.origin?.ref) {
+                const made = await this.computerJobStarted(viaBotId, userId, {
+                    ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
+                    originRef: ask.origin.ref,
+                    title: ask.title,
+                    // The wait itself, and a few seconds more for the time it took the ask to be sent and written
+                    sinceSeconds: (Date.now() - began) / 1000 + COMPUTER_STARTED_LOOK_SLACK_SECONDS,
+                });
+                if (made && COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
+            }
             throw error;
         }
     }

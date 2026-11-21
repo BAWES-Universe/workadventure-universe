@@ -71,31 +71,92 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         }
     });
 
-    it('answers "starting" when the start timed out and Orbit now has a job running or waiting for this person', async () => {
-        const calls: string[] = [];
+    const ASK = { title: '  Add a page ', origin: { kind: 'dm' as const, ref: '!room:chat.test' }, isGuest: false };
+    /** Orbit as this start meets it: the POST times out, and the read about this start answers as told. */
+    const slowStart = (read: () => unknown | Promise<unknown>) => {
         const { orbit } = service(async () => ({ data: {} }));
-        (orbit as unknown as { brickCall: unknown }).brickCall = vi.fn(async (method: string) => {
-            calls.push(method);
+        const call = vi.fn(async (method: string) => {
             if (method === 'post') throw timedOut();
-            return { data: { available: true, on: true, busy: true } };
+            return read();
         });
-        expect(await orbit.startComputerJob('b', 'u', { title: 'x' })).toEqual({ ok: false, reason: 'starting' });
-        expect(calls).toEqual(['post', 'get']);
-        const asked = (orbit as unknown as { brickCall: ReturnType<typeof vi.fn> }).brickCall.mock.calls[1];
-        expect(asked.slice(0, 4)).toEqual(['get', 'api/bots/b/computer-jobs', undefined, { userId: 'u' }]);
+        (orbit as unknown as { brickCall: unknown }).brickCall = call;
+        return { orbit, call };
+    };
+
+    it('answers "starting" only when Orbit proves THIS start made a job: the person had another job running, the start timed out, and Orbit made this one', async () => {
+        const { orbit, call } = slowStart(() => ({ data: { available: true, on: true, busy: true, started: { id: 'job-new', status: 'queued' } } }));
+        expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+        expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
+        const asked = call.mock.calls[1] as unknown[];
+        expect(asked.slice(0, 3)).toEqual(['get', 'api/bots/b/computer-jobs', undefined]);
+        // by the ask's own conversation and title, as an elapsed time (a few seconds of slack, not a moment from this server's clock)
+        expect(asked[3]).toMatchObject({ userId: 'u', isGuest: 'false', originRef: '!room:chat.test', title: '  Add a page ' });
+        const since = Number((asked[3] as { sinceSeconds: string }).sinceSeconds);
+        expect(since).toBeGreaterThanOrEqual(5);
+        expect(since).toBeLessThanOrEqual(10);
     });
 
-    it('still throws when the start timed out and nothing is going on (or Orbit cannot say), so the computer is reported as not reached', async () => {
-        for (const busy of [{ data: { busy: false } }, { data: {} }, 'down'] as const) {
+    it('throws, as any failure of a start does, when the person has another job running and the start never reached Orbit', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        // the old read said busy: true here, and the start was reported as "starting" for a job that does not exist
+        for (const read of [{ data: { available: true, on: true, busy: true, started: null } }, { data: { available: true, on: true, busy: true } }]) {
+            const { orbit } = slowStart(() => read);
+            await expect(orbit.startComputerJob('b', 'u', ASK)).rejects.toThrow('timeout');
+        }
+        warn.mockRestore();
+    });
+
+    it('throws when it cannot be proved: no conversation to prove it by, Orbit cannot be asked, a job that is not going to run, or a damaged answer', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const noOrigin = slowStart(() => ({ data: { started: { id: 'j', status: 'running' } } }));
+        await expect(noOrigin.orbit.startComputerJob('b', 'u', { title: 'x' })).rejects.toThrow('timeout');
+        // nothing was asked: there was nothing to ask by
+        expect(noOrigin.call).toHaveBeenCalledTimes(1);
+        const reads: unknown[] = [
+            () => {
+                throw new Error('down');
+            },
+            () => ({ data: { started: { id: 'j', status: 'failed' } } }),
+            () => ({ data: { started: { id: 'j', status: 'stopped' } } }),
+            () => ({ data: { started: { id: '', status: 'running' } } }),
+            () => ({ data: { started: { status: 'running' } } }),
+            () => ({ data: { started: 'yes' } }),
+            () => ({ data: undefined }),
+        ];
+        for (const read of reads) {
+            const { orbit } = slowStart(read as () => unknown);
+            await expect(orbit.startComputerJob('b', 'u', ASK)).rejects.toThrow('timeout');
+        }
+        warn.mockRestore();
+    });
+
+    it('says "starting" for a job that is running, waiting or queued, and leaves the guest flag out when it is not known', async () => {
+        for (const status of ['running', 'waiting', 'queued']) {
+            const { orbit, call } = slowStart(() => ({ data: { started: { id: 'j', status } } }));
+            expect(await orbit.startComputerJob('b', 'u', { title: 'x', origin: { kind: 'dm', ref: 'r' } }), status).toEqual({ ok: false, reason: 'starting' });
+            expect((call.mock.calls[1] as unknown[])[3]).not.toHaveProperty('isGuest');
+        }
+    });
+
+    it('looks back at most as far as Orbit allows, however long the start took', async () => {
+        vi.useFakeTimers();
+        try {
             const { orbit } = service(async () => ({ data: {} }));
-            (orbit as unknown as { brickCall: unknown }).brickCall = vi.fn(async (method: string) => {
-                if (method === 'post') throw timedOut();
-                if (busy === 'down') throw new Error('down');
-                return busy;
+            const reads: Array<Record<string, string>> = [];
+            (orbit as unknown as { brickCall: unknown }).brickCall = vi.fn(async (method: string, _path: string, _body: unknown, params?: Record<string, string>) => {
+                if (method === 'post') {
+                    await new Promise((resolve) => setTimeout(resolve, 15 * 60_000));
+                    throw timedOut();
+                }
+                reads.push(params ?? {});
+                return { data: { started: { id: 'j', status: 'running' } } };
             });
-            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-            await expect(orbit.startComputerJob('b', 'u', { title: 'x' })).rejects.toThrow('timeout');
-            warn.mockRestore();
+            const started = orbit.startComputerJob('b', 'u', ASK);
+            await vi.advanceTimersByTimeAsync(15 * 60_000);
+            expect(await started).toEqual({ ok: false, reason: 'starting' });
+            expect(reads.map((one) => one.sinceSeconds)).toEqual(['600']);
+        } finally {
+            vi.useRealTimers();
         }
     });
 
@@ -111,11 +172,15 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         expect(isSlowAnswer(undefined)).toBe(false);
     });
 
-    it('reads busy exactly, and a failure is not busy', async () => {
-        expect(await service(async () => ({ data: { busy: true } })).orbit.computerIsBusy('b', 'u')).toBe(true);
-        expect(await service(async () => ({ data: { busy: 'yes' } })).orbit.computerIsBusy('b', 'u')).toBe(false);
+    it('reads the job a start made exactly: an id and a state, and anything else, or a failure, is none', async () => {
+        const find = { originRef: 'r', title: 't', sinceSeconds: 7.2 };
+        expect(await service(async () => ({ data: { started: { id: 'j', status: 'running' } } })).orbit.computerJobStarted('b', 'u', find)).toEqual({ id: 'j', status: 'running' });
+        const seen = service(async () => ({ data: { started: null } }));
+        expect(await seen.orbit.computerJobStarted('b', 'u', find)).toBeNull();
+        expect((seen.call.mock.calls[0] as unknown[])[3]).toEqual({ userId: 'u', originRef: 'r', title: 't', sinceSeconds: '8' });
+        expect(await service(async () => ({ data: { started: { id: 5, status: 'running' } } })).orbit.computerJobStarted('b', 'u', find)).toBeNull();
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-        expect(await service(async () => { throw new Error('down'); }).orbit.computerIsBusy('b', 'u')).toBe(false);
+        expect(await service(async () => { throw new Error('down'); }).orbit.computerJobStarted('b', 'u', find)).toBeNull();
         warn.mockRestore();
     });
 });
