@@ -772,7 +772,8 @@ describe("the Usage page (#1999)", () => {
         });
 
         describe("a let-go App that was then confirmed delivered, with the computer part given back (Orbit's own words, shown as they are)", () => {
-            const NOTE = "Partly done. Exa was delivered. Its hold was released. The computer part didn't finish and its cost was returned.";
+            const NOTE =
+                "Partly done. Exa was delivered. Its hold was released. The computer part didn't finish and its cost was returned.";
             const delivered = {
                 label: "exa",
                 outcome: "worked",
@@ -826,7 +827,16 @@ describe("the Usage page (#1999)", () => {
             });
 
             it("keeps the Paid by line when something was owed (a partly done task that charged)", async () => {
-                game.getMyUsage.mockResolvedValue(live({}, { activity: [{ ...receipt(), spentMicros: 9_000, actions: [{ ...delivered, amountMicros: 9_000 }] }] }));
+                game.getMyUsage.mockResolvedValue(
+                    live(
+                        {},
+                        {
+                            activity: [
+                                { ...receipt(), spentMicros: 9_000, actions: [{ ...delivered, amountMicros: 9_000 }] },
+                            ],
+                        }
+                    )
+                );
                 await open();
                 row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
                 await settle();
@@ -834,7 +844,22 @@ describe("the Usage page (#1999)", () => {
             });
 
             it("keeps the Paid by line for a task that is simply done at $0 (only a partly done task with nothing owed hides it)", async () => {
-                game.getMyUsage.mockResolvedValue(live({}, { activity: [{ ...receipt(), outcome: "done", outcomeText: undefined, outcomeNote: undefined, actions: [] }] }));
+                game.getMyUsage.mockResolvedValue(
+                    live(
+                        {},
+                        {
+                            activity: [
+                                {
+                                    ...receipt(),
+                                    outcome: "done",
+                                    outcomeText: undefined,
+                                    outcomeNote: undefined,
+                                    actions: [],
+                                },
+                            ],
+                        }
+                    )
+                );
                 await open();
                 row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
                 await settle();
@@ -849,15 +874,21 @@ describe("the Usage page (#1999)", () => {
                 expect(receiptText()).toContain("Paid by you");
             });
 
-            it("says nothing about who paid on the collapsed row either when nothing was paid by anyone else (a sponsor or Universe paying a $0 partial)", async () => {
-                for (const payer of ["universe", "sponsor"]) {
-                    game.getMyUsage.mockResolvedValue(live({}, { activity: [{ ...receipt(), payer, payerName: payer === "sponsor" ? "Dana" : undefined }] }));
+            it.each(["universe", "sponsor"])(
+                "says nothing about who paid on the collapsed row either when nothing was paid by anyone else (%s paying a $0 partial)",
+                async (payer) => {
+                    game.getMyUsage.mockResolvedValue(
+                        live(
+                            {},
+                            { activity: [{ ...receipt(), payer, payerName: payer === "sponsor" ? "Dana" : undefined }] }
+                        )
+                    );
                     await open();
                     const hint = row()?.querySelector(".m")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
                     expect(hint, payer).toMatch(/Partly done/);
                     expect(hint, payer).not.toMatch(/Paid by/);
                 }
-            });
+            );
         });
 
         it("shows Orbit's headline and note for a refund that is pending, never Done, never Refunded, and no Paid by line", async () => {

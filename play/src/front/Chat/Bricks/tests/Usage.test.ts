@@ -338,7 +338,8 @@ describe("real numbers (credits and grants)", () => {
         });
 
         it("is partly done, with Orbit's words kept as they are, for an App that was let go and then confirmed delivered (nothing owed for it) beside a computer part given back", () => {
-            const NOTE = "Partly done. Exa was delivered. Its hold was released. The computer part didn't finish and its cost was returned.";
+            const NOTE =
+                "Partly done. Exa was delivered. Its hold was released. The computer part didn't finish and its cost was returned.";
             const item = read({
                 category: "computer",
                 outcome: "partial",
@@ -348,8 +349,15 @@ describe("real numbers (credits and grants)", () => {
                 returnedMicros: 30_000,
                 actions: [{ label: "exa", outcome: "worked", text: "Exa · worked", takenText: null, amountMicros: 0 }],
             });
-            expect(item).toMatchObject({ outcome: "partial", outcomeText: "Partly done", outcomeNote: NOTE, returnedMicros: 30_000 });
-            expect(item?.actions).toEqual([expect.objectContaining({ label: "exa", outcome: "worked", text: "Exa · worked", amountMicros: 0 })]);
+            expect(item).toMatchObject({
+                outcome: "partial",
+                outcomeText: "Partly done",
+                outcomeNote: NOTE,
+                returnedMicros: 30_000,
+            });
+            expect(item?.actions).toEqual([
+                expect.objectContaining({ label: "exa", outcome: "worked", text: "Exa · worked", amountMicros: 0 }),
+            ]);
             expect(item?.refundPendingMicros).toBeUndefined();
         });
 
