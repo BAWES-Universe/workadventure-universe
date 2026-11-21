@@ -13,6 +13,11 @@ const bash = spawnSync('bash', ['-c', 'echo ok'], { encoding: 'utf8' });
 const haveBash = bash.status === 0 && bash.stdout.trim() === 'ok';
 const SECRET = 'hunter2';
 
+/** The text as Bash reads it once its line continuations are out: a word that a continuation split is one word again. */
+const joined = (text: string): string => text.replace(/\\\n/g, '');
+/** Whether the secret is in the text, as it was written or as Bash reads it (a continuation inside the marker hides it from a plain search). */
+const showsSecret = (text: string): boolean => text.includes(SECRET) || joined(text).includes(SECRET);
+
 /** Whether Bash parses the whole text as a script (and nothing more is done with it). */
 const validBash = (script: string): boolean => spawnSync('bash', ['-n'], { input: script, encoding: 'utf8', timeout: 5000 }).status === 0;
 
@@ -113,7 +118,8 @@ export function validCases(seed: number, attempts: number): string[] {
     for (let n = 0; n < attempts; n++) {
         const body = generate(random);
         const script = `PASSWORD=$(${body})`;
-        if (validBash(body) && validBash(script)) found.push(script);
+        // Only a try that has the secret in it, as Bash reads it, can show that redaction kept it: a continuation may split the only one
+        if (validBash(body) && validBash(script) && showsSecret(script)) found.push(script);
     }
     return found;
 }
@@ -129,7 +135,7 @@ function leaksAround(assignment: string, random: () => number): string | null {
     const before = pick(MATERIAL);
     const after = pick(MATERIAL);
     for (const text of [assignment, `${before} ${assignment}`, `${assignment} ${after}`, `${before} ${assignment} ${after}`, `${assignment} next`]) {
-        if (redactSecrets(text).includes(SECRET)) return text;
+        if (showsSecret(redactSecrets(text))) return text;
     }
     return null;
 }
@@ -144,7 +150,7 @@ describe.skipIf(!haveBash)('redactSecrets against real Bash: where the other pas
             const body = Array.from({ length: 1 + Math.floor(random() * 8) }, () => QUOTED_PARTS[Math.floor(random() * QUOTED_PARTS.length)]).join(random() < 0.5 ? '' : ' ');
             if (!body.includes(SECRET)) continue;
             const assignment = `PASSWORD="${body}"`;
-            if (!validBash(assignment)) continue;
+            if (!validBash(assignment) || !showsSecret(assignment)) continue;
             valid++;
             const leaked = leaksAround(assignment, random);
             if (leaked) leaks.push(JSON.stringify(leaked));
@@ -186,9 +192,11 @@ describe.skipIf(!haveBash)('redactSecrets against real Bash: where the other pas
             for (let at = 0; at <= body.length; at++) {
                 const split = `${body.slice(0, at)}\\\n${body.slice(at)}`;
                 const script = `PASSWORD=$(${split})`;
-                if (!validBash(split) || !validBash(script)) continue;
+                // Only a split that leaves the secret in the text as Bash reads it can show that redaction kept it (one that splits the marker itself leaves
+                // none in the raw text, and an unchanged text would pass)
+                if (!validBash(split) || !validBash(script) || !showsSecret(script)) continue;
                 valid++;
-                for (const text of [script, `${script} next`, `${MATERIAL[1]} ${script}`]) if (redactSecrets(text).includes(SECRET)) leaks.push(JSON.stringify(text));
+                for (const text of [script, `${script} next`, `${MATERIAL[1]} ${script}`]) if (showsSecret(redactSecrets(text))) leaks.push(JSON.stringify(text));
             }
         }
         expect(leaks, `${valid} valid splits`).toEqual([]);
@@ -202,7 +210,7 @@ describe.skipIf(!haveBash)('redactSecrets against real Bash: a secret inside the
         const attempts = Number(process.env.FUZZ_ATTEMPTS ?? 1500);
         const seed = Number(process.env.FUZZ_SEED ?? 20261121);
         const cases = validCases(seed, attempts);
-        const leaks = cases.filter((script) => redactSecrets(script).includes(SECRET) || redactSecrets(`${script} tail`).includes(SECRET));
+        const leaks = cases.filter((script) => showsSecret(redactSecrets(script)) || showsSecret(redactSecrets(`${script} tail`)));
         // A miss prints the string, to be put in the tests above (FUZZ_DUMP names a file that gets them as JSON)
         if (process.env.FUZZ_DUMP) writeFileSync(process.env.FUZZ_DUMP, JSON.stringify(leaks, null, 1));
         expect(leaks.map((script) => JSON.stringify(script)), `seed ${seed}: ${cases.length} valid of ${attempts}`).toEqual([]);
@@ -210,8 +218,26 @@ describe.skipIf(!haveBash)('redactSecrets against real Bash: a secret inside the
         expect(cases.length).toBeGreaterThan(Math.min(20, attempts / 100));
     }, 600_000);
 
+    it('hides an assignment on the line after a comment that ends in a backslash: Bash starts a new line there, whatever the comment holds', () => {
+        for (const script of [`# note!\\\nPASSWORD=${SECRET}`, `echo a # c\\\nPASSWORD=${SECRET} next`, `# a\\\n# b\\\nPASSWORD=${SECRET}`]) {
+            // a real new line, and a real assignment: Bash accepts it, and what it holds is hidden
+            expect(validBash(script), script).toBe(true);
+            expect(redactSecrets(script), script).not.toContain(SECRET);
+        }
+    });
+
+    it('detects a secret that stays in the text: the fixtures that hold one count, and a split marker is read as Bash reads it', () => {
+        // a continuation inside the marker: the raw text does not hold it, the text as Bash reads it does
+        const split = `printf hun\\\nter2`;
+        expect(split.includes(SECRET)).toBe(false);
+        expect(showsSecret(split)).toBe(true);
+        // an input returned unchanged would be caught
+        expect(showsSecret(`PASSWORD=$(${split})`)).toBe(true);
+        expect(showsSecret(redactSecrets(`PASSWORD=$(${split})`))).toBe(false);
+    });
+
     it('keeps the line after the value, when the value ends where Bash ends it', () => {
-        for (const script of ['PASSWORD=$(printf ok) next', "PASSWORD=$(echo a # c )\necho b) next", 'PASSWORD=$( (printf ok)# )\n) next']) {
+        for (const script of ['PASSWORD=$(printf ok) next', "PASSWORD=$(echo a # c )\necho b) next", 'PASSWORD=$( (printf ok)# )\n) next', 'PASSWORD=$((1 << 2)) next', 'PASSWORD=$((1<<2)) next', 'PASSWORD=$((1 + (2 << 3))) next']) {
             if (!validBash(script)) continue;
             expect(redactSecrets(script), script).toBe('PASSWORD=[hidden] next');
         }

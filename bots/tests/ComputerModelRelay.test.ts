@@ -2242,13 +2242,15 @@ describe('the shared record of a call, before the call goes on', () => {
     let base2: string;
     const reports: Array<[string, string]> = [];
     const written: string[] = [];
-    const state = { hold: undefined as Promise<void> | undefined, failWrites: 0 };
+    const state = { hold: undefined as Promise<void> | undefined, failWrites: 0, began: undefined as (() => void) | undefined };
     const rowsB: Array<{ jobId: string; rows: CallRow[] }> = [];
     let own!: ReturnType<typeof createRefusalNotes>;
     /** The jobs whose runner is working on this server this moment. */
     const here = new Set<string>();
     const shared = {
         noteCalled: async (jobId: string) => {
+            // Said when the write of the call's record begins, so a test can wait for exactly that moment
+            state.began?.();
             if (state.hold) await state.hold;
             if (state.failWrites > 0) {
                 state.failWrites -= 1;
@@ -2288,23 +2290,31 @@ describe('the shared record of a call, before the call goes on', () => {
         rowsB.length = 0;
         here.clear();
         state.hold = undefined;
+        state.began = undefined;
         state.failWrites = 0;
     });
     // The agent's own calls carry its tools; a side call (a title, a summary) does not
     const withTools = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
-    const askHere = (body: Record<string, unknown> = { messages }) => fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(body) });
+    const askHere = (body: Record<string, unknown> = { messages }, signal?: AbortSignal) => fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(body), signal });
 
     it('waits for the record of the call before it asks the provider, and goes on once it is written', async () => {
         let release!: () => void;
         state.hold = new Promise<void>((resolve) => (release = resolve));
-        const answer = askHere();
-        await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalled());
-        await new Promise((resolve) => setTimeout(resolve, 60));
-        // the call is held at the record: nothing was reserved or sent yet
-        expect(orbit.authorize).not.toHaveBeenCalled();
-        expect(upstreamRequests).toHaveLength(0);
-        release();
-        expect((await answer).status).toBe(200);
+        const writeBegan = new Promise<void>((resolve) => (state.began = resolve));
+        try {
+            const answer = askHere();
+            // the call has been identified and its record is being written (and held): only now is it checked that nothing went on
+            await writeBegan;
+            expect(orbit.identify).toHaveBeenCalled();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            expect(orbit.authorize).not.toHaveBeenCalled();
+            expect(upstreamRequests).toHaveLength(0);
+            release();
+            expect((await answer).status).toBe(200);
+        } finally {
+            // never left held, whatever failed above
+            release();
+        }
         expect(written).toEqual([`called:${JOB}`]);
         expect(upstreamRequests).toHaveLength(1);
     });
@@ -2388,6 +2398,31 @@ describe('the shared record of a call, before the call goes on', () => {
             expect((await askHere({})).status).toBe(503);
             await own.flush(SIDE);
             expect(rowsB).toEqual([]);
+        });
+
+        it('records no fault for a refused agent call whose caller went away while the record was being written, and still records one for a caller that stayed', async () => {
+            const GONE = 'job-caller-left';
+            orbit.identify.mockResolvedValue({ ok: true, jobId: GONE, botId: BOT });
+            state.failWrites = 100;
+            let release!: () => void;
+            state.hold = new Promise<void>((resolve) => (release = resolve));
+            const controller = new AbortController();
+            const left = askHere(withTools, controller.signal).catch(() => undefined);
+            await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalled());
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            controller.abort();
+            await left;
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            release();
+            await vi.waitFor(() => expect(reports).toEqual([['called_unrecorded', GONE]]));
+            await own.flush(GONE);
+            await new Promise((resolve) => setTimeout(resolve, 60));
+            expect(rowsB).toEqual([]);
+            // a caller that stayed still gets its row
+            state.hold = undefined;
+            expect((await askHere(withTools)).status).toBe(503);
+            await vi.waitFor(() => expect(rowsB).toHaveLength(1));
+            expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
         });
 
         it('refuses the model list the same way', async () => {

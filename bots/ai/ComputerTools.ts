@@ -205,9 +205,10 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             case 'cheaper_route':
                 return { started: false, success: false, note: `${started.app ?? 'An app you have'} can do this job: do it through ${started.app ?? 'that app'}. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
             case 'starting':
-                // The answer was slow and Orbit says it made THIS job (one for this person, from this chat, with this title, begun since the ask went out):
-                // the machine is being made. Nothing about its progress is known, so nothing is promised: only what is known is said, and they can ask again
-                return { started: false, starting: true, note: 'Your computer is starting. It is not known yet whether this job has been taken. Say in one short sentence that your computer is starting and that if the job does not show in the bar above this chat in a minute or two, they can ask you again. Do not say the job has begun, or will begin by itself. Do not say how long it will take.' };
+                // The answer was slow and Orbit found THIS job (one for this person, from this chat, with this title, begun since the ask went out), queued,
+                // waiting or running. That says the job exists, nothing about the machine: no claim is made that it is starting or has begun, only that Orbit
+                // has the job and where its state shows
+                return { started: false, found: true, note: 'Orbit found this job. Say in one short sentence that the job was found and that its state shows in the bar above this chat. Do not say your computer is starting, that the job has begun, or will begin by itself. Do not say how long it will take. Do not ask them to ask again.' };
             case 'unknown':
                 // The answer was slow and nobody can tell whether THIS job was made. Not a failure (it may be running): the person must not be told it failed,
                 // or they ask again and a second job is paid for behind the first

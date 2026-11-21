@@ -638,7 +638,11 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         };
         // The runner of this job is on another server and this call could not be recorded for it: refused, as a fault of ours (the row reaches Orbit through the
         // sink, which does not rest on the shared store), so the machine tries again and the load balancer may send the retry to the runner's server
-        if (reachedAnswer === 'unservable') return fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
+        // A caller that went away while the record was being written (the close listener below is installed later) is no fault of ours to record
+        if (reachedAnswer === 'unservable') {
+            if (res.destroyed) return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+            return fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
+        }
 
         if (!isRecord(body) || !Array.isArray(body.messages) || body.messages.length === 0) {
             return problem(res, 400, 'A request needs a list of messages.', 'invalid_request');

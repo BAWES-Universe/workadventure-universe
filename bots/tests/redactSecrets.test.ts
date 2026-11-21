@@ -351,6 +351,63 @@ describe('a value is read whole, as the shell reads a word', () => {
         expect(redactSecrets('PASSWORD=(hunter2 other) next')).not.toContain('other');
     });
 
+    it('keeps what follows an arithmetic expansion that shifts (`<<` is a shift there, not a here-document), and still reads a subshell that begins with parentheses as a command', () => {
+        const cases: Array<[string, string]> = [
+            ['PASSWORD=$((1 << 2)) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$((1<<2)) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$((x << y)) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$((1 + (2 << 3))) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD="$((1 << 2)) hunter2" next', `PASSWORD=${HIDDEN} next`],
+            // not arithmetic: the first `)` that closes is not followed by another, so it is a command substitution with a subshell
+            ['PASSWORD=$((echo a) | cat) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$((a)+(b)) next', `PASSWORD=${HIDDEN} next`],
+            // a here-document in a subshell still runs to the end, as before
+            ['PASSWORD=$((cat <<EOF\nx ) y\nEOF\n) ) next', `PASSWORD=${HIDDEN}`],
+        ];
+        for (const [text, hidden] of cases) expect(redactSecrets(text), text).toBe(hidden);
+    });
+
+    it('does one bounded amount of work for a value made of expansions inside expansions inside quotes, and hides the rest of it', () => {
+        // every level reads what is inside it twice (as arithmetic, which does not fit, then as a command): without one budget across both, each level doubles the work
+        const level = (depth: number): string => (depth === 0 ? 'z' : `$(( "${level(depth - 1)}" ) x)`);
+        const text = `PASSWORD=${level(22)} next`;
+        const began = Date.now();
+        const out = redactSecrets(text);
+        expect(Date.now() - began).toBeLessThan(250);
+        // the end cannot be told: all of it is hidden
+        expect(out).toBe(`PASSWORD=${HIDDEN}`);
+        // and a stream-sized value of that kind is as quick
+        const long = `PASSWORD=${level(150)}`;
+        const startedLong = Date.now();
+        expect(redactSecrets(long)).toBe(`PASSWORD=${HIDDEN}`);
+        expect(Date.now() - startedLong).toBeLessThan(250);
+        // ordinary shallow nesting keeps what follows
+        expect(redactSecrets(`PASSWORD=${level(2)} next`)).toBe(`PASSWORD=${HIDDEN} next`);
+    });
+
+    it('hides all of the login of a URL when a header begins inside it and goes on past it, and leaves a standalone URL and header as they were said', () => {
+        const url = 'https://alice:Authorization=demo-value-xyz@host.test/this/is/a/long/path';
+        const out = redactSecrets(url);
+        expect(out).not.toContain('alice');
+        expect(out).not.toContain('demo-value');
+        expect(out).toBe(HIDDEN);
+        expect(redactSecrets('go to https://alice:demo-value-xyz@host.test/x now')).toBe(`go to https://${HIDDEN}@host.test/x now`);
+        expect(redactSecrets('Authorization: Bearer demo-value-xyz')).toBe(`Authorization: ${HIDDEN}`);
+        expect(redactSecrets('https://alice:Bearer abcdefgh1234@host.test/x/y')).not.toContain('abcdefgh1234');
+    });
+
+    it('does not let a backslash at the end of a comment continue it: the line after is a line of its own, and an assignment on it is hidden', () => {
+        expect(redactSecrets('# note!\\\nPASSWORD=demo-value')).toBe(`# note!\\\nPASSWORD=${HIDDEN}`);
+        expect(redactSecrets('echo hi # c\\\nPASSWORD=demo-value next')).toBe(`echo hi # c\\\nPASSWORD=${HIDDEN} next`);
+        expect(redactSecrets('echo hi # c\\\nPASSWORD=demo-value next')).not.toContain('demo-value');
+        // a real continuation is still taken out, in a name too, and a # in a quote, in `$#` or after a word is no comment
+        expect(redactSecrets('PASS\\\nWORD=demo-value next')).toBe(`PASSWORD=${HIDDEN} next`);
+        expect(redactSecrets("echo '# x\\\n' PASSWORD=demo-value")).toBe(`echo '# x\\\n' PASSWORD=${HIDDEN}`);
+        // `#` in `$#` or inside a word begins no comment: the backslash and the line break there are a continuation, which joins the lines as Bash does
+        expect(redactSecrets('echo $# \\\nPASSWORD=demo-value next')).not.toContain('demo-value');
+        expect(redactSecrets('echo a#b \\\nPASSWORD=demo-value next')).not.toContain('demo-value');
+    });
+
     it('also hides it where the computer says why it could not go on, and in a label', () => {
         expect(whyOf('It refused me: PASSWORD=two\\ words [[failed]]')).not.toContain('words');
         expect(safeStepLabel('Signing in with PASSWORD=two\\ words now')).toBe(`Signing in with PASSWORD=${HIDDEN} now`);

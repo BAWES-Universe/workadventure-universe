@@ -1686,9 +1686,10 @@ export class AdminApiService {
      * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. A start that takes longer than we wait (or that a gateway
      * cut) is not a failure of the computer when Orbit PROVES that this start made a job (one for this person, from this conversation, with this title, begun
      * since the ask went out, running or waiting): the machine is being made, and it answers `starting`. That the person has some other job going proves
-     * nothing about this one. When Orbit says there is no such job (or one that failed or stopped) the start throws as any failure does. When it CANNOT say
-     * (no origin to ask by, an Orbit without the read, a damaged answer, the read failing) the answer is `unknown`: the slow start may well have made a job,
-     * and telling the person it failed would have them ask again and pay for a second one.
+     * nothing about this one. When Orbit says the job it made has failed or stopped the start throws as any failure does (it was made and is over). When it
+     * CANNOT say (no origin to ask by, an Orbit without the read, a damaged answer, the read failing) or finds no such job YET (`started: null`: the POST
+     * may still be processed and commit after this one read) the answer is `unknown`: the slow start may well make a job, and telling the person it failed
+     * would have them ask again and pay for a second one.
      */
     async startComputerJob(
         viaBotId: string,
@@ -1709,14 +1710,13 @@ export class AdminApiService {
                     // The wait itself, and a few seconds more for the time it took the ask to be sent and written
                     sinceSeconds: (Date.now() - began) / 1000 + COMPUTER_STARTED_LOOK_SLACK_SECONDS,
                 });
-                if (made === 'unknown') return { ok: false, reason: 'unknown' };
-                if (made !== 'none') {
-                    if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
-                    // A job that failed or stopped: it was made and is over, which is what a failed start says too
-                    if (COMPUTER_JOB_OVER.includes(made.status)) throw error;
-                    // A state this server does not know: nothing can be said of it
-                    return { ok: false, reason: 'unknown' };
-                }
+                // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
+                if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };
+                if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
+                // A job that failed or stopped: it was made and is over, which is what a failed start says too
+                if (COMPUTER_JOB_OVER.includes(made.status)) throw error;
+                // A state this server does not know: nothing can be said of it
+                return { ok: false, reason: 'unknown' };
             }
             throw error;
         }
@@ -1786,18 +1786,18 @@ export class AdminApiService {
 
     /**
      * The model relay's durable record of how a job's model calls ended (the fault record Orbit judges a failed job's refund by): one row per job and
-     * call, idempotent. True when Orbit took the rows, or answered with its own "Job not found" (it has no such job, so there is nothing to keep them for).
-     * False when it could not be reached, failed, or has no such route yet (a bare 404 or 405 from an older Orbit): the rows are kept and sent again,
+     * call, idempotent. True when Orbit took the rows. `'missing'` when it answered with its own "Job not found" (it has no such job, so there is nothing to keep
+     * them for: the rows are dropped, but Orbit read none of them, so this is not Orbit taking evidence). False when it could not be reached, failed, or has no such route yet (a bare 404 or 405 from an older Orbit): the rows are kept and sent again,
      * so they are still there once Orbit is upgraded. `'rejected'` when Orbit answered with its own 400 ("Invalid request": one row it cannot read
      * rejects the whole batch, and the same rows are refused every time): the caller splits the batch to find the row.
      */
-    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected'> {
+    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected' | 'missing'> {
         try {
             const response = await this.brickCall<{ ok?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
             return response.status === 200 && response.data?.ok !== false;
         } catch (error) {
             // Only Orbit's own answer for an unknown job is final; a missing route answers 404 or 405 with something else
-            if (axios.isAxiosError(error) && error.response?.status === 404 && (error.response.data as { error?: unknown } | undefined)?.error === 'Job not found') return true;
+            if (axios.isAxiosError(error) && error.response?.status === 404 && (error.response.data as { error?: unknown } | undefined)?.error === 'Job not found') return 'missing';
             // Likewise only Orbit's own words for a refused body: a bare 400 (a proxy, a gateway) says nothing of the rows and is tried again
             if (axios.isAxiosError(error) && error.response?.status === 400 && (error.response.data as { error?: unknown } | undefined)?.error === 'Invalid request') return 'rejected';
             return false;

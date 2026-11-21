@@ -50,9 +50,9 @@ describe('the fault record Orbit keeps of a computer job’s model calls', () =>
         expect(seen.body).toEqual({ faults: [row] });
     });
 
-    it('is true when Orbit answers that it has no such job: there is nothing to keep the rows for', async () => {
+    it('is "missing", not true, when Orbit answers that it has no such job: there is nothing to keep the rows for, but Orbit read none of them', async () => {
         answer = { status: 404, body: { error: 'Job not found' } };
-        expect(await service.computerJobFaults('b', 'j', [row])).toBe(true);
+        expect(await service.computerJobFaults('b', 'j', [row])).toBe('missing');
     });
 
     it('is false when the route is missing (an older Orbit answers 404 or 405 without its own words): the rows are kept for after the upgrade', async () => {

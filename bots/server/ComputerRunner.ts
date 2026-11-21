@@ -190,7 +190,7 @@ export interface RunnerDeps {
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
     /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
     runId?: () => string;
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince'>>;
     /**
      * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
      * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
@@ -440,16 +440,31 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         // Only for a turn this process saw from its beginning: after a restart the notes know nothing of a call that was taken up before it, so a turn taken up
         // by reconnecting is not judged pool-only from the refusals seen since (the turns it starts itself, and Orbit's own record, still are)
         const poolBusy = () => since !== null && seenFromStart() && deps.refusals?.onlyPoolBusySince?.(job.jobId, since) === true;
+        // Looked at again at the end of the wait: a call taken up meanwhile means the pool has room again, and that includes a call taken up by the relay of
+        // ANOTHER bot server (the machine's calls reach whichever one the load balancer picks, and this server's own notes know only its own)
+        const giveUpIfStill = async () => {
+            if (turnController.signal.aborted || !poolBusy()) return;
+            if (since !== null && deps.refusals?.acceptedAnywhereSince) {
+                let taken = true;
+                try {
+                    taken = await deps.refusals.acceptedAnywhereSince(job.jobId, since);
+                } catch {
+                    taken = true;
+                }
+                if (taken) return;
+                // The read took a moment: the turn may have ended, or a call been taken up here, meanwhile
+                if (turnController.signal.aborted || !poolBusy()) return;
+            }
+            gaveUp = true;
+            turnController.abort();
+            void orbit.cancel(job.jobId).catch(() => undefined);
+        };
         const watchPool = () => {
             if (turnController.signal.aborted) return;
             if (poolBusy()) {
                 poolTimer ??= setTimeout(() => {
                     poolTimer = undefined;
-                    // Looked at again: a call taken up meanwhile means the pool has room again
-                    if (turnController.signal.aborted || !poolBusy()) return;
-                    gaveUp = true;
-                    turnController.abort();
-                    void orbit.cancel(job.jobId).catch(() => undefined);
+                    void giveUpIfStill();
                 }, timing.poolGiveUpMs ?? RUNNER_TIMING.poolGiveUpMs);
             } else if (poolTimer) {
                 clearTimeout(poolTimer);
@@ -910,15 +925,27 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // Hermes can hand an error of ours back as a finished turn, with the error as its words or with none: the relay says whether the
             // turn's last call failed for a fault of ours (nothing answered after it), and then the turn is a bad one that is ours, words or not
             const silent = !result.failed && result.words.trim() === '';
-            const ourFault = (!result.failed && readFrom !== null && deps.refusals?.endedOnFault?.(job.jobId, readFrom)) || false;
-            if (result.failed || silent || ourFault) {
+            const endedOnOurFault = () => (!result.failed && readFrom !== null && deps.refusals?.endedOnFault?.(job.jobId, readFrom)) || false;
+            let ourFault = endedOnOurFault();
+            let badTurn = result.failed || silent || ourFault;
+            // A turn that failed or said nothing and in which no call of the job ever reached the relay: the machine could not get to it (or never
+            // tried), and the model is ours, so no word of the job's made it fail. A confirmed fault of ours, noted before the streak is read
+            // Only for a turn this process saw from its beginning: one taken up by reconnecting (after a restart of the bot server) may have made calls before
+            // Calls land on whichever bot server the load balancer picks, so "none reached this server" is not "none reached the relay": the other servers are
+            // asked too (through the shared store), and when that cannot be told nothing is concluded
+            let noCall = false;
+            if (badTurn && sawItAll && readFrom !== null) {
+                noCall = await noCallReachedAnyRelay(job.jobId, readFrom);
+                // The job was stopped while the other servers were asked: nothing of this turn is recorded or ended on, and no finish is sent for it
+                if (signal.aborted) return;
+                // The asking took a moment, in which a call of the turn may have been answered (a recovery): the turn is judged, and attributed below, by the
+                // state of the notes NOW, one state for both
+                ourFault = endedOnOurFault();
+                badTurn = result.failed || silent || ourFault;
+            }
+            if (badTurn) {
                 const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
-                // A turn that failed or said nothing and in which no call of the job ever reached the relay: the machine could not get to it (or never
-                // tried), and the model is ours, so no word of the job's made it fail. A confirmed fault of ours, noted before the streak is read
-                // Only for a turn this process saw from its beginning: one taken up by reconnecting (after a restart of the bot server) may have made calls before
-                // Calls land on whichever bot server the load balancer picks, so "none reached this server" is not "none reached the relay": the other servers are
-                // asked too (through the shared store), and when that cannot be told nothing is concluded
-                if (sawItAll && readFrom !== null && (await noCallReachedAnyRelay(job.jobId, readFrom))) noteNoRelay(job, turnNo, run, 'no_call');
+                if (noCall && readFrom !== null) noteNoRelay(job, turnNo, run, 'no_call');
                 bad += 1;
                 badTurns.push(turnNo);
                 // A confirmed fault of Universe's in any turn of the streak (our key refused, no route, no room, a model gone) makes the ending ours, whatever

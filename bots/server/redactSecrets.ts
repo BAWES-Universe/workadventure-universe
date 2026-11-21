@@ -42,11 +42,20 @@ const ASSIGNMENT_START = /(^|[\s;&|?(])([A-Za-z_][A-Za-z0-9_]*)=/g;
  */
 function endOfShellWord(text: string, from: number, origin: number[]): number {
     const end = text.length;
+    // One work budget for the whole value, across every scan inside it: a value of a few hundred characters that holds expansions inside expansions inside
+    // double quotes could otherwise be scanned over and over (a scan that has to try two readings reads what is inside each of them once for each reading,
+    // so every level doubles the work) and hold the bot server's event loop. When it runs out, the end cannot be told: the rest of the value is hidden
+    let budget = Math.max(2000, 12 * (end - from));
+    const spend = (): void => {
+        if (--budget < 0) throw OUT_OF_WORK;
+    };
     // Where a line continuation was taken out, a physical line ended: a comment does not go on past it, and what follows it begins a line
     const cut = (index: number): boolean => index > 0 && origin[index] > origin[index - 1] + 1;
     const lineStarts = new Set<number>();
     // The character at `at` is escaped by a backslash before it (an odd run of them): `\ #` is one word, not a blank and a comment
     const escapedAt = (at: number): boolean => {
+        // A line break is never escaped here: the continuations are out of the text, so a backslash left before one ends a comment's line, and continues nothing
+        if (text[at] === '\n') return false;
         let run = 0;
         while (at - 1 - run >= 0 && text[at - 1 - run] === '\\') run++;
         return run % 2 === 1;
@@ -60,6 +69,7 @@ function endOfShellWord(text: string, from: number, origin: number[]): number {
         // `start` is the character after the opening quote; returns the index after the closing quote (or the end)
         let i = start;
         while (i < end) {
+            spend();
             const c = text[i];
             if ((quote === '"' || ansi) && c === '\\') i += 2;
             else if (c === quote) return i + 1;
@@ -72,6 +82,7 @@ function endOfShellWord(text: string, from: number, origin: number[]): number {
     const backticks = (start: number): number => {
         let i = start;
         while (i < end) {
+            spend();
             if (text[i] === '\\') i += 2;
             else if (text[i] === '`') return i + 1;
             else if (heredocAt(i)) return end;
@@ -85,6 +96,7 @@ function endOfShellWord(text: string, from: number, origin: number[]): number {
         let depth = 1;
         let i = open + 1;
         while (i < end) {
+            spend();
             const c = text[i];
             if (c === '\\') i += 2;
             else if (c === "'") i = quoted(i + 1, "'");
@@ -102,34 +114,46 @@ function endOfShellWord(text: string, from: number, origin: number[]): number {
         }
         return end;
     };
-    // `open` is the index of the first `(` of a `$((`: Bash reads it as arithmetic (up to the `))` that balances it: no comment, here-document or `case` in it)
-    // and, when that does not fit, as a command substitution that begins with a parenthesis. Which one it was is not told here: the later end of the two
-    const arithmetic = (open: number): number => {
+    // `open` is the index of the first `(` of a `$((`. Bash reads it as arithmetic only when what follows the two parentheses holds balanced parentheses up to
+    // a `)` that is IMMEDIATELY followed by another `)` (no comment, here-document or `case` in it: `<<` is a shift there); otherwise it is a command
+    // substitution that begins with a subshell. Returns the index after the `))`, or null when it is not arithmetic, or the end when no `)` closes it at all
+    const arithmetic = (open: number): number | null => {
         let depth = 0;
-        let i = open;
+        let i = open + 2;
         while (i < end) {
+            spend();
             const c = text[i];
             if (c === '\\') i += 2;
             else if (c === "'") i = quoted(i + 1, "'");
             else if (c === '"') i = quoted(i + 1, '"');
             else if (c === '`') i = backticks(i + 1);
+            else if (c === '$' && (text[i + 1] === '(' || text[i + 1] === '{')) i = nested(i + 1);
             else if (c === '(') {
                 depth++;
                 i++;
             } else if (c === ')') {
-                depth--;
-                i++;
-                if (depth === 0) return i;
+                if (depth > 0) {
+                    depth--;
+                    i++;
+                } else return text[i + 1] === ')' ? i + 2 : null;
             } else i++;
         }
         return end;
     };
     // `open` is the index of the `(` or `{` after a `$`; returns the index after its balanced close (or the end)
-    const nested = (open: number): number => (text[open] === '(' && text[open + 1] === '(' ? Math.max(arithmetic(open), command(open)) : command(open));
+    const nested = (open: number): number => {
+        spend();
+        if (text[open] === '(' && text[open + 1] === '(') {
+            const asArithmetic = arithmetic(open);
+            if (asArithmetic !== null) return asArithmetic;
+        }
+        return command(open);
+    };
     const command = (open: number): number => {
         const stack: string[] = [text[open] === '(' ? ')' : '}'];
         let i = open + 1;
         while (i < end && stack.length > 0) {
+            spend();
             const c = text[i];
             const inCommand = stack[stack.length - 1] === ')';
             if (c === '\\') i += 2;
@@ -163,20 +187,29 @@ function endOfShellWord(text: string, from: number, origin: number[]): number {
         return stack.length > 0 ? end : i;
     };
     let i = from;
-    // An array: `NAME=(a b)`
-    if (text[i] === '(') i = nested(i);
-    while (i < end) {
-        const c = text[i];
-        if (c === '\\') i += 2;
-        else if (c === '"' || c === "'") i = quoted(i + 1, c);
-        else if (c === '$' && text[i + 1] === "'") i = quoted(i + 2, "'", true);
-        else if (c === '`') i = backticks(i + 1);
-        else if (c === '$' && (text[i + 1] === '(' || text[i + 1] === '{')) i = nested(i + 1);
-        else if (/[\s&;|)]/.test(c)) break;
-        else i++;
+    try {
+        // An array: `NAME=(a b)`
+        if (text[i] === '(') i = nested(i);
+        while (i < end) {
+            spend();
+            const c = text[i];
+            if (c === '\\') i += 2;
+            else if (c === '"' || c === "'") i = quoted(i + 1, c);
+            else if (c === '$' && text[i + 1] === "'") i = quoted(i + 2, "'", true);
+            else if (c === '`') i = backticks(i + 1);
+            else if (c === '$' && (text[i + 1] === '(' || text[i + 1] === '{')) i = nested(i + 1);
+            else if (/[\s&;|)]/.test(c)) break;
+            else i++;
+        }
+    } catch (error) {
+        if (error !== OUT_OF_WORK) throw error;
+        return end;
     }
     return Math.min(i, end);
 }
+
+/** Thrown inside `endOfShellWord` when its work budget is spent. */
+const OUT_OF_WORK = new Error('out of work');
 
 /** A part of a text to say as something else, by its place in the original text. */
 interface Span {
@@ -187,13 +220,28 @@ interface Span {
     weak?: true;
 }
 
-/** Takes out the line continuations (a backslash before a line break, not itself escaped), keeping where each character of what is left stood. */
+/**
+ * Takes out the line continuations (a backslash before a line break, not itself escaped), keeping where each character of what is left stood. Not in a
+ * comment: a `#` that begins a word (outside quotes) comments out the rest of its line, and a backslash at the end of that line continues nothing, so
+ * the line break stays and the line after it begins a line of its own.
+ */
 function joinContinuations(text: string): { logical: string; at: number[] } {
     let logical = '';
     const at: number[] = [];
     let run = 0;
+    let comment = false;
+    let quote: '"' | "'" | null = null;
     for (let i = 0; i < text.length; i++) {
         const c = text[i];
+        const escaped = run % 2 === 1;
+        if (comment) {
+            // To the end of the physical line, whatever it holds
+            if (c === '\n') comment = false;
+            run = 0;
+            logical += c;
+            at.push(i);
+            continue;
+        }
         if (c === '\\') {
             run++;
             // A backslash that is not escaped and is followed by a line break is a continuation: it and the line break go
@@ -202,7 +250,14 @@ function joinContinuations(text: string): { logical: string; at: number[] } {
                 run = 0;
                 continue;
             }
-        } else run = 0;
+        } else {
+            run = 0;
+            if (quote === null && c === '#' && !escaped && (logical === '' || /[\s;&|()<>]/.test(logical[logical.length - 1]))) comment = true;
+            else if (!escaped && (c === '"' || c === "'")) {
+                if (quote === null) quote = c;
+                else if (quote === c) quote = null;
+            }
+        }
         logical += c;
         at.push(i);
     }
@@ -275,6 +330,8 @@ export function redactSecrets(text: string): string {
     let at = 0;
     for (let i = 0; i < spans.length; ) {
         let chosen = spans[i];
+        // The union of the spans that overlap begins where the earliest of them does (they are sorted by start)
+        const unionStart = chosen.start;
         let end = chosen.end;
         let j = i + 1;
         // Spans that overlap are one part: all of it goes, said as the longest says it (a strong one before a weak one when they are as long)
@@ -285,8 +342,10 @@ export function redactSecrets(text: string): string {
             const same = next.end - next.start === chosen.end - chosen.start;
             if (longer || (same && chosen.weak && !next.weak)) chosen = next;
         }
-        if (chosen.start >= at) {
-            out += text.slice(at, chosen.start) + chosen.text;
+        if (unionStart >= at) {
+            // All of the union goes. The longest span says it, unless it begins later than the union does (a header that begins inside a URL's login and goes
+            // on past it): then what it says would leave the front of the union showing, and the union is hidden as a whole
+            out += text.slice(at, unionStart) + (chosen.start === unionStart ? chosen.text : HIDDEN);
             at = end;
         }
         i = j;

@@ -39,6 +39,16 @@ end
 return removed
 `;
 
+/**
+ * Writes the field ARGV[1] = ARGV[2] of the hash KEYS[1] and renews its life to ARGV[3] seconds, as ONE step: a hash that ran out of life between a write and a
+ * separate EXPIRE would take the field with it (EXPIRE answers 0 for a key that is gone) while the writer believed it was stored.
+ */
+export const SET_AND_RENEW = `
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return 1
+`;
+
 /** A key of another kind that matches the prefix (Redis answers WRONGTYPE to a hash command on it): not ours, and no reason to stop reading the others. */
 const wrongType = (error: unknown): boolean => error instanceof Error && /^WRONGTYPE\b/.test(error.message);
 export const EVIDENCE_TTL_SECONDS = Math.round(EVIDENCE_KEEP_MS / 1000);
@@ -93,9 +103,8 @@ export class RedisEvidenceStore implements EvidenceStore {
         try {
             const client = this.client();
             const key = EVIDENCE_PREFIX + jobId;
-            await this.within(client.hSet(key, row.callId, JSON.stringify({ botId, row })));
-            // The life of the hash starts again with each write
-            await this.within(client.expire(key, EVIDENCE_TTL_SECONDS));
+            // The field and the new life of the hash (it starts again with each write) in one step
+            await this.within(client.eval(SET_AND_RENEW, { keys: [key], arguments: [row.callId, JSON.stringify({ botId, row }), String(EVIDENCE_TTL_SECONDS)] }));
             return true;
         } catch {
             return false;
@@ -116,8 +125,8 @@ export class RedisEvidenceStore implements EvidenceStore {
         try {
             const client = this.client();
             const key = DEAD_PREFIX + jobId;
-            await this.within(client.hSet(key, row.callId, JSON.stringify({ botId, row })));
-            await this.within(client.expire(key, DEAD_TTL_SECONDS));
+            // Acknowledged only once the dead-letter copy and its life are both in the store: the pending copy is removed on this answer
+            await this.within(client.eval(SET_AND_RENEW, { keys: [key], arguments: [row.callId, JSON.stringify({ botId, row }), String(DEAD_TTL_SECONDS)] }));
             return true;
         } catch {
             return false;
@@ -228,6 +237,8 @@ export class RedisEvidenceStore implements EvidenceStore {
 export const CALLED_PREFIX = 'computer:called:';
 /** The field a server writes when it could not record a call of a job: `unsure:<server>`. */
 export const UNRECORDED_FIELD = 'unsure:';
+/** The field a server writes when it took up a call of a job (the shared pool had room for it): `accepted:<server>`. Not a call's arrival: never read as one. */
+export const ACCEPTED_FIELD = 'accepted:';
 /** Sets the field of the hash KEYS[1] (ARGV[1]) to the moment ARGV[2] unless it already holds a later one, and gives the hash a life of ARGV[3] seconds. */
 export const KEEP_LATER = `
 local current = tonumber(redis.call('HGET', KEYS[1], ARGV[1]))
@@ -278,6 +289,21 @@ export class RedisSharedCalls implements SharedCalls {
         await this.write(jobId, UNRECORDED_FIELD + this.instanceId, at);
     }
 
+    async noteAccepted(jobId: string, at: number): Promise<void> {
+        await this.write(jobId, ACCEPTED_FIELD + this.instanceId, at);
+    }
+
+    async lastAcceptedByOthers(jobId: string): Promise<number | null> {
+        const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
+        let latest: number | null = null;
+        for (const [field, value] of Object.entries(all)) {
+            if (!field.startsWith(ACCEPTED_FIELD) || field.slice(ACCEPTED_FIELD.length) === this.instanceId) continue;
+            const at = Number(value);
+            if (Number.isFinite(at) && (latest === null || at > latest)) latest = at;
+        }
+        return latest;
+    }
+
     /** Keeps the later of two moments, so the same moment written twice, or a late write, never takes a later one back. */
     private async write(jobId: string, field: string, at: number): Promise<void> {
         const client = this.client();
@@ -289,6 +315,8 @@ export class RedisSharedCalls implements SharedCalls {
         const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
         let latest: number | null = null;
         for (const [field, value] of Object.entries(all)) {
+            // That a server took a call up is not that a call arrived
+            if (field.startsWith(ACCEPTED_FIELD)) continue;
             // A server's own writes are known to its own notes exactly; a call it could not record counts like one it did
             const instance = field.startsWith(UNRECORDED_FIELD) ? field.slice(UNRECORDED_FIELD.length) : field;
             if (instance === this.instanceId) continue;

@@ -121,6 +121,10 @@ export interface SharedCalls {
     noteUnrecorded(jobId: string, at: number): Promise<void>;
     /** The latest moment (ms) another bot server saw a call of the job reach its relay (or could not record one), or null for none. Rejects when the shared store cannot be read. */
     lastCalledByOthers(jobId: string): Promise<number | null>;
+    /** This server took up a call of the job (the shared pool had room for it), at this moment (ms). Fire and forget. Not an arrival: `lastCalledByOthers` does not read it. */
+    noteAccepted?(jobId: string, at: number): Promise<void>;
+    /** The latest moment (ms) another bot server took up a call of the job, or null for none. Rejects when the shared store cannot be read. */
+    lastAcceptedByOthers?(jobId: string): Promise<number | null>;
 }
 
 /** How long the relay waits for the shared record of a call before it forwards the call anyway (each of its two tries). */
@@ -202,6 +206,12 @@ export interface RefusalNotes {
     /** Whether any call of this job was taken up since this point (or at or after this moment, ms): `0` asks whether one ever was. */
     acceptedSince(jobId: string, since: Since): boolean;
     /**
+     * Whether a call of this job was taken up since this point on ANY bot server: this server's own notes, and the other servers' through the shared store
+     * (their relays take the calls the machine sends them, the runner of the job lives on one). True when it cannot be told (the store cannot be read, or the
+     * point has no moment): a turn is given up only on what is known. Without a shared store it is `acceptedSince`.
+     */
+    acceptedAnywhereSince(jobId: string, since: Since): Promise<boolean>;
+    /**
      * Whether the calls of this job since this point were ALL refused for want of room in the shared pool: at least one was, CONFIRMED (kind `fault`), none was
      * taken up, and nothing else refused a call either (the person's allowance or a rule of theirs, a refusal that is theirs).
      */
@@ -220,9 +230,11 @@ export const REFUSAL_NOTE_KEEP_MS = 60 * 60 * 1000;
 export interface RefusalOptions {
     /**
      * Where rows go: Orbit's fault record. Resolves false when Orbit could not take them (they are kept and tried again), and `'rejected'` when Orbit
-     * answered that it will not take THESE rows, whatever the time (its own 400): the batch is split to find the row that is refused.
+     * answered that it will not take THESE rows, whatever the time (its own 400): the batch is split to find the row that is refused. `'missing'` when
+     * Orbit says it has no such job (its own "Job not found"): there is nothing to keep the rows for, so they are removed, but it is NOT proof that Orbit
+     * accepts evidence (it did not read the rows), so it never counts as Orbit taking rows.
      */
-    sink?: (botId: string, jobId: string, rows: CallRow[]) => Promise<boolean | 'rejected'>;
+    sink?: (botId: string, jobId: string, rows: CallRow[]) => Promise<boolean | 'rejected' | 'missing'>;
     /** How long to wait before each new try to send rows. */
     retryMs?: number[];
     /** How long to wait, after those tries all failed, before each later try in the background (rows are kept an hour in all). */
@@ -245,11 +257,23 @@ export interface RefusalOptions {
      * a row has waited for Orbit longer than `EVIDENCE_UNACKED_MS` (once per row), `dead_letter` when Orbit refused a row ALONE (its own 400) while it took
      * others: the row was moved to the dead letters (kept 30 days, never deleted, replayable under its id) and is no longer sent, `all_refused` when Orbit
      * refused a row and has taken none lately (a contract or version mismatch, or Orbit broken: the rows are kept and sent again like when Orbit is away;
-     * once until Orbit takes a row again), `called_unrecorded` when the shared record of a call of a job could not be written twice (once per job; the call
-     * still went ahead). Carries ids only (callId is empty for that one). Never throws into the caller's way.
+     * once until Orbit takes a row again), `called_unrecorded` when the shared record of a call of a job could not be written twice (once per job: the call
+     * may have gone ahead or been refused (503), that depends on whether the job's runner works here, so this says only that it was not recorded). Carries ids only (callId is empty for that one). Never throws into the caller's way.
      */
     report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded', info: { jobId: string; callId: string }) => void;
 }
+
+/**
+ * What each thing `report` tells is called for the operators (Sentry). `called_unrecorded` claims nothing about what became of the call: with the job's runner
+ * on this server it goes ahead, with the runner elsewhere the relay refuses it (503) without forwarding it.
+ */
+export const FAULT_EVIDENCE_MESSAGES = {
+    not_durable: 'Fault evidence not durable',
+    unacked: 'Fault evidence not acknowledged by Orbit for an hour',
+    dead_letter: 'Fault evidence row refused by Orbit alone and set aside (kept 30 days)',
+    all_refused: 'Orbit refuses every fault evidence row it is sent: kept and sent again',
+    called_unrecorded: 'A computer model call could not be recorded for the other bot servers (the call may have been refused with a 503 or have gone ahead: the relay log of the job says which)',
+} as const;
 
 /** How long a row that Orbit has not taken is kept and sent again, in the store and in memory: 7 days. */
 export const EVIDENCE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
@@ -390,8 +414,10 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         if (confirmed) seen.confirmed = { at: now(), order: count };
         // A call that ended in any way reached the relay
         if (kind !== 'called') seen.called = { at: now(), order: count };
-        // The other bot servers are told (a call of a turn the runner here has left is not noted by anything above, so it is not told either)
-        if (options.shared && tellOthers) {
+        // The other bot servers are told of the ARRIVAL of a call, at its arrival (a call of a turn the runner here has left is not noted by anything above, so it
+        // is not told either). How a call ended (an answer, a fault, a refusal) is local: told at its end it would be a new arrival at the time it ended, and a
+        // call of turn 4 that finishes in turn 5 would hide a genuine no_call of turn 5 from the runner on another server
+        if (options.shared && tellOthers && kind === 'called') {
             try {
                 options.shared.noteCalled(jobId, now()).catch(() => undefined);
             } catch {
@@ -431,11 +457,18 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
      * a batch for one bad row), the batch is split in halves so the good rows get through.
      */
     const deliver = async (entry: Queue, jobId: string, batch: CallRow[], sink: NonNullable<RefusalOptions['sink']>, pass: { suspects: Set<CallRow> }): Promise<boolean> => {
-        let answer: boolean | 'rejected' = false;
+        let answer: boolean | 'rejected' | 'missing' = false;
         try {
             answer = await sink(entry.botId, jobId, batch);
         } catch {
             answer = false;
+        }
+        if (answer === 'missing') {
+            // Cleaned up like rows taken, but Orbit read none of them: `orbitTookAt` is for the times Orbit ACCEPTED evidence, which tells a refusal of one
+            // row from a contract that no longer fits
+            settle(entry, jobId, batch);
+            leaveDead(entry, jobId, batch);
+            return true;
         }
         if (answer === true) {
             orbitTookAt = now();
@@ -713,7 +746,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         note(jobId) {
             forget();
             last.set(jobId, { at: now(), order: ++count });
-            mark(jobId, 'called');
+            // A refusal is the end of a call that arrived before: its arrival was told then
+            mark(jobId, 'called', false, false);
         },
         sawSince(jobId, since) {
             const seen = last.get(jobId);
@@ -762,15 +796,17 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             // The runner of the job is not working it here now (a turn in the notes proves nothing: the job may have been taken over by another server), so it can never see this call, and the record it would have read could
             // not be written: the call is not forwarded. Saying so apart would not help (the store is failing for this server, and the runner reads a store that
             // may be well): the refusal is the fact, and it is a fault of ours that Orbit hears of through the sink
-            let here = false;
-            try {
-                here = options.runsHere?.(jobId) === true;
-            } catch {
-                here = false;
-            }
-            if (!here) return 'unservable';
-            // The runner is here: its own notes see the call. The other servers are told apart that a call was not recorded, all the same
-            await attempt('unrecorded');
+            const runnerHere = (): boolean => {
+                try {
+                    return options.runsHere?.(jobId) === true;
+                } catch {
+                    return false;
+                }
+            };
+            if (!runnerHere()) return 'unservable';
+            // The runner is here: its own notes see the call. The other servers are told apart that a call was not recorded, all the same. Waiting for that
+            // takes a moment, in which this process may stop the job: when the write failed too, whoever runs the job now has no way to see the call
+            if (!(await attempt('unrecorded')) && !runnerHere()) return 'unservable';
             return false;
         },
         calledSince(jobId, since) {
@@ -786,14 +822,42 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             if (from === undefined) return true;
             try {
                 const other = await options.shared.lastCalledByOthers(jobId);
-                return other !== null && other >= from - SHARED_CALL_SKEW_MS;
+                if (other !== null && other >= from - SHARED_CALL_SKEW_MS) return true;
+                // The read excludes this process's own fields, and it took a moment: a call that reached THIS process meanwhile is not in what it returned
+                const meanwhile = calls.get(jobId)?.called;
+                return meanwhile !== undefined && within(meanwhile, since);
             } catch {
                 return true;
             }
         },
         accepted(jobId, at) {
             // Taken up in the turn that made the call: one taken up after the runner moved on belongs to the turn it began in, not to the one that is going now
-            if (!staleCall(jobId, at)) mark(jobId, 'accepted');
+            if (staleCall(jobId, at)) return;
+            mark(jobId, 'accepted');
+            // The other servers are told, for the runner of the job that may live on one of them and judges the turn by what the pool answered
+            if (options.shared?.noteAccepted) {
+                try {
+                    options.shared.noteAccepted(jobId, now()).catch(() => undefined);
+                } catch {
+                    /* telling the other servers never holds a call */
+                }
+            }
+        },
+        async acceptedAnywhereSince(jobId, since) {
+            const seen = calls.get(jobId)?.accepted;
+            if (seen !== undefined && within(seen, since)) return true;
+            if (!options.shared?.lastAcceptedByOthers) return false;
+            const from = typeof since === 'number' ? since : since.at;
+            if (from === undefined) return true;
+            try {
+                const other = await options.shared.lastAcceptedByOthers(jobId);
+                if (other !== null && other >= from - SHARED_CALL_SKEW_MS) return true;
+                // A call taken up HERE while the read was pending is not in what it returned
+                const meanwhile = calls.get(jobId)?.accepted;
+                return meanwhile !== undefined && within(meanwhile, since);
+            } catch {
+                return true;
+            }
         },
         acceptedSince(jobId, since) {
             const seen = calls.get(jobId)?.accepted;

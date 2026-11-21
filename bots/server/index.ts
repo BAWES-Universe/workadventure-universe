@@ -36,7 +36,7 @@ import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
 import { createFaultReplayRoute } from './ComputerFaultReplayRoute';
-import { createRefusalNotes } from './ComputerRefusals';
+import { createRefusalNotes, FAULT_EVIDENCE_MESSAGES } from './ComputerRefusals';
 import { RedisEvidenceStore, RedisSharedCalls } from './ComputerEvidenceStore';
 import { createComputerRunner, probeRelay, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
@@ -97,13 +97,6 @@ const aiService = botManager.getAIService();
 // and records how each model call ended in Orbit's durable fault record, which Orbit judges a failed job's refund by (never held up for it)
 // The rows Orbit has not taken yet are also kept in the shared store (Redis), so a restart of this server does not lose the evidence a failed job's
 // refund rests on: they are sent again, unchanged, when the server is back (see resumeEvidence)
-const FAULT_EVIDENCE_MESSAGES = {
-    not_durable: 'Fault evidence not durable',
-    unacked: 'Fault evidence not acknowledged by Orbit for an hour',
-    dead_letter: 'Fault evidence row refused by Orbit alone and set aside (kept 30 days)',
-    all_refused: 'Orbit refuses every fault evidence row it is sent: kept and sent again',
-    called_unrecorded: 'A computer model call could not be recorded for the other bot servers (it went ahead)',
-} as const;
 const computerRefusals = createRefusalNotes(Date.now, {
     sink: (botId, jobId, rows) => adminApiService.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
     store: new RedisEvidenceStore(() => botRegistry.evidenceClient()),

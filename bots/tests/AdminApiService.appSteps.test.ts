@@ -96,9 +96,9 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         expect(since).toBeLessThanOrEqual(10);
     });
 
-    it('throws, as any failure of a start does, when Orbit answers that there is no such job: the person has another job running and the start never reached Orbit', async () => {
+    it('answers "unknown" when this one read finds no job yet (`started: null`): the start may still be processed and commit after the read, so it is no proof that none will be made', async () => {
         const { orbit } = slowStart(() => ({ data: { available: true, on: true, busy: true, started: null } }));
-        await expect(orbit.startComputerJob('b', 'u', ASK)).rejects.toThrow('timeout');
+        expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
     });
 
     it('throws when the job it made has failed or stopped: it was made and is over, as a failed start says', async () => {
@@ -108,7 +108,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         }
     });
 
-    it('says "unknown", not that it failed, when nobody can tell whether the start made a job: an Orbit without the read, a damaged answer, the read failing, no conversation to ask by', async () => {
+    it('says "unknown", not that it failed, when nobody can tell whether the start made a job (and not a null, tested apart): an Orbit without the read, a damaged answer, the read failing, no conversation to ask by', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         // the person has another job running, and the old busy read said so: no proof of anything about this start
         const reads: unknown[] = [

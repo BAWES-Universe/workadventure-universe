@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { KEEP_LATER, RedisSharedCalls, type EvidenceRedis } from '../server/ComputerEvidenceStore';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, type CallRow, type EvidenceStore, type SharedCalls } from '../server/ComputerRefusals';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, type CallRow, type EvidenceStore, type SharedCalls } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -812,7 +812,7 @@ describe('the evidence kept before the money decision is final, and delivered af
          * on its own: the sink holds every answer until `open()`, so the rows that are recorded meanwhile are sent together in the next batch.
          */
         const orbit = (bad: Set<string>) => {
-            const state = { away: false, awayForOnly: undefined as string | undefined };
+            const state = { away: false, awayForOnly: undefined as string | undefined, awayWhenHas: undefined as string | undefined };
             let open!: () => void;
             const gate = new Promise<void>((resolve) => (open = resolve));
             const taken: string[] = [];
@@ -821,7 +821,7 @@ describe('the evidence kept before the money decision is final, and delivered af
                 await gate;
                 const ids = rows.map((row) => row.callId);
                 calls.push(ids);
-                if (state.away || (state.awayForOnly !== undefined && ids.join() === state.awayForOnly)) return false;
+                if (state.away || (state.awayForOnly !== undefined && ids.join() === state.awayForOnly) || (state.awayWhenHas !== undefined && ids.includes(state.awayWhenHas) && !ids.some((id) => bad.has(id)))) return false;
                 if (ids.some((id) => bad.has(id))) return 'rejected';
                 taken.push(...ids);
                 return true;
@@ -889,18 +889,27 @@ describe('the evidence kept before the money decision is final, and delivered af
             expect(told).toEqual(['dead_letter']);
         });
 
-        it('stops where Orbit goes away in the middle of a split, and sends the rest again later with the same call ids', async () => {
+        it('stops where Orbit goes away in the middle of a split, after a good child was taken, and sends only the rest again later, with the same call ids', async () => {
             const o = orbit(new Set(['bad']));
             const notes = createRefusalNotes(() => 1000, { retryMs: [], laterMs: [], sink: o.sink });
-            o.state.awayForOnly = 'b';
-            for (const id of ['a', 'b', 'bad', 'c']) notes.record('bot', 'job', call(id));
+            // the batch [b, bad, c, d] is split in halves: [b, bad] is split again and its child [b] is TAKEN, then Orbit goes away for the other half [c, d]
+            o.state.awayWhenHas = 'c';
+            for (const id of ['a', 'b', 'bad', 'c', 'd']) notes.record('bot', 'job', call(id));
             o.open();
-            // [a] went first; then [b, bad, c] was refused, split into [b, bad] (refused) and [b], and Orbit was away for [b]
             expect(await notes.flush('job')).toBe(false);
-            expect(o.taken).toEqual(['a']);
-            o.state.awayForOnly = undefined;
+            // [a] went first, and [b] was taken before Orbit went away
+            expect(o.taken).toEqual(['a', 'b']);
+            const before = o.calls.length;
+            o.state.awayWhenHas = undefined;
             expect(await notes.flush('job')).toBe(true);
-            expect([...o.taken].sort()).toEqual(['a', 'b', 'c']);
+            // the retry sends only what Orbit has not dealt with, under the ids they had: the rows it took are not sent again
+            const again = o.calls.slice(before).flat();
+            expect(again).not.toContain('a');
+            expect(again).not.toContain('b');
+            expect([...again].sort()).toEqual(expect.arrayContaining(['bad', 'c', 'd']));
+            expect([...o.taken].sort()).toEqual(['a', 'b', 'c', 'd']);
+            // every call id was taken once
+            expect(new Set(o.taken).size).toBe(o.taken.length);
         });
 
         it('leaves a newer row of the same call id where it is when the older one was refused alone', async () => {
@@ -1282,9 +1291,95 @@ describe('calls of a job that arrive at another bot server', () => {
         expect(store.state.told).toEqual([]);
         a.called('j', { turn: 2 });
         expect(store.state.told).toEqual(['A:j']);
+        // how a call ended is no arrival: nothing more is told by a record, an answer, a fault or a refusal
         a.record('b', 'j', call('c1'));
-        expect(store.state.told.length).toBeGreaterThan(1);
-        expect(new Set(store.state.told)).toEqual(new Set(['A:j']));
+        a.answered('j');
+        a.fault('j');
+        a.note('j');
+        a.accepted('j');
+        expect(store.state.told).toEqual(['A:j']);
+    });
+
+    it('does not publish the end of a call as a new arrival: a call that reached B in an earlier turn and finishes in this one does not hide a genuine no_call of this turn', async () => {
+        const { a, b, advance } = rig();
+        a.turn('j', 4);
+        // the call of turn 4 reaches B and is recorded at its arrival
+        expect(await b.reached('j')).toBe(true);
+        // the runner on A moves on to turn 5 (well after the clocks of the servers can differ)
+        advance(60_000);
+        a.turn('j', 5);
+        const mark = a.mark();
+        advance(10);
+        // the call of turn 4 only now finishes on B, by every kind of ending
+        b.answered('j');
+        b.fault('j');
+        b.record('b', 'j', call('c1'));
+        b.note('j');
+        expect(await a.calledAnywhereSince('j', mark)).toBe(false);
+    });
+
+    it('says a call was taken up when another server took one up, tells the others of its own, and concludes nothing when it cannot tell', async () => {
+        let at = 100_000;
+        const accepted = new Map<string, number>();
+        const reads = { down: false };
+        const forServer = (id: string): SharedCalls => ({
+            noteCalled: async () => undefined,
+            noteUnrecorded: async () => undefined,
+            lastCalledByOthers: async () => null,
+            noteAccepted: async (_job, when) => void accepted.set(id, when),
+            lastAcceptedByOthers: async () => {
+                if (reads.down) throw new Error('down');
+                const others = [...accepted].filter(([server]) => server !== id).map(([, when]) => when);
+                return others.length > 0 ? Math.max(...others) : null;
+            },
+        });
+        const a = createRefusalNotes(() => at, { shared: forServer('A') });
+        const b = createRefusalNotes(() => at, { shared: forServer('B') });
+        a.turn('j', 1);
+        const mark = a.mark();
+        at += 10;
+        expect(await a.acceptedAnywhereSince('j', mark)).toBe(false);
+        // B's relay takes a call up: A's own notes know nothing of it, the shared record does
+        b.accepted('j');
+        expect(a.acceptedSince('j', mark)).toBe(false);
+        expect(await a.acceptedAnywhereSince('j', mark)).toBe(true);
+        // a call of a turn the runner has left is not told
+        b.turn('j', 2);
+        b.accepted('j', { turn: 1 });
+        expect(accepted.get('B')).toBe(100_010);
+        // A's own acceptance counts without the store, and an unreadable store is not "none taken up"
+        const quiet = createRefusalNotes(() => at, { shared: forServer('C') });
+        reads.down = true;
+        expect(await quiet.acceptedAnywhereSince('j', quiet.mark())).toBe(true);
+        reads.down = false;
+        expect(await quiet.acceptedAnywhereSince('j', { order: quiet.mark().order })).toBe(true);
+        // no shared store: this server's own notes
+        const alone = createRefusalNotes(() => at);
+        const from = alone.mark();
+        expect(await alone.acceptedAnywhereSince('j', from)).toBe(false);
+        alone.accepted('j');
+        expect(await alone.acceptedAnywhereSince('j', from)).toBe(true);
+    });
+
+    it('looks at this server’s own notes again after the shared read: a call that reached this server while the read was pending is a call', async () => {
+        let at = 100_000;
+        const shared = {
+            noteCalled: async () => undefined,
+            noteUnrecorded: async () => undefined,
+            lastCalledByOthers: async () => {
+                // a call arrives HERE while the shared store is being read (the read leaves this server's own fields out)
+                at += 5;
+                notes.called('j');
+                return null;
+            },
+        };
+        const notes = createRefusalNotes(() => at, { shared });
+        const mark = notes.mark();
+        at += 5;
+        expect(await notes.calledAnywhereSince('j', mark)).toBe(true);
+        // and with no call anywhere it is still false
+        const quiet = createRefusalNotes(() => at, { shared: { ...shared, lastCalledByOthers: async () => null } });
+        expect(await quiet.calledAnywhereSince('j', quiet.mark())).toBe(false);
     });
 
     it('is not held up or broken by a shared store that fails or throws', async () => {
@@ -1390,6 +1485,26 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(await b.reached('here')).toBe(false);
         });
 
+        it('is unservable when the apart note fails too and the runner stopped the job while it was being written: whoever runs the job now cannot see the call', async () => {
+            const store = sharedStore();
+            let asked = 0;
+            // the runner works the job when the call arrives and has stopped it by the time the apart note failed
+            const b = createRefusalNotes(() => 1000, { shared: store.forServer('B'), runsHere: () => asked++ === 0 });
+            store.state.failCalled = 2;
+            store.state.failUnrecorded = true;
+            expect(await b.reached('j')).toBe('unservable');
+            // the runner still here when the apart note fails: the call goes ahead as before
+            const c = createRefusalNotes(() => 1000, { shared: store.forServer('C'), runsHere: () => true });
+            store.state.failCalled = 2;
+            expect(await c.reached('k')).toBe(false);
+            // the runner stopped the job but the apart note WAS written: whoever runs it now reads that a call may have arrived, so it may go ahead
+            let n = 0;
+            const d = createRefusalNotes(() => 1000, { shared: store.forServer('D'), runsHere: () => n++ === 0 });
+            store.state.failCalled = 2;
+            store.state.failUnrecorded = false;
+            expect(await d.reached('m')).toBe(false);
+        });
+
         it('does not count a turn the notes remember as a runner that is here: a job taken over by another server, or stopped, is not run here now', async () => {
             const { b, store, here } = rig();
             // this server ran the job a minute ago (its notes hold the turn), then the runner stopped it and another server took it over
@@ -1488,6 +1603,22 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(Object.keys(r.hashes.get('computer:called:j') ?? {})).toEqual(['unsure:A']);
             expect(await b.lastCalledByOthers('j')).toBe(12_000);
             expect(await a.lastCalledByOthers('j')).toBeNull();
+            expect(r.ttl.get('computer:called:j')).toBe(3600);
+        });
+
+        it('says apart that a call was taken up: the others read it as such, and it is never read as a call that arrived', async () => {
+            const r = redis();
+            const a = new RedisSharedCalls(() => r.client, 'A');
+            const b = new RedisSharedCalls(() => r.client, 'B');
+            await a.noteAccepted('j', 20_000);
+            expect(Object.keys(r.hashes.get('computer:called:j') ?? {})).toEqual(['accepted:A']);
+            expect(await b.lastAcceptedByOthers('j')).toBe(20_000);
+            expect(await a.lastAcceptedByOthers('j')).toBeNull();
+            // not an arrival: a turn's "no call reached the relay" is not undone by it
+            expect(await b.lastCalledByOthers('j')).toBeNull();
+            // and an arrival is not an acceptance
+            await b.noteCalled('j', 30_000);
+            expect(await a.lastAcceptedByOthers('j')).toBeNull();
             expect(r.ttl.get('computer:called:j')).toBe(3600);
         });
 
@@ -1642,5 +1773,43 @@ describe('whether every call of a turn was refused for want of room in the share
         expect(notes.acceptedSince('a', 0)).toBe(true);
         expect(notes.acceptedSince('a', next)).toBe(false);
         expect(notes.onlyPoolBusySince('a', next)).toBe(true);
+    });
+});
+
+describe('Orbit saying it has no such job', () => {
+    const call = (callId: string) => ({ callId, kind: 'fault' as const, reason: 'relay_down' as const, source: 'universe-ai' as const, route: 'r', providerStatus: 503 as number | null });
+
+    it('clears the rows of that job but is no proof that Orbit takes evidence: a row refused alone afterwards is not set aside as the row’s own fault', async () => {
+        const answers: Record<string, boolean | 'rejected' | 'missing'> = { gone: 'missing', other: 'rejected' };
+        const sent: string[] = [];
+        const told: string[] = [];
+        const notes = createRefusalNotes(() => 1000, {
+            retryMs: [0],
+            laterMs: [],
+            sink: async (_bot, jobId, rows) => {
+                sent.push(`${jobId}:${rows.map((row) => row.callId).join()}`);
+                return answers[jobId] ?? false;
+            },
+            report: (what, info) => told.push(`${what} ${info.jobId}`),
+        });
+        notes.record('bot', 'gone', call('g1'));
+        expect(await notes.flush('gone')).toBe(true);
+        // the rows are gone: nothing is sent for that job again
+        expect(await notes.flush('gone')).toBe(true);
+        expect(sent).toEqual(['gone:g1']);
+        // Orbit has taken NO row so far (it only said the job is not there): a row it refuses alone is a contract that may not fit, kept and sent again
+        notes.record('bot', 'other', call('o1'));
+        expect(await notes.flush('other')).toBe(false);
+        expect(told).toEqual(['all_refused other']);
+    });
+});
+
+describe('what the operators are told about calls that could not be recorded', () => {
+    it('says every kind in words, and does not claim that a refused call went ahead', () => {
+        expect(Object.keys(FAULT_EVIDENCE_MESSAGES).sort()).toEqual(['all_refused', 'called_unrecorded', 'dead_letter', 'not_durable', 'unacked']);
+        // with the runner elsewhere the relay answers 503 and forwards nothing: the alert must not say the call went ahead as a fact
+        expect(FAULT_EVIDENCE_MESSAGES.called_unrecorded).toMatch(/refused/);
+        expect(FAULT_EVIDENCE_MESSAGES.called_unrecorded).toMatch(/or have gone ahead/);
+        expect(FAULT_EVIDENCE_MESSAGES.called_unrecorded).not.toMatch(/\(it went ahead\)/);
     });
 });

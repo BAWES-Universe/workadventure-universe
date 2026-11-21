@@ -122,18 +122,20 @@ describe('use_computer (#2000)', () => {
         expect(String(unknown.note)).toMatch(/Do not say it failed or that it started/);
     });
 
-    it('says a computer that is still being made as starting, in plain words, and not as a failure', async () => {
-        const starting = await run(asking({ ok: false, reason: 'starting' }));
-        // A slow answer with a busy computer is not evidence that THIS job was taken (the busy read may be an earlier job): nothing is promised
-        expect(starting).toMatchObject({ started: false, starting: true });
-        expect(starting).not.toHaveProperty('success');
-        expect(String(starting.note)).toMatch(/your computer is starting/i);
-        expect(String(starting.note)).toMatch(/not known yet whether this job has been taken/);
-        expect(String(starting.note)).toMatch(/ask you again/);
-        expect(String(starting.note)).not.toMatch(/begins by itself/);
-        expect(String(starting.note)).toMatch(/Do not say the job has begun, or will begin by itself/);
-        expect(String(starting.note)).not.toMatch(/could not be reached/);
-        expect(resultOf('c1', starting)).toMatchObject({ ok: true });
+    it('says that Orbit found the job, not that the computer is starting, when a slow start was matched to a queued, waiting or running job', async () => {
+        const found = await run(asking({ ok: false, reason: 'starting' }));
+        expect(found).toMatchObject({ started: false, found: true });
+        expect(found).not.toHaveProperty('success');
+        expect(found).not.toHaveProperty('starting');
+        const note = String(found.note);
+        expect(note).toMatch(/Orbit found this job/);
+        expect(note).toMatch(/bar above this chat/);
+        // nothing about the machine is claimed: only that the job exists and where its state shows
+        expect(note).toMatch(/Do not say your computer is starting, that the job has begun, or will begin by itself/);
+        expect(note).not.toMatch(/Your computer is starting/);
+        expect(note).not.toMatch(/ask you again/);
+        expect(note).not.toMatch(/could not be reached/);
+        expect(resultOf('c1', found)).toMatchObject({ ok: true });
     });
 
     it('marks a job that did not start as a failed step, and a job that is running or waiting its turn as one that worked', async () => {

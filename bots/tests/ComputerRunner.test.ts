@@ -21,7 +21,7 @@ import {
     type TurnOpened,
 } from '../server/ComputerRunner';
 import { readRunnerEvents, runnerEventOf, streamLimits } from '../server/ComputerTurnStream';
-import { createRefusalNotes, type CallRow, type SharedCalls } from '../server/ComputerRefusals';
+import { createRefusalNotes, SHARED_CALL_SKEW_MS, type CallRow, type SharedCalls } from '../server/ComputerRefusals';
 
 const JOB: RunnableJob = { jobId: 'job-1', botId: 'brick-1', title: 'Visa form', brief: 'Two people, Kuwait', writes: true, hasTurn: false };
 const RELAY = 'https://bot-server.example.test';
@@ -1329,12 +1329,14 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
     });
 
     it('is ours when a bad turn of the streak had a confirmed fault, even after a silent one: silent first, then two documented failures on our key', async () => {
-        let call = 0;
+        // a fake that answers by the turn the runner said it is on, so it gives the same answer however often it is asked
+        let turnNo = 0;
         // turn 1 says nothing; turns 2 and 3 ended on a fault of ours that the relay recorded as confirmed (our key refused)
         const refusals = {
             sawSince: () => false,
-            endedOnFault: () => (call += 1) > 1,
-            confirmedSince: () => call > 1,
+            turn: (_job: string, n: number) => void (turnNo = n),
+            endedOnFault: () => turnNo > 1,
+            confirmedSince: () => turnNo > 1,
         };
         const { orbit, seen } = fakeOrbit([done(''), done('The model said no'), done('The model said no')]);
         await runJob(orbit, JOB, RELAY, refusals);
@@ -1363,8 +1365,8 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
     });
 
     it('stays the agent’s for a silent turn and unresolved faults only (nothing confirmed), and for a streak the person’s allowance or a rule stopped', async () => {
-        let call = 0;
-        const unresolved = { sawSince: () => false, endedOnFault: () => (call += 1) > 1, confirmedSince: () => false };
+        let turnNo = 0;
+        const unresolved = { sawSince: () => false, turn: (_job: string, n: number) => void (turnNo = n), endedOnFault: () => turnNo > 1, confirmedSince: () => false };
         const a = fakeOrbit([done(''), done('The model did not answer'), done('The model did not answer')]);
         await runJob(a.orbit, JOB, RELAY, unresolved);
         expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
@@ -1528,7 +1530,7 @@ describe('a machine that cannot reach our own model service', () => {
         const fake = fakeOrbit(scripts);
         const runner = createComputerRunner({ orbit: fake.orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, runId: () => 'run1', ...(options.probe ? { relayProbe: options.probe } : {}), timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
         fake.orbit.running = async () => [JOB];
-        return { ...fake, notes, rows, clock, run: async () => { await runner.tick(); await runner.idle(); } };
+        return { ...fake, notes, rows, clock, runner, advance: (ms: number) => (t += ms), run: async () => { await runner.tick(); await runner.idle(); } };
     };
     const unreachable = () => ({ ok: false as const, reason: 'relay_unreachable' });
 
@@ -1743,12 +1745,15 @@ describe('a machine that cannot reach our own model service', () => {
         it('writes no fault, and does not make the ending ours, when the other server saw the calls of every turn', async () => {
             const store = sharedStore();
             let other!: ReturnType<typeof createRefusalNotes>;
-            const { seen, rows, clock, run } = rig(
-                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (other.called(JOB.jobId), silent())),
+            // each turn's call is made well apart from the others (more than the clocks of two servers can differ): only a call of its own turn can show for it
+            const { seen, rows, clock, advance, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (other.called(JOB.jobId), advance(SHARED_CALL_SKEW_MS + 1000), silent())),
                 { shared: store.forServer('A') }
             );
             other = createRefusalNotes(clock, { shared: store.forServer('B') });
             await run();
+            // every turn's call was recorded by the other server
+            expect(store.state.told).toEqual(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => `B:${JOB.jobId}`));
             // silent turns after calls are the agent's, as on one server; no_call is not written, so the streak is not ours
             expect(rows).toEqual([]);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
@@ -1769,12 +1774,14 @@ describe('a machine that cannot reach our own model service', () => {
         it('writes no fault when the other server’s first write of its call was lost and its retry landed (the record has the call)', async () => {
             const store = sharedStore();
             let other!: ReturnType<typeof createRefusalNotes>;
-            const { seen, rows, clock, run } = rig(
-                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 1), void other.reached(JOB.jobId), silent())),
+            const { seen, rows, clock, advance, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 1), void other.reached(JOB.jobId), advance(SHARED_CALL_SKEW_MS + 1000), silent())),
                 { shared: store.forServer('A') }
             );
             other = createRefusalNotes(clock, { shared: store.forServer('B') });
             await run();
+            // each turn's first write was lost and its retry landed: one record for each turn
+            await vi.waitFor(() => expect(store.state.told).toEqual(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => `B:${JOB.jobId}`)));
             expect(rows).toEqual([]);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
         });
@@ -1782,15 +1789,61 @@ describe('a machine that cannot reach our own model service', () => {
         it('writes no fault when the other server could not record its call at all, but said so apart', async () => {
             const store = sharedStore();
             let other!: ReturnType<typeof createRefusalNotes>;
-            const { seen, rows, clock, run } = rig(
-                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 2), void other.reached(JOB.jobId), silent())),
+            const { seen, rows, clock, advance, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 2), void other.reached(JOB.jobId), advance(SHARED_CALL_SKEW_MS + 1000), silent())),
                 { shared: store.forServer('A') }
             );
             // the runner of the job is working on B too (a stale one, a job both servers think they run), so its call goes ahead and says apart that it was not recorded
             other = createRefusalNotes(clock, { shared: store.forServer('B'), runsHere: () => true });
             await run();
+            // each turn's call said apart that it was not recorded: one note for each turn, and none of the calls recorded as an arrival
+            await vi.waitFor(() => expect(store.state.unrecorded).toEqual(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => `B:${JOB.jobId}`)));
+            expect(store.state.told).toEqual([]);
             expect(rows).toEqual([]);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('records nothing and sends no finish for a turn when the job was stopped while the other servers were being asked', async () => {
+            const store = sharedStore();
+            const reads = { n: 0 };
+            let stop = () => undefined as void;
+            const shared: SharedCalls = {
+                ...store.forServer('A'),
+                // the third turn's question to the other servers is the one the stop comes in the middle of
+                lastCalledByOthers: async () => {
+                    reads.n += 1;
+                    if (reads.n === 3) stop();
+                    return null;
+                },
+            };
+            const { seen, rows, runner, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => silent), { shared });
+            stop = () => runner.stop();
+            await run();
+            expect(reads.n).toBe(3);
+            // the two turns before it were judged as usual; the stopped one writes no no_call row and the job is not ended on it
+            expect(rows.map((row) => row.turn)).toEqual([1, 2]);
+            expect(finished(seen)).toEqual([]);
+        });
+
+        it('judges a turn by the notes as they are AFTER the other servers were asked: a fault recovered meanwhile is no bad turn, so it does not end the job', async () => {
+            let turnNo = 0;
+            let recovered = false;
+            // the relay answers a call of the third turn while the other servers are being asked about it
+            const refusals = {
+                sawSince: () => false,
+                mark: () => ({ order: 1, at: 1 }),
+                turn: (_job: string, n: number) => void ((turnNo = n), (recovered = false)),
+                calledAnywhereSince: async () => {
+                    if (turnNo === 3) recovered = true;
+                    return true;
+                },
+                endedOnFault: () => !recovered,
+                confirmedSince: () => !recovered,
+            };
+            const { orbit, seen } = fakeOrbit([done('Working on it'), done('Working on it'), done('Working on it'), done('All fine. [[done]]')]);
+            await runJob(orbit, JOB, RELAY, refusals);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            expect(seen.turns).toHaveLength(4);
         });
 
         it('writes no fault when the shared store cannot be read: a call may have arrived elsewhere, and nothing is concluded', async () => {
@@ -1972,6 +2025,63 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
             await notes.flush(JOB.jobId);
             expect(sent.find((row) => row.callId === 'pool_busy_gave_up_run1_1')).toMatchObject({ kind: 'fault' });
+        });
+    });
+
+    /** The shared record of two bot servers, in memory: what each noted (a call arriving, a call taken up) and what the other reads of it. */
+    const sharedRecord = () => {
+        const called = new Map<string, number>();
+        const accepted = new Map<string, number>();
+        const forServer = (id: string) => ({
+            noteCalled: async (_jobId: string, at: number) => void called.set(id, Math.max(at, called.get(id) ?? 0)),
+            noteUnrecorded: async () => undefined,
+            lastCalledByOthers: async () => {
+                const others = [...called].filter(([server]) => server !== id).map(([, at]) => at);
+                return others.length > 0 ? Math.max(...others) : null;
+            },
+            noteAccepted: async (_jobId: string, at: number) => void accepted.set(id, Math.max(at, accepted.get(id) ?? 0)),
+            lastAcceptedByOthers: async () => {
+                const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
+                return others.length > 0 ? Math.max(...others) : null;
+            },
+        });
+        return { forServer, accepted };
+    };
+
+    it('does not give up on a turn when the pool took up a call of the job on ANOTHER bot server: only a call taken up nowhere is a pool with no room', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const sent: CallRow[] = [];
+            const sink = async (_botId: string, _jobId: string, rows: CallRow[]) => (sent.push(...rows), true);
+            // this server's runner works the job; the machine's calls reach this server (refused for room) and another one (taken up)
+            const notes = createRefusalNotes(Date.now, { sink, shared: record.forServer('A') });
+            const other = createRefusalNotes(Date.now, { sink, shared: record.forServer('B') });
+            const { orbit, seen } = fakeOrbit([]);
+            const state = retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)); at(20_000, () => other.accepted(JOB.jobId)); }, 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            // the turn went on to its end: not stopped, the machine not cancelled, nothing written as a fault of ours
+            expect(state.turns).toBe(1);
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.some((row) => row.callId.startsWith('pool_busy_gave_up'))).toBe(false);
+        });
+    });
+
+    it('still gives up when no server took up a call, though the other servers have shared notes', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const sent: CallRow[] = [];
+            const notes = createRefusalNotes(Date.now, { sink: async (_botId, _jobId, rows) => (sent.push(...rows), true), shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)); }, 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
         });
     });
 

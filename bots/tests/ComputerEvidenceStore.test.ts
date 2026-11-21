@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEAD_PREFIX, DEAD_TTL_SECONDS, DELETE_IF_UNCHANGED, EVIDENCE_PREFIX, EVIDENCE_TTL_SECONDS, RedisEvidenceStore, type EvidenceRedis } from '../server/ComputerEvidenceStore';
+import { DEAD_PREFIX, DEAD_TTL_SECONDS, DELETE_IF_UNCHANGED, SET_AND_RENEW, EVIDENCE_PREFIX, EVIDENCE_TTL_SECONDS, RedisEvidenceStore, type EvidenceRedis } from '../server/ComputerEvidenceStore';
 import { createRefusalNotes, EVIDENCE_KEEP_MS, type CallRow } from '../server/ComputerRefusals';
 
 const row = (callId: string, over: Partial<CallRow> = {}): CallRow => ({
@@ -21,7 +21,7 @@ function fakeRedis() {
     const hashes = new Map<string, Map<string, string>>();
     const ttl = new Map<string, number>();
     const hash = (key: string) => hashes.get(key) ?? hashes.set(key, new Map()).get(key)!;
-    const state = { down: false, silent: false, pageSize: 2, scans: 0, wrongTypes: new Set<string>(), beforeEval: undefined as undefined | (() => void) };
+    const state = { expiresBetweenWriteAndRenew: false, down: false, silent: false, pageSize: 2, scans: 0, wrongTypes: new Set<string>(), beforeEval: undefined as undefined | (() => void) };
     const gate = async <T>(work: () => T): Promise<T> => {
         if (state.down) throw new Error('Redis went away');
         if (state.silent) return new Promise<T>(() => undefined);
@@ -33,16 +33,27 @@ function fakeRedis() {
                 if (state.wrongTypes.has(key)) throw new Error('WRONGTYPE Operation against a key holding the wrong kind of value');
                 return Object.fromEntries(hashes.get(key) ?? []);
             }),
-        hSet: (key, field, value) => gate(() => (hash(key).set(field, value), 1)),
+        hSet: (key, field, value) =>
+            gate(() => {
+                hash(key).set(field, value);
+                // The hash runs out of life right after a separate write: a separate renew then finds no key
+                if (state.expiresBetweenWriteAndRenew) hashes.delete(key);
+                return 1;
+            }),
         hDel: (key, fields) =>
             gate(() => {
                 for (const field of Array.isArray(fields) ? fields : [fields]) hashes.get(key)?.delete(field);
                 if (hashes.get(key)?.size === 0) hashes.delete(key);
                 return 1;
             }),
-        // The one script the store runs: delete each field only while it holds the value it was given, as one step
+        // The scripts the store runs, each as one step
         eval: (script, options) =>
             gate(() => {
+                if (script === SET_AND_RENEW) {
+                    hash(options.keys[0]).set(options.arguments[0], options.arguments[1]);
+                    ttl.set(options.keys[0], Number(options.arguments[2]));
+                    return 1;
+                }
                 if (script !== DELETE_IF_UNCHANGED) throw new Error('an unknown script');
                 state.beforeEval?.();
                 let removed = 0;
@@ -55,7 +66,7 @@ function fakeRedis() {
                 if (hashes.get(options.keys[0])?.size === 0) hashes.delete(options.keys[0]);
                 return removed;
             }),
-        expire: (key, seconds) => gate(() => (ttl.set(key, seconds), 1)),
+        expire: (key, seconds) => gate(() => (hashes.has(key) ? (ttl.set(key, seconds), 1) : 0)),
         scan: (cursor, options) =>
             gate(() => {
                 state.scans++;
@@ -191,6 +202,19 @@ describe('the evidence kept for Orbit in the shared store', () => {
 });
 
 describe('the dead letters: rows Orbit refused alone while it took others', () => {
+    it('writes a pending row and a dead letter together with their life as one step: a hash that runs out of life after the write cannot take the field with it', async () => {
+        const redis = fakeRedis();
+        redis.state.expiresBetweenWriteAndRenew = true;
+        const store = new RedisEvidenceStore(() => redis.client, () => NOW);
+        expect(await store.deadLetter('bot-1', 'job-1', row('c1'))).toBe(true);
+        expect(await store.save('bot-1', 'job-2', row('c2'))).toBe(true);
+        // both are really in the store, with their life
+        expect((await store.loadDead()).map((job) => [job.jobId, job.rows.map((one) => one.callId)])).toEqual([['job-1', ['c1']]]);
+        expect(redis.ttl.get(`${DEAD_PREFIX}job-1`)).toBe(DEAD_TTL_SECONDS);
+        expect((await store.load()).map((job) => [job.jobId, job.rows.map((one) => one.callId)])).toEqual([['job-2', ['c2']]]);
+        expect(redis.ttl.get(`${EVIDENCE_PREFIX}job-2`)).toBe(EVIDENCE_TTL_SECONDS);
+    });
+
     it('keeps a row apart from the pending ones for 30 days under its call id, and brings it back unchanged with its bot', async () => {
         const redis = fakeRedis();
         const store = new RedisEvidenceStore(() => redis.client, () => NOW);
