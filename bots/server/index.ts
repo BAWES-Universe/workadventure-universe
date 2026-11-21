@@ -38,7 +38,7 @@ import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
 import { createFaultReplayRoute } from './ComputerFaultReplayRoute';
 import { createRefusalNotes, FAULT_EVIDENCE_MESSAGES } from './ComputerRefusals';
 import { RedisEvidenceStore, RedisSharedCalls } from './ComputerEvidenceStore';
-import { RedisStartKeys } from './ComputerStartKeys';
+import { wireComputerStartKeys } from './ComputerStartKeys';
 import { createComputerRunner, probeRelay, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
@@ -94,7 +94,7 @@ let dmCards: CardSurface | undefined;
 // has its cards with or without them.
 const aiService = botManager.getAIService();
 // The key of a computer job's start waits in the shared store while its outcome is open, so a restart between a start and its answer never makes a second job (a second charge)
-aiService.setComputerStartKeys(new RedisStartKeys(() => botRegistry.evidenceClient()));
+wireComputerStartKeys(aiService, () => botRegistry.evidenceClient());
 // The address a Brick's computer calls for its AI (OpenAI format, /v1): Orbit checks the key and the room, the provider's key stays here
 // The relay notes what it refused for a person's allowance or rules, and the runner of the same job reads it to tell whose failure a turn was
 // and records how each model call ended in Orbit's durable fault record, which Orbit judges a failed job's refund by (never held up for it)
@@ -233,6 +233,8 @@ const COMPUTER_REPORTS_EVERY_MS = 10 * 1000;
 const EVIDENCE_REPLAY_EVERY_MS = 5 * 60 * 1000;
 /** Dead letters are offered again once a day. */
 const DEAD_LETTER_REPLAY_EVERY_MS = 24 * 60 * 60 * 1000;
+/** The operators are told of a row that is close to the end of the time it is kept (6 days of 7 pending, 29 days of 30 dead) when it is looked for this often: hourly, so no row slips past its day. */
+const EVIDENCE_AGED_EVERY_MS = 60 * 60 * 1000;
 /** Sends again the evidence of failed computer jobs that was kept when this server stopped. The shared store may not be up yet: it is asked again a few times. */
 function resumeEvidence(attempt = 0): void {
     const delays = [0, 2000, 10_000, 30_000, 120_000, 300_000];
@@ -254,6 +256,10 @@ function startComputers(): void {
     // The dead letters (rows Orbit refused alone) are offered again once a day under the same ids: one Orbit takes leaves them, one it refuses again stays
     const deadLetterReplay = setInterval(() => void computerRefusals.replayDeadLetters(), DEAD_LETTER_REPLAY_EVERY_MS);
     deadLetterReplay.unref?.();
+    // Rows close to the end of the time they are kept are told to the operators (Sentry) in time to replay them: at start (the store may not be up yet) and then every hour
+    void computerRefusals.tellAged();
+    const evidenceAged = setInterval(() => void computerRefusals.tellAged(), EVIDENCE_AGED_EVERY_MS);
+    evidenceAged.unref?.();
     computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
     computerSweepInterval.unref?.();
     // A development server that pretends (COMPUTER_PRETEND_RUNNER=yes) has no runner

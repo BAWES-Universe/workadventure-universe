@@ -38,7 +38,7 @@ describe("the line under a paying page says what the approved mock says", () => 
         const over = { problem: "still_checking", canCheck: true } as Partial<PayLine>;
         expect(view(over)).toMatchObject({
             title: "We're still checking your earlier payment.",
-            sub: "If you paid, it will show up here when your payment service confirms it.",
+            sub: "If you paid, it will show up here when your payment service confirms it. Buying again starts a new payment.",
             closable: false,
         });
         expect(labels(over)).toEqual(["check:Check payment:primary"]);

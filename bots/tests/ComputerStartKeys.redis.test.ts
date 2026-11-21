@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto';
 import { createClient } from 'redis';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { runComputerTool, START_KEY_KEEP_MS } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
 /**
- * The two scripts of the start key store against a real Redis (the unit tests run their meaning in JavaScript, so a change to the Lua would not show there). Runs
+ * The two scripts of the start key store (claim and delete) against a real Redis (the unit tests run their meaning in JavaScript, so a change to the Lua would not show there). Runs
  * when BOTS_TEST_REDIS_URL is given and is skipped when there is none; CI sets BOTS_REQUIRE_REDIS, and there a missing Redis fails the run. Every scope is new for each run
  * and deleted at the end: nothing else in the database is touched.
  */
@@ -36,56 +37,133 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         await client.quit();
     });
 
-    it('keeps the key and the moment it was first sent, with a life that is what was asked for, and reads them back', async () => {
+    const LIFE = START_KEY_KEEP_MS;
+
+    it('keeps the key and the moment it was first sent, with the life asked for, and answers the entry it holds', async () => {
         const store = new RedisStartKeys(() => client as never);
         const s = scope('keeps');
-        await store.set(s, { key: 'a-start-key-0001', at: 1700000000000 }, 600_000);
-        expect(await store.get(s)).toEqual({ key: 'a-start-key-0001', at: 1700000000000 });
+        const at = Date.now();
+        expect(await store.claim(s, { key: 'a-start-key-0001', at }, LIFE, LIFE)).toEqual({ key: 'a-start-key-0001', at });
         const life = await client.pTTL(startKeyNameOf(s));
         expect(life).toBeGreaterThan(590_000);
         expect(life).toBeLessThanOrEqual(600_000);
-        // a second set (the same ask sent again) keeps the first moment it is given and takes the new, shorter life
-        await store.set(s, { key: 'a-start-key-0001', at: 1700000000000 }, 120_000);
+        expect(JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null')).toEqual({ key: 'a-start-key-0001', at });
+    });
+
+    it('answers the FIRST key to every later ask while it is good, keeps its life as it was (never a new ten minutes), and leaves the entry as it is', async () => {
+        const store = new RedisStartKeys(() => client as never);
+        const s = scope('first');
+        const at = Date.now();
+        await store.claim(s, { key: 'first-key-00001', at }, 120_000, LIFE);
+        const before = await client.get(startKeyNameOf(s));
+        expect(await store.claim(s, { key: 'second-key-0002', at: at + 1 }, LIFE, LIFE)).toEqual({ key: 'first-key-00001', at });
+        expect(await client.get(startKeyNameOf(s))).toBe(before);
         expect(await client.pTTL(startKeyNameOf(s))).toBeLessThanOrEqual(120_000);
+    });
+
+    it('takes the caller\'s key over an entry whose first send is older than the life given (the store has not expired it yet), and over a value that is not an entry', async () => {
+        const store = new RedisStartKeys(() => client as never);
+        const old = scope('old');
+        const at = Date.now();
+        await client.set(startKeyNameOf(old), JSON.stringify({ key: 'old-key-0000001', at: at - LIFE - 5000 }), { PX: 60_000 });
+        expect(await store.claim(old, { key: 'new-key-0000001', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000001', at });
+        const foreign = scope('foreign-claim');
+        await client.set(startKeyNameOf(foreign), 'not json', { PX: 60_000 });
+        expect(await store.claim(foreign, { key: 'new-key-0000002', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000002', at });
+        // an entry of the right shape with the wrong types is not one either
+        const odd = scope('odd');
+        await client.set(startKeyNameOf(odd), JSON.stringify({ key: 7, at: 'x' }), { PX: 60_000 });
+        expect(await store.claim(odd, { key: 'new-key-0000003', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000003', at });
     });
 
     it('lets the key go by itself when its life is over', async () => {
         const store = new RedisStartKeys(() => client as never);
         const s = scope('expires');
-        await store.set(s, { key: 'a-start-key-0001', at: 1 }, 1);
+        await store.claim(s, { key: 'a-start-key-0001', at: Date.now() }, 1, LIFE);
         expect(await client.pTTL(startKeyNameOf(s))).toBeLessThanOrEqual(1000);
         await client.pExpire(startKeyNameOf(s), 30);
         await new Promise((resolve) => setTimeout(resolve, 80));
-        expect(await store.get(s)).toBeUndefined();
+        expect(await client.get(startKeyNameOf(s))).toBeNull();
+    });
+
+    it('two servers asking at the same moment with nothing held agree on ONE key (many at once, each with a key of its own)', async () => {
+        const a = new RedisStartKeys(() => client as never);
+        const b = new RedisStartKeys(() => client as never);
+        const s = scope('race');
+        const at = Date.now();
+        const answers = await Promise.all(Array.from({ length: 40 }, (_, index) => (index % 2 ? a : b).claim(s, { key: `racer-key-${String(index).padStart(4, '0')}`, at: at + index }, LIFE, LIFE)));
+        expect(new Set(answers.map((one) => one?.key)).size).toBe(1);
+        const held = JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null') as { key: string };
+        expect(answers[0]?.key).toBe(held.key);
+    });
+
+    it('two servers handling the same ask at the same moment (empty memory on both) send the SAME X-Computer-Start-Attempt: one job, never two', async () => {
+        const s = 'brick-race';
+        const ask = () => {
+            const sent: string[] = [];
+            const admin = {
+                startComputerJob: vi.fn(async (_bot: string, _user: string, body: { startKey: string }) => {
+                    sent.push(body.startKey);
+                    return { ok: false, reason: 'unknown' };
+                }),
+            };
+            const store = new RedisStartKeys(() => client as never);
+            return { sent, run: () => runComputerTool({ job: `Race ${s} ${run}` }, { admin: admin as never, botId: 'brick-race', userId: 'uuid-race', startKeys: new Map(), startKeyStore: store }) };
+        };
+        const servers = Array.from({ length: 6 }, ask);
+        await Promise.all(servers.map((one) => one.run()));
+        const keys = servers.flatMap((one) => one.sent);
+        expect(keys).toHaveLength(6);
+        expect(new Set(keys).size).toBe(1);
+        // tidy: the scope this test made (its name is a hash of the Brick, person, chat and title)
+        const name = startKeyNameOf(`brick-race|uuid-race|${JSON.stringify([null, null, `race ${s} ${run}`])}`);
+        expect(JSON.parse((await client.get(name)) ?? 'null')).toMatchObject({ key: keys[0] });
+        await client.del(name);
+    });
+
+    it('a new ask racing a stored one between a read and a write has no gap: the stored key is the one sent, after a restart too (a fresh memory)', async () => {
+        const store = new RedisStartKeys(() => client as never);
+        const job = `Stored ${run}`;
+        const sent: string[] = [];
+        const admin = {
+            startComputerJob: vi.fn(async (_bot: string, _user: string, body: { startKey: string }) => {
+                sent.push(body.startKey);
+                return { ok: false, reason: 'starting' };
+            }),
+        };
+        const ask = () => runComputerTool({ job }, { admin: admin as never, botId: 'brick-stored', userId: 'uuid-stored', startKeys: new Map(), startKeyStore: store });
+        await ask();
+        await Promise.all([ask(), ask(), ask()]);
+        expect(new Set(sent).size).toBe(1);
+        await client.del(startKeyNameOf(`brick-stored|uuid-stored|${JSON.stringify([null, null, job.toLowerCase()])}`));
     });
 
     it('deletes only the key it is told: the key of an ask that started again since stays, and a missing key is nothing', async () => {
         const store = new RedisStartKeys(() => client as never);
         const s = scope('delete');
-        await store.set(s, { key: 'the-first-key-01', at: 1 }, 600_000);
+        await store.claim(s, { key: 'the-first-key-01', at: Date.now() }, LIFE, LIFE);
         await store.delete(s, 'another-key-0002');
-        expect(await store.get(s)).toEqual({ key: 'the-first-key-01', at: 1 });
+        expect(JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null')).toMatchObject({ key: 'the-first-key-01' });
         await store.delete(s, 'the-first-key-01');
-        expect(await store.get(s)).toBeUndefined();
+        expect(await client.get(startKeyNameOf(s))).toBeNull();
         await store.delete(s, 'the-first-key-01');
     });
 
-    it('leaves a value that is not JSON alone (and does not throw): it is not ours to delete', async () => {
+    it('leaves a value that is not JSON alone when deleting (and does not throw): it is not ours to delete', async () => {
         const store = new RedisStartKeys(() => client as never);
         const s = scope('foreign');
         await client.set(startKeyNameOf(s), 'not json', { PX: 60_000 });
         await store.delete(s, 'the-first-key-01');
         expect(await client.get(startKeyNameOf(s))).toBe('not json');
-        expect(await store.get(s)).toBeUndefined();
     });
 
     it('is a different entry for a different scope', async () => {
         const store = new RedisStartKeys(() => client as never);
         const a = scope('a');
         const b = scope('b');
-        await store.set(a, { key: 'key-for-a-00001', at: 1 }, 60_000);
-        await store.set(b, { key: 'key-for-b-00001', at: 2 }, 60_000);
-        expect((await store.get(a))?.key).toBe('key-for-a-00001');
-        expect((await store.get(b))?.key).toBe('key-for-b-00001');
+        await store.claim(a, { key: 'key-for-a-00001', at: Date.now() }, 60_000, LIFE);
+        await store.claim(b, { key: 'key-for-b-00001', at: Date.now() }, 60_000, LIFE);
+        expect((await store.claim(a, { key: 'other-key-00001', at: Date.now() }, LIFE, LIFE))?.key).toBe('key-for-a-00001');
+        expect((await store.claim(b, { key: 'other-key-00002', at: Date.now() }, LIFE, LIFE))?.key).toBe('key-for-b-00001');
     });
 });

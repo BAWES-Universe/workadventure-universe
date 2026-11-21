@@ -264,6 +264,12 @@ export interface RefusalNotes {
      * deleted otherwise (they are kept `DEAD_LETTER_KEEP_MS`). Answers how many rows were put back, or null when the store could not be read.
      */
     replayDeadLetters(jobId?: string): Promise<number | null>;
+    /**
+     * Tells the operators of each row that is close to the end of the life it is kept: a row still waiting for Orbit after `EVIDENCE_AGED_MS` (`pending_aging`) and a
+     * dead letter of `DEAD_LETTER_AGED_MS` (`dead_aging`), by the time of the row itself, in memory and in the store (a row another server kept too). Once per row for as
+     * long as the row is there. Never changes a row. False when the store could not be read (ask again later); never throws.
+     */
+    tellAged(): Promise<boolean>;
     /** The point in the order of events from which a turn's window starts: what is noted after this call, and only that, is in the window. */
     mark(): { order: number; at: number };
     /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job since this point (or at or after this moment, ms). */
@@ -386,10 +392,15 @@ export interface RefusalOptions {
      * others: the row was moved to the dead letters (kept 30 days, never deleted, replayable under its id) and is no longer sent, `all_refused` when Orbit
      * refused a row and has taken none lately (a contract or version mismatch, or Orbit broken: the rows are kept and sent again like when Orbit is away;
      * once until Orbit takes a row again), `called_unrecorded` when the shared record of a call of a job could not be written twice (once per job: the call
-     * may have gone ahead or been refused (503), that depends on whether the job's runner works here, so this says only that it was not recorded). Carries ids only (callId is empty for that one). Never throws into the caller's way.
+     * may have gone ahead or been refused (503), that depends on whether the job's runner works here, so this says only that it was not recorded), and, from `tellAged`,
+     * `pending_aging` (a row still waiting for Orbit after `EVIDENCE_AGED_MS`, 6 days, a day before the store lets go of it) and `dead_aging` (a dead letter of
+     * `DEAD_LETTER_AGED_MS`, 29 days, a day before it expires), once per row, so operators replay it through the dead-letter route in time. Carries ids only (callId is empty for that one). Never throws into the caller's way.
      */
-    report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded', info: { jobId: string; callId: string }) => void;
+    report?: (what: FaultReportKind, info: { jobId: string; callId: string }) => void;
 }
+
+/** Everything `report` can tell. */
+export type FaultReportKind = 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded' | 'pending_aging' | 'dead_aging';
 
 /**
  * What each thing `report` tells is called for the operators (Sentry). `called_unrecorded` claims nothing about what became of the call: with the job's runner
@@ -401,6 +412,8 @@ export const FAULT_EVIDENCE_MESSAGES = {
     dead_letter: 'Fault evidence row refused by Orbit alone and set aside (kept 30 days)',
     all_refused: 'Orbit refuses every fault evidence row it is sent: kept and sent again',
     called_unrecorded: 'A computer model call could not be recorded for the other bot servers (the call may have been refused with a 503 or have gone ahead: the relay log of the job says which)',
+    pending_aging: 'Fault evidence row still not taken by Orbit after 6 days: it is dropped at 7, so look at Orbit now (the rows are sent again every 5 minutes)',
+    dead_aging: 'Fault evidence dead letter is 29 days old: it is dropped at 30, so replay it now through the dead letter route (the job and call ids are in this event)',
 } as const;
 
 /** How many of the latest turns a runner tells the other servers (a call that began before the latest turn began is tied to the one before). */
@@ -410,6 +423,10 @@ const SHARED_TURNS = 6;
 export const EVIDENCE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 /** A row Orbit has not taken after this long is told to the operators once. */
 export const EVIDENCE_UNACKED_MS = 60 * 60 * 1000;
+/** A row Orbit has still not taken after this long is told to the operators again, a day before the 7 days it is kept run out: 6 days. */
+export const EVIDENCE_AGED_MS = 6 * 24 * 60 * 60 * 1000;
+/** A dead letter this old is told to the operators, a day before the 30 days it is kept run out: 29 days. */
+export const DEAD_LETTER_AGED_MS = 29 * 24 * 60 * 60 * 1000;
 const DEFAULT_STORE_LATER_MS = 5 * 60 * 1000;
 
 /** The most rows Orbit takes in one call. */
@@ -462,6 +479,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const queued = new Map<string, Queue>();
     let notDurableTold = false;
     const unackedTold = new Set<string>();
+    /** The rows `tellAged` has told the operators of (`<what>|<job>|<call>`), for as long as the row is there. */
+    const agedTold = new Set<string>();
     /** When Orbit last took a row (any job): a refusal of one row alone counts as the row's own only while Orbit is taking others. */
     let orbitTookAt: number | null = null;
     let allRefusedTold = false;
@@ -469,7 +488,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const unrecordedTold = new Map<string, number>();
     /** Dead letters when there is no store to keep them in (kept as long as the process lives: never deleted). */
     const deadInMemory = new Map<string, { botId: string; jobId: string; row: CallRow }>();
-    const tell = (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded', jobId: string, callId: string) => {
+    const tell = (what: FaultReportKind, jobId: string, callId: string) => {
         try {
             options.report?.(what, { jobId, callId });
         } catch {
@@ -675,7 +694,6 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         return all;
     };
 
-    /** Sends the job's queued rows, a batch at a time; a batch Orbit did not take waits for the next try. One sender per job at a time. */
     /** The turns (as row ids) whose arrival this server has already queued, by job. */
     const arrivals = new Map<string, { ids: Set<string>; at: number }>();
     /** Queues a row for Orbit: kept where a restart does not lose it, and sent without waiting (the call that made the row is not held for either). */
@@ -689,6 +707,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         keep(entry, jobId, row);
         void send(jobId);
     };
+    /** Sends the job's queued rows, a batch at a time; a batch Orbit did not take waits for the next try. One sender per job at a time. */
     const send = (jobId: string): Promise<boolean> => {
         const entry = queued.get(jobId);
         if (!entry || entry.rows.size === 0) return Promise.resolve(true);
@@ -1121,6 +1140,39 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 void send(jobId);
             }
             return put;
+        },
+        async tellAged() {
+            const seen = new Set<string>();
+            const check = (what: 'pending_aging' | 'dead_aging', jobId: string, row: CallRow, limit: number) => {
+                const since = Date.parse(row.at);
+                if (!Number.isFinite(since) || now() - since < limit) return;
+                const key = `${what}|${jobId}|${row.callId}`;
+                seen.add(key);
+                if (agedTold.has(key)) return;
+                agedTold.add(key);
+                tell(what, jobId, row.callId);
+            };
+            // A row put back from the dead letters is told as a dead letter (it is still kept there), never also as a waiting one
+            for (const [jobId, entry] of queued) for (const row of entry.rows.values()) if (!entry.fromDead.has(row)) check('pending_aging', jobId, row, EVIDENCE_AGED_MS);
+            for (const one of deadInMemory.values()) check('dead_aging', one.jobId, one.row, DEAD_LETTER_AGED_MS);
+            let readAll = true;
+            if (store) {
+                try {
+                    for (const { jobId, rows } of await store.load()) for (const row of rows) check('pending_aging', jobId, row, EVIDENCE_AGED_MS);
+                } catch {
+                    readAll = false;
+                }
+                if (store.loadDead) {
+                    try {
+                        for (const { jobId, rows } of await store.loadDead()) for (const row of rows) check('dead_aging', jobId, row, DEAD_LETTER_AGED_MS);
+                    } catch {
+                        readAll = false;
+                    }
+                }
+            }
+            // What is told stays told while the row is there: a row that has gone (taken, replayed, expired) is forgotten, so memory does not grow
+            if (readAll) for (const key of [...agedTold]) if (!seen.has(key)) agedTold.delete(key);
+            return readAll;
         },
         mark: () => ({ order: count, at: now() }),
         confirmedSince(jobId, since) {

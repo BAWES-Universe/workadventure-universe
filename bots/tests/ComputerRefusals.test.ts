@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CLOSE_TURN, FENCE_LIFE_MS, KEEP_LATER, NOTE_ACCEPTED_UNLESS_CLOSED, RETRACT_FENCE, RedisSharedCalls, SET_AND_RENEW, type EvidenceRedis } from '../server/ComputerEvidenceStore';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, SHARED_TURN_LEASE_MS, SHARED_TURN_RENEW_MS, type CallRow, type EvidenceStore, type SharedCalls, type SharedTurn, type SharedTurnList, type CallTurn, type CloseAttempt } from '../server/ComputerRefusals';
+import { createRefusalNotes, DEAD_LETTER_AGED_MS, DEAD_LETTER_KEEP_MS, EVIDENCE_AGED_MS, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, SHARED_TURN_LEASE_MS, SHARED_TURN_RENEW_MS, type CallRow, type FaultReportKind, type EvidenceStore, type SharedCalls, type SharedTurn, type SharedTurnList, type CallTurn, type CloseAttempt } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -533,7 +533,7 @@ describe('the evidence kept before the money decision is final, and delivered af
         };
         return { store, held, dead, log, state };
     };
-    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded', info: { jobId: string; callId: string }) => void } = {}) => {
+    const ledger = (store: EvidenceStore, sinkAnswers: () => boolean, extra: { storeLaterMs?: number; report?: (what: FaultReportKind, info: { jobId: string; callId: string }) => void } = {}) => {
         const sent: Array<{ botId: string; jobId: string; rows: CallRow[] }> = [];
         let at = 1000;
         const notes = createRefusalNotes(() => at, {
@@ -875,6 +875,231 @@ describe('the evidence kept before the money decision is final, and delivered af
         await notes.flush('j');
         expect(sent.flatMap((one) => one.rows).map((row) => row.callId)).toEqual(['c1']);
         expect(told).toEqual(['c1']);
+    });
+
+    describe('rows close to the end of the time they are kept are told to the operators (Opus ruling on GPT round 3, R3): 6 days of 7 pending, 29 days of 30 dead', () => {
+        const aged = () => {
+            const told: Array<[FaultReportKind, string, string]> = [];
+            return { told, report: (what: FaultReportKind, info: { jobId: string; callId: string }) => void (what === 'pending_aging' || what === 'dead_aging' ? told.push([what, info.jobId, info.callId]) : undefined) };
+        };
+        const deadRow = (callId: string, at: number): CallRow => ({ ...call(callId), at: new Date(at).toISOString() }) as CallRow;
+
+        it('tells once of a row Orbit still has not taken after 6 days, by the time of the row itself, with the job and the call', async () => {
+            expect(EVIDENCE_AGED_MS).toBe(6 * 24 * 60 * 60 * 1000);
+            expect(EVIDENCE_KEEP_MS - EVIDENCE_AGED_MS).toBe(24 * 60 * 60 * 1000);
+            const mem = memoryStore();
+            const one = aged();
+            const { notes, sent, advance } = ledger(mem.store, () => false, { report: one.report });
+            notes.record('b', 'j', call('c1'));
+            await notes.flush('j');
+            advance(EVIDENCE_AGED_MS - 1);
+            expect(await notes.tellAged()).toBe(true);
+            expect(one.told).toEqual([]);
+            advance(1);
+            expect(await notes.tellAged()).toBe(true);
+            expect(one.told).toEqual([['pending_aging', 'j', 'c1']]);
+            // not again for that row, however often it is looked at
+            advance(60 * 60 * 1000);
+            await notes.tellAged();
+            await notes.tellAged();
+            expect(one.told).toHaveLength(1);
+            // nothing is changed: the row is still kept, still waiting, and goes to Orbit when it is back
+            expect(mem.held.has('j|c1')).toBe(true);
+            expect(sent).toEqual([]);
+        });
+
+        it('does not tell of a row that is young, one that Orbit has taken, or a row that has just been made', async () => {
+            const mem = memoryStore();
+            const one = aged();
+            let up = false;
+            const { notes, advance } = ledger(mem.store, () => up, { report: one.report });
+            notes.record('b', 'j', call('c1'));
+            await notes.flush('j');
+            advance(EVIDENCE_AGED_MS - 5000);
+            up = true;
+            await notes.flush('j');
+            notes.record('b', 'j', call('c2'));
+            advance(10_000);
+            await notes.tellAged();
+            expect(one.told).toEqual([]);
+        });
+
+        it('tells of a row only the store holds (the rows of another server, or of a process that has stopped), and that server is not told of what it could read in memory twice', async () => {
+            const mem = memoryStore();
+            const first = ledger(mem.store, () => false);
+            first.notes.record('b', 'j', call('c1'));
+            await vi.waitFor(() => expect(mem.held.size).toBe(1));
+            const one = aged();
+            const other = ledger(mem.store, () => false, { report: one.report });
+            other.advance(EVIDENCE_AGED_MS);
+            expect(await other.notes.tellAged()).toBe(true);
+            // it never resumed: the row is not in its memory, and it was told from the store, once
+            expect(one.told).toEqual([['pending_aging', 'j', 'c1']]);
+            // a store that cannot be read for a moment does not make it forget: the row is not told again when the store is back
+            mem.state.failLoad = true;
+            expect(await other.notes.tellAged()).toBe(false);
+            mem.state.failLoad = false;
+            expect(await other.notes.tellAged()).toBe(true);
+            expect(one.told).toHaveLength(1);
+            await other.notes.resume();
+            await other.notes.tellAged();
+            expect(one.told).toHaveLength(1);
+        });
+
+        it('tells of a row only this process holds (the store could not keep it) at the same 6 days, from memory', async () => {
+            const mem = memoryStore();
+            mem.state.down = true;
+            const one = aged();
+            const { notes, advance } = ledger(mem.store, () => false, { report: one.report });
+            notes.record('b', 'j', call('only-here'));
+            await notes.flush('j');
+            expect(mem.held.size).toBe(0);
+            advance(EVIDENCE_AGED_MS - 1);
+            await notes.tellAged();
+            expect(one.told).toEqual([]);
+            advance(1);
+            await notes.tellAged();
+            expect(one.told).toEqual([['pending_aging', 'j', 'only-here']]);
+        });
+
+        it('keeps a row waiting for Orbit and a dead letter of the same job and call apart: each is told, as what it is', async () => {
+            const mem = memoryStore();
+            const one = aged();
+            const { notes, advance } = ledger(mem.store, () => false, { report: one.report });
+            notes.record('b', 'j', call('same'));
+            await notes.flush('j');
+            mem.dead.set('j|same', { botId: 'b', jobId: 'j', row: deadRow('same', 1000) });
+            advance(DEAD_LETTER_AGED_MS);
+            await notes.tellAged();
+            expect(one.told.map(([what]) => what).sort()).toEqual(['dead_aging', 'pending_aging']);
+        });
+
+        it('after a restart the aged row is delivered under the SAME call id and unchanged (the receipt and the wallet at Orbit rest on that), and is told only while it waits', async () => {
+            const mem = memoryStore();
+            const first = ledger(mem.store, () => false);
+            first.notes.turn('j', 4, 'run-z');
+            first.notes.record('bot-9', 'j', call('c1', { kind: 'uncertain', reason: 'stream_cut', providerStatus: null }));
+            await vi.waitFor(() => expect(mem.held.size).toBe(1));
+            const original = [...mem.held.values()][0].row;
+            const one = aged();
+            let up = false;
+            const second = ledger(mem.store, () => up, { report: one.report });
+            second.advance(EVIDENCE_AGED_MS);
+            expect(await second.notes.resume()).toBe(true);
+            await second.notes.tellAged();
+            expect(one.told).toEqual([['pending_aging', 'j', 'c1']]);
+            up = true;
+            expect(await second.notes.flush('j')).toBe(true);
+            expect(second.sent).toEqual([{ botId: 'bot-9', jobId: 'j', rows: [original] }]);
+            expect(second.sent[0].rows[0].callId).toBe('c1');
+            await vi.waitFor(() => expect(mem.held.size).toBe(0));
+            await second.notes.tellAged();
+            expect(one.told).toHaveLength(1);
+        });
+
+        it('tells once of a dead letter of 29 days, a day before it expires, and by the time of the row, with its job and call', async () => {
+            expect(DEAD_LETTER_AGED_MS).toBe(29 * 24 * 60 * 60 * 1000);
+            expect(DEAD_LETTER_KEEP_MS - DEAD_LETTER_AGED_MS).toBe(24 * 60 * 60 * 1000);
+            const mem = memoryStore();
+            const one = aged();
+            const { notes, advance } = ledger(mem.store, () => true, { report: one.report });
+            mem.dead.set('j|bad', { botId: 'b', jobId: 'j', row: deadRow('bad', 1000) });
+            advance(DEAD_LETTER_AGED_MS - 1);
+            expect(await notes.tellAged()).toBe(true);
+            expect(one.told).toEqual([]);
+            advance(1);
+            await notes.tellAged();
+            await notes.tellAged();
+            expect(one.told).toEqual([['dead_aging', 'j', 'bad']]);
+            // the dead letter is only read: it stays where it is, to be replayed
+            expect(mem.dead.size).toBe(1);
+        });
+
+        it('a dead letter is told as a dead letter, never also as a row waiting for Orbit, once it is put back for a replay', async () => {
+            const mem = memoryStore();
+            const one = aged();
+            const { notes, advance } = ledger(mem.store, () => false, { report: one.report });
+            mem.dead.set('j|bad', { botId: 'b', jobId: 'j', row: deadRow('bad', 1000) });
+            advance(DEAD_LETTER_AGED_MS);
+            expect(await notes.replayDeadLetters()).toBe(1);
+            await notes.tellAged();
+            expect(one.told).toEqual([['dead_aging', 'j', 'bad']]);
+        });
+
+        it('tells of a dead letter kept only in memory (no store) too', async () => {
+            const one = aged();
+            const kinds: string[] = [];
+            let now = 1000;
+            const notes = createRefusalNotes(() => now, {
+                retryMs: [0],
+                laterMs: [],
+                report: (what, info) => {
+                    kinds.push(what);
+                    one.report(what, info);
+                },
+                sink: async (_botId, _jobId, rows) => (rows.some((row) => row.callId === 'bad') ? 'rejected' : true),
+            });
+            notes.record('b', 'j', call('ok'));
+            await notes.flush('j');
+            notes.record('b', 'j', call('bad'));
+            await notes.flush('j');
+            expect(kinds).toContain('dead_letter');
+            now += DEAD_LETTER_AGED_MS;
+            await notes.tellAged();
+            expect(one.told).toEqual([['dead_aging', 'j', 'bad']]);
+        });
+
+        it('forgets a row that has gone (replayed, taken, expired): the same call id kept again later is told again', async () => {
+            const mem = memoryStore();
+            const one = aged();
+            const { notes, advance } = ledger(mem.store, () => true, { report: one.report });
+            mem.dead.set('j|bad', { botId: 'b', jobId: 'j', row: deadRow('bad', 1000) });
+            advance(DEAD_LETTER_AGED_MS);
+            await notes.tellAged();
+            mem.dead.clear();
+            await notes.tellAged();
+            mem.dead.set('j|bad', { botId: 'b', jobId: 'j', row: deadRow('bad', 1000) });
+            await notes.tellAged();
+            expect(one.told.map(([what]) => what)).toEqual(['dead_aging', 'dead_aging']);
+        });
+
+        it('keeps what it has told while the store cannot be read (a row is not told twice for a store that blinked), and says it could not read, never throwing', async () => {
+            const mem = memoryStore();
+            const one = aged();
+            const { notes, advance } = ledger(mem.store, () => false, { report: one.report });
+            mem.dead.set('j|bad', { botId: 'b', jobId: 'j', row: deadRow('bad', 1000) });
+            advance(DEAD_LETTER_AGED_MS);
+            expect(await notes.tellAged()).toBe(true);
+            mem.state.failLoad = true;
+            expect(await notes.tellAged()).toBe(false);
+            mem.state.failLoad = false;
+            expect(await notes.tellAged()).toBe(true);
+            expect(one.told).toEqual([['dead_aging', 'j', 'bad']]);
+            const noDead = memoryStore();
+            noDead.store.loadDead = async () => {
+                throw new Error('down');
+            };
+            expect(await ledger(noDead.store, () => true).notes.tellAged()).toBe(false);
+        });
+
+        it('is a yes with no store and nothing to tell, and a report that throws never stops it', async () => {
+            const bare = createRefusalNotes(() => 1000, { sink: async () => true });
+            expect(await bare.tellAged()).toBe(true);
+            const mem = memoryStore();
+            const { notes, advance } = ledger(mem.store, () => false, { report: () => { throw new Error('Sentry down'); } });
+            mem.dead.set('j|bad', { botId: 'b', jobId: 'j', row: deadRow('bad', 1000) });
+            notes.record('b', 'j', call('c1'));
+            advance(DEAD_LETTER_AGED_MS);
+            await expect(notes.tellAged()).resolves.toBe(true);
+        });
+
+        it('says in words what it is and what to do, and carries ids only', () => {
+            expect(FAULT_EVIDENCE_MESSAGES.pending_aging).toMatch(/6 days/);
+            expect(FAULT_EVIDENCE_MESSAGES.pending_aging).toMatch(/dropped at 7/);
+            expect(FAULT_EVIDENCE_MESSAGES.dead_aging).toMatch(/29 days/);
+            expect(FAULT_EVIDENCE_MESSAGES.dead_aging).toMatch(/dropped at 30/);
+            expect(FAULT_EVIDENCE_MESSAGES.dead_aging).toMatch(/replay/);
+        });
     });
 
     it('a failing report never holds or loses the evidence: the row is still made again in the store and still sent', async () => {
@@ -3439,7 +3664,7 @@ describe('Orbit saying it has no such job', () => {
 
 describe('what the operators are told about calls that could not be recorded', () => {
     it('says every kind in words, and does not claim that a refused call went ahead', () => {
-        expect(Object.keys(FAULT_EVIDENCE_MESSAGES).sort()).toEqual(['all_refused', 'called_unrecorded', 'dead_letter', 'not_durable', 'unacked']);
+        expect(Object.keys(FAULT_EVIDENCE_MESSAGES).sort()).toEqual(['all_refused', 'called_unrecorded', 'dead_aging', 'dead_letter', 'not_durable', 'pending_aging', 'unacked']);
         // with the runner elsewhere the relay answers 503 and forwards nothing: the alert must not say the call went ahead as a fact
         expect(FAULT_EVIDENCE_MESSAGES.called_unrecorded).toMatch(/refused/);
         expect(FAULT_EVIDENCE_MESSAGES.called_unrecorded).toMatch(/or have gone ahead/);

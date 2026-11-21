@@ -286,7 +286,7 @@ describe("the line under a paying page in the artifact window (the approved mock
         await vi.advanceTimersByTimeAsync(3_000);
         await settle();
         expect(text()).toBe(
-            "We're still checking your earlier payment. If you paid, it will show up here when your payment service confirms it. Check payment"
+            "We're still checking your earlier payment. If you paid, it will show up here when your payment service confirms it. Buying again starts a new payment. Check payment"
         );
         const calls = api.payOnArtifact.mock.calls.length;
         await vi.advanceTimersByTimeAsync(25 * 60_000);

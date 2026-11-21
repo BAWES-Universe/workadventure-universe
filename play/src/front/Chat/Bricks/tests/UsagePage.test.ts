@@ -771,6 +771,58 @@ describe("the Usage page (#1999)", () => {
             expect(receiptText()).not.toContain("Nothing taken");
         });
 
+        describe("a let-go App that was then confirmed delivered, with the computer part given back (Orbit's own words, shown as they are)", () => {
+            const NOTE = "Partly done. Exa was delivered. Its hold was released. The computer part didn't finish and its cost was returned.";
+            const delivered = {
+                label: "exa",
+                outcome: "worked",
+                text: "Exa · worked",
+                takenText: null,
+                amountMicros: 0,
+            };
+            const receipt = () =>
+                task({
+                    id: "act_late",
+                    title: "Research the trip",
+                    category: "computer",
+                    state: "done",
+                    spentMicros: 0,
+                    returnedMicros: 30_000,
+                    outcome: "partial",
+                    outcomeText: "Partly done",
+                    outcomeNote: NOTE,
+                    actions: [delivered],
+                    lines: [{ label: "Computer, 3 minutes", note: "Given back", returnedMicros: 30_000 }],
+                });
+            const row = () => target.querySelector('[data-activity="act_late"]');
+            const collapsedHint = async () => {
+                game.getMyUsage.mockResolvedValue(live({}, { activity: [receipt()] }));
+                await open();
+                return row()?.querySelector(".m")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+            };
+
+            it("says Partly done on the collapsed row itself, with no receipt open, never Done, Refunded or a charge", async () => {
+                const hint = await collapsedHint();
+                expect(hint).toMatch(/Partly done/);
+                expect(hint).not.toMatch(/Refunded|·\s*Done\b/);
+                expect(byId("usageReceipt")).toBeNull();
+                expect(byId("usageReceiptWhy")).toBeNull();
+            });
+
+            it("shows the App that was delivered as its own line, Orbit's note word for word, and the computer part given back, once the row is opened", async () => {
+                await collapsedHint();
+                row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+                expect(stepRows()).toEqual(["Exa · worked $0"]);
+                expect(byId("usageReceiptWhy")?.textContent).toBe(NOTE);
+                expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+                expect(receiptText()).toContain("Computer, 3 minutes");
+                expect(receiptText()).toContain("Given back $0.03");
+                expect(receiptText()).not.toContain("Nothing taken");
+                expect(receiptText()).not.toContain("Refunded");
+            });
+        });
+
         it("shows Orbit's headline and note for a refund that is pending, never Done, never Refunded, and no Paid by line", async () => {
             const hint = await show(
                 task({

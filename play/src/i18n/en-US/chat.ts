@@ -2240,7 +2240,8 @@ const chat: BaseTranslation = {
         payNotHeard: "We haven't heard back about your payment yet.",
         payNotHeardSub: "If you paid, it still counts. Check it here before paying again.",
         payStillChecking: "We're still checking your earlier payment.",
-        payStillCheckingSub: "If you paid, it will show up here when your payment service confirms it.",
+        payStillCheckingSub:
+            "If you paid, it will show up here when your payment service confirms it. Buying again starts a new payment.",
         payNotPaid: "Not paid yet.",
         payNotPaidSub: "If you already paid, it can take a while to show. Check it here before paying again.",
         payNeedsUpdate: "This page's pay button needs an update.",

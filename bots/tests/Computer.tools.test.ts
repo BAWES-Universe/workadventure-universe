@@ -315,19 +315,17 @@ describe('the key of an ask (GPT round 3, finding 3): the same ask is the same s
 
 describe('the key of an ask survives a restart of the server (Opus ruling on GPT round 3, finding 3): kept in the shared store while the outcome is open', () => {
     const KEY = /^[A-Za-z0-9_-]{8,64}$/;
-    /** The shared store, as a map that remembers every call made to it, and what it held at the moment of each. */
+    /** The shared store, as a map that remembers every call made to it. `claim` is one step, as the store's script is: the key held while it is good, else the caller's. */
     function sharedStore() {
         const held = new Map<string, StoredStartKey & { keepMs: number }>();
         const log: string[] = [];
         const store: StartKeyStore = {
-            get: vi.fn(async (scope: string) => {
-                log.push('get');
-                const entry = held.get(scope);
-                return entry ? { key: entry.key, at: entry.at } : undefined;
-            }),
-            set: vi.fn(async (scope: string, entry: StoredStartKey, keepMs: number) => {
-                log.push('set');
+            claim: vi.fn(async (scope: string, entry: StoredStartKey, keepMs: number, lifeMs: number) => {
+                log.push('claim');
+                const old = held.get(scope);
+                if (old && old.at >= Date.now() - lifeMs) return { key: old.key, at: old.at };
                 held.set(scope, { ...entry, keepMs });
+                return { key: entry.key, at: entry.at };
             }),
             delete: vi.fn(async (scope: string, key: string) => {
                 log.push('delete');
@@ -370,18 +368,26 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
         }
     });
 
-    it('keeps the life of the FIRST send: a key found again keeps only what is left of the ten minutes, never a new ten', async () => {
+    it('keeps the life of the FIRST send: a key put back after the store lost it keeps only what is left of the ten minutes, never a new ten, and one the store holds is left as it is', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-11-21T10:00:00Z'));
         const { store, held } = sharedStore();
         const admin = asking({ ok: false, reason: 'unknown' });
-        await asAfterRestart(admin, store);
+        const memory = new Map<string, StartKeyEntry>();
+        const ask = () => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
+        await ask();
+        expect([...held.values()][0].keepMs).toBe(START_KEY_KEEP_MS);
         vi.setSystemTime(new Date('2026-11-21T10:04:00Z'));
-        await asAfterRestart(admin, store);
+        // the store still holds it: left exactly as it was
+        await ask();
+        expect([...held.values()][0]).toMatchObject({ at: new Date('2026-11-21T10:00:00Z').getTime(), keepMs: START_KEY_KEEP_MS });
+        // the store lost it: put back under the moment of the first send, for what is left
+        held.clear();
+        await ask();
         const [entry] = [...held.values()];
         expect(entry.at).toBe(new Date('2026-11-21T10:00:00Z').getTime());
         expect(entry.keepMs).toBe(START_KEY_KEEP_MS - 4 * 60_000);
-        expect(keysOf(admin)[1]).toBe(keysOf(admin)[0]);
+        expect(new Set(keysOf(admin)).size).toBe(1);
     });
 
     it('sends a new key when the stored one is older than the ten minutes (the store did not expire it yet), and keeps the new one', async () => {
@@ -469,16 +475,47 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
         expect(held.size).toBe(1);
     });
 
-    it('uses the key of the process\'s own memory first, and asks the store only when it has none', async () => {
-        const { store } = sharedStore();
+    it('sends the key of the process\'s own memory when the store holds none or the same, and claims it in the store each time so another server finds it', async () => {
+        const { store, held } = sharedStore();
         const admin = asking({ ok: false, reason: 'unknown' });
         const memory = new Map<string, StartKeyEntry>();
         const ask = () => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
         await ask();
-        expect(store.get).toHaveBeenCalledTimes(1);
         await ask();
-        expect(store.get).toHaveBeenCalledTimes(1);
+        expect(store.claim).toHaveBeenCalledTimes(2);
         expect(keysOf(admin)[1]).toBe(keysOf(admin)[0]);
+        // the store lost it (flushed): the memory's key is put back, with what was left of its ten minutes, never a new key
+        held.clear();
+        await ask();
+        expect(keysOf(admin)[2]).toBe(keysOf(admin)[0]);
+        expect([...held.values()].map((entry) => entry.key)).toEqual([keysOf(admin)[0]]);
+    });
+
+    it('sends the key the store holds, not its own, when another server claimed it first: the first key of an ask wins, and the memory follows it', async () => {
+        const { store, held } = sharedStore();
+        const scope = `${BRICK}|uuid-alice|${JSON.stringify([null, null, 'visa form'])}`;
+        const first = { key: 'first-server-key', at: Date.now() - 1000 };
+        held.set(scope, { ...first, keepMs: START_KEY_KEEP_MS });
+        const admin = asking({ ok: false, reason: 'unknown' });
+        const memory = new Map<string, StartKeyEntry>();
+        memory.set(JSON.stringify([null, null, 'visa form']), { key: 'my-own-old-key-1', at: Date.now() - 60_000, open: true });
+        await runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
+        expect(keysOf(admin)).toEqual(['first-server-key']);
+        expect([...memory.values()]).toEqual([{ key: 'first-server-key', at: first.at, open: true }]);
+        // settled: the key the store gave is the one taken back
+        await runComputerTool({ job: 'Visa form' }, { admin: asking({ ok: true, job: job(), restoredFrom: null }) as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
+        expect(held.size).toBe(0);
+    });
+
+    it('two servers handling the same ask at the same moment, each with an empty memory, send the SAME key: one job, never two', async () => {
+        const { store, held } = sharedStore();
+        const one = asking({ ok: false, reason: 'unknown' });
+        const two = asking({ ok: false, reason: 'unknown' });
+        await Promise.all([asAfterRestart(one, store), asAfterRestart(two, store), asAfterRestart(one, store)]);
+        const keys = [...keysOf(one), ...keysOf(two)];
+        expect(keys).toHaveLength(3);
+        expect(new Set(keys).size).toBe(1);
+        expect(held.size).toBe(1);
     });
 
     it('works with the store alone (no memory of the chat), and with the memory alone (no store)', async () => {
@@ -498,10 +535,9 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
         }
     });
 
-    it('goes on with the memory\'s key when the store fails at any call, and still sends the start (the store never holds a tool call)', async () => {
+    it('goes on with the memory\'s key when the store fails at any call or does not answer, and still sends the start (the store never holds a tool call)', async () => {
         const failing: StartKeyStore = {
-            get: vi.fn().mockRejectedValue(new Error('down')),
-            set: vi.fn().mockRejectedValue(new Error('down')),
+            claim: vi.fn().mockRejectedValue(new Error('down')),
             delete: vi.fn().mockRejectedValue(new Error('down')),
         };
         const memory = new Map<string, StartKeyEntry>();
@@ -808,8 +844,12 @@ describe('who has the computer in a chat (#2000)', () => {
     it('sends the key to the shared store the server gave it (setComputerStartKeys), so a restart finds it: the same ask on a fresh service with the same store is the same start', async () => {
         const held = new Map<string, StoredStartKey>();
         const store: StartKeyStore = {
-            get: async (scope) => held.get(scope),
-            set: async (scope, entry) => void held.set(scope, entry),
+            claim: async (scope, entry) => {
+                const old = held.get(scope);
+                if (old) return old;
+                held.set(scope, entry);
+                return entry;
+            },
             delete: async (scope, key) => void (held.get(scope)?.key === key && held.delete(scope)),
         };
         const startComputerJob = vi.fn().mockResolvedValue({ ok: false, reason: 'unknown' });

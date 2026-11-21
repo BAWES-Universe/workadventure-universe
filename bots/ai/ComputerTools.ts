@@ -81,8 +81,9 @@ export interface ComputerToolContext {
      */
     startKeys?: Map<string, StartKeyEntry>;
     /**
-     * Where the key of an ask whose outcome is open is also kept, so a restart of this server between a start and its answer still finds it (see `ComputerStartKeys`): looked
-     * at before the key of a new ask is made, set BEFORE the start is sent, and deleted when the outcome is final. Without it (or when it fails) the process's own memory is all there is.
+     * Where the key of an ask whose outcome is open is also kept, so a restart of this server between a start and its answer still finds it, and another bot server handling the same
+     * ask at the same moment sends the same key (see `ComputerStartKeys`): claimed in one step BEFORE the start is sent, and deleted when the outcome is final. Without it (or when
+     * it fails) the process's own memory is all there is.
      */
     startKeyStore?: StartKeyStore;
 }
@@ -236,18 +237,18 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const asked = askedOf(job, context.origin);
     const scope = `${context.botId}|${context.userId}|${asked}`;
     const now = Date.now();
-    let earlier = context.startKeys?.get(asked);
-    // A restart of this server forgot the process's own memory: the key of an ask whose outcome was still open is where it was kept
-    if (!(earlier && now - earlier.at < START_KEY_KEEP_MS) && context.startKeyStore) {
-        const stored = await context.startKeyStore.get(scope).catch(() => undefined);
-        if (stored) earlier = { key: stored.key, at: stored.at, open: true };
-    }
+    const earlier = context.startKeys?.get(asked);
     // Open until the answer says otherwise: a start in flight whose key a new message of the person cleared would be sent again under another key (a second job)
-    const entry: StartKeyEntry = earlier && now - earlier.at < START_KEY_KEEP_MS ? earlier : { key: randomUUID(), at: now, open: true };
+    let entry: StartKeyEntry = earlier && now - earlier.at < START_KEY_KEEP_MS ? earlier : { key: randomUUID(), at: now, open: true };
+    // The FIRST key of this ask wins, across bot servers and restarts: one step in the shared store keeps ours BEFORE the start is sent (with what is left of the ten minutes)
+    // unless it already holds a key of this ask that is still good, and answers the one it holds. Two servers handling the same ask at once, a restart that forgot the process's
+    // memory, and an ask racing a stored one all send that one key. When the store does not answer, our own key goes on (the process's memory is all there is)
+    if (context.startKeyStore) {
+        const held = await context.startKeyStore.claim(scope, { key: entry.key, at: entry.at }, START_KEY_KEEP_MS - (now - entry.at), START_KEY_KEEP_MS).catch(() => undefined);
+        if (held && held.key !== entry.key) entry = { key: held.key, at: held.at, open: true };
+    }
     const startKey = entry.key;
     context.startKeys?.set(asked, entry);
-    // Kept BEFORE the start is sent: a restart between the send and the answer must still find the key. Its life is what is left of the ten minutes
-    if (context.startKeyStore) await context.startKeyStore.set(scope, { key: startKey, at: entry.at }, START_KEY_KEEP_MS - (now - entry.at)).catch(() => undefined);
     // An ask that went nowhere (Orbit said no before it made anything, or the request itself failed with an answer that is final) is not kept: asking again is a new ask
     const dropKey = async () => {
         if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
