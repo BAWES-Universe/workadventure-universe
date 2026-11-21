@@ -4,6 +4,7 @@
  * This service tracks bot configuration and usage across rooms, worlds, and universes.
  */
 
+import { randomUUID } from 'crypto';
 import axios, { type AxiosResponse } from 'axios';
 import * as Sentry from '@sentry/node';
 import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type MemoryForgetHandler } from '../memory/ForgetNotice';
@@ -12,7 +13,7 @@ import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
 import { computerReportOf, type ComputerReport, type UndeliverableWhy } from './ComputerReports';
-import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
+import { dueRunOf, failedNoticeOf, heldNoticeOf, type DueRun, type FailedNotice, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -451,7 +452,27 @@ export interface TaskReceiptOpened {
     link: string | null;
     /** The words for who pays ("Paid by you"). */
     paidBy: string | null;
+    /** The turn the receipt is on: sent with every renew and close, so a word from an older turn changes nothing. Absent from an Orbit that gives none. */
+    generation?: number;
 }
+/** What Orbit says to a renewal: the generation the receipt is on now, and whether this one was too old to count. */
+export interface TaskReceiptRenewed {
+    generation?: number;
+    stale: boolean;
+}
+/** Orbit's answer to a close that came from an older generation: nothing changed, and this is the one the receipt is on now. */
+export interface TaskReceiptStale {
+    stale: true;
+    generation?: number;
+}
+/**
+ * Orbit's answer to a close of done or refunded for a task that is not over (a computer's job is still running, or a run of the task has not ended):
+ * the receipt waits in "checking" and ends with the job. The close is not taken yet: it is said again later, and settles at once when the job is over.
+ */
+export interface TaskReceiptWaiting {
+    waiting: true;
+}
+const wholeGeneration = (value: unknown): number | undefined => (typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined);
 export type TaskReceiptState = 'done' | 'refunded' | 'checking';
 
 /** Orbit's own wait for the provider is a minute; the bot server waits a little longer so the answer comes back. */
@@ -514,6 +535,47 @@ export type GuestBrickAllowance =
 const BRICK_CALL_TIMEOUT_MS = 8_000;
 /** Ending a computer job: Orbit hands its files over before it answers, which can take up to about four minutes. */
 const COMPUTER_FINISH_TIMEOUT_MS = 6 * 60_000;
+/**
+ * The first job on a brand-new Brick makes its machine inside Orbit's start call (40 to 126 s measured on dev); Orbit waits up to 4 minutes for a machine to be
+ * ready (READY_WITHIN_MS), so the start call waits longer than that, and the answer is never cut while the machine is still being made.
+ */
+export const COMPUTER_START_TIMEOUT_MS = 6 * 60_000;
+/** When Orbit cannot look up who the question is about it answers 503 `retry: true`: the question is asked again after each of these waits (ms), then it is unknown. */
+const COMPUTER_STARTED_RETRY_MS = [1000, 2000];
+/** The header a start carries its own key in, and the query parameter the read asks for it by (Orbit's contract: ^[A-Za-z0-9_-]{8,64}$, a uuid fits). */
+export const COMPUTER_START_ATTEMPT_HEADER = 'X-Computer-Start-Attempt';
+/** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
+const COMPUTER_JOB_LIVE = ['running', 'waiting', 'queued'];
+/** The states of a job that was made and is over. */
+const COMPUTER_JOB_OVER = ['failed', 'stopped'];
+
+/** Whether a call failed because it took too long (our own timeout, or a gateway in front of Orbit that gave up): the work may be going on behind it. */
+export function isSlowAnswer(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const { code, response } = error as { code?: unknown; response?: { status?: unknown } };
+    return code === 'ECONNABORTED' || code === 'ETIMEDOUT' || response?.status === 504 || response?.status === 524;
+}
+/**
+ * Whether a failed start proves NOTHING about what Orbit decided, so the start may well have made a job behind it and the question "did this start make one?" has to be asked
+ * before anyone is told it failed. Only an answer Orbit ITSELF gave is final: a 4xx with its own JSON body (a refusal, a bad request). Everything else may have been
+ * committed behind it: no HTTP answer at all (a connection reset, a broken pipe, a refused or dropped connection, a timeout: any network code), 408, every 5xx (502, 503,
+ * 504, 524...), and a 4xx that is not Orbit's own (a gateway's or proxy's page with no JSON body). An error raised before anything was sent (no setup, a bad address) is no
+ * failure of a start that was made: nothing was started, and the caller is told it failed.
+ */
+export function mayHaveStarted(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const { code, response, isAxiosError } = error as { code?: unknown; response?: { status?: unknown; data?: unknown }; isAxiosError?: unknown };
+    if (response && typeof response === 'object') {
+        const status = typeof response.status === 'number' ? response.status : 0;
+        if (status === 408 || status >= 500) return true;
+        // A 4xx is Orbit's own no only when it comes with Orbit's own JSON body; a page or an empty answer is a gateway's
+        return !(typeof response.data === 'object' && response.data !== null && !Array.isArray(response.data));
+    }
+    // Raised before the request went out: nothing was sent, so nothing was started
+    if (typeof code === 'string' && (code === 'ERR_INVALID_URL' || code.startsWith('ERR_BAD_OPTION'))) return false;
+    // A failed request with no answer: the network code says how it broke, and says nothing of whether Orbit had already taken the start
+    return isAxiosError === true || typeof code === 'string';
+}
 /** A file a computer job made can be as big as Limits allow, so its fetch gets longer than a call for a list. */
 const COMPUTER_FILE_TIMEOUT_MS = 120_000;
 /** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
@@ -603,6 +665,9 @@ export type BotAiCredentialsAnswer =
           forOthers?: boolean;
       })
     | { source: 'resting'; keyOwnerId: string; restingLine: string };
+
+/** How long keepItemDelivered waits before trying a call again that failed for a reason that is not a refusal (so it tries three times) */
+const KEEP_DELIVERED_RETRY_MS = [300, 900] as const;
 
 export class AdminApiService {
     private adminApiUrl: string;
@@ -1094,7 +1159,7 @@ export class AdminApiService {
         };
     }
 
-    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS): Promise<AxiosResponse<T>> {
+    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1102,7 +1167,7 @@ export class AdminApiService {
             url: resolveAdminApiEndpoint(this.adminApiUrl, path),
             ...(body === undefined ? {} : { data: body }),
             ...(params ? { params } : {}),
-            headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+            headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...(extraHeaders ?? {}) },
             timeout: timeoutMs,
         });
     }
@@ -1277,13 +1342,16 @@ export class AdminApiService {
      * retry never share one, and a run that was handed out and never reported, again with the same run id. Throws when Orbit cannot
      * be asked: nothing is lost, the runs are handed out again.
      */
-    async claimDueItems(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[] }> {
-        const response = await this.brickCall<{ runs?: unknown; held?: unknown }>('post', 'api/bricks/items/due', { kinds });
+    async claimDueItems(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[]; failed: FailedNotice[] }> {
+        const response = await this.brickCall<{ runs?: unknown; held?: unknown; failed?: unknown }>('post', 'api/bricks/items/due', { kinds });
         const runs = Array.isArray(response.data?.runs) ? response.data.runs : [];
         const held = Array.isArray(response.data?.held) ? response.data.held : [];
+        // An Orbit from before has no `failed`: none
+        const failed = Array.isArray(response.data?.failed) ? response.data.failed : [];
         return {
             runs: runs.map(dueRunOf).filter((run): run is DueRun => run !== null),
             held: held.map(heldNoticeOf).filter((notice): notice is HeldNotice => notice !== null),
+            failed: failed.map(failedNoticeOf).filter((notice): notice is FailedNotice => notice !== null),
         };
     }
 
@@ -1302,17 +1370,28 @@ export class AdminApiService {
 
     /**
      * Keeps the chat event a run's message got, and with it how the run is to be reported (a goal that reached its outcome, its progress).
-     * True when Orbit kept it (or already had this one). An Orbit from before the report is kept refuses the call that carries one: the
+     * True when Orbit kept it (or already had this one). An Orbit from before the report is kept refuses (4xx) the call that carries one: the
      * event id is then kept alone, because where the message went matters more than how the run is reported.
      */
     async keepItemDelivered(runId: string, eventId: string, report?: { outcome?: string; result?: string; progress?: unknown; reached?: boolean }): Promise<boolean> {
         const path = `api/bricks/items/runs/${encodeURIComponent(runId)}/delivered`;
         for (const body of report ? [{ eventId, report: this.withoutEmpty(report) }, { eventId }] : [{ eventId }]) {
-            try {
-                await this.brickCall('post', path, body);
-                return true;
-            } catch (error) {
-                console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+            // A call that fails for a reason that is not a refusal is tried again a short while later (twice), so a blip does not lose the report
+            for (let attempt = 0; attempt <= KEEP_DELIVERED_RETRY_MS.length; attempt++) {
+                try {
+                    await this.brickCall('post', path, body);
+                    return true;
+                } catch (error) {
+                    console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+                    // Only a refusal (4xx, but not "too early" or "too many") says the call that carries the report is not understood: the next
+                    // body is then tried. A 503 or a timeout says nothing: the same call is tried again, and when it never gets through the
+                    // answer is false, so the report is not dropped quietly
+                    const status = (error as { response?: { status?: number } })?.response?.status;
+                    const refused = typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429;
+                    if (refused) break;
+                    if (attempt === KEEP_DELIVERED_RETRY_MS.length) return false;
+                    await new Promise<void>((resolve) => setTimeout(resolve, KEEP_DELIVERED_RETRY_MS[attempt]));
+                }
             }
         }
         return false;
@@ -1452,6 +1531,51 @@ export class AdminApiService {
         }
     }
 
+    /**
+     * The job this very start made (#2000): read only, asked after a start whose answer was slow. Every start carries a `startKey` of its own (one random id per start
+     * the person asked for), Orbit keeps it with the job the start makes, and this asks for the job of THAT key and no other: the title, the conversation and the time
+     * are only what a person reads, so a job of an earlier start (the same title, just before) is never taken for this one. `'none'` when Orbit answers that no job
+     * has that key (`started: null`). `'unknown'` when it does not say (an Orbit without this read answers without `started`, a damaged answer) or cannot be asked:
+     * the start may well have made a job, which nobody can tell. An Orbit that could not look up who the question is about, or whose start with that key is still
+     * going on, answers HTTP 503 with `retry: true` and no `started`: that is never "no job", so the question is asked again (after one second, then after two), and
+     * when it is still not answered it is `'unknown'`: the job is not started a second time.
+     */
+    async computerJobStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; startKey: string }): Promise<{ id: string; status: string } | 'none' | 'unknown'> {
+        for (let attempt = 0; ; attempt++) {
+            const answer = await this.lookAtStarted(viaBotId, userId, find);
+            if (answer !== 'retry') return answer;
+            if (attempt >= COMPUTER_STARTED_RETRY_MS.length) return 'unknown';
+            await new Promise((resolve) => setTimeout(resolve, COMPUTER_STARTED_RETRY_MS[attempt]));
+        }
+    }
+
+    /** One asking of `computerJobStarted`; `'retry'` when Orbit says it could not look up the person (503, or `retry: true`) and the question can be asked again. */
+    private async lookAtStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; startKey: string }): Promise<{ id: string; status: string } | 'none' | 'unknown' | 'retry'> {
+        try {
+            const response = await this.brickCall<{ started?: { id?: unknown; status?: unknown; attempt?: unknown } | null }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, {
+                userId,
+                ...(typeof find.isGuest === 'boolean' ? { isGuest: String(find.isGuest) } : {}),
+                // The key of this start and nothing else: Orbit finds the job by it alone (an Orbit that has not got it answers without `started`: unknown)
+                attempt: find.startKey,
+            });
+            const data = response.data;
+            // No `started` at all is an Orbit that does not have this read: it says nothing. Only its own `null` says there is no such job. One that says to
+            // try again (`retry: true`) could not look the person up
+            if (data && typeof data === 'object' && (data as { retry?: unknown }).retry === true && !(data as { started?: unknown }).started) return 'retry';
+            if (!data || typeof data !== 'object' || !('started' in data) || data.started === undefined) return 'unknown';
+            const started = data.started;
+            if (started === null) return 'none';
+            // The job counts for THIS start only when Orbit says it is the job of this very key: a missing or a different attempt is no proof of anything
+            return typeof started === 'object' && typeof started.id === 'string' && started.id !== '' && typeof started.status === 'string' && started.attempt === find.startKey ? { id: started.id, status: started.status } : 'unknown';
+        } catch (error) {
+            console.warn("[AdminApiService] Could not read whether a Brick's computer job was started:", error instanceof Error ? error.message : error);
+            // Orbit's own "could not look the person up": 503, with `retry: true` in its answer. A bare 503 (a gateway) is a failed read, asked again the same way
+            const response = axios.isAxiosError(error) ? error.response : undefined;
+            if (response && (response.status === 503 || (response.data as { retry?: unknown } | undefined)?.retry === true)) return 'retry';
+            return 'unknown';
+        }
+    }
+
     /** An Instant call to Orbit with the service token. Never throws: 200 and 202 are answers, 404 is "not the owner", the rest are not answers. */
     private async instantCall(method: 'get' | 'post', path: string, body: unknown, params: Record<string, string> | undefined, timeout: number): Promise<{ status: number; data: Record<string, unknown> } | { status: 'none'; retry: boolean; rejected?: true; http?: number }> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
@@ -1560,7 +1684,19 @@ export class AdminApiService {
         const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'open', taskKey: task.taskKey, title: task.title, category: task.category }, undefined, INSTANT_LIST_TIMEOUT_MS);
         if (answer.status !== 200 && answer.status !== 201) return null;
         const paid = answer.data.paidBy as { label?: unknown } | undefined;
-        return { link: asText(answer.data.link), paidBy: asText(paid?.label) };
+        const generation = wholeGeneration(answer.data.generation);
+        return { link: asText(answer.data.link), paidBy: asText(paid?.label), ...(generation === undefined ? {} : { generation }) };
+    }
+
+    /**
+     * Says a task's receipt is alive (a run starts, a turn ends): Orbit moves its lease on (`action: 'renew'`). A renewal never revives an ended receipt. A
+     * `generation` older than the receipt's changes nothing and the answer names the one it is on now. Null when Orbit cannot say: a lease that lapses is
+     * settled by Orbit's own sweep, so nothing waits on this. Never throws.
+     */
+    async renewTaskReceipt(botId: string, userId: string, task: { taskKey: string; generation?: number }): Promise<TaskReceiptRenewed | null> {
+        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'renew', taskKey: task.taskKey, ...(task.generation === undefined ? {} : { generation: task.generation }) }, undefined, INSTANT_LIST_TIMEOUT_MS);
+        if (answer.status !== 200) return null;
+        return { generation: wholeGeneration(answer.data.generation), stale: answer.data.stale === true };
     }
 
     /**
@@ -1569,30 +1705,87 @@ export class AdminApiService {
      * more to ask: Orbit took it, or said it never will (a receipt that is not this person's or does not exist, a guest without Activity, a request it
      * refuses: asking again will not change that). False when Orbit gave no answer (down, a server error, a timeout) or said to slow down (429), so it is worth asking again.
      */
-    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState }): Promise<boolean> {
-        const answer = await this.instantCall('post', `api/bots/${encodeURIComponent(botId)}/task-receipts`, { userId, action: 'close', taskKey: task.taskKey, state: task.state }, undefined, INSTANT_LIST_TIMEOUT_MS);
+    async closeTaskReceipt(botId: string, userId: string, task: { taskKey: string; state: TaskReceiptState; generation?: number }): Promise<boolean | TaskReceiptStale | TaskReceiptWaiting> {
+        const answer = await this.instantCall(
+            'post',
+            `api/bots/${encodeURIComponent(botId)}/task-receipts`,
+            { userId, action: 'close', taskKey: task.taskKey, state: task.state, ...(task.generation === undefined ? {} : { generation: task.generation }) },
+            undefined,
+            INSTANT_LIST_TIMEOUT_MS
+        );
         // "Too many asks" (429) passes, so it is asked again; any other refusal of the request itself will not change
         if (answer.status === 'none') return answer.rejected === true && answer.http !== 429;
+        // A close from an older generation changed nothing: the caller says which one the receipt is on now, and decides whether it is still the closer
+        if (answer.status === 200 && answer.data.stale === true) return { stale: true, generation: wholeGeneration(answer.data.generation) };
+        // A done or a refunded that Orbit answers with "checking": the task is not over (its job is still running), so the receipt waits for it. It is
+        // not ended, and not a failure: the close goes again later. When the word sent was "checking" itself, "checking" is the answer it asked for
+        if (answer.status === 200 && task.state !== 'checking' && answer.data.state === 'checking') return { waiting: true };
         return answer.status === 200 || answer.status === 404;
     }
 
-    /** Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. */
+    /**
+     * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. Every start carries a key of its own (`startKey`, one random id
+     * per start), which Orbit keeps with the job it makes. A start whose answer did not come back whole (it took longer than we wait, a gateway cut it, the connection
+     * was reset or broken, or a server or proxy answered 5xx: see `mayHaveStarted`) is not a failure of the computer when Orbit says that the job of THIS key was made.
+     * Only an answer Orbit itself gave to say no (a 4xx) or an error raised before anything was sent is thrown at once, with no look-up. When the job of the key is running, waiting or queued the machine is being made, and the answer is `starting`. Another job of the person's, even one of the
+     * same title in the same chat that ran just before, proves nothing about this start and is never read for it. When the job of the key has failed or stopped the answer is
+     * `ended` (it was made and is over: not a failure to reach the computer). When Orbit CANNOT say (an Orbit without the read, a damaged answer, the read failing, a
+     * start with that key still going on) or finds no job of the key YET (`started: null`: the POST may still be processed and commit after this one read) the answer is
+     * `unknown`: the slow start may well make a job, and telling the person it failed would have them ask again and pay for a second one.
+     */
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
+        ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
+        const startKey = randomUUID();
+        // Asks Orbit which job THIS start made (by its key), and says what is true of it: the same for a start whose answer was lost and for one whose answer came but
+        // did not say what happened
+        const lookUp = async (): Promise<{ ok: false; reason: string }> => {
+            const made = await this.computerJobStarted(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
+            // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
+            if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };
+            if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
+            // A job that failed or stopped: it WAS made and is over. That is no connection failure of the start (nothing was unreachable), and the person is
+            // told what is true of it: `ended`
+            if (COMPUTER_JOB_OVER.includes(made.status)) return { ok: false, reason: 'ended' };
+            // A state this server does not know: nothing can be said of it
+            return { ok: false, reason: 'unknown' };
+        };
+        let answer: Awaited<ReturnType<AdminApiService['sendComputerJob']>>;
+        try {
+            answer = await this.sendComputerJob(viaBotId, userId, ask, startKey);
+        } catch (error) {
+            if (isSlowAnswer(error) || mayHaveStarted(error)) return lookUp();
+            throw error;
+        }
+        // An answer that says it worked (`ok: true`) but not what was made, or that says neither one thing nor the other: the job may well have been made, so it is
+        // asked for by its key like a lost answer, and when that cannot confirm it nothing is said of it (never a second job, never "failed")
+        return answer === 'unclear' ? lookUp() : answer;
+    }
+
+    private async sendComputerJob(
+        viaBotId: string,
+        userId: string,
+        ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } },
+        startKey: string
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string } | 'unclear'> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
             {
                 userId,
+                ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
                 title: ask.title,
                 ...(ask.brief ? { brief: ask.brief } : {}),
                 ...(ask.writes === undefined ? {} : { writes: ask.writes }),
                 ...(ask.plan ? { plan: ask.plan } : {}),
                 ...(ask.origin ? { origin: ask.origin } : {}),
-            }
+            },
+            undefined,
+            COMPUTER_START_TIMEOUT_MS,
+            // This start's own key, in a header (the body stays as it was): Orbit keeps it with the job, and a start that repeats it is answered with that job and never makes a second
+            { [COMPUTER_START_ATTEMPT_HEADER]: startKey }
         );
         const data = response.data;
         const job = data?.job;
@@ -1603,7 +1796,11 @@ export class AdminApiService {
                 restoredFrom: typeof data.restoredFrom === 'string' ? data.restoredFrom : null,
             };
         }
-        return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown', ...(typeof data?.app === 'string' ? { app: data.app } : {}) };
+        // Only an explicit refusal (Orbit says no, and why) is final here; an answer that is neither a whole success nor that is `'unclear'`
+        if (data && typeof data === 'object' && data.ok !== true && (data.ok === false || typeof data.reason === 'string')) {
+            return { ok: false, reason: typeof data.reason === 'string' ? data.reason : 'unknown', ...(typeof data.app === 'string' ? { app: data.app } : {}) };
+        }
+        return 'unclear';
     }
 
     /** Whether the steps an app has taken in one answer already cost what the job would on the computer, so the Brick should look again at the way. Throws when Orbit cannot be reached. */
@@ -1612,13 +1809,16 @@ export class AdminApiService {
         return response.data?.review === true;
     }
 
-    /** A job as it stands (#2000), or null when it is not there. */
-    /** The job as Orbit has it; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string } | null> {
+    /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number } | null> {
         try {
-            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
-            if (job && typeof job.id === 'string' && typeof job.status === 'string') return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' };
+            if (job && typeof job.id === 'string' && typeof job.status === 'string') {
+                // The control generation, when Orbit gives one (an Orbit that does not is not asked to fence)
+                const generation = typeof job.generation === 'number' && Number.isInteger(job.generation) && job.generation >= 0 ? job.generation : undefined;
+                return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick', ...(generation === undefined ? {} : { generation }) };
+            }
             throw new Error('Orbit gave no job');
         } catch (error) {
             if (axios.isAxiosError(error) && error.response?.status === 404) return null;
@@ -1631,6 +1831,27 @@ export class AdminApiService {
         // Finishing waits for Orbit to read the job's files off its computer (it is limited by time there, up to a few minutes): the other calls answer at once
         const response = await this.brickCall<Record<string, unknown>>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`, body, undefined, body.action === 'finish' ? COMPUTER_FINISH_TIMEOUT_MS : BRICK_CALL_TIMEOUT_MS);
         return response.data ?? {};
+    }
+
+    /**
+     * The model relay's durable record of how a job's model calls ended (the fault record Orbit judges a failed job's refund by): one row per job and
+     * call, idempotent. True when Orbit took the rows. `'missing'` when it answered with its own "Job not found" (it has no such job, so there is nothing to keep
+     * them for: the rows are dropped, but Orbit read none of them, so this is not Orbit taking evidence). False when it could not be reached, failed, or has no such route yet (a bare 404 or 405 from an older Orbit): the rows are kept and sent again,
+     * so they are still there once Orbit is upgraded. `'rejected'` when Orbit answered with its own 400 ("Invalid request": one row it cannot read
+     * rejects the whole batch, and the same rows are refused every time): the caller splits the batch to find the row.
+     */
+    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected' | 'missing'> {
+        try {
+            const response = await this.brickCall<{ ok?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
+            // Only Orbit's own positive answer (200 with `ok: true`) says it took the rows: a 200 from something on the way, or a body without it, does not
+            return response.status === 200 && response.data?.ok === true;
+        } catch (error) {
+            // Only Orbit's own answer for an unknown job is final; a missing route answers 404 or 405 with something else
+            if (axios.isAxiosError(error) && error.response?.status === 404 && (error.response.data as { error?: unknown } | undefined)?.error === 'Job not found') return 'missing';
+            // Likewise only Orbit's own words for a refused body: a bare 400 (a proxy, a gateway) says nothing of the rows and is tried again
+            if (axios.isAxiosError(error) && error.response?.status === 400 && (error.response.data as { error?: unknown } | undefined)?.error === 'Invalid request') return 'rejected';
+            return false;
+        }
     }
 
     /**

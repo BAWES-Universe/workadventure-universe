@@ -62,6 +62,16 @@ describe('BotClient chat access', () => {
         expect(said).not.toHaveBeenCalled();
     });
 
+    it('never takes a call-only sender for a player, whatever its random part ends in, and never finds one by name', async () => {
+        const { bot, behavior, receive } = setup({ allowed: true, kind: 'allowed' });
+        (behavior as unknown as { getTalker: unknown }).getTalker = vi.fn();
+        // A player in the room has the same name as the sender says: a name proves nothing about a call-only connection
+        (bot as unknown as { players: Map<number, { name: string }> }).players.set(5, { name: 'Person' });
+        await receive(chatFrom('call_5b2e91ac-77', 'hi'));
+        await receive(chatFrom('call_deadbeef_42', 'hi'));
+        expect(behavior.onChatMessage).not.toHaveBeenCalled();
+    });
+
     it('asks about a guest as a guest', async () => {
         const { behavior, check, receive } = setup({ allowed: true, kind: 'allowed' });
         behavior.getPersonForAccess.mockReturnValue({ signedIn: false, identifier: 'guest-uuid' });

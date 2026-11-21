@@ -16,6 +16,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import express, { type Request, type Response, type Router } from 'express';
 import type { AIProviderConfig } from '../ai/types';
 import { decryptApiKey } from '../ai/encryption';
@@ -24,11 +25,12 @@ import { isOpenAIHost, readUsageDetail, refusesStreamOptions } from '../ai/provi
 import { priceCall } from '../ai/pricing/costing';
 import { priceMetadata, type CallMetadata } from '../ai/pricing/ledger';
 import type { CallCost } from '../ai/pricing/types';
+import type { CallKind, FaultReason, RefusalNotes } from './ComputerRefusals';
 
 /** What the relay needs of Orbit: the three calls of /api/computer/llm. */
 export interface RelayOrbit {
     identify(token: string): Promise<{ ok: true; jobId: string; botId: string } | { ok: false }>;
-    authorize(input: { token: string; callId: string; estimateMicros: number; payer: 'universe' | 'own-key' }): Promise<{ ok: true } | { ok: false; reason: 'refused' | 'allowance' | 'pool' }>;
+    authorize(input: { token: string; callId: string; estimateMicros: number; payer: 'universe' | 'own-key'; route: string }): Promise<{ ok: true } | { ok: false; reason: 'refused' | 'allowance' | 'pool' | 'rule'; full?: boolean }>;
     settle(input: SettleInput): Promise<{ ok: boolean }>;
 }
 
@@ -45,7 +47,9 @@ export function relayOrbitFor(admin: { computerRelayCall(step: 'identify' | 'aut
             const { status, data } = await admin.computerRelayCall('authorize', input);
             if (status !== 200) throw unexpected('authorize', status);
             if (data.ok === true) return { ok: true };
-            return { ok: false, reason: data.reason === 'allowance' || data.reason === 'pool' ? data.reason : 'refused' };
+            const reason = data.reason === 'allowance' || data.reason === 'pool' || data.reason === 'rule' ? data.reason : 'refused';
+            // `full`: the pool has no room for even the smallest call (a fault of ours); without it the call was refused for its own size, which the job decides
+            return reason === 'pool' ? { ok: false, reason, full: data.full === true } : { ok: false, reason };
         },
         async settle(input) {
             const { status } = await admin.computerRelayCall('settle', { ...input });
@@ -73,13 +77,18 @@ export interface SettleInput {
 /** How the Brick's AI runs now, as Orbit says (the same answer a reply gets). Null when it cannot be told or the key is resting. */
 export type RelayRoute = { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null };
 
+/** Orbit says the Brick's own key is down and its owner chose to stop replying: no AI is called, and the person's own key is why. */
+export type RelayRestingOwnKey = { restingOwnKey: true };
+
 export interface RelayDeps {
     orbit: RelayOrbit;
-    routeFor(botId: string): Promise<RelayRoute | null>;
+    routeFor(botId: string): Promise<RelayRoute | RelayRestingOwnKey | null>;
     /** For tests: how a call to the provider is made. Defaults to the global fetch (the address guard for an address a person typed). */
     fetchFor?: (config: AIProviderConfig) => typeof fetch;
     /** For tests: how long to wait between tries to settle. */
     settleDelaysMs?: number[];
+    /** Where a refusal for the person's allowance or a rule of theirs is noted, so the runner of the same job can tell such a turn from one that broke. */
+    refusals?: RefusalNotes;
 }
 
 /** Technical guards, in one place (none of these is a limit a person sees). */
@@ -98,6 +107,10 @@ export const RELAY_GUARDS = {
     unpricedHoldMicros: 50_000,
     /** Characters per token, set low on purpose: the room held is an upper reading of the input. */
     charsPerToken: 3,
+    /** The most of a provider's answer that is read into memory: a refusal's words, a whole reply, one line of a stream. */
+    maxErrorBytes: 64 * 1024,
+    maxReplyBytes: 16 * 1024 * 1024,
+    maxStreamLineChars: 1024 * 1024,
 } as const;
 
 const SETTLE_DELAYS_MS = [1000, 3000];
@@ -115,6 +128,148 @@ const toolCallChars = (calls: unknown): number => {
     }
     return total;
 };
+
+/**
+ * A provider's answer read up to `max` bytes. Past that the body is cancelled and the first `max` bytes are returned, cut (the same bytes whatever way the chunks fell): an answer is never held whole
+ * in memory because a provider (or something in front of it) sent more than any answer needs. `tooLong` says so.
+ */
+export async function readBoundedWithFlag(response: globalThis.Response, max: number): Promise<{ text: string; tooLong: boolean }> {
+    const body = response.body;
+    if (!body) return { text: '', tooLong: false };
+    const reader = body.getReader();
+    const decoder = new StringDecoder('utf8');
+    let text = '';
+    let bytes = 0;
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const before = bytes;
+            bytes += value.byteLength;
+            if (bytes > max) {
+                // What of this chunk fits under the bound is kept, so the text read is the first `max` bytes whatever way the provider split its chunks
+                if (max > before) text += decoder.write(Buffer.from(value.subarray(0, max - before)));
+                // Not waited for: the body of a clone is one of two branches of a tee, and cancelling one branch finishes only when the other is
+                // cancelled or read to its end too, which a caller that reads the original after this returns would never reach
+                void reader.cancel().catch(() => undefined);
+                return { text: text + decoder.end(), tooLong: true };
+            }
+            text += decoder.write(Buffer.from(value));
+        }
+    } finally {
+        reader.releaseLock?.();
+    }
+    return { text: text + decoder.end(), tooLong: false };
+}
+
+const readBounded = async (response: globalThis.Response, max: number): Promise<string> => (await readBoundedWithFlag(response, max)).text;
+
+/** The JSON of an answer no longer than `max` bytes; null when it is longer or is not JSON. */
+export async function readBoundedJson(response: globalThis.Response, max: number): Promise<unknown> {
+    try {
+        const { text, tooLong } = await readBoundedWithFlag(response, max);
+        return tooLong ? null : JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
+
+/** The JSON of a whole non-streamed answer, and whether it was cut at the bound (then it is not read at all). */
+export async function readBoundedReply<T>(response: globalThis.Response, max: number): Promise<{ data: T | null; tooLong: boolean }> {
+    try {
+        const { text, tooLong } = await readBoundedWithFlag(response, max);
+        return tooLong ? { data: null, tooLong: true } : { data: JSON.parse(text) as T, tooLong: false };
+    } catch {
+        return { data: null, tooLong: false };
+    }
+}
+
+/**
+ * The string and number fields a provider's refusal said (`code`, `type`, `param`, `message`, `status`) in a body that was cut at the bound, so
+ * it could not be parsed whole: the first of each (none of a field that is said twice with different values), read where it stands, and only from the object the whole body would be read from (`error`, as the
+ * full parse does), never from a sibling object (`meta`), a nested one, or the top level beside an `error` that may come after the cut. Where the
+ * scope cannot be told, nothing is read: a field out of its object could be taken for a confirmed fault, or for the request's. A value that was cut
+ * off is not there. Linear in the text.
+ */
+export function leadingFieldsOf(text: string): Record<string, unknown> | null {
+    const wanted = new Set(['code', 'type', 'param', 'message', 'status']);
+    type Frame = { object: boolean; expectKey: boolean; key: string | null; under: string | null };
+    const stack: Frame[] = [];
+    const found: Record<string, unknown> = {};
+    // A field the error object says twice with different values: a whole parse would keep the last, which a cut body may not have reached, so no
+    // value of it is read (never a confirmed fault from the first of two that disagree)
+    const conflicted = new Set<string>();
+    const take = (key: string, value: unknown) => {
+        if (conflicted.has(key)) return;
+        if (key in found) {
+            if (found[key] !== value) unreadable(key);
+            return;
+        }
+        found[key] = value;
+    };
+    const unreadable = (key: string) => {
+        conflicted.add(key);
+        delete found[key];
+    };
+    // Whether the container being read is the top-level `error` object
+    const inError = () => stack.length === 2 && stack[1].object && stack[1].under === 'error';
+    for (let i = 0; i < text.length; ) {
+        const char = text[i];
+        const top = stack[stack.length - 1];
+        if (char === '{' || char === '[') {
+            // A field of the error that is said again as something that is no string or number: unreadable, as a disagreement is
+            if (inError() && top?.object && top.key !== null && !top.expectKey && wanted.has(top.key)) unreadable(top.key);
+            stack.push({ object: char === '{', expectKey: char === '{', key: null, under: top?.object ? top.key : null });
+            i += 1;
+        } else if (char === '}' || char === ']') {
+            stack.pop();
+            i += 1;
+        } else if (char === ',') {
+            if (top?.object) top.expectKey = true;
+            i += 1;
+        } else if (char === ':') {
+            if (top?.object) top.expectKey = false;
+            i += 1;
+        } else if (char === '"') {
+            let end = i + 1;
+            while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+            // an unfinished string is not read, and nothing after it is there
+            if (end >= text.length) break;
+            let value: unknown;
+            try {
+                value = JSON.parse(text.slice(i, end + 1));
+            } catch {
+                value = undefined;
+            }
+            if (top?.object && top.expectKey) top.key = typeof value === 'string' ? value : null;
+            else if (top?.object && top.key !== null) {
+                if (inError() && wanted.has(top.key) && typeof value === 'string') take(top.key, value);
+                // `"error": "words"` is a refusal that is only words
+                else if (stack.length === 1 && top.key === 'error' && typeof value === 'string' && !('message' in found) && !conflicted.has('message')) found.message = value;
+            }
+            i = end + 1;
+        } else if (char === '-' || (char >= '0' && char <= '9')) {
+            const token = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(i, i + 40))?.[0] ?? char;
+            // a number cut off by the end of the text is not a whole number
+            if (i + token.length >= text.length) break;
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key)) {
+                // a whole number is the value; a decimal or an exponent is said as something no code is, so it disagrees like any other second say
+                if (/^-?\d+$/.test(token)) take(top.key, Number(token));
+                else unreadable(top.key);
+            }
+            i += token.length;
+        } else if (text.startsWith('true', i) || text.startsWith('false', i)) {
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key)) unreadable(top.key);
+            i += text.startsWith('true', i) ? 4 : 5;
+        } else if (text.startsWith('null', i)) {
+            if (top?.object && !top.expectKey && inError() && top.key !== null && wanted.has(top.key)) take(top.key, null);
+            i += 4;
+        } else {
+            i += 1;
+        }
+    }
+    return Object.keys(found).length > 0 ? found : null;
+}
 
 const drained = (res: Response, signal: AbortSignal) =>
     new Promise<void>((resolve) => {
@@ -144,6 +299,122 @@ function wordsOf(text: string): string {
 }
 
 /** A provider that says our key is wrong is our problem, not Hermes's: Hermes must not read it as its own key being refused. */
+/** The codes and types a provider sets when the error is about our key, our credit or our model (it never echoes what the job sent in them): ours. */
+const KEY_CODES = /invalid[_ -]?api[_ -]?key|model[_ -]?not[_ -]?found|insufficient[_ -]?(quota|funds|credit)|billing|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
+/** The same said in a message: read only when the error has no status and names no field, since a provider echoes the job's own values in a message. */
+const KEY_CODES_NOT_MODEL = /invalid[_ -]?api[_ -]?key|insufficient[_ -]?(quota|funds|credit)|billing|account[_ -]?(deactivated|suspended)|authentication[_ -]?(error|failed)|permission[_ -]?denied/i;
+const KEY_MESSAGE_NOT_MODEL = /incorrect api key|invalid api key|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
+const KEY_MESSAGE = /incorrect api key|invalid api key|model .*does not exist|exceeded your (current )?quota|insufficient[_ -]?(quota|funds|credit)|billing|account (is )?(deactivated|suspended)/i;
+/** A 404 that says the model we named is missing (the relay chooses the model; the job cannot). */
+/** The fields of a call that choose the model or the provider that serves it (OpenRouter's routing and its server-side plugins): never the job's to set. */
+export const ROUTING_FIELDS = ['models', 'provider', 'route', 'transforms', 'plugins', 'preset', 'fallbacks'] as const;
+
+/** The part of a message that says a model is missing, with the model's name after it where the name comes after the words: what a message says of the key or the credit is read from what is left, since a model can be named anything (`billing-assistant`). */
+const MODEL_CLAUSE = /\bmodel\b[^.]{0,120}\b(?:does not exist|not found|is not available|has been (?:deprecated|decommissioned|removed))|no endpoints found for\s+\S+/gi;
+const statesKeyOrCredit = (message: string): boolean => KEY_MESSAGE_NOT_MODEL.test(message.replace(MODEL_CLAUSE, ' '));
+const MODEL_MISSING = /\bmodel\b[^.]{0,120}\b(does not exist|not found|is not available|has been (deprecated|decommissioned|removed))|no endpoints found for\b/i;
+/** A 404 that says the request needs something the model lacks (image input, tool use...): the job's own request, not a missing model. */
+const NEEDS_FEATURE = /that support|support(s|ed)? (image|tool|function|vision|json|structured|reasoning|streaming|input)|(image|tool|vision|function)[ _-](input|use|calling)/i;
+/** A 429 that is about this one request being larger than the limit (OpenAI: "Request too large ... Limit 30000, Requested 45000 ... must be reduced"), not a rate limit: a rate limit names what was used too (Limit 30000, Used 28000, Requested 5000). */
+const REQUEST_TOO_LARGE = /request too large|too large for|must be reduced|reduce (the length|the size|your (prompt|input|request))|limit \d+,? requested \d+/i;
+const CONTENT_WORDS = /moderat|content[_ -]?(policy|filter|management)|safety|flagged|context[_ -]?(length|window)|maximum context|too many tokens|token limit|prompt (is )?too long|too large/i;
+/** Wording that says the prompt or the context is the problem, not the value of a field: the job's own input. */
+const INPUT_WORDS = /context[_ -]?(length|window)|maximum context|prompt (is )?too long|too many tokens|in the (messages|prompt)|messages? (is|are) too (long|large)|inputs? tokens|max_new_tokens|prompt tokens/i;
+/** The two fields that carry the token limit: the job's own ask up to our setting, so the limit is the job's unless we lowered it. */
+const TOKEN_LIMIT_FIELDS = new Set(['max_tokens', 'max_completion_tokens']);
+/** The fields of a call that the relay sets itself; every other field is what the job's own machine sent, and a job's words can steer it. */
+const RELAY_FIELDS = new Set(['model', 'max_tokens', 'max_completion_tokens', 'n', 'stream', 'stream_options']);
+
+/** How the fields of a call were chosen, for reading a provider's refusal of them (see jobsOwnLimit), and the limit the relay sent. */
+export interface JobsOwn {
+    limit: boolean;
+    name: boolean;
+    outputCap?: number;
+}
+
+/**
+ * What a provider's error says, in the three classes Orbit judges refunds by:
+ *  - `fault`: a confirmed fault of Universe's (our key or credit refused: 401, 402, a key code; our model said to be missing), which no job's words can cause.
+ *  - `not_ours`: what the job itself sent was refused (moderation, a content policy, a context that is too long, a body too large, a 400 or 422 about
+ *    a field the job's machine sent, a token limit the job asked for): neither a fault of ours nor an answer.
+ *  - `uncertain`: unresolved, for bounded goodwill and reconciliation: the provider's own service failing (5xx), a rate limit (429), a refusal of a
+ *    field only the relay sets (model, a token limit we chose, n, stream), a 400 or 422 that names no field at all, and an error that says nothing.
+ * `who` is `ours` for `fault` and `uncertain`, `request` for `not_ours`.
+ */
+export interface ProviderReading {
+    who: 'ours' | 'request';
+    kind: 'fault' | 'uncertain' | 'not_ours';
+    reason: FaultReason;
+    /** Ours because the provider says the MODEL is missing, and nothing says the key or the credit was refused: on a person's own key that is not their refusal. */
+    model?: true;
+}
+
+const OURS_FAULT = (reason: FaultReason, model = false): ProviderReading => ({ who: 'ours', kind: 'fault', reason, ...(model ? { model: true as const } : {}) });
+const OURS_UNSURE = (reason: FaultReason): ProviderReading => ({ who: 'ours', kind: 'uncertain', reason });
+const REQUESTS = (): ProviderReading => ({ who: 'request', kind: 'not_ours', reason: 'field_job_set' });
+
+export function readProviderError(status: number | null, error: unknown, jobs: JobsOwn = { limit: true, name: true }): ProviderReading {
+    const record = isRecord(error) ? error : {};
+    const words = ['code', 'type', 'message', 'status'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
+    let numeric = status;
+    if (numeric === null) {
+        const code = record.code ?? record.status;
+        const asNumber = typeof code === 'number' ? code : typeof code === 'string' && /^\d{3}$/.test(code) ? Number(code) : null;
+        numeric = asNumber !== null && asNumber >= 100 && asNumber < 600 ? asNumber : null;
+    }
+    // Our key, our credit or our model, named by the error's own code or type: ours, before anything else is read, 429 included. OpenAI-style providers
+    // answer a used-up credit or a refused key with 429 and `insufficient_quota`, which is not a rate limit: only what the provider sets (code, type) is read
+    // for that, never a message, since a message echoes the job's own values and a job can steer those
+    const codes = ['code', 'type'].map((key) => (typeof record[key] === 'string' ? (record[key] as string) : '')).join(' ');
+    // Said in the codes: the model is missing and nothing says the key or the credit was refused
+    const modelOnly = !KEY_CODES_NOT_MODEL.test(codes);
+    if (numeric === 429 && KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours', modelOnly);
+    if (numeric === 429 && REQUEST_TOO_LARGE.test(words)) {
+        // "Requested" is the input and the limit we set together: when the input alone fits under the provider's limit, it was our limit that made the
+        // request too large (ours); when the job set the limit, or the input alone does not fit, it is the request's
+        const limit = Number(/\blimit\D{0,3}(\d[\d,]*)/i.exec(words)?.[1]?.replace(/,/g, ''));
+        const requested = Number(/\brequested\D{0,3}(\d[\d,]*)/i.exec(words)?.[1]?.replace(/,/g, ''));
+        if (!jobs.limit && jobs.outputCap !== undefined && limit > 0 && requested > 0 && requested - jobs.outputCap <= limit) return OURS_UNSURE('provider_429');
+        return REQUESTS();
+    }
+    if (numeric === 429) return OURS_UNSURE('provider_429');
+    if (numeric !== null && numeric >= 500) return OURS_UNSURE('provider_5xx');
+    if (numeric === 413) return REQUESTS();
+    // A refusal of a field the relay sets (model, n, stream, its options): ours, but unresolved (a setting of ours may be wrong, or the provider may have
+    // changed). The token limit is the job's own when the job asked for it and we did not lower it, and then a refusal of it is the request's; a limit we
+    // chose is ours, unless the wording blames the prompt or the context (a context that is too long, N tokens in the messages, inputs tokens)
+    // Our key, our credit or our model, named by the error's own code or type: ours, before the field it names is looked at (a `model_not_found` that
+    // names `model` is a missing model of ours, not a refusal of a field); read above for a 429, here for every other status
+    if (KEY_CODES.test(codes)) return OURS_FAULT('provider_key_ours', modelOnly);
+    const paramField = typeof record.param === 'string' ? (/^[A-Za-z_]+/.exec(record.param)?.[0] ?? '') : '';
+    const refusedShape = numeric === null || numeric === 400 || numeric === 422;
+    if (refusedShape && RELAY_FIELDS.has(paramField)) {
+        if (!TOKEN_LIMIT_FIELDS.has(paramField)) return OURS_UNSURE('field_relay_set');
+        // The name of the field is the relay's choice on OpenAI's host (max_completion_tokens) and the job's own elsewhere, where the relay keeps the name the job
+        // used: a refusal of the name is ours only when the relay picked it
+        if (/unsupported[_ ]parameter/i.test(`${typeof record.code === 'string' ? record.code : ''} ${typeof record.message === 'string' ? record.message.slice(0, 40) : ''}`)) return jobs.name ? REQUESTS() : OURS_UNSURE('field_relay_set');
+        return jobs.limit || INPUT_WORDS.test(words) ? REQUESTS() : OURS_UNSURE('field_relay_set');
+    }
+    if (CONTENT_WORDS.test(words)) return REQUESTS();
+    if (numeric === null && typeof record.param !== 'string' && KEY_MESSAGE.test(typeof record.message === 'string' ? record.message : '')) return OURS_FAULT('provider_key_ours', !statesKeyOrCredit(typeof record.message === 'string' ? record.message : ''));
+    // A refusal of the shape of the call (by status when there is one: a 401, 402, 403 or 404 often carries type `invalid_request_error` too, and is
+    // about our key or our model): the request's when it names a field the job sent, unresolved when it names no field at all (a bad payload of the job's
+    // or a forwarding or serialization error of ours cannot be told apart)
+    const badShape = numeric === null ? record.type === 'invalid_request_error' || typeof record.param === 'string' : numeric === 400 || numeric === 422;
+    if (badShape) return paramField ? REQUESTS() : OURS_UNSURE('fieldless_400');
+    if (numeric === 401 || numeric === 402) return OURS_FAULT('provider_key_ours');
+    // A 404 is ours only when it says OUR model is missing: a provider also answers 404 when the request needs something the model lacks ("No endpoints
+    // found that support image input", "... tool use"), and the job decides what it sends. A plain 403 is not enough either (a key code was read above)
+    if (numeric === 404 && typeof record.message === 'string' && MODEL_MISSING.test(record.message) && !NEEDS_FEATURE.test(record.message)) return OURS_FAULT('provider_key_ours', !statesKeyOrCredit(record.message));
+    // Any other status, or an error that says nothing of a code: unresolved (a plain 403 has a reason of its own, so operations can read it)
+    return OURS_UNSURE(numeric === null ? 'provider_5xx' : numeric === 403 ? 'provider_403' : 'fieldless_400');
+}
+
+/** Whose a provider's error is, read as `readProviderError` does: `request` when what the job itself sent was refused, else `ours`. */
+export function whoseProviderError(status: number | null, error: unknown, jobs: JobsOwn = { limit: true, name: true }): 'ours' | 'request' {
+    return readProviderError(status, error, jobs).who;
+}
+
 const statusToHermes = (status: number): number => (status === 401 || status === 402 || status === 403 ? 502 : status >= 400 && status < 600 ? status : 502);
 
 /** An error in the shape every OpenAI client reads. */
@@ -160,10 +431,28 @@ const bearerOf = (req: Request): string | null => {
     return token.startsWith('cjt_') && token.length <= 200 ? token : null;
 };
 
-/** The most the call may write: what Hermes asked for, else the provider's setting, else the default, never above the guard. */
+const askedLimitOf = (body: Record<string, unknown>): number | undefined =>
+    [body.max_completion_tokens, body.max_tokens].find((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
+
+/**
+ * What of the token limit the job chose, for reading a provider's refusal of it. The value is the job's own when it asked for one and we set no
+ * limit of our own (with a setting, a value the provider refuses is our setting's mistake; with none, any ask is the job's, including one the
+ * guard lowered). The field name is the job's own only when the host is not OpenAI's and the job itself sent max_completion_tokens (the relay keeps that name there); max_tokens is the name the relay sends anyway, so a refusal of it is ours.
+ */
+export function jobsOwnLimit(body: Record<string, unknown>, config: AIProviderConfig): { limit: boolean; name: boolean } {
+    const asked = askedLimitOf(body);
+    return {
+        limit: asked !== undefined && !(config.maxTokens > 0),
+        name: !isOpenAIHost(config.endpoint) && typeof body.max_completion_tokens === 'number',
+    };
+}
+
+/** The most the call may write: what Hermes asked for, else the provider's setting, else the default, never above our setting or the guard. */
 export function outputCapOf(body: Record<string, unknown>, config: AIProviderConfig): number {
-    const asked = [body.max_completion_tokens, body.max_tokens].find((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
-    const base = asked ?? (config.maxTokens > 0 ? config.maxTokens : RELAY_GUARDS.defaultOutputTokens);
+    const asked = askedLimitOf(body);
+    const setting = config.maxTokens > 0 ? config.maxTokens : null;
+    // Never more than our own setting, so a limit the job asked for above it is lowered to it
+    const base = asked !== undefined ? (setting !== null ? Math.min(asked, setting) : asked) : (setting ?? RELAY_GUARDS.defaultOutputTokens);
     return Math.min(Math.floor(base), RELAY_GUARDS.maxOutputTokens);
 }
 
@@ -209,7 +498,31 @@ interface Ended {
     cutShort: boolean;
     /** The call could not be made at all (the provider was not reached): nothing was sent, so nothing is owed. */
     notSent: boolean;
+    /** The call failed on our side before the provider was asked (its stored key could not be read): ours whoever's key it is. */
+    relaySide?: boolean;
+    /** What the provider said was wrong, when it said so (an error answer, or an error object inside a 200 answer): whose it is. Neither is an answer. */
+    reading?: ProviderReading;
+    /** The status the provider answered with, when it answered an error. */
+    upstreamStatus?: number;
+    /** The reading is of the relay's own cutoff (its time limit, its reply bound), not of anything the provider said: it is the same on every key. */
+    local?: boolean;
+    /** The provider's error body could not be read to its end (the connection broke or the relay's time ran out while it was read): its reading is of a part. */
+    bodyBroken?: boolean;
+    /** The stream ended normally, but in the middle of an event: the last of what the provider sent is missing, so the call is no whole answer. */
+    incomplete?: boolean;
+    /** The stream had data that was dropped unread (a line over the bound): it may have said an error, so it is not a whole answer, but it is not cut either. */
+    skippedData?: boolean;
 }
+
+/** Evidence of an answer: something the model wrote (words, thinking or a tool call), or tokens the provider says it spent. An empty 200 is no answer. */
+const answeredBy = (ended: Ended): boolean => ended.outputChars > 0 || (ended.usage?.completionTokens ?? 0) > 0;
+
+/** Of two readings of the same call the stronger counts: a confirmed fault, then an unresolved one, then the request's. */
+const strongerReading = (one: ProviderReading | undefined, two: ProviderReading): ProviderReading => {
+    if (!one) return two;
+    const rank = (reading: ProviderReading) => (reading.kind === 'fault' ? 2 : reading.kind === 'uncertain' ? 1 : 0);
+    return rank(two) > rank(one) ? two : one;
+};
 
 export function createComputerModelRelay(deps: RelayDeps): Router {
     const router = express.Router();
@@ -236,6 +549,33 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
     }
 
+    /**
+     * A call reached the relay: noted for the runner here, and recorded for the runner of the job on another bot server before the call goes on (it waits a
+     * moment for that, bounded; when it cannot be recorded the call still goes ahead, and the notes tell the operators and the other servers).
+     */
+    async function reachedRelay(jobId: string, at?: { turn: number; run?: string }, arrivedAt?: number): Promise<'forward' | 'unservable'> {
+        const notes = deps.refusals;
+        if (!notes) return 'forward';
+        if (!notes.reached) {
+            notes.called?.(jobId, at);
+            return 'forward';
+        }
+        try {
+            // The shared record says when the call ARRIVED, not when the write happens to be made
+            const recorded = await notes.reached(jobId, at, arrivedAt);
+            if (recorded === 'unservable') {
+                // The runner of this job is on another server and this call cannot be recorded for it: it is refused here, so the machine tries again (and the
+                // load balancer may send the retry to the server that has the runner)
+                console.warn('[ComputerRelay] A call of a job could not be recorded for the server of its runner; it was refused (503).');
+                return 'unservable';
+            }
+            if (!recorded) console.warn('[ComputerRelay] A call of a job could not be recorded for the other bot servers; it went ahead (its runner is here).');
+        } catch {
+            /* the call is never held for it */
+        }
+        return 'forward';
+    }
+
     router.get('/v1/models', async (req: Request, res: Response) => {
         const token = bearerOf(req);
         let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
@@ -246,37 +586,140 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
         }
         if (!who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
+        // The machine of this job reached the relay (the runner reads that: a turn that failed with no call at all never got here)
+        if ((await reachedRelay(who.jobId)) === 'unservable') return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
         // One name: Hermes never chooses the model, the Brick's own AI does
         res.json({ object: 'list', data: [{ id: 'universe-ai', object: 'model', created: 0, owned_by: 'universe' }] });
     });
 
-    router.post('/v1/chat/completions', json, async (req: Request, res: Response) => {
+    /** The turn a call belongs to (the one current when it ARRIVED) and the run of the runner of that turn: `turn` is null when that cannot be told. */
+    async function startOf(jobId: string, arrived: { order: number; at: number } | undefined): Promise<{ turn: number | null; run?: string }> {
+        // The turn is the runner's: when the runner works on another bot server this one asks the shared record which turn had begun when the call arrived
+        // (`null` when that cannot be told: Orbit reads such a row with every turn it judges)
+        if (deps.refusals?.turnOfCall) {
+            const there = await deps.refusals.turnOfCall(jobId, arrived).catch(() => ({ turn: null as number | null }));
+            const run = (there as { run?: string }).run;
+            return { turn: there.turn, ...(run ? { run } : {}) };
+        }
+        const at = arrived !== undefined && deps.refusals?.turnAt ? deps.refusals.turnAt(jobId, arrived) : undefined;
+        const run = at ? at.run : deps.refusals?.runOf?.(jobId);
+        return { turn: at ? at.turn : deps.refusals?.turnOf?.(jobId) ?? 0, ...(run ? { run } : {}) };
+    }
+
+    // A body too big, or not JSON: said in the shape clients read, never as a page
+    const bodyProblem = (res: Response, error: unknown) => {
+        const status = isRecord(error) && typeof error.status === 'number' && error.status >= 400 && error.status < 500 ? error.status : 400;
+        return problem(res, status, status === 413 ? 'The request is too large.' : 'The request could not be read.', status === 413 ? 'request_too_large' : 'invalid_request');
+    };
+
+    // Where in the order of events this call ARRIVED: taken before its body is read (a body can be slow to arrive) and before the job is known
+    // (nothing of anyone's is read from it: it is only a point in a counter). Reading the body and asking Orbit who the caller is can each take
+    // longer than a turn change, and the call belongs to the turn that was current when it arrived
+    const arrival = (_req: Request, res: Response, next: express.NextFunction) => {
+        res.locals.arrived = deps.refusals?.mark?.();
+        next();
+    };
+    // A body that is too big or cannot be read is a call that REACHED the relay all the same: the parser rejects it before the handler, so the error is kept
+    // here and the handler answers it after it has noted the arrival (see `bodyProblem` below, which says what clients read)
+    const readBody = (req: Request, res: Response, next: express.NextFunction) => {
+        json(req, res, (error?: unknown) => {
+            if (error !== undefined) res.locals.bodyError = error;
+            next();
+        });
+    };
+    router.post('/v1/chat/completions', arrival, readBody, async (req: Request, res: Response) => {
         const token = bearerOf(req);
+        const arrived = res.locals.arrived as { order: number; at: number } | undefined;
+        // Set when the body could not be read (over the bound, or not JSON): the call is answered with that, once it is noted as having reached the relay
+        const bodyError = res.locals.bodyError as unknown;
+        const wasBodyError = res.locals.bodyError !== undefined;
         let who: Awaited<ReturnType<RelayOrbit['identify']>> | null = null;
         try {
             who = token ? await deps.orbit.identify(token) : null;
         } catch {
+            if (wasBodyError) return bodyProblem(res, bodyError);
             return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
         }
-        if (!token || !who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
+        if (!token || !who?.ok) {
+            // As before for a body that could not be read: its own answer, and nothing is noted for a key that proves nothing
+            if (wasBodyError) return bodyProblem(res, bodyError);
+            return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
+        }
         const { jobId, botId } = who as { ok: true; jobId: string; botId: string };
-
+        // A call that failed for a fault of ours is noted for the runner (see ComputerRefusals): Hermes may hand its error back as a finished turn
+        // Only the agent's own calls (they carry its tools) count: a side call Hermes makes with the same key (a summary, a title) that fails
+        // after the turn was answered is no failure of the turn. Decided from the body BEFORE anything else is done with the call (the body is read by the
+        // json parser ahead of this handler): a call that is refused before it is read further, as an unrecordable one is, is no fault of the turn when it is a side call
         const body = req.body;
+        const agentCall = isRecord(body) && Array.isArray(body.tools) && body.tools.length > 0;
+        // The call's own id: Orbit's fault record keeps one row per job and call, so the same id is sent when a row is sent again
+        const callId = randomUUID();
+        // The turn the call starts in: its row names that turn even when the runner has moved on by the time the call ends
+        // (the turn current when it ARRIVED, not when its caller was identified), and the run of the runner that turn was in: turn numbers start
+        // again from 1 after a restart, so the number alone is not the turn
+        // The turn is the runner's: when the runner works on another bot server this one asks the shared record which turn had begun when the call arrived
+        // (`null` when that cannot be told: Orbit reads such a row with every turn it judges)
+        const started = await startOf(jobId, arrived);
+        const startedTurn = started.turn;
+        const startedRun = started.run;
+        // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
+        // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
+        const reachedAnswer = await reachedRelay(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) }, arrived?.at);
+        // A body the relay could not read was answered by the relay itself (413 or 400): the machine reached us, so the turn is no turn with no call (the arrival
+        // is noted above, for a key Orbit knows and for no other). It is a mistake of the request, never of ours: no row is written (a body that cannot be read
+        // cannot be told to be an agent's call, and nothing of ours failed). Nothing is forwarded and no room was taken (this is before Orbit is asked for any)
+        if (wasBodyError) {
+            // ...unless the arrival could not be recorded for the runner of the job on ANOTHER server. The servers say nothing to each other but through the shared
+            // record, and its write failed (twice, for the call and for the marker that says a call could not be recorded): the runner would read "no call
+            // reached any relay" and write a confirmed no_call of ours for a call that did arrive, and no other channel exists that it reads. So the call is refused
+            // exactly as every other call that cannot be recorded for its runner (503, the machine tries again and the load balancer may send it to the runner's
+            // server, which records it and answers its own 413/400): a refusal of ours that the runner's marker agrees with, never a missing note taken for proof
+            if (reachedAnswer === 'unservable' && !res.destroyed) return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+            return bodyProblem(res, bodyError);
+        }
+        let routeName = 'unknown';
+        let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
+        // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
+        const noteCall = (kind: CallKind, reason: FaultReason, providerStatus: number | null = null) => {
+            if (agentCall) deps.refusals?.record(botId, jobId, { callId, kind, reason, source: rowSource, route: routeName, providerStatus, turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+        };
+        const fault = (reason: FaultReason, status: number, message: string, code: string, type = 'server_error') => {
+            noteCall('fault', reason, status);
+            return problem(res, status, message, code, type);
+        };
+        // The runner of this job is on another server and this call could not be recorded for it: refused, as a fault of ours (the row reaches Orbit through the
+        // sink, which does not rest on the shared store), so the machine tries again and the load balancer may send the retry to the runner's server
+        // A caller that went away while the record was being written (the close listener below is installed later) is no fault of ours to record
+        if (reachedAnswer === 'unservable') {
+            if (res.destroyed) return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+            return fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
+        }
+
         if (!isRecord(body) || !Array.isArray(body.messages) || body.messages.length === 0) {
             return problem(res, 400, 'A request needs a list of messages.', 'invalid_request');
         }
         const streaming = body.stream === true;
 
-        let route: RelayRoute | null;
+        let asked: RelayRoute | RelayRestingOwnKey | null;
         try {
-            route = await deps.routeFor(botId);
+            asked = await deps.routeFor(botId);
         } catch {
-            return problem(res, 503, 'The AI could not be reached. Try again in a moment.', 'service_unavailable', 'server_error');
+            return fault('relay_down', 503, 'The AI could not be reached. Try again in a moment.', 'service_unavailable');
         }
-        if (!route) return problem(res, 503, 'This Brick’s AI is not answering right now.', 'ai_resting', 'server_error');
+        // The Brick's own key is down and its owner chose to stop: that is the person's, never ours. Universe's AI resting, or a route nobody can tell, is ours
+        if (asked && 'restingOwnKey' in asked) {
+            rowSource = 'own-key';
+            routeName = 'own-key';
+            noteCall('not_ours', 'own_provider', 503);
+            return problem(res, 503, 'This Brick’s AI is not answering right now.', 'ai_resting', 'server_error');
+        }
+        if (!asked) return fault('route_unknown', 503, 'This Brick’s AI is not answering right now.', 'ai_resting');
+        const route = asked as RelayRoute;
         const { config, source } = route;
+        rowSource = source === 'own-key' ? 'own-key' : 'universe-ai';
+        routeName = source === 'own-key' ? 'own-key' : `${source}:${config.providerId}`;
         // Only OpenAI-format providers are reached directly here; others come with their own translation
-        if (config.type !== 'openai') return problem(res, 501, 'This Brick’s AI cannot be used from a computer yet.', 'provider_not_supported', 'server_error');
+        if (config.type !== 'openai') return fault('route_unknown', 501, 'This Brick’s AI cannot be used from a computer yet.', 'provider_not_supported');
 
         // Check and take the place in one step, before anything is awaited: calls arriving together cannot all read the same count
         const running = inFlight.get(jobId) ?? 0;
@@ -299,30 +742,100 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
 
         const now = new Date();
         const outputCap = outputCapOf(body, config);
-        const callId = randomUUID();
         const payer = source === 'own-key' ? 'own-key' : 'universe';
         let ended: Ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
         try {
             let allowed: Awaited<ReturnType<RelayOrbit['authorize']>>;
             try {
-                allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer });
+                allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer, route: routeName });
             } catch {
-                return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+                // A caller that went away while the room was being asked for is no fault of anyone's: nothing is written for it
+                if (gone || res.destroyed) return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+                return fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
             }
             if (!allowed.ok) {
                 const reason = 'reason' in allowed ? allowed.reason : 'refused';
+                // A caller that went away while the room was being asked for is refused to nobody: no row is written for it, whatever the refusal was
+                const nobody = gone || res.destroyed;
+                if (!nobody && (reason === 'allowance' || reason === 'rule')) noteCall('not_ours', reason, 429);
                 if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
-                if (reason === 'pool') return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
+                if (reason === 'rule') return problem(res, 429, 'A spending rule stops this call.', 'insufficient_quota', 'insufficient_quota');
+                if (reason === 'pool') {
+                    // Confirmed ours only when the pool has no room for even the smallest call: the size of a call grows with what the job sent, so a call
+                    // refused for its own size is unresolved
+                    // The size of a call grows with what the job sent, so a call refused for its own size (full: false, or no word of it from an older Orbit)
+                    // is unresolved even when it is the job's first: the pool may have room for a smaller one. Orbit confirms a pool that took none of a
+                    // job's calls by its own record
+                    if (!nobody) noteCall('full' in allowed && allowed.full === true ? 'fault' : 'uncertain', 'pool_busy', 503);
+                    return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
+                }
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
             }
 
+            // Orbit found room for this call: it is taken up (a turn whose calls were all refused for room is a different thing from one with a call taken)
+            // When the runner of the job is on another server the acceptance is handed over to it first (bounded): a call that is forwarded without the runner being
+            // able to see that it was taken up could be given up on for want of room while it is being answered. When that fails nothing is forwarded and the room goes back
+            let handedOver = true;
+            if (agentCall && !gone && !res.destroyed) {
+                const handoff = deps.refusals?.accepted?.(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) }, callId);
+                // `false`: the turn was given up by its runner, and takes no call (nothing is forwarded for it); a promise: the handoff to the runner on another server
+                if (handoff === false) handedOver = false;
+                else if (handoff && handoff !== true) handedOver = (await handoff.catch(() => false)) !== false;
+            }
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
-                else ended = await callProvider({ body, config, streaming, outputCap, res });
+                else if (!handedOver) {
+                    // A fault of ours (the machine tries again): nothing was sent to the provider, so the room is released with the call
+                    console.warn('[ComputerRelay] A call that Orbit took up could not be handed to the server of its runner; it was refused (503).');
+                    fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
+                    ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
+                } else {
+                    const timing = { timedOut: false };
+                    ended = await callProvider({ body, config, streaming, outputCap, res, timing });
+                    // The relay's own time limit ran out: unresolved either way (a stream that wrote nothing in time may be a provider that hung, one that
+                    // was writing proves progress only), so it is for Orbit's bounded goodwill and reconciliation, not charged or refunded blindly
+                    // A refusal whose body was only partly read when the time ran out is read from a part, and the relay's own cutoff stands in its place
+                    if (timing.timedOut && (!ended.reading || ended.bodyBroken)) ended = { ...ended, reading: OURS_UNSURE(ended.outputChars === 0 ? 'timeout_no_output' : 'timeout_after_output'), local: true };
+                    // How the call ended, for the runner and for Orbit's fault record: a confirmed fault of ours, an unresolved one, what the person's side
+                    // did (their allowance, a rule, their own provider, a request of the job's own that the provider refused) or a whole answer. What a
+                    // provider answered (an error of its own, a rate limit, a stream it cut off) is ours only when the provider and its key are ours: on a
+                    // person's own key the provider, the key and the endpoint are theirs (their credit ran out, their key was revoked)
+                    // A caller that went away is no fault of anyone's (the 504 written for a cut-off wait goes to nobody)
+                    if (agentCall && !gone) {
+                        const reading = ended.reading;
+                        const requestWrong = reading?.who === 'request';
+                        const cut = ended.cutShort || ended.incomplete === true;
+                        const providerSaid = !requestWrong && (reading?.who === 'ours' || res.statusCode >= 500 || cut);
+                        const status = ended.upstreamStatus ?? (res.statusCode >= 400 ? res.statusCode : null);
+                        // What the provider said was wrong of the job's own request (moderation, a context too long, an invalid request) is neither a
+                        // fault nor an answer, and is off our side: the runner never ends a job as ours for a turn that the job's own request failed
+                        if (requestWrong) noteCall('not_ours', 'field_job_set', status);
+                        else if (providerSaid) {
+                            if (ended.relaySide) noteCall('fault', 'relay_down', status);
+                            // The relay's own cutoff (its time limit, its reply bound) is the same on every key: unresolved, never the person's side
+                            else if (ended.local && reading) noteCall(reading.kind, reading.reason, status);
+                            // On a person's own key only a refusal of the key or the credit is theirs (it was revoked, its credit ran out): the runner never
+                            // ends the job as ours for it. Every other failure of the provider (a 5xx, a rate limit, a cut stream, a timeout, an endpoint that
+                            // could not be reached, a plain 403) is read as on Universe's key: unresolved, since nothing proves whose it was
+                            // (a model of theirs the provider says it does not have is neither: the key and the credit may be fine, so it is unresolved)
+                            else if (source === 'own-key' && reading?.reason === 'provider_key_ours' && reading.model) noteCall('uncertain', 'field_relay_set', status);
+                            else if (source === 'own-key' && reading?.reason === 'provider_key_ours') noteCall('not_ours', 'own_provider', status);
+                            else if (reading) noteCall(reading.kind, reading.reason, status);
+                            // A stream that broke after it began, or an answer that was a 5xx with nothing read from it: unresolved
+                            else noteCall('uncertain', cut ? 'stream_cut' : 'provider_5xx', status);
+                        } else if (res.statusCode === 200 && !cut && !ended.skippedData && !ended.notSent && answeredBy(ended)) noteCall('answered', 'provider_5xx' /* no reason is kept for an answer */);
+                    }
+                }
             } catch (error) {
                 console.error('[ComputerRelay] A call failed:', providerErrorText(error));
-                if (!res.headersSent) problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
-                else res.end();
+                // An error nobody expected, while the provider was being called: unresolved on every key (nothing proves whose it was)
+                if (!res.headersSent) {
+                    if (!gone) noteCall('uncertain', 'provider_5xx', 502);
+                    problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
+                } else {
+                    if (!gone) noteCall('uncertain', 'stream_cut');
+                    res.end();
+                }
                 ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
             }
         } finally {
@@ -337,13 +850,21 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // The provider said what it used: priced from that. If it said nothing, the input is read as estimated and the output from what came through
         let metadata = ended.usage;
         let estimated = false;
+        let estimatedCounts = false;
         if (!metadata?.error && (!metadata || (metadata.promptTokens ?? 0) + (metadata.completionTokens ?? 0) <= 0)) {
             const promptTokens = inputTokensOf(body);
             const completionTokens = Math.ceil(ended.outputChars / RELAY_GUARDS.charsPerToken);
-            metadata = completionTokens > 0 ? { promptTokens, completionTokens } : undefined;
-            estimated = metadata !== undefined;
+            // A cost the provider reported stands whatever else is missing: only the token counts are filled in
+            const reported = typeof metadata?.costUsd === 'number' && Number.isFinite(metadata.costUsd) && metadata.costUsd >= 0 ? { costUsd: metadata.costUsd } : {};
+            metadata = completionTokens > 0 ? { promptTokens, completionTokens, ...reported } : 'costUsd' in reported ? reported : undefined;
+            estimated = metadata !== undefined && !('costUsd' in reported);
+            estimatedCounts = metadata !== undefined && 'completionTokens' in metadata;
         }
-        const priced = priceMetadata(config, metadata, now);
+        // Counts we only estimated never re-price a cost the provider reported (a rate per token would win over it on made-up counts):
+        // that cost is priced on its own, and the estimated counts only fill the token tallies
+        const reportedCost = estimatedCounts && metadata && 'costUsd' in metadata && metadata.costUsd !== undefined ? { costUsd: metadata.costUsd } : null;
+        const withCounts = priceMetadata(config, metadata, now);
+        const priced = reportedCost ? { cost: priceMetadata(config, reportedCost, now).cost, usage: withCounts.usage } : withCounts;
         const facts = factsOf(priced.cost, estimated);
         await settleOnce({
             jobId,
@@ -358,8 +879,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
     });
 
     /** Makes the call and gives the answer back as it comes. */
-    async function callProvider(call: { body: Record<string, unknown>; config: AIProviderConfig; streaming: boolean; outputCap: number; res: Response }): Promise<Ended> {
-        const { body, config, streaming, outputCap, res } = call;
+    async function callProvider(call: { body: Record<string, unknown>; config: AIProviderConfig; streaming: boolean; outputCap: number; res: Response; timing: { timedOut: boolean } }): Promise<Ended> {
+        const { body, config, streaming, outputCap, res, timing } = call;
         // A key that cannot be read means nothing was sent: the room goes back
         let key: string | null;
         try {
@@ -367,11 +888,15 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         } catch (error) {
             console.error('[ComputerRelay] A key could not be read:', providerErrorText(error));
             problem(res, 502, 'The AI could not be reached.', 'upstream_unreachable', 'server_error');
-            return { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
+            return { usage: undefined, outputChars: 0, cutShort: false, notSent: true, relaySide: true };
         }
         const url = `${(config.endpoint || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`;
 
         const sent: Record<string, unknown> = { ...body, model: config.model, n: 1, stream: streaming };
+        // A job never chooses where or by what its call is served: routing fields a gateway (OpenRouter) reads would let it have the call served by
+        // a dearer fallback model than the room held for it, or get a "no endpoints found" that reads as a fault of ours. Only the relay's own
+        // model and the route it was given are used
+        for (const field of ROUTING_FIELDS) delete sent[field];
         // The reply is never longer than the room held for it. OpenAI's own models want the newer field name.
         delete sent.max_tokens;
         delete sent.max_completion_tokens;
@@ -383,6 +908,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         let cutShort = false;
         const timer = setTimeout(() => {
             cutShort = true;
+            timing.timedOut = true;
             controller.abort();
         }, RELAY_GUARDS.callTimeoutMs);
         // Hermes went away (it was cancelled, the person took over, the computer stopped): the provider call stops too
@@ -407,10 +933,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             try {
                 upstream = await send(sent);
                 if (!upstream.ok && sent.stream_options) {
-                    const text = await upstream.clone().text().catch(() => '');
+                    const text = await readBounded(upstream.clone(), RELAY_GUARDS.maxErrorBytes).catch(() => '');
                     if (refusesStreamOptions(upstream.status, text)) {
                         refusedStreamOptions.add(url);
                         delete sent.stream_options;
+                        // The first answer is let go of (its copy was read above): a body nobody reads would be held until the call ends. Not waited for.
+                        void upstream.body?.cancel().catch(() => undefined);
                         upstream = await send(sent);
                     }
                 }
@@ -428,21 +956,41 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
 
             if (!upstream.ok) {
                 // What the provider said, in words fit for a log: never its key, never the conversation
-                const text = await upstream.text().catch(() => '');
+                let bodyBroken = false;
+                const { text, tooLong } = await readBoundedWithFlag(upstream, RELAY_GUARDS.maxErrorBytes).catch(() => {
+                    bodyBroken = true;
+                    return { text: '', tooLong: false };
+                });
                 const message = providerErrorText(wordsOf(text)).split(key ?? '\u0000').join('[redacted]');
                 console.warn('[ComputerRelay] The provider refused a call:', upstream.status);
                 problem(res, statusToHermes(upstream.status), message, 'upstream_error', 'server_error');
-                // A call the provider refused was not billed
-                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false };
+                // A call the provider refused was not billed. Whose the refusal is is read from what it said
+                let said: unknown = null;
+                try {
+                    const parsed = JSON.parse(text) as unknown;
+                    said = isRecord(parsed) && parsed.error !== undefined ? parsed.error : parsed;
+                } catch {
+                    // A body that is not JSON says nothing more than its status. One that was cut at the bound is JSON that was never finished: the
+                    // fields the provider put before the cut (its code, type, param and message) still say whose the refusal is
+                    // When none of them can be read (the cut came first, or the scope cannot be told) it says nothing: never the raw words, which the
+                    // job's own input may be echoing, or which sit in a sibling object a full parse would not read as the error
+                    if (tooLong) said = leadingFieldsOf(text) ?? {};
+                }
+                return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false, upstreamStatus: upstream.status, ...(bodyBroken ? { bodyBroken } : {}), reading: readProviderError(upstream.status, isRecord(said) ? said : { message: typeof said === 'string' ? said : text.slice(0, 300) }, { ...jobsOwnLimit(body, config), outputCap }) };
             }
 
             if (!streaming) {
-                const data = (await upstream.json().catch(() => null)) as { usage?: unknown; choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> } | null;
+                const { data, tooLong } = await readBoundedReply<{ usage?: unknown; choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> }>(upstream, RELAY_GUARDS.maxReplyBytes);
                 if (!data) {
                     problem(res, 502, 'The AI answered with something unreadable.', 'upstream_error', 'server_error');
-                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
+                    // A reply cut at the bound is unresolved (class 3: Orbit's bounded goodwill, never a confirmed fault of ours and never decided
+                    // as the person's): only the job's own settings (logprobs on every token) can make a reply that long, so it is not confirmed
+                    // ours, but nothing proves whose it is either. It is written down explicitly (reason provider_5xx: the 502 the agent gets and
+                    // one of the 15 reasons Orbit takes) so it can never become a confirmed fault. A reply that is not JSON is unresolved too
+                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: false, ...(tooLong ? { reading: OURS_UNSURE('provider_5xx'), local: true } : {}) };
                 }
                 res.status(200).json(data);
+                const answerError = (data as { error?: unknown }).error !== undefined && !data.choices?.length ? readProviderError(null, (data as { error?: unknown }).error, { ...jobsOwnLimit(body, config), outputCap }) : null;
                 const usage = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
                 const message = data.choices?.[0]?.message;
                 // What the model wrote counts whether it was words, thinking or a tool call
@@ -452,6 +1000,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     outputChars: written,
                     cutShort,
                     notSent: false,
+                    ...(answerError ? { reading: answerError } : {}),
                 };
             }
 
@@ -466,14 +1015,26 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             res.flushHeaders();
 
             let pending = '';
+            // A line that grew past the bound is dropped whole, to its end: it is passed on as it came but never read
+            let skipping = false;
+            // Whether any data was dropped unread (a line over the bound, in whatever way it was met): the stream may have said something that was
+            // never read, such as an error, so it is no whole answer even when it ended cleanly
+            let skippedData = false;
+            const decoder = new StringDecoder('utf8');
             let usage: CallMetadata | undefined;
             let outputChars = 0;
+            let reading: ProviderReading | undefined;
+            let incomplete = false;
             const read = (line: string) => {
                 if (!line.startsWith('data:')) return;
                 const data = line.slice(5).trim();
                 if (!data || data === '[DONE]') return;
                 try {
-                    const chunk = JSON.parse(data) as { usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
+                    const chunk = JSON.parse(data) as { error?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
+                    // A provider can answer 200 and put its error in the stream: that is no answer
+                    if (chunk.error !== undefined && chunk.error !== null) {
+                        reading = strongerReading(reading, readProviderError(null, chunk.error, { ...jobsOwnLimit(body, config), outputCap }));
+                    }
                     if (chunk.usage) usage = { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, ...readUsageDetail(chunk.usage) };
                     for (const choice of chunk.choices ?? []) {
                         if (typeof choice.delta?.content === 'string') outputChars += choice.delta.content.length;
@@ -487,15 +1048,42 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             try {
                 for await (const chunk of Readable.fromWeb(upstream.body as never) as AsyncIterable<Buffer>) {
                     if (res.destroyed || res.writableEnded || controller.signal.aborted) break;
-                    pending += chunk.toString('utf8');
+                    pending += decoder.write(chunk);
                     let at: number;
                     while ((at = pending.indexOf('\n')) >= 0) {
-                        read(pending.slice(0, at).replace(/\r$/, ''));
+                        // The end of a line that was already dropped: what is left of it is dropped as well
+                        if (skipping) {
+                            skipping = false;
+                            skippedData = true;
+                        }
+                        // A line that was completed in this very chunk is held to the bound too: it is passed on, never read
+                        else if (at <= RELAY_GUARDS.maxStreamLineChars) read(pending.slice(0, at).replace(/\r$/, ''));
+                        else skippedData = true;
                         pending = pending.slice(at + 1);
+                    }
+                    if (pending.length > RELAY_GUARDS.maxStreamLineChars) {
+                        pending = '';
+                        skipping = true;
+                        skippedData = true;
                     }
                     if (!res.write(chunk)) await drained(res, controller.signal);
                 }
-                read(pending);
+                pending += decoder.end();
+                // The stream ended in the middle of an event (a data line cut short, or one that never ended within the bound): it is no whole answer
+                // whatever came before it, so it never makes good an earlier fault
+                const rest = pending.trim();
+                const payload = rest.startsWith('data:') ? rest.slice(5).trim() : null;
+                if (skipping) incomplete = true;
+                else if (payload !== null) {
+                    if (payload !== '[DONE]') {
+                        try {
+                            JSON.parse(payload);
+                        } catch {
+                            incomplete = true;
+                        }
+                    }
+                } else incomplete = rest.length > 0 && 'data:'.startsWith(rest);
+                if (!skipping) read(pending);
                 if (!res.writableEnded) res.end();
             } catch (error) {
                 // The provider's stream broke, or Hermes went away: what came through is counted, and the other side is told
@@ -505,18 +1093,17 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 }
                 if (!res.writableEnded) res.end();
             }
-            return { usage, outputChars, cutShort, notSent: false };
+            return { usage, outputChars, cutShort, notSent: false, ...(incomplete && !cutShort ? { incomplete } : {}), ...(skippedData ? { skippedData } : {}), ...(reading ? { reading } : {}) };
         } finally {
             clearTimeout(timer);
             res.off('close', onClose);
         }
     }
 
-    // A body too big, or not JSON: said in the shape clients read, never as a page
+    // Anything else the parser raised before the handler: said in the same shape
     router.use((error: unknown, _req: Request, res: Response, next: express.NextFunction) => {
         if (res.headersSent) return next(error);
-        const status = isRecord(error) && typeof error.status === 'number' && error.status >= 400 && error.status < 500 ? error.status : 400;
-        return problem(res, status, status === 413 ? 'The request is too large.' : 'The request could not be read.', status === 413 ? 'request_too_large' : 'invalid_request');
+        return bodyProblem(res, error);
     });
 
     return router;

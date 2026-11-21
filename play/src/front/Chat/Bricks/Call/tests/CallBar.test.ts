@@ -100,6 +100,21 @@ describe("the call bar, the call button and the walk-up card (game #2004, mock P
         expect(onResume).not.toHaveBeenCalled();
     });
 
+    it("shows whether the microphone is on or off, so a tap on it can be seen to have worked", async () => {
+        await bar(live(), { micOn: true });
+        expect(byId("call-mic")?.dataset.mic).toBe("on");
+        expect(button("Microphone")).not.toBeNull();
+        const onIcon = byId("call-mic")?.innerHTML;
+        view?.$destroy();
+        view = undefined;
+        target.innerHTML = "";
+        await bar(live(), { micOn: false });
+        expect(byId("call-mic")?.dataset.mic).toBe("off");
+        expect(button("Microphone is off")).not.toBeNull();
+        expect(button("Microphone")).toBeNull();
+        expect(byId("call-mic")?.innerHTML).not.toBe(onIcon);
+    });
+
     it("the bar can float over another chat, or the closed chat, and tapping it opens the call's chat", async () => {
         const onOpen = vi.fn();
         await bar(live(), { floating: true, onOpen });

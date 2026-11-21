@@ -28,8 +28,12 @@ export function statusFromError(error: unknown): number | undefined {
     return status;
 }
 
-/** A login written into an address (`https://user:password@host`), up to the last `@` before the path. */
-const URL_LOGIN = /([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/gi;
+/**
+ * A login written into an address (`https://user:password@host`), up to the last `@` before the path. It is found from the `://` itself, whatever is
+ * written before it (a scheme after punctuation, as in `...https://me:pw@host`), so no run of letters is ever tried from each of its characters: the
+ * match starts only at a `://`, and the login cannot hold a `/`, so the starts never overlap.
+ */
+const URL_LOGIN = /(:\/\/)[^/?#\s]*@/g;
 
 /** A key or token a provider's error text could carry: `Bearer ...`, `sk-...`, `AIza...`, or any long run of key-like characters. */
 const TOKEN_LIKE = /\bBearer\s+\S+|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}|\bAIza[0-9A-Za-z_-]{20,}|[A-Za-z0-9_+/=-]{32,}/g;

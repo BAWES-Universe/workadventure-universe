@@ -96,6 +96,17 @@ export interface ApprovalDeps {
     questions?: QuestionCards;
     /** Whether a room is still only the bot's and this person's, asked right before a goal's card goes into it (the card shows what the step would do). */
     roomStillTheirs?: (botId: string, roomId: string, matrixUserId: string) => boolean;
+    /**
+     * Whether this room is the person's own direct message with the bot, where a goal's card went. A tap on a goal's card this process
+     * does not hold (it restarted since) is believed only from that room, so a tap from any other room neither runs the saved step nor
+     * has the card, with the arguments the step was saved with, drawn there.
+     */
+    directRoomIs?: (botId: string, roomId: string, matrixUserId: string) => Promise<boolean>;
+    /**
+     * Remembers, for every bot server and across restarts, a goal's saved step whose card could not be shown and whose saved step could not
+     * be closed: any server asked for that step shows the card instead of joining a card nobody has. Without it only this process knows.
+     */
+    unshownCards?: { mark(actionId: string): Promise<void>; marked(actionId: string): Promise<boolean>; clear(actionId: string): Promise<void> };
     /** The bot tells the person how an approved action ended. Never throws. */
     followUp?: (outcome: Outcome) => Promise<void>;
     now?: () => number;
@@ -205,6 +216,11 @@ export class ToolApprovals {
     private readonly proposing = new Map<string, Promise<Proposed>>();
     /** A goal's saved step whose card could not be shown and whose saved step could not be closed: the next ask for it shows the card instead of joining a card nobody has. */
     private readonly unshown = new Set<string>();
+    /** Of those, the ones whose note could not be written to the shared store: only this process knows, so only its note counts. */
+    private readonly unshownHereOnly = new Set<string>();
+    /** Steps whose card was shown but whose "no card" marker could not be cleared in the shared store: the marker there is out of date, and is cleared again. */
+    private readonly staleMarks = new Set<string>();
+    private staleTimer: ReturnType<typeof setTimeout> | undefined;
     /** A person's card in a bubble that closed because they said something else: a new card for the same tool is a change (#1658). */
     private readonly changing = new Map<string, number>();
     /** The replies only a person saw in a bubble, kept a while so they come back with the person after a reload (#1658). */
@@ -270,7 +286,7 @@ export class ToolApprovals {
             if (task) {
                 // Orbit sets the wait of a goal's card (a super admin's "Scheduled card wait"), and says when it is the card already waiting
                 const saved = await this.deps.orbit.createOrJoin(botId, { ...base, proposalKey: randomKey(), rememberScope: null });
-                if (!saved.created && !this.unshown.has(saved.action.id)) return { kind: 'waiting', result: ALREADY_ASKED_TASK_RESULT };
+                if (!saved.created && !(await this.noCardShown(saved.action.id))) return { kind: 'waiting', result: ALREADY_ASKED_TASK_RESULT };
                 action = saved.action;
                 wait = Math.max(1, Math.round((Date.parse(action.reviewExpiresAt) - this.now()) / 60_000));
             } else {
@@ -310,7 +326,9 @@ export class ToolApprovals {
                 if (task && person.matrixUserId && this.deps.roomStillTheirs && !this.deps.roomStillTheirs(botId, roomId, person.matrixUserId)) throw new Error('The chat is not only theirs any more');
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
                 card.shownAt = this.now();
-                this.unshown.delete(action.id);
+                // Held before anything is awaited again: the person may tap it at once, and the tap must find this card, not make another
+                this.keep(action.id, card);
+                if (task) await this.cardShown(action.id);
             } catch (error) {
                 // No card, no OK: the saved action is closed so a tap can never find it
                 console.warn(`[ToolApprovals] Could not show the card for ${toolName}:`, errorText(error));
@@ -319,11 +337,10 @@ export class ToolApprovals {
                     () => false
                 );
                 // Still waiting at Orbit with no card: the same step asked again must show it, not join it
-                if (task && !closed) this.unshown.add(action.id);
-                else this.unshown.delete(action.id);
+                if (task && !closed) await this.cardNotShown(action.id);
+                else if (task) await this.cardShown(action.id);
                 return { kind: 'failed', result: NO_CARD_RESULT };
             }
-            this.keep(action.id, card);
             if (!nearby) return { kind: 'waiting', result: task ? WAITING_TASK_RESULT : WAITING_RESULT };
             this.scheduleExpiry(action.id, card);
             // One line for everyone: the bot needs an OK, or it changed what it asks (the person said something else)
@@ -333,6 +350,79 @@ export class ToolApprovals {
             console.warn(`[ToolApprovals] Could not ask for an OK for ${toolName}:`, errorText(error));
             return { kind: 'failed', result: NO_CARD_RESULT };
         }
+    }
+
+    /**
+     * Whether this saved step of a goal is known to have no card. When the shared store can be read it is the answer: another bot server may
+     * have shown the card since this one failed to, and this process's own note is then out of date. Only a note that never reached the store,
+     * or a store that cannot be read, is believed here alone.
+     */
+    private async noCardShown(actionId: string): Promise<boolean> {
+        const store = this.deps.unshownCards;
+        // The card was shown here, and the marker that said otherwise could not be cleared: it is out of date, whatever the store still holds
+        if (this.staleMarks.has(actionId)) {
+            if (store) {
+                await store.clear(actionId).then(
+                    () => this.staleMarks.delete(actionId),
+                    () => undefined
+                );
+            }
+            return false;
+        }
+        if (this.unshown.has(actionId)) {
+            if (!store || this.unshownHereOnly.has(actionId)) return true;
+            try {
+                if (await store.marked(actionId)) return true;
+            } catch {
+                return true;
+            }
+            this.unshown.delete(actionId);
+            return false;
+        }
+        return (await store?.marked(actionId).catch(() => false)) ?? false;
+    }
+
+    private async cardNotShown(actionId: string): Promise<void> {
+        this.staleMarks.delete(actionId);
+        this.unshown.add(actionId);
+        await this.deps.unshownCards?.mark(actionId).then(
+            () => this.unshownHereOnly.delete(actionId),
+            () => void this.unshownHereOnly.add(actionId)
+        );
+    }
+
+    private async cardShown(actionId: string): Promise<void> {
+        this.unshown.delete(actionId);
+        this.unshownHereOnly.delete(actionId);
+        // A clear that fails (the store is down) is kept, and tried again, or another bot server would find the old marker and take the shown card for a missing one
+        await this.deps.unshownCards?.clear(actionId).then(
+            () => this.staleMarks.delete(actionId),
+            () => {
+                this.staleMarks.add(actionId);
+                // A safety limit: a step that is never asked again leaves its entry here, so the oldest go
+                if (this.staleMarks.size > 500) this.staleMarks.delete(this.staleMarks.keys().next().value as string);
+                this.retryStaleMarks();
+            }
+        );
+    }
+
+    /** Clears the markers that could not be cleared, every half minute, until the store takes them: no bot server should find a marker for a card that is shown. */
+    private retryStaleMarks(): void {
+        if (this.staleTimer || this.staleMarks.size === 0 || !this.deps.unshownCards) return;
+        this.staleTimer = setTimeout(() => {
+            this.staleTimer = undefined;
+            const store = this.deps.unshownCards;
+            if (!store) return;
+            void Promise.all(
+                [...this.staleMarks].map((id) =>
+                    store.clear(id).then(
+                        () => void this.staleMarks.delete(id),
+                        () => undefined
+                    )
+                )
+            ).then(() => this.retryStaleMarks());
+        }, 30_000);
+        this.staleTimer.unref?.();
     }
 
     private findWaiting(
@@ -392,6 +482,11 @@ export class ToolApprovals {
         // A card of a goal or task is in that goal's own conversation, and is tapped in the person's direct message all the same
         const own = action?.conversationKey === conversationKeyOf(roomId, nearby) || (!nearby && !!action && taskItemOf(action.conversationKey) !== null);
         if (!action || action.requesterKey !== person.uuid || !own) return null;
+        // A goal's card went to the person's own direct message only: a tap from any other room is not on this card
+        if (!nearby && taskItemOf(action.conversationKey) !== null && this.deps.directRoomIs) {
+            const theirs = person.matrixUserId ? await this.deps.directRoomIs(botId, roomId, person.matrixUserId).catch(() => false) : false;
+            if (!theirs) return null;
+        }
         const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
         const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
         // Whether the tool was never checked is not saved with the action: ask the gate again for a card that still waits,

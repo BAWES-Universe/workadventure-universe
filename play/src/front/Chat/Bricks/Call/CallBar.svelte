@@ -3,7 +3,7 @@
     import BotMoodEmoji from "../../../Components/Video/BotMoodEmoji.svelte";
     import type { BotFeeling } from "../../Bots/BotMood";
     import { clock, type CallState } from "./CallSession";
-    import { IconHandStop, IconMicrophoneOn, IconPhoneOff } from "@wa-icons";
+    import { IconHandStop, IconMicrophoneOff, IconMicrophoneOn, IconPhoneOff } from "@wa-icons";
 
     /**
      * The call bar (game #2004, mock v10 Part 18 and Desktop 15 to 17): at the top of the Brick's chat while its chat is
@@ -23,6 +23,8 @@
     export let onResume: () => void = () => undefined;
     export let onEnd: () => void = () => undefined;
     export let onMute: () => void = () => undefined;
+    /** The microphone is on: the button shows which, so a tap can be told apart from nothing happening. */
+    export let micOn = true;
     export let onStopSpeaking: () => void = () => undefined;
     /** Whether Stop speaking can be offered: only where the game can really stop the bot's voice. */
     export let stoppable = true;
@@ -94,8 +96,16 @@
                     <IconHandStop font-size="20" />
                 </button>
             {/if}
-            <button type="button" class="call-ic" aria-label={$LL.chat.brickCall.microphone()} on:click={onMute}>
-                <IconMicrophoneOn font-size="20" />
+            <button
+                type="button"
+                class="call-ic"
+                class:off={!micOn}
+                aria-label={micOn ? $LL.chat.brickCall.microphone() : $LL.chat.brickCall.microphoneOff()}
+                data-testid="call-mic"
+                data-mic={micOn ? "on" : "off"}
+                on:click={onMute}
+            >
+                {#if micOn}<IconMicrophoneOn font-size="20" />{:else}<IconMicrophoneOff font-size="20" />{/if}
             </button>
         {/if}
         <button type="button" class="call-end" aria-label={$LL.chat.brickCall.end()} on:click={onEnd}>

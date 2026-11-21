@@ -45,6 +45,13 @@ describe("priceMetadata", () => {
         expect(priceMetadata({ type: "openai", endpoint: "https://openrouter.ai/api/v1", model: "x/y" }, { costUsd: 0.000123 }, offPeak).cost).toMatchObject({ basis: "provider", micros: 123 });
     });
 
+    it("does not make a cost the provider reported free because a rate per token is set and the counts are missing", () => {
+        const withRate = { type: "openai", endpoint: "https://openrouter.ai/api/v1", model: "x/y", settings: { costPerToken: 0.001 } };
+        expect(priceMetadata(withRate, { costUsd: 0.0123 }, offPeak).cost).toMatchObject({ basis: "provider", micros: 12300 });
+        // With counts, the rate still wins
+        expect(priceMetadata(withRate, { promptTokens: 100, completionTokens: 50, costUsd: 0.0123 }, offPeak).cost).toMatchObject({ basis: "override", micros: 150000 });
+    });
+
     it("saves a call that failed before it said anything as a real zero: nothing was billed", () => {
         expect(priceMetadata(deepseek, { tokensUsed: 0, error: true }, offPeak).cost).toMatchObject({ basis: "priced", micros: 0 });
     });

@@ -1,6 +1,6 @@
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
 import type { BotAsk } from "../Bots/BotAsk";
-import { DEFAULT_BRICK_LOOK, type BrickCard, type GuestChatLine } from "./Brick";
+import { DEFAULT_BRICK_LOOK, type BrickCard, type CarriedChatMedia, type GuestChatLine } from "./Brick";
 import { ownCard } from "./BrickHello";
 
 /**
@@ -124,10 +124,11 @@ export interface GuestChat {
     /** How many lines, from the first, are already in the person's chat with their Brick: a carry cut short goes on from here. */
     carriedTo?: number;
     /**
-     * Where the part on its way ends, kept before it is sent: a part whose answer was lost is sent again with the very same
-     * lines, so the bot server says it once, and lines said since come in the next part.
+     * The part on its way, exactly as it was sent (its place in the chat, whether it was the last, and its lines), kept before
+     * it is sent: a part whose answer was lost is sent again unchanged, so the bot server says it once, and lines said since
+     * come in the next part.
      */
-    carryingTo?: number;
+    carrying?: CarriedPart;
     lines: GuestLine[];
 }
 
@@ -158,6 +159,48 @@ function readLines(value: unknown): GuestLine[] {
     return lines;
 }
 
+/** The part that was on its way, as it was kept: undefined unless every bit of it reads as a part. */
+function readCarrying(value: unknown): CarriedPart | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const { from, to, last, lines } = value as Record<string, unknown>;
+    if (typeof from !== "number" || typeof to !== "number" || !Number.isInteger(from) || !Number.isInteger(to)) {
+        return undefined;
+    }
+    if (from < 0 || to <= from || typeof last !== "boolean" || !Array.isArray(lines) || lines.length === 0) {
+        return undefined;
+    }
+    const kept: GuestChatLine[] = [];
+    for (const one of lines) {
+        if (!one || typeof one !== "object") return undefined;
+        const line = one as Record<string, unknown>;
+        if (typeof line.id !== "string" || (line.from !== "guest" && line.from !== "brick")) return undefined;
+        if (typeof line.text !== "string" || typeof line.at !== "number") return undefined;
+        const media = line.media === undefined ? undefined : readCarriedMedia(line.media);
+        if (line.media !== undefined && !media) return undefined;
+        kept.push({
+            id: line.id,
+            from: line.from,
+            text: line.text,
+            at: line.at,
+            ...(media ? { media } : {}),
+            ...(line.label === true ? { label: true as const } : {}),
+        });
+    }
+    return { from, to, last, lines: kept };
+}
+
+function readCarriedMedia(value: unknown): CarriedChatMedia[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    for (const one of value) {
+        if (!one || typeof one !== "object") return undefined;
+        const { kind, name, type, receipt } = one as Record<string, unknown>;
+        if ((kind !== "file" && kind !== "note") || typeof name !== "string" || typeof type !== "string")
+            return undefined;
+        if (typeof receipt !== "string") return undefined;
+    }
+    return value as CarriedChatMedia[];
+}
+
 /**
  * The chat this device kept, as it was saved. Undefined when there is none, when it is not this guest's, or when it
  * was last touched longer ago than `keepMs`. `keepMs` is left out where a person who has signed in picks it up: Orbit
@@ -173,12 +216,29 @@ export function parseGuestChat(
     try {
         const saved = JSON.parse(raw) as Record<string, unknown> | null;
         if (!saved || typeof saved !== "object") return undefined;
-        const { guestId: owner, startedAt, savedAt, saidNeedsAccount, carryTaken, carriedTo, carryingTo } = saved;
+        const { guestId: owner, startedAt, savedAt, saidNeedsAccount, carryTaken, carriedTo } = saved;
         if (typeof owner !== "string" || (guestId !== null && owner !== guestId)) return undefined;
         if (typeof startedAt !== "number" || typeof savedAt !== "number" || !Number.isFinite(savedAt)) return undefined;
         if (keepMs !== undefined && now - savedAt > keepMs) return undefined;
         const lines = readLines(saved.lines);
         if (lines.length === 0) return undefined;
+        const reached = typeof carriedTo === "number" && Number.isInteger(carriedTo) && carriedTo > 0 ? carriedTo : 0;
+        // A chat saved mid-carry by the build before parts kept only where the part on its way ended (`carryingTo`): it is the same
+        // part, asked again as it was, so what the bot server has already said is not said twice
+        const carryingTo = saved.carryingTo;
+        const carrying =
+            readCarrying(saved.carrying) ??
+            (saved.carrying === undefined &&
+            typeof carryingTo === "number" &&
+            Number.isInteger(carryingTo) &&
+            carryingTo > reached &&
+            carryingTo <= lines.length
+                ? carriedPart(
+                      { guestId: owner, startedAt, savedAt, saidNeedsAccount: saidNeedsAccount === true, lines },
+                      reached,
+                      carryingTo
+                  )
+                : undefined);
         return {
             guestId: owner,
             startedAt,
@@ -186,7 +246,7 @@ export function parseGuestChat(
             saidNeedsAccount: saidNeedsAccount === true,
             ...(carryTaken === true ? { carryTaken: true as const } : {}),
             ...(typeof carriedTo === "number" && Number.isInteger(carriedTo) && carriedTo > 0 ? { carriedTo } : {}),
-            ...(typeof carryingTo === "number" && Number.isInteger(carryingTo) && carryingTo > 0 ? { carryingTo } : {}),
+            ...(carrying ? { carrying } : {}),
             lines,
         };
     } catch {
@@ -236,13 +296,16 @@ export function historyExcept(
     lines: readonly GuestLine[],
     skip: ReadonlySet<number>
 ): { from: "guest" | "brick"; text: string }[] {
-    const kept = lines.filter((line, index) => !skip.has(index) && lineWords(line)).slice(-REQUEST_LINES_MAX);
     const out: { from: "guest" | "brick"; text: string }[] = [];
     const encoder = new TextEncoder();
     let bytes = 0;
-    for (let index = kept.length - 1; index >= 0; index--) {
+    // Newest first, and no further once a limit is reached: an old chat is never read through to its first line
+    for (let index = lines.length - 1; index >= 0 && out.length < REQUEST_LINES_MAX; index--) {
+        if (skip.has(index)) continue;
+        const words = lineWords(lines[index]);
+        if (!words) continue;
         // Earlier pictures and notes are read as words: only the message being answered sends its files
-        const line = { from: kept[index].from, text: lineWords(kept[index]).slice(0, REQUEST_LINE_CHARS) };
+        const line = { from: lines[index].from, text: words.slice(0, REQUEST_LINE_CHARS) };
         bytes += encoder.encode(JSON.stringify(line)).length + 1;
         if (bytes > REQUEST_HISTORY_BYTES_MAX) break;
         out.push(line);
@@ -477,10 +540,13 @@ export function carriedPart(chat: GuestChat, from: number, upTo: number = chat.l
     return { from, to, last: to >= chat.lines.length, lines };
 }
 
-/** For a bot server from before, which takes a carried chat as one message: the newest lines that fit in one part. */
-export function carriedTail(chat: GuestChat): CarriedPart {
+/**
+ * For a bot server from before, which takes a carried chat as one message: the newest lines that fit in one part, and never a line
+ * before `from` (those it has already taken).
+ */
+export function carriedTail(chat: GuestChat, from = 0): CarriedPart {
     let start = chat.lines.length;
-    while (start > 0 && carriedPart(chat, start - 1).last) start -= 1;
+    while (start > from && carriedPart(chat, start - 1).last) start -= 1;
     const part = carriedPart(chat, start);
     return { ...part, to: chat.lines.length, last: true };
 }

@@ -13,6 +13,8 @@
 
 /** What the model answers, alone, when the answer needs something the others were not there for. Never shown. */
 export const PRIVATE_MARKER = '[PRIVATE_REPLY]';
+/** Every spelling of the marker the watch accepts. */
+const PRIVATE_MARKER_ANY_CASE = /\[PRIVATE_REPLY\]/gi;
 
 /** A reply only one person sees keeps coming back with them for this long, and no more than this many (as cards' replies do). */
 const KEPT_MS = 2 * 60 * 60 * 1000;
@@ -92,8 +94,8 @@ export function privateBodyOf(reply: string): string {
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
         .replace(/\[EMOTION_UPDATE\][\s\S]*?\[\/EMOTION_UPDATE\]/gi, '')
         .replace(/\[EMOTION_UPDATE\][\s\S]*$/i, '')
-        .split(PRIVATE_MARKER)
-        .join('')
+        // The same case rule as the marker is found by (MarkerWatch reads "[private_reply]" too)
+        .replace(PRIVATE_MARKER_ANY_CASE, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }

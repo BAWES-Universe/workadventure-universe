@@ -150,6 +150,15 @@ export function limitChoices(kind: "everyone" | "person", current: number): numb
 }
 
 /**
+ * Whether Orbit answered a change to a share with a definite refusal (400, 409, 503): nothing changed. Anything else (no answer, a timeout,
+ * a server fault) may have gone through, so what is shared is not known and has to be read again.
+ */
+export function shareRefused(error: unknown): boolean {
+    const status = error instanceof Error ? (error as Error & { status?: number }).status : undefined;
+    return status === 400 || status === 409 || status === 503;
+}
+
+/**
  * What the owner is told when Orbit would not do a change to a share. Orbit words these (400, 409, 503) for people, so they are
  * shown as they are; anything else, a network failure included, is the plain "didn't go through" line.
  */

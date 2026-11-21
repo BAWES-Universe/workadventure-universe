@@ -9,6 +9,7 @@ const shared = vi.hoisted(() => ({
     saved: null as string | null,
     taken: null as string | null,
     writeFails: false,
+    markFails: false,
     steps: undefined as undefined | CarrySteps,
 }));
 
@@ -23,7 +24,7 @@ vi.mock("../../../Connection/LocalUserStore", () => ({
         },
         getGuestBrickChatTaken: () => shared.taken,
         setGuestBrickChatTaken: (id: string) => {
-            shared.taken = id;
+            if (!shared.markFails) shared.taken = id;
         },
         dropGuestBrickChat: () => {
             shared.saved = null;
@@ -49,6 +50,7 @@ vi.mock("../GuestBrickCarry", () => ({
 describe("the chat a guest brought along keeps that Orbit handed it over, even when it cannot be saved again (#1997)", () => {
     beforeEach(() => {
         shared.writeFails = false;
+        shared.markFails = false;
         shared.taken = null;
         shared.saved = serializeGuestChat(withLine(newGuestChat(GUEST, 1), { from: "guest", text: "hi", at: 2 }));
         shared.steps = undefined;
@@ -62,17 +64,31 @@ describe("the chat a guest brought along keeps that Orbit handed it over, even w
         return shared.steps as CarrySteps;
     }
 
-    it("reads a chat as taken once its mark was kept, though the chat itself could not be saved with it", async () => {
+    it("reads a chat as taken from the page's own memory when neither the chat nor the mark could be written", async () => {
         const carry = await steps();
         const chat = carry.read();
         expect(chat?.carryTaken).toBeUndefined();
 
         shared.writeFails = true;
+        shared.markFails = true;
         carry.keep({ ...(chat as NonNullable<typeof chat>), carryTaken: true });
 
-        // The chat on the device has no mark, but the one handed over is still known, so Orbit is not asked again
+        // Nothing on the device says it, but this page knows Orbit handed it over, so Orbit is not asked again
+        expect(shared.taken).toBeNull();
         expect(JSON.parse(shared.saved as string).carryTaken).toBeUndefined();
         expect(carry.read()?.carryTaken).toBe(true);
+    });
+
+    it("reads a chat as taken from the mark kept on the device by a page that has since been reloaded", async () => {
+        const first = await steps();
+        shared.writeFails = true;
+        first.keep({ ...(first.read() as NonNullable<ReturnType<CarrySteps["read"]>>), carryTaken: true });
+        expect(shared.taken).toBe(`${GUEST}|@me:chat`);
+
+        // A fresh page: nothing is remembered in memory, only what the device kept
+        const second = await steps();
+        expect(JSON.parse(shared.saved as string).carryTaken).toBeUndefined();
+        expect(second.read()?.carryTaken).toBe(true);
     });
 
     it("does not take a chat as handed over when the mark, or the chat itself, was left by another account on this device", async () => {

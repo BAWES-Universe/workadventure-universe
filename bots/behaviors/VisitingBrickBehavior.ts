@@ -75,6 +75,8 @@ export class VisitingBrickBehavior extends IdleBehavior {
     private lookedAt = 0;
     private told = false;
     private walking = false;
+    /** A search for a way is still on its way: the path is not following yet, and a second search would supersede it. */
+    private searching = false;
     /** A path was started and has not ended yet: when it ends the Brick must stand still, or it keeps showing as walking. */
     private pathStarted = false;
     private lookedAcross = false;
@@ -149,13 +151,17 @@ export class VisitingBrickBehavior extends IdleBehavior {
         }
         // It is already on its way: the path is worked out again only when the person is well past where it was heading
         if (this.walking && bot.getIsFollowingPath()) return;
+        // A search that is still working out its way is not started again: each one costs the whole map, and a newer one supersedes it
+        if (this.searching) return;
         // A spot it could not reach is not asked for again at once: a search for a way costs the whole map
         if (now < this.retryAt) return;
         const spots = spotsAround(person, here);
         const spot = spots[this.failedSpots % spots.length];
         this.walking = true;
+        this.searching = true;
         bot.moveToWithPathfinding(spot.x, spot.y)
             .then((started) => {
+                this.searching = false;
                 if (started) {
                     this.pathStarted = true;
                     this.failedSpots = 0;
@@ -169,6 +175,7 @@ export class VisitingBrickBehavior extends IdleBehavior {
     }
 
     private giveUpOnSpot(): void {
+        this.searching = false;
         this.walking = false;
         this.failedSpots += 1;
         this.retryAt = Date.now() + VISIT_RETRY_AFTER_MS;

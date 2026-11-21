@@ -111,6 +111,44 @@ describe('use_computer (#2000)', () => {
         expect(await run(asking({}), {})).toEqual({ error: 'Say in a few words what the job is.' });
     });
 
+    it('says it is not known whether a job started when the start was slow and Orbit could not say: not a failure, not a start, and to look before asking again', async () => {
+        const unknown = await run(asking({ ok: false, reason: 'unknown' }));
+        expect(unknown).toMatchObject({ started: false, unknown: true });
+        expect(unknown).not.toHaveProperty('success');
+        expect(unknown).not.toHaveProperty('starting');
+        expect(String(unknown.note)).toMatch(/not known whether this job started/);
+        expect(String(unknown.note)).toMatch(/couldn't confirm it/);
+        expect(String(unknown.note)).toMatch(/look at the bar above this chat before asking again/);
+        expect(String(unknown.note)).toMatch(/Do not say it failed or that it started/);
+    });
+
+    it('says the job was found and has already ended (not a connection failure, not running) when a slow start was matched to a job that failed or was stopped', async () => {
+        const ended = await run(asking({ ok: false, reason: 'ended' }));
+        expect(ended).toMatchObject({ started: false, ended: true });
+        expect(ended).not.toHaveProperty('success');
+        expect(String(ended.note)).toMatch(/already ended/);
+        expect(String(ended.note)).toMatch(/bar above this chat/);
+        // the generic connection failure says the computer could not be reached: this one must not
+        expect(String(ended.note)).toMatch(/Do not say your computer could not be reached/);
+        expect(String(ended.note)).not.toMatch(/could not be reached just now/);
+    });
+
+    it('says that Orbit found the job, not that the computer is starting, when a slow start was matched to a queued, waiting or running job', async () => {
+        const found = await run(asking({ ok: false, reason: 'starting' }));
+        expect(found).toMatchObject({ started: false, found: true });
+        expect(found).not.toHaveProperty('success');
+        expect(found).not.toHaveProperty('starting');
+        const note = String(found.note);
+        expect(note).toMatch(/Orbit found this job/);
+        expect(note).toMatch(/bar above this chat/);
+        // nothing about the machine is claimed: only that the job exists and where its state shows
+        expect(note).toMatch(/Do not say your computer is starting, that the job has begun, or will begin by itself/);
+        expect(note).not.toMatch(/Your computer is starting/);
+        expect(note).not.toMatch(/ask you again/);
+        expect(note).not.toMatch(/could not be reached/);
+        expect(resultOf('c1', found)).toMatchObject({ ok: true });
+    });
+
     it('marks a job that did not start as a failed step, and a job that is running or waiting its turn as one that worked', async () => {
         const down = { startComputerJob: vi.fn().mockRejectedValue(new Error('offline')) };
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -125,7 +163,7 @@ describe('use_computer (#2000)', () => {
     });
 
     it('shows as one step on the steps line', () => {
-        expect(describeStep({ id: 'c1', name: COMPUTER_TOOL, arguments: { job: 'Visa form' } })).toMatchObject({ doing: 'Working on its computer', done: 'Worked on its computer', detail: 'Visa form', kind: 'write' });
+        expect(describeStep({ id: 'c1', name: COMPUTER_TOOL, arguments: { job: 'Visa form' } })).toMatchObject({ doing: 'Starting its computer, this takes a minute', done: 'Worked on its computer', detail: 'Visa form', kind: 'write' });
     });
 });
 
@@ -174,10 +212,19 @@ describe('asking Orbit for a computer (#2000)', () => {
         expect(JSON.stringify(request.mock.calls.at(-1))).not.toContain('plan');
     });
 
-    it('throws when Orbit answers with a failure status, since every refusal comes as a 200 with a reason', async () => {
+    it('throws when Orbit itself answers with a failure status (a 4xx with its own JSON body), since every refusal comes as a 200 with a reason', async () => {
         process.env.BOT_SERVICE_TOKEN = 'secret';
-        request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 500'), { response: { status: 500 } }));
-        await expect(service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).rejects.toThrow(/500/);
+        request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 403'), { isAxiosError: true, response: { status: 403, data: { error: 'Not allowed' } } }));
+        await expect(service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).rejects.toThrow(/403/);
+        expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('looks for the job of the start after a 5xx (the answer may be a gateway\u2019s, and the job made behind it), and does not throw: the person is not told it failed', async () => {
+        process.env.BOT_SERVICE_TOKEN = 'secret';
+        request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 500'), { isAxiosError: true, response: { status: 500 } }));
+        request.mockImplementationOnce(async (config: { params?: { attempt?: string } }) => ({ data: { started: { id: 'j-made', status: 'running', attempt: config.params?.attempt } } }));
+        expect(await service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).toEqual({ ok: false, reason: 'starting' });
+        expect(request).toHaveBeenCalledTimes(2);
     });
 
     it('sweeps without ever throwing', async () => {
@@ -256,7 +303,7 @@ describe('who has the computer in a chat (#2000)', () => {
         computerOnFor(botId: string, playerId: number, admin?: unknown): Promise<boolean>;
         runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: unknown; botId?: string; playerId?: number }): Promise<Record<string, unknown>>;
     };
-    function service(admin: Record<string, unknown>, userUuid: string | null = 'uuid-alice') {
+    function service(admin: Record<string, unknown>, userUuid: string | null = 'uuid-alice', isGuest?: boolean) {
         const ai = Object.create(AIService.prototype) as AIService;
         Object.assign(ai, {
             helperBricks: new Set<string>(),
@@ -265,7 +312,7 @@ describe('who has the computer in a chat (#2000)', () => {
             brickOwners: new Map<string, string>(),
             computerOnCache: new Map(),
             adminApiService: { isConfigured: () => true, ...admin },
-            conversationMemory: { getMemory: () => ({ userUuid: userUuid ?? undefined }) },
+            conversationMemory: { getMemory: () => ({ userUuid: userUuid ?? undefined, ...(isGuest === undefined ? {} : { isGuest }) }) },
         });
         return ai as unknown as Ai;
     }
@@ -301,5 +348,15 @@ describe('who has the computer in a chat (#2000)', () => {
         ai.noteBrick(BRICK, { isDefault: false });
         expect(await ai.runComputerToolCall({ job: 'Taxi booking' }, { botId: BRICK, playerId: 1 })).toMatchObject({ queued: true });
         expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', writes: undefined });
+    });
+
+    it('sends the speaker\'s guest status from the chat\'s own memory with the job', async () => {
+        for (const isGuest of [false, true]) {
+            const startComputerJob = vi.fn().mockResolvedValue({ ok: true, job: { id: 'j1', status: 'queued', queuedFor: 'turn' }, restoredFrom: null });
+            const ai = service({ startComputerJob }, 'uuid-alice', isGuest);
+            ai.noteBrick(BRICK, { isDefault: false });
+            await ai.runComputerToolCall({ job: 'Taxi booking' }, { botId: BRICK, playerId: 1 });
+            expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', isGuest, writes: undefined });
+        }
     });
 });

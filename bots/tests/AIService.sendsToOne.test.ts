@@ -74,6 +74,19 @@ describe('what a reply sends with it (#1993)', () => {
         });
     });
 
+    describe('an answer for one person alone (it was offered no tools)', () => {
+        it('runs none of the tools the model asks for anyway', async () => {
+            const bot = client();
+            const results = await service()['executeToolCalls'](SENDS, bot as never, undefined, undefined, 'uuid-khalid', SPACE, 'bot1', KHALID, undefined, undefined, false, undefined, undefined, undefined, false, false, true);
+
+            expect(results.map((one) => Boolean(one.result.error))).toEqual([true, true, true, true]);
+            expect(bot.sendImage).not.toHaveBeenCalled();
+            expect(bot.sendFile).not.toHaveBeenCalled();
+            expect(bot.sendAudio).not.toHaveBeenCalled();
+            expect(bot.sendVideo).not.toHaveBeenCalled();
+        });
+    });
+
     describe('what a tool made', () => {
         const made = (...urls: string[]) => [{ id: 't1', name: 'generate_media', result: { urls } }];
         const send = (ai: AIService, bot: unknown, results: unknown, only?: number) =>
@@ -110,6 +123,33 @@ describe('what a reply sends with it (#1993)', () => {
             expect((failing.sendImage.mock.calls as unknown[][]).map((call) => call[5])).toEqual([KHALID, KHALID]);
         });
 
+        it('keeps a private send and a group reply for the same URL as two entries, each for its own audience', async () => {
+            const url = 'https://cdn.example.test/a.png';
+            const memory = {
+                pendingMedia: [{ url, originalUrl: url, mediaType: 'image', mimeType: '', caption: '', createdAt: 1, retryCount: 0 }] as unknown as Array<{ url: string; audience?: number }>,
+                maxPendingMedia: 5,
+            };
+            const bot = client();
+            bot.sendImage.mockRejectedValue(new Error('send failed'));
+            await send(service(memory), bot, made(url), KHALID);
+            // The group's entry was not taken over by the private one: it still goes to everyone
+            expect(memory.pendingMedia.map((item) => item.audience)).toEqual([undefined, KHALID]);
+
+            // The same audience asking again reuses its own entry
+            await send(service(memory), bot, made(url), KHALID);
+            expect(memory.pendingMedia).toHaveLength(2);
+
+            // A private send that goes through takes only its own entry out
+            const fine = client();
+            await send(service(memory), fine, made(url), KHALID);
+            expect(memory.pendingMedia.map((item) => item.audience)).toEqual([undefined]);
+
+            // The explicit send tools queue the same way
+            const blocked = { pendingMedia: [{ url, originalUrl: url, mediaType: 'image', mimeType: '', createdAt: 1, retryCount: 0 }] as unknown as Array<{ audience?: number }>, maxPendingMedia: 5 };
+            await service(blocked)['sendMediaWithRetry'](bot as never, SPACE, url, '', 'image', () => Promise.reject(new Error('no')), 'bot1', KHALID, KHALID);
+            expect(blocked.pendingMedia.map((item) => item.audience)).toEqual([undefined, KHALID]);
+        });
+
         it('goes into the space for everyone in a reply other people read', async () => {
             const bot = client();
             const ai = service();
@@ -136,6 +176,16 @@ describe('what a reply sends with it (#1993)', () => {
             expect(memory.pendingMedia).toEqual([]);
         });
 
+        it('sends the same media queued for one person and for the room once each, to its own audience', () => {
+            const bot = client();
+            const memory = waiting(Date.now() - 60_000);
+            (memory.pendingMedia as Array<Record<string, unknown>>).push({ ...memory.pendingMedia[0], audience: KHALID });
+            service(memory)['flushPendingMedia'](bot as never, SPACE, 'bot1', KHALID, undefined, KHALID);
+
+            expect(bot.sendMediaMessage).toHaveBeenCalledTimes(2);
+            expect((bot.sendMediaMessage.mock.calls as unknown[][]).map((call) => call[7])).toEqual([KHALID, KHALID]);
+        });
+
         it('waits when other people read the reply, and what that reply made goes to everyone', () => {
             const bot = client();
             const now = Date.now();
@@ -146,6 +196,43 @@ describe('what a reply sends with it (#1993)', () => {
             expect(bot.sendMediaMessage).toHaveBeenCalledTimes(1);
             expect(bot.sendMediaMessage).toHaveBeenCalledWith(SPACE, 'https://cdn.example.test/logo.png', 'image', 'image/png', 'Our logo', undefined, KHALID, undefined);
             expect(memory.pendingMedia.map((item) => item.url)).toEqual(['https://cdn.example.test/song.mp3']);
+        });
+
+        it('made for one person in an answer that was stopped goes to that person alone, even when a reply other people read sends it', () => {
+            const bot = client();
+            const now = Date.now();
+            // A shared reply began at `now`; a private answer for Khalid queued this a moment later and was stopped before it sent it
+            const memory = waiting(now + 5);
+            (memory.pendingMedia[0] as { audience?: number }).audience = KHALID;
+            service(memory)['flushPendingMedia'](bot as never, SPACE, 'bot1', KHALID, now, undefined);
+
+            expect(bot.sendMediaMessage).toHaveBeenCalledWith(SPACE, 'https://cdn.example.test/song.mp3', 'audio', 'audio/mpeg', 'Your song', undefined, KHALID, KHALID);
+            expect(memory.pendingMedia).toEqual([]);
+        });
+
+        it('goes to the person the memory is about as they are now, not to the id it was queued with before they came back', () => {
+            const bot = client();
+            const now = Date.now();
+            const OTHER = 77;
+            // A memory restored for a person who came back as player 77: the item still carries the id Khalid had (and someone else may hold now)
+            const memory = waiting(now - 60_000);
+            (memory.pendingMedia[0] as { audience?: number }).audience = KHALID;
+            service(memory)['flushPendingMedia'](bot as never, SPACE, 'bot1', OTHER, undefined, undefined);
+
+            expect(bot.sendMediaMessage).toHaveBeenCalledWith(SPACE, 'https://cdn.example.test/song.mp3', 'audio', 'audio/mpeg', 'Your song', undefined, OTHER, OTHER);
+        });
+
+        it('is queued with the person it is for when an answer for them alone makes it', () => {
+            const memory = { pendingMedia: [] as Array<{ audience?: number }>, maxPendingMedia: 5 };
+            const results = [{ id: 't1', name: 'generate_media', result: { urls: ['https://cdn.example.test/chart.png'] } }];
+            service(memory)['preQueueToolResults'](results, new Set(), 'bot1', KHALID, false, KHALID);
+            service(memory)['preQueueToolResults'](
+                [{ id: 't2', name: 'generate_media', result: { urls: ['https://cdn.example.test/other.png'] } }],
+                new Set(),
+                'bot1',
+                KHALID
+            );
+            expect(memory.pendingMedia.map((item) => item.audience)).toEqual([KHALID, undefined]);
         });
     });
 });

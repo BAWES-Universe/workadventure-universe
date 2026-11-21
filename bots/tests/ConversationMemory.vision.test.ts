@@ -72,7 +72,7 @@ describe('PersistentMemory.appendVisionDescription', () => {
             adminApiToken: 'token',
             debounceInterval: 1000,
             immediateSaveEnabled: false,
-        });
+        } as ConstructorParameters<typeof PersistentMemory>[0] & { adminApiToken: string });
         const saveSpy = vi.spyOn(persistent as any, 'scheduleDebouncedSave');
 
         persistent.addMessage('bot-1', 1, 'what is this?', 'person', 'space');

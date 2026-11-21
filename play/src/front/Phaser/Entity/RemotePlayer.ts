@@ -22,7 +22,7 @@ import { friendsEnabledStore, relationshipsStore } from "../../Chat/Stores/Frien
 import { invitesEnabledStore, ringStore } from "../../Chat/Stores/RingStore";
 import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
 import { botIdFromChatId } from "../../Chat/Bots/BotChatStatus";
-import { visitingWith } from "../../Chat/Bricks/BrickVisit";
+import { visitingCaptionStore } from "../../Chat/Bricks/BrickVisitCaption";
 import { botDmAccessCache } from "../../Chat/Bots/BotStatusStore";
 import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
 import { CardAnswers, CARD_ANSWER_KEPT_MS } from "../../Components/ActionsMenu/cardAnswers";
@@ -99,11 +99,9 @@ export class RemotePlayer extends Character implements ActivatableInterface {
      */
     private watchVisiting(scene: GameScene): void {
         if (!this.userUuid.startsWith("bot-")) return;
-        this.visitingUnsubscriber = scene.allUsersInWorldStore.subscribe((users) => {
-            const user = [...(users?.values() ?? [])].find((candidate) => candidate.uuid === this.userUuid);
-            const name = visitingWith(user?.tags);
-            this.setCaption(name ? get(LL).chat.brick.visitingWith({ name }) : undefined);
-        });
+        this.visitingUnsubscriber = visitingCaptionStore(scene.allUsersInWorldStore, LL, this.userUuid).subscribe(
+            (caption) => this.setCaption(caption)
+        );
     }
 
     public updatePosition(position: PositionMessage): void {

@@ -76,7 +76,17 @@ describe('Call', () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ botId: 'b1', started: true, spaceName: 'call__abc' });
         expect(gate.check).toHaveBeenCalledWith('b1', 'call', { signedIn: true, identifier: 'uuid-1' }, 'Nora');
-        expect(botManager.startCall).toHaveBeenCalledWith('b1', 'uuid-1');
+        expect(botManager.startCall).toHaveBeenCalledWith('b1', 'uuid-1', undefined);
+    });
+
+    it('passes on the id the caller gave its call, and refuses one a space name cannot carry', async () => {
+        await call({ playerUuid: 'uuid-1', callId: 'call-aaaa1111' });
+        expect(botManager.startCall).toHaveBeenCalledWith('b1', 'uuid-1', 'call-aaaa1111');
+        botManager.startCall.mockClear();
+        expect((await call({ playerUuid: 'uuid-1', callId: 'x' })).status).toBe(400);
+        expect((await call({ playerUuid: 'uuid-1', callId: 'a b/c#d-12345' })).status).toBe(400);
+        expect((await call({ playerUuid: 'uuid-1', callId: 12345678 })).status).toBe(400);
+        expect(botManager.startCall).not.toHaveBeenCalled();
     });
 
     it('does not start a call Orbit refuses, and says why in its own line', async () => {
@@ -134,7 +144,15 @@ describe('Ending a call', () => {
     it('ends the call of the person asking', async () => {
         const response = await end();
         expect(await response.json()).toEqual({ botId: 'b1', ended: true });
-        expect(botManager.endCall).toHaveBeenCalledWith('b1', 'uuid-1');
+        expect(botManager.endCall).toHaveBeenCalledWith('b1', 'uuid-1', undefined);
+    });
+
+    it('ends only the call it names, and refuses an id a call cannot carry', async () => {
+        await end({ playerUuid: 'uuid-1', callId: 'call-aaaa1111' });
+        expect(botManager.endCall).toHaveBeenCalledWith('b1', 'uuid-1', 'call-aaaa1111');
+        botManager.endCall.mockClear();
+        expect((await end({ playerUuid: 'uuid-1', callId: '../etc' })).status).toBe(400);
+        expect(botManager.endCall).not.toHaveBeenCalled();
     });
 
     it('never ends the call of someone else', async () => {

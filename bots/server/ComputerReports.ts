@@ -60,6 +60,8 @@ export interface ComputerReport {
     /** Files handed over to be put in the chat as cards. */
     handed: HandedFile[];
     givenBack: boolean;
+    /** Whole micros of a refund Orbit has promised and not paid yet (0 when none, or from an older Orbit): said as pending, never as given back. */
+    refundPendingMicros: number;
 }
 
 const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule'];
@@ -118,7 +120,19 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         files: Array.isArray(report.files) ? report.files.filter((name): name is string => typeof name === 'string' && name.length > 0) : [],
         handed: handedOf(report.handed),
         givenBack: report.givenBack === true,
+        refundPendingMicros: typeof report.refundPendingMicros === 'number' && Number.isFinite(report.refundPendingMicros) && report.refundPendingMicros > 0 ? Math.round(report.refundPendingMicros) : 0,
     };
+}
+
+/**
+ * Money as the person reads it, exactly as Orbit's `dollars()` says it (the game's Usage page says it the same way): "$0", "less than $0.001"
+ * under half a thousandth, thousandths of a dollar under a cent (`$0.009`), cents from a cent up (`$0.05`, `$2.50`).
+ */
+export function moneyText(micros: number): string {
+    if (!(micros > 0)) return '$0';
+    if (micros < 500) return 'less than $0.001';
+    if (micros < 10_000) return `$${(micros / 1_000_000).toFixed(3)}`;
+    return `$${(micros / 1_000_000).toFixed(2)}`;
 }
 
 // --- the words -------------------------------------------------------------------------------------------------------------------------------
@@ -152,7 +166,13 @@ const UNSURE_NOUN: Record<string, string> = { send: 'message', publish: 'publish
  * What reached other places, from the record only: what is known to have gone, what was tried and is not known, and (only then) that the record
  * shows nothing went. A job that was only to look says that instead.
  */
-export function receiptOf(report: Pick<ComputerReport, 'effects' | 'writes'>, quiet: 'ended' | 'waiting' = 'ended'): string {
+export function receiptOf(report: Pick<ComputerReport, 'effects' | 'writes'> & { refundPendingMicros?: number }, quiet: 'ended' | 'waiting' = 'ended'): string {
+    const said = receiptWords(report, quiet);
+    // A refund Orbit has promised and not paid is said as pending, after what the record proves: it is not said as given back
+    return report.refundPendingMicros && report.refundPendingMicros > 0 ? `${said} ${moneyText(report.refundPendingMicros)} refund pending.` : said;
+}
+
+function receiptWords(report: Pick<ComputerReport, 'effects' | 'writes'>, quiet: 'ended' | 'waiting'): string {
     const done = report.effects.filter((effect) => effect.state === 'done').map((effect) => (DONE_WORDS[effect.kind] ?? (() => 'Something was done.'))(effect.where));
     const unsure = report.effects
         .filter((effect) => effect.state === 'unknown')
@@ -198,12 +218,13 @@ export function reportText(report: ComputerReport): string {
                     ? ` I'm ready to put in ${report.ready.what.trim().replace(/[.!?]+$/, '')} at ${report.ready.where.trim().replace(/[.!?]+$/, '')}, and nothing of yours has reached it yet.`
                     : '';
             // Paying and submitting are the person's: they are told, from the record, that nothing has gone yet (or what has)
-            const so = report.effects.length > 0 || report.waitingFor === 'pay' || report.waitingFor === 'submit' ? ` ${receiptOf(report, 'waiting')}` : '';
+            const so = report.effects.length > 0 || report.waitingFor === 'pay' || report.waitingFor === 'submit' || report.refundPendingMicros > 0 ? ` ${receiptOf(report, 'waiting')}` : '';
             return `${name} needs you.${ready}${so} ${next}`;
         }
         case 'failed': {
             const why = report.why ? ` ${capital(sentence(report.why))}` : '';
-            const back = report.givenBack ? " This try won't count against your month." : '';
+            // A refund that is still pending is said in the receipt as pending: the try is not said to be given back until it is
+            const back = report.givenBack && report.refundPendingMicros <= 0 ? " This try won't count against your month." : '';
             return `I couldn't finish ${name}.${why} ${receiptOf(report)} My computer kept what I had ready.${back} Want me to try again, or would you rather do that step yourself?`;
         }
         case 'unanswered': {

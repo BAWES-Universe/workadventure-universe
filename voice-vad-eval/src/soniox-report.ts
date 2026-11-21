@@ -7,10 +7,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { percentile } from './scoring.ts';
 import { LISTENED, listenedAs } from './listened.ts';
+import type { RecordedClip, RecordedEvent, RecordedStream } from './soniox-record.ts';
 
-type Ev = [number, string, string?, number?];
-interface Stream { openAt: number; finishAt?: number; events: Ev[]; sentMs: number }
-interface Rec { id: string; kind: string; set: string; label: string; condition: string; group: string; language: string; seconds: number; leadExtraMs: number; onsetMs?: number; offsetMs?: number; streams: Stream[]; sentMs: number }
+// The shapes soniox-record.ts writes, taken from it (a type import: nothing of it runs here)
+type Ev = RecordedEvent;
+type Stream = RecordedStream;
+type Rec = RecordedClip;
 interface Outcome { stopAt?: number; heldMs: number; pauses: number; resumes: number; continues: number; spanMs: number; events: [number, string][]; why: Record<string, number> }
 interface Row { id: string; kind: string; group: string; onsetMs?: number; leadExtraMs: number; result: Record<string, Outcome> }
 

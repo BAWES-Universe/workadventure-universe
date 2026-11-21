@@ -5,6 +5,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildNoteHearing } from '../voice/NoteHearingWiring';
+
+// The length of a clip is measured with ffmpeg, which is not what is tested here: a clip always measures as three seconds
+vi.mock('../voice/NoteLength', () => ({
+    NoteLength: class {
+        measure = vi.fn(async (bytes: Uint8Array) => ({ ok: true as const, seconds: 3, bytes, filename: 'note.ogg' }));
+    },
+}));
 import type { AdminApiService } from '../server/AdminApiService';
 
 const UNIVERSE_AI = {
@@ -68,8 +75,10 @@ describe('every bot hears voice notes', () => {
         const hearing = build();
         const source = vi.fn(async () => 'own-key' as const);
         hearing.useReplySource(source);
-        // A real clip, so the measurement passes when ffmpeg is here; either way the reservation is what is checked
         await hearing.hear('bot-1', 'e-1', { bytes: new Uint8Array([1, 2, 3]), filename: 'a.m4a' }, { userId: 'u', isGuest: true });
+        // What the bot's reply would run on is asked for this bot, and the reservation at Orbit is made on it
         expect(source).toHaveBeenCalledWith('bot-1');
+        expect(admin.reserveVoiceNote).toHaveBeenCalledTimes(1);
+        expect(admin.reserveVoiceNote.mock.calls[0][0]).toMatchObject({ scope: 'bot', botId: 'bot-1', userId: 'u', isGuest: true, seconds: 3, source: 'own-key' });
     });
 });

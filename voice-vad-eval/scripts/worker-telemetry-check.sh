@@ -9,6 +9,8 @@ cd "$(dirname "$0")/.."
 DATA="$1"; TALK="${2:-20}"; IDLE="${3:-75}"; OUT="${OUT:-out/telemetry}"; PORT=8831; mkdir -p "$OUT"
 run() { # name, extra env...
     local name="$1"; shift
+    # What a run leaves, so that a run that fails before it writes its summary is never read with the files of an earlier one
+    rm -f "$OUT/$name".summary.json "$OUT/$name".full.strace "$OUT/$name".strace "$OUT/$name".log "$OUT/$name".load.json
     env -i PATH="$PATH" HOME="$(mktemp -d)" ORT_DISABLE_TELEMETRY=1 VOICE_WORKER_PORT=$PORT VOICE_ICE_SERVERS='[]' \
         LOAD_SUMMARY="$OUT/$name.summary.json" "$@" \
         strace -f -qq -s 256 -e trace=connect,sendto,sendmsg,sendmmsg -o "$OUT/$name.full.strace" \
@@ -30,7 +32,7 @@ run() { # name, extra env...
     asked=$(grep -aoE '\\[0-9]{1,3}[a-z0-9-]+(\\[0-9]{1,3}[a-z0-9-]+)+\\0' "$OUT/$name.strace" | sed -E 's/\\[0-9]{1,3}/./g; s/^\.//; s/\.$//' | sort | uniq -c | sed -E 's/^ +//' | paste -sd',' || true)
     names=$(grep -aoiE '(microsoft|visualstudio|applicationinsights|events\\[0-9]+data)[a-z0-9.\\-]*' "$OUT/$name.full.strace" | sort -u | tr '\n' ' ' || true)
     summary=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const o=s.observerWork;console.log(`observer: ${o?`${o.status}, ${o.windows.accepted} windows kept, ${o.errors} errors`:"none"}; frames heard: ${s.heard.frames}`)' "$OUT/$name.summary.json" 2>/dev/null || echo "summary missing")
-    echo "$name: network calls=$total, of them to anywhere but this machine=$outside; names looked up: ${asked:-none}; microsoft names seen in traffic: ${names:-none}; $summary"
+    echo "$name: calls naming a network address=$total, of them to anywhere but this machine=$outside; names looked up: ${asked:-none}; microsoft names seen in traffic: ${names:-none}; $summary"
     rm -f "$OUT/$name.full.strace"
 }
 run worker-observer-off

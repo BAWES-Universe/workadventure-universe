@@ -1,5 +1,5 @@
 // Turns the replay's rows (yield-replay.ts) into tables.
-//   tsx src/yield-report.ts sweep <dir>              the tune half at each quiet window: picks one by the rule below
+//   tsx src/yield-report.ts sweep <dir> <data dir>   the tune half at each quiet window: picks one by the rule below
 //   tsx src/yield-report.ts report <rows.jsonl> <out.md>   every table, for one run (the report half, once, after the pick)
 // Speech clips should stop the bot; noise clips should not. "Stopped" is for good (the answer is lost); "paused",
 // "turned down" and "went on" are the reversible steps. The person's recording starts 1.0 s into every speech clip (LEAD in
@@ -7,7 +7,7 @@
 import { LISTENED, listenedAs, sourceOfId } from './listened.ts';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LEAD } from './fixtures.ts';
+import { buildManifest, LEAD, replayProvidersOf } from './fixtures.ts';
 import { percentile } from './scoring.ts';
 
 type Event = [number, string];
@@ -113,7 +113,8 @@ function speechStats(rows: Row[], b: string) {
                 if (GOING_ON.has(e) && !talking) {
                     talking = true;
                     from = t;
-                } else if ((e === 'pause' || e === 'stop') && talking) {
+                } else if ((e === 'pause' || e === 'dip' || e === 'stop') && talking) {
+                    // Turned down is not at full volume: a second dip after the bot went back up closes that stretch too
                     talking = false;
                     total += t - from;
                 }
@@ -196,7 +197,7 @@ const groupOf = (r: Row) => (r.kind === 'burst' ? 'three knocks' : r.label);
  * If no shorter window meets all four, 1500 ms stays.
  */
 const WINDOWS = [300, 600, 1000, 1500];
-function sweep(dir: string): void {
+function sweep(dir: string, data: string): void {
     const lines: string[] = [];
     const say = (s = '') => lines.push(s);
     const runs = new Map<number, Row[]>();
@@ -206,6 +207,27 @@ function sweep(dir: string): void {
         const rows = read(join(dir, file));
         if (rows.some((r) => r.split !== 'tune')) throw new Error(`${file} holds clips outside the tune half`);
         runs.set(w, rows);
+    }
+    // Every window is scored on the very same clips as the 1500 ms run, or the comparison is of different things: a run made with
+    // REPLAY_LIMIT, or one that stopped early, is refused
+    const keysOf = (rows: Row[]) => new Set(rows.map((r) => `${r.id}\u0000${r.provider}`));
+    const refKeys = keysOf(runs.get(1500)!);
+    // The 1500 ms run is the yardstick, so it is checked against the tune half itself (not against the other runs only): every clip of
+    // the half, with every provider it is replayed with. A set that is all missing the same clips (REPLAY_LIMIT, REPLAY_STRIDE) is refused
+    const expected = new Set<string>();
+    for (const item of buildManifest(data)) if (item.split === 'tune') for (const provider of replayProvidersOf(item)) expected.add(`${item.id}\u0000${provider}`);
+    if (expected.size === 0) throw new Error(`the data directory ${data} has no tune half to score`);
+    if (runs.get(1500)!.length !== refKeys.size || refKeys.size !== expected.size || [...refKeys].some((k) => !expected.has(k))) {
+        throw new Error(`the tune run for 1500 ms is not the whole tune half (${refKeys.size} clip rows, the half has ${expected.size}): run it again without REPLAY_LIMIT or REPLAY_STRIDE`);
+    }
+    if (refKeys.size === 0 || !runs.get(1500)!.some((r) => r.kind === 'speech') || !runs.get(1500)!.some((r) => r.kind !== 'speech' && r.provider === 'empty')) {
+        throw new Error('the tune run for 1500 ms holds no speech clips, or no noise clips the criteria use');
+    }
+    for (const [w, rows] of runs) {
+        const keys = keysOf(rows);
+        if (rows.length !== keys.size || keys.size !== refKeys.size || [...keys].some((k) => !refKeys.has(k))) {
+            throw new Error(`the tune run for ${w} ms was not scored on the same clips as the one for 1500 ms (${keys.size} of ${rows.length} rows are different clips, ${refKeys.size} in the 1500 ms run): run it again without REPLAY_LIMIT`);
+        }
     }
     const stat = new Map<number, { s: ReturnType<typeof speechStats>; overlap: number; noiseStopped: number; heldPerMin: number; knockHold: number; today: ReturnType<typeof speechStats> }>();
     for (const [w, rows] of runs) {
@@ -383,6 +405,6 @@ function report(path: string, outPath: string): void {
 }
 
 const [mode, a, b] = process.argv.slice(2);
-if (mode === 'sweep' && a) sweep(a);
+if (mode === 'sweep' && a && b) sweep(a, b);
 else if (mode === 'report' && a && b) report(a, b);
-else throw new Error('usage: yield-report.ts sweep <dir> | report <rows.jsonl> <out.md>');
+else throw new Error('usage: yield-report.ts sweep <dir> <data dir> | report <rows.jsonl> <out.md>');

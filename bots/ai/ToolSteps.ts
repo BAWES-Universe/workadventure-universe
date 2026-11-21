@@ -52,6 +52,8 @@ export interface ToolStepResult {
     note?: string;
     /** When the call settled, so a quick call is not timed with the slowest one it ran beside (#2061). */
     at?: number;
+    /** The call asked a question or changed nothing: neither done nor failed, so it never counts as "didn't work" (the step's own words say what happened). */
+    noChange?: boolean;
     /** What the step says once it has ended, when "Forgot" or "Read a page" would be untrue ("Didn't forget anything"). */
     done?: string;
 }
@@ -117,7 +119,7 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
     // Forgetting something about the person (game #2003): "Forgot", with their own words under it
     [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
     // A job on the Brick's own computer (game #2000)
-    [COMPUTER_TOOL]: (args) => ({ doing: 'Working on its computer', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
+    [COMPUTER_TOOL]: (args) => ({ doing: 'Starting its computer, this takes a minute', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
     // A reminder the person asked for (game #2002): "Set a reminder", with what it says under it. Reading what is kept is never a step.
     [SET_REMINDER_TOOL]: (args) => ({ doing: 'Setting a reminder', done: 'Set a reminder', detail: shown(args.text), group: 'set_reminder', kind: 'write' }),
     // A briefing, a watch or a goal the person asked for: what it is, with their words under it
@@ -210,7 +212,7 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         // Forgetting that removed nothing (asked which memory they mean, a question, already gone): the step must not read
         // "Forgot" while the memory is still there (game #2020)
         if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
-            return { id, ok: false, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
+            return { id, ok: false, noChange: true, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
         }
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
@@ -263,7 +265,7 @@ export class ReplySteps {
         for (const result of results) {
             const step = this.steps.find((s) => s.id === result.id && s.state === 'running');
             if (!step) continue;
-            step.state = result.ok ? 'done' : result.waiting ? 'waiting' : result.unknown ? 'unknown' : 'failed';
+            step.state = result.ok || result.noChange ? 'done' : result.waiting ? 'waiting' : result.unknown ? 'unknown' : 'failed';
             step.secs = secondsBetween(step.began, result.at ?? now);
             if (result.shows?.length) step.shows = result.shows;
             if (result.note) step.note = result.note;
@@ -342,7 +344,10 @@ export function summaryOf(steps: Array<{ group?: string; done: string; state: St
     const groups = new Map<string, { done: string; count: number }>();
     for (const step of steps) {
         if (step.state !== 'done') continue;
-        const key = step.group ?? step.done;
+        // Steps of one group that ended with different words (a memory removal that forgot, and one that found nothing to forget)
+        // are counted apart: one label over a count of both would say something that only some of them did
+        const base = step.group ?? step.done;
+        const key = OWN_GROUPS[base] ? base : `${base}|${step.done}`;
         const group = groups.get(key);
         if (group) group.count++;
         else groups.set(key, { done: step.done, count: 1 });
@@ -442,8 +447,9 @@ function plainAnswer(result: unknown): string | undefined {
 /**
  * What a call sent and got back, as labelled plain lines for a step opened in a direct message (#2061). Only the person
  * whose reply it is reads this, so an address stays; a key, token or password never does, and data (JSON) is never shown.
+ * What the tool answered is left out unless `resultIsSafeToShow` says its answer is an explicit safe summary.
  */
-export function stepDetails(rawArgs: unknown, result?: unknown): StepLine[] | undefined {
+export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToShow = false): StepLine[] | undefined {
     const lines: StepLine[] = [];
     for (const [key, value] of Object.entries(parseArgs(rawArgs))) {
         if (lines.length >= LINES_MAX) break;
@@ -451,7 +457,9 @@ export function stepDetails(rawArgs: unknown, result?: unknown): StepLine[] | un
         const text = plainValue(value);
         if (text) lines.push({ label: tidyName(key), text });
     }
-    const answer = plainAnswer(result);
+    // A tool server's answer is its own words and can carry a password or a code in plain text, so it is shown only for a tool
+    // whose answer is known to be a safe summary (none of the tool servers' tools are, for now)
+    const answer = resultIsSafeToShow ? plainAnswer(result) : undefined;
     if (answer) lines.push({ label: 'Result', text: answer });
     return lines.length ? lines : undefined;
 }

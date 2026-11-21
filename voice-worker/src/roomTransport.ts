@@ -63,8 +63,12 @@ export class RoomTransport implements OutputTarget {
     private privateUntil = 0;
     /** Publications the bot has been subscribed to at some point, by track sid: asking for them again is watched. */
     private readonly heardBefore = new Set<string>();
-    /** A watched ask again, by track sid: its timer and how many times it has been made again. */
-    private readonly asking = new Map<string, { timer: NodeJS.Timeout; tries: number }>();
+    /**
+     * A watched ask again, by track sid: its timer and how many times it has been made again. `watching`: the bot asked and waits to see
+     * the microphone arrive. `gap`: it let go of the subscription and waits to ask once more; a microphone that arrives then belongs
+     * to the ask before, which is already undone.
+     */
+    private readonly asking = new Map<string, { timer: NodeJS.Timeout; tries: number; phase: 'watching' | 'gap' }>();
 
     constructor(readonly epoch: number, private readonly serverUrl: string, private readonly token: string, private readonly deps: RoomDeps) {}
 
@@ -179,15 +183,17 @@ export class RoomTransport implements OutputTarget {
             publication.setSubscribed(false);
             const again = setTimeout(() => {
                 this.asking.delete(sid);
-                if (this.gone || publication.subscribed || !this.stillPublished(participant, sid) || !this.mayHear(participant.identity)) return;
+                // Not "already subscribed": the media server sets that before it says so, so a late arrival from the ask before shows it here,
+                // while the unsubscribe asked for above is still on its way and would leave the microphone off with nothing to ask again
+                if (this.gone || !this.stillPublished(participant, sid) || !this.mayHear(participant.identity)) return;
                 publication.setSubscribed(true);
                 this.watchAsk(participant, publication, tries + 1);
             }, RESUBSCRIBE_GAP_MS);
             again.unref?.();
-            this.asking.set(sid, { timer: again, tries });
+            this.asking.set(sid, { timer: again, tries, phase: 'gap' });
         }, RESUBSCRIBE_CHECK_MS * 2 ** tries);
         timer.unref?.();
-        this.asking.set(sid, { timer, tries });
+        this.asking.set(sid, { timer, tries, phase: 'watching' });
     }
 
     private stillPublished(participant: RemoteParticipant, sid: string): boolean {
@@ -210,7 +216,8 @@ export class RoomTransport implements OutputTarget {
             publication.setSubscribed(false);
             return;
         }
-        this.stopAsking(publication.sid ?? '');
+        // The microphone arrived: the watch for it is over. Not the wait to ask once more, which a late arrival from the ask before must not cancel
+        if (this.asking.get(publication.sid ?? '')?.phase !== 'gap') this.stopAsking(publication.sid ?? '');
         this.heardBefore.add(publication.sid ?? '');
         const stream = new AudioStream(track, { sampleRate: INPUT_RATE, numChannels: 1 });
         this.readers.set(sid, stream);

@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+    exactDollars,
+    availableLabel,
     availableText,
     fullAgainWhen,
     moneyLeft,
     moneyUsedUp,
     parseUsage,
     renewsWhen,
-    spentText,
+    spentLabel,
     storageSize,
 } from "../Usage";
 
@@ -239,6 +241,236 @@ describe("real numbers (credits and grants)", () => {
         expect(usage?.storagePaidByUniverse).toBe(true);
     });
 
+    it("has one row for a receipt: the same id twice is one task, the first", () => {
+        const at = "2026-11-15T11:16:00.000Z";
+        const read = parseUsage(
+            real({
+                activity: [
+                    { id: "same", title: "First", at },
+                    { id: "same", title: "Second", at },
+                    { id: "other", title: "Other", at },
+                ],
+            })
+        );
+        expect(read?.activity.map((one) => `${one.id}:${one.title}`)).toEqual(["same:First", "other:Other"]);
+    });
+
+    it("does not let a row that is still being looked up take the place of the same task's settled row", () => {
+        const at = "2026-11-15T11:16:00.000Z";
+        const read = parseUsage(
+            real({
+                activity: [
+                    { id: "same", title: "Looking", at, state: "checking" },
+                    { id: "same", title: "Settled", at, state: "done" },
+                ],
+            })
+        );
+        expect(read?.activity.map((one) => `${one.id}:${one.title}`)).toEqual(["same:Settled"]);
+    });
+
+    describe("a task that did not finish, or could not be confirmed", () => {
+        const read = (over: Record<string, unknown>) =>
+            parseUsage(
+                real({
+                    activity: [
+                        {
+                            id: "act_x",
+                            title: "Email the invoices",
+                            at: "2026-11-15T11:16:00.000Z",
+                            state: "done",
+                            spentMicros: 30_000,
+                            ...over,
+                        },
+                    ],
+                })
+            )?.activity[0];
+        const step = (outcome: string, over: Record<string, unknown> = {}) => ({
+            label: "gmail",
+            outcome,
+            text: `Gmail · ${outcome}`,
+            takenText: "Nothing taken",
+            amountMicros: 5_000,
+            ...over,
+        });
+
+        it("keeps an action whose outcome could not be confirmed, with Orbit's words and no amount", () => {
+            const item = read({ actions: [step("worked"), step("unknown", { takenText: "Hold being released" })] });
+            expect(item?.actions.map((one) => one.outcome)).toEqual(["worked", "unknown"]);
+            expect(item?.actions[1]).toMatchObject({ takenText: "Hold being released", amountMicros: null });
+            expect(item?.actions[0]).toMatchObject({ takenText: null, amountMicros: 5_000 });
+        });
+
+        it("reads Orbit's failed and unconfirmed outcomes, never as done, with Orbit's headline and note", () => {
+            expect(
+                read({ outcome: "failed", outcomeText: "Didn't finish", outcomeNote: "The message wasn't sent." })
+            ).toMatchObject({
+                outcome: "failed",
+                outcomeText: "Didn't finish",
+                outcomeNote: "The message wasn't sent.",
+            });
+            expect(read({ outcome: "unconfirmed", outcomeText: "Couldn't confirm" })).toMatchObject({
+                outcome: "unconfirmed",
+                outcomeText: "Couldn't confirm",
+                outcomeNote: null,
+            });
+        });
+
+        it("is partly done for a step that worked and one that did not work or could not be confirmed", () => {
+            expect(read({ outcome: "partial", actions: [step("worked"), step("unknown")] })?.outcome).toBe("partial");
+            expect(read({ outcome: "partial", actions: [step("worked"), step("failed")] })?.outcome).toBe("partial");
+            expect(read({ outcome: "partial", actions: [step("unknown")] })?.outcome).toBe("done");
+            expect(read({ outcome: "partial", actions: [] })?.outcome).toBe("done");
+            expect(read({ actions: [step("worked"), step("failed")] })?.outcome).toBe("done");
+        });
+
+        it("is partly done for one step that worked even when the other step is the computer, which is not an action", () => {
+            // A refunded computer and a charged Gmail send: Orbit says "partial" and sends only the Gmail action
+            const item = read({
+                outcome: "partial",
+                outcomeText: "Partly done",
+                outcomeNote: "The Gmail step worked. The computer's time was returned.",
+                spentMicros: 5_000,
+                returnedMicros: 30_000,
+                actions: [step("worked")],
+            });
+            expect(item).toMatchObject({ outcome: "partial", returnedMicros: 30_000, outcomeText: "Partly done" });
+            expect(item?.refundPendingMicros).toBeUndefined();
+        });
+
+        it("reads a rule stop, a task still being decided and a refund pending as themselves, never as done, with Orbit's headline and note", () => {
+            expect(
+                read({
+                    outcome: "stopped",
+                    outcomeText: "Stopped at your spending rule",
+                    outcomeNote: "A rule you set stopped it.",
+                    spentMicros: null,
+                })
+            ).toMatchObject({
+                state: "done",
+                outcome: "stopped",
+                outcomeText: "Stopped at your spending rule",
+                outcomeNote: "A rule you set stopped it.",
+                unknownOutcome: false,
+            });
+            expect(read({ outcome: "deciding", outcomeText: "Still deciding" })).toMatchObject({
+                outcome: "deciding",
+                outcomeText: "Still deciding",
+                unknownOutcome: false,
+            });
+            expect(
+                read({
+                    outcome: "refund_pending",
+                    outcomeText: "$0.05 refund pending",
+                    outcomeNote: "We're giving this back.",
+                    spentMicros: null,
+                    refundPendingMicros: 50_000,
+                })
+            ).toMatchObject({
+                outcome: "refund_pending",
+                outcomeText: "$0.05 refund pending",
+                refundPendingMicros: 50_000,
+                spentMicros: null,
+            });
+            // a refunded task is the refund, whatever else it says
+            expect(read({ state: "refunded", outcome: "stopped", outcomeText: "x" })).toMatchObject({
+                outcome: "refunded",
+                outcomeText: null,
+            });
+        });
+
+        it("keeps the amounts Orbit returned or still owes as whole micros, and none when it sends none or nonsense", () => {
+            expect(read({ returnedMicros: 12_000.4, refundPendingMicros: 50_000 })).toMatchObject({
+                returnedMicros: 12_000,
+                refundPendingMicros: 50_000,
+            });
+            const none = read({ returnedMicros: 0, refundPendingMicros: -5 });
+            expect(none).not.toHaveProperty("returnedMicros");
+            expect(none).not.toHaveProperty("refundPendingMicros");
+            expect(read({ returnedMicros: "5", refundPendingMicros: null })).not.toHaveProperty("returnedMicros");
+        });
+
+        it("reads what a line that says Given back got back", () => {
+            const item = read({
+                outcome: "partial",
+                actions: [step("worked")],
+                lines: [
+                    { label: "Computer, 5 minutes", note: "Given back", returnedMicros: 30_000 },
+                    { label: "Computer, 2 minutes", note: "Refund pending" },
+                ],
+            });
+            expect(item?.lines).toEqual([
+                { label: "Computer, 5 minutes", amountMicros: null, note: "Given back", returnedMicros: 30_000 },
+                { label: "Computer, 2 minutes", amountMicros: null, note: "Refund pending", returnedMicros: null },
+            ]);
+        });
+
+        it("says an amount as Orbit says it: thousandths under a cent, cents above, nothing for less than a tenth of a cent", () => {
+            expect(exactDollars(9_000)).toBe("$0.009");
+            expect(exactDollars(1_200)).toBe("$0.001");
+            expect(exactDollars(50_000)).toBe("$0.05");
+            expect(exactDollars(10_000)).toBe("$0.01");
+            expect(exactDollars(1_250_000)).toBe("$1.25");
+            expect(exactDollars(300)).toBeNull();
+            expect(exactDollars(0)).toBeNull();
+            expect(exactDollars(Number.NaN)).toBeNull();
+        });
+
+        it("keeps the note of an outcome it does not know, and reads it as done; a refunded task carries neither", () => {
+            expect(read({ outcome: "later", outcomeNote: "Held up." })).toMatchObject({
+                outcome: "done",
+                outcomeNote: "Held up.",
+            });
+            expect(read({ state: "refunded", outcome: "failed", outcomeNote: "x", outcomeText: "y" })).toMatchObject({
+                outcome: "refunded",
+                outcomeNote: null,
+                outcomeText: null,
+            });
+        });
+
+        it("tells an outcome it does not know from a genuine done task, so its headline can still be shown", () => {
+            expect(read({ outcome: "later", outcomeText: "Held up" })).toMatchObject({
+                outcome: "done",
+                unknownOutcome: true,
+                outcomeText: "Held up",
+            });
+            for (const outcome of [
+                "done",
+                "partial",
+                "failed",
+                "unconfirmed",
+                "stopped",
+                "deciding",
+                "refund_pending",
+                undefined,
+                "",
+                7,
+            ]) {
+                expect(read({ outcome, outcomeText: "x" })?.unknownOutcome).toBe(false);
+            }
+            // A refunded task is the refund, whatever else it says
+            expect(read({ state: "refunded", outcome: "later" })?.unknownOutcome).toBe(false);
+        });
+
+        it("keeps an unconfirmed task as unconfirmed once its hold is released and Orbit sends it as refunded: the money line stays the refund's", () => {
+            const item = read({
+                state: "refunded",
+                spentMicros: null,
+                outcome: "unconfirmed",
+                outcomeText: "Couldn't confirm",
+                outcomeNote: "We couldn't confirm whether Exa finished. We released your hold.",
+                actions: [step("unknown", { takenText: "Hold released" })],
+            });
+            expect(item).toMatchObject({
+                state: "refunded",
+                outcome: "unconfirmed",
+                outcomeText: "Couldn't confirm",
+                outcomeNote: "We couldn't confirm whether Exa finished. We released your hold.",
+            });
+            expect(item?.actions).toHaveLength(1);
+            expect(item?.actions[0]).toMatchObject({ outcome: "unknown", takenText: "Hold released" });
+        });
+    });
+
     it("reads at most fifty tasks", () => {
         const many = Array.from({ length: 80 }, (_, i) => ({
             id: `a${i}`,
@@ -256,11 +488,38 @@ describe("dollars", () => {
         expect(availableText(9_999, "en-US")).toBe("$0");
         expect(availableText(-5, "en-US")).toBe("$0");
     });
-    it("rounds what was taken up to the cent, so it never understates", () => {
-        expect(spentText(60_000, "en-US")).toBe("$0.06");
-        expect(spentText(920_001, "en-US")).toBe("$0.93");
-        expect(spentText(1, "en-US")).toBe("$0.01");
-        expect(spentText(0, "en-US")).toBe("$0");
+    it("says what is available under a cent as 'less than', and what was taken exactly as Orbit does", () => {
+        const tiny = "Less than $0.01";
+        expect(availableLabel(5_000, "en-US", tiny)).toBe(tiny);
+        expect(availableLabel(9_999, "en-US", tiny)).toBe(tiny);
+        expect(availableLabel(0, "en-US", tiny)).toBe("$0");
+        expect(availableLabel(10_000, "en-US", tiny)).toBe("$0.01");
+        expect(availableLabel(3_209_999, "en-US", tiny)).toBe("$3.20");
+        // What was taken is said EXACTLY as Orbit's dollars() says it (same table in Orbit's and the bots' tests), above a cent too
+        const line = "less than $0.001";
+        const table: Array<[number, string]> = [
+            [0, "$0"],
+            [1, "less than $0.001"],
+            [499, "less than $0.001"],
+            [500, "$0.001"],
+            [1200, "$0.001"],
+            [1500, "$0.002"],
+            [2500, "$0.003"],
+            [9000, "$0.009"],
+            [9999, "$0.010"],
+            [10000, "$0.01"],
+            [10001, "$0.01"],
+            [15000, "$0.01"],
+            [25000, "$0.03"],
+            [35000, "$0.04"],
+            [45000, "$0.04"],
+            [50000, "$0.05"],
+            [1250000, "$1.25"],
+            [5000000, "$5.00"],
+            [3209999, "$3.21"],
+        ];
+        for (const [micros, said] of table) expect(spentLabel(micros, "en-US", line)).toBe(said);
+        expect(spentLabel(Number.NaN, "en-US", line)).toBe("$0");
     });
     it("is used up below a cent, and the bar counts whole cents", () => {
         expect(moneyUsedUp({ availableMicros: 9_999 })).toBe(true);

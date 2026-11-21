@@ -116,6 +116,49 @@ describe('BotManager calls', () => {
         expect(manager.liveCalls()).toBe(0);
     });
 
+    it('names the call by the id its caller gave, and ends only that call, so a late hang-up for an earlier call leaves the newer one', async () => {
+        const { manager, clients } = setup();
+        const first = await manager.startCall('b1', 'uuid-1', 'call-aaaa1111');
+        expect(parseCallSpaceName(first.spaceName)?.callId).toBe('call-aaaa1111');
+        const second = await manager.startCall('b1', 'uuid-1', 'call-bbbb2222');
+        expect(parseCallSpaceName(second.spaceName)?.callId).toBe('call-bbbb2222');
+        // The first call's hang-up reaches the server after the second call started: it is the second that stays
+        expect(await manager.endCall('b1', 'uuid-1', 'call-aaaa1111')).toBe(false);
+        expect(manager.liveCalls()).toBe(1);
+        expect(clients[1].endCall).not.toHaveBeenCalled();
+        expect(await manager.endCall('b1', 'uuid-1', 'call-bbbb2222')).toBe(true);
+        expect(clients[1].endCall).toHaveBeenCalledWith(second.spaceName);
+        expect(manager.liveCalls()).toBe(0);
+    });
+
+    it('cancels a start still being set up only when the hang-up is for that call', async () => {
+        const { manager, admin, clients } = setup();
+        let answer!: (value: unknown) => void;
+        admin.getBotConfiguration.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const starting = manager.startCall('b1', 'uuid-1', 'call-bbbb2222');
+        const rejected = expect(starting).rejects.toBeInstanceOf(BotUnavailableError);
+        await vi.waitFor(() => expect(admin.getBotConfiguration).toHaveBeenCalled());
+        // A hang-up for an earlier call does not cancel this one
+        expect(await manager.endCall('b1', 'uuid-1', 'call-aaaa1111')).toBe(false);
+        // This call's own does
+        expect(await manager.endCall('b1', 'uuid-1', 'call-bbbb2222')).toBe(true);
+        answer({ botId: 'b1', name: 'Nora', voiceEnabled: true });
+        await rejected;
+        expect(clients).toHaveLength(0);
+    });
+
+    it('still ends whatever call the person has when the hang-up names none', async () => {
+        const { manager } = setup();
+        await manager.startCall('b1', 'uuid-1', 'call-aaaa1111');
+        expect(await manager.endCall('b1', 'uuid-1')).toBe(true);
+        expect(manager.liveCalls()).toBe(0);
+    });
+
     it('does not keep a call a newer start has replaced while it was still connecting', async () => {
         const { manager, build, clients } = setup();
         let release!: () => void;

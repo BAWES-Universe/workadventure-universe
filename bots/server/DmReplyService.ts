@@ -229,6 +229,26 @@ export class DmReplyService extends BaseBehavior {
     forgetConfig(botId: string): void {
         this.configCache.delete(botId);
         this.missingCache.delete(botId);
+        this.fenceOff(botId);
+    }
+
+    /**
+     * Settings read before a change must not be kept after it: each bot has a generation, raised when its settings are forgotten while
+     * a read of them is out, and a read that finishes under another generation than it began in is used once and never cached.
+     */
+    private configFence?: Map<string, { generation: number; reading: number }>;
+
+    private fenceOf(botId: string): { generation: number; reading: number } {
+        this.configFence ??= new Map();
+        let fence = this.configFence.get(botId);
+        if (!fence) this.configFence.set(botId, (fence = { generation: 0, reading: 0 }));
+        return fence;
+    }
+
+    /** A read of this bot's settings that is out now is of the old ones. Nothing is kept for a bot nobody is reading for. */
+    private fenceOff(botId: string): void {
+        const fence = this.configFence?.get(botId);
+        if (fence && fence.reading > 0) fence.generation++;
     }
 
     /**
@@ -237,8 +257,15 @@ export class DmReplyService extends BaseBehavior {
      */
     forgetBrickOf(botId: string, ownerId: string): boolean {
         const cached = this.configCache.get(botId);
-        if (!cached || cached.config.brick?.ownerId !== ownerId) return false;
+        if (!cached) {
+            // Nothing held: a read that is out now may still bring back the settings from before this change, and is not kept (this
+            // makes Orbit be asked nothing, it only keeps one answer from being cached)
+            this.fenceOff(botId);
+            return false;
+        }
+        if (cached.config.brick?.ownerId !== ownerId) return false;
         this.configCache.delete(botId);
+        this.fenceOff(botId);
         return true;
     }
 
@@ -364,7 +391,20 @@ export class DmReplyService extends BaseBehavior {
         if (!admin.isConfigured()) throw new Error('The admin API is not configured, so bot settings cannot be loaded');
         // Bounded, as every caller waits on it: a chat's next events, and the game's bot states
         // Direct messages are where a Brick lives (#1995), so this is the one place that asks Orbit for one
-        const config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS, { bricks: true });
+        const fence = this.fenceOf(botId);
+        const generation = fence.generation;
+        fence.reading++;
+        let config: BotConfiguration | null;
+        let stale = false;
+        try {
+            config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS, { bricks: true });
+        } finally {
+            fence.reading--;
+            stale = fence.generation !== generation;
+            if (fence.reading === 0 && this.configFence?.get(botId) === fence) this.configFence.delete(botId);
+        }
+        // Forgotten while it was being read: this answer may be from before the change, so it is used this once and not kept
+        if (stale) return config;
         this.configCache.delete(botId);
         this.missingCache.delete(botId);
         if (config) {

@@ -62,6 +62,8 @@ export interface ComputerToolContext {
     apps?: string[];
     botId: string;
     userId: string;
+    /** Whether the speaker signed in as a guest, as the chat knows it: sent with the id, so Orbit never has to guess what kind of id it is (an id with an "@" is looked up as an email). */
+    isGuest?: boolean;
     /** The direct chat this reply is in: the job is started from it, and its result goes back to it and nowhere else. */
     origin?: { kind: 'dm'; ref: string };
     /** The apps a review in this reply said the computer could do better: a call that names one with how many steps are left is for Orbit to weigh, not sent back to the app. */
@@ -193,7 +195,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const plan = planned ? { app: planned, ...(steps !== undefined ? { steps } : {}), ...(appCannot ? { appCannot } : {}) } : undefined;
     let started;
     try {
-        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) });
+        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) });
     } catch (error) {
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
@@ -202,6 +204,18 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         switch (started.reason) {
             case 'cheaper_route':
                 return { started: false, success: false, note: `${started.app ?? 'An app you have'} can do this job: do it through ${started.app ?? 'that app'}. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
+            case 'starting':
+                // The answer was slow and Orbit found THIS job (one for this person, from this chat, with this title, begun since the ask went out), queued,
+                // waiting or running. That says the job exists, nothing about the machine: no claim is made that it is starting or has begun, only that Orbit
+                // has the job and where its state shows
+                return { started: false, found: true, note: 'Orbit found this job. Say in one short sentence that the job was found and that its state shows in the bar above this chat. Do not say your computer is starting, that the job has begun, or will begin by itself. Do not say how long it will take. Do not ask them to ask again.' };
+            case 'unknown':
+                // The answer was slow and nobody can tell whether THIS job was made. Not a failure (it may be running): the person must not be told it failed,
+                // or they ask again and a second job is paid for behind the first
+                return { started: false, unknown: true, note: 'It is not known whether this job started. Say in one short sentence that you couldn\'t confirm it, and ask them to look at the bar above this chat before asking again. Do not say it failed or that it started.' };
+            case 'ended':
+                // The answer was slow, and Orbit shows that the job THIS start made has already failed or been stopped: it was made, so it is no connection failure
+                return { started: false, ended: true, note: 'Orbit found this job and it has already ended (it failed or was stopped). Say in one short sentence that the job was found but has already ended, and that the bar above this chat shows how. Do not say your computer could not be reached or that it is running. Do not start it again unless they ask you to.' };
             case 'off':
                 return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
             case 'broken_start':
