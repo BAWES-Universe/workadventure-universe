@@ -1270,6 +1270,21 @@ describe('whyOf: the one sentence the agent gave for why it could not go on', ()
         expect(long).not.toMatch(/PASSWORD="a/);
     });
 
+    it('redacts a value that has a marker written inside it BEFORE the markers are taken out, so no half of the value is left standing', () => {
+        for (const words of [
+            'PASSWORD=[[note]]demo-value [[failed]]',
+            'The step used PASSWORD=[[note]]demo-value [[failed]]',
+            'Ran export API_TOKEN=[[x]]abc123def456 and then it stopped. [[failed]]',
+            'Tried. The header was Authorization: Bearer [[a]]zz9yy8xx7ww6 and it failed [[failed]]',
+        ]) {
+            const why = whyOf(words) ?? '';
+            expect(why, words).not.toMatch(/demo-value|abc123def456|zz9yy8xx7ww6|\*\*\*REDACTED/);
+            expect(why, words).toContain('[hidden]');
+        }
+        // markers that stand alone are still taken out
+        expect(whyOf('Tried. [[done]] Then the site is down [[note]] again. [[failed]]')).toBe('Then the site is down again.');
+    });
+
     it('is the last sentence before the failed marker', () => {
         expect(whyOf('I opened the form. The site stopped me at the passport upload and kept showing an error. [[failed]]')).toBe('The site stopped me at the passport upload and kept showing an error.');
         expect(whyOf('First line\nThe site is down [[failed]]')).toBe('The site is down');
@@ -1958,6 +1973,41 @@ describe('asking an address whether it is the relay', () => {
         expect(seen[0][0]).toBe('https://x.test/v1/models');
         expect(JSON.stringify(seen[0][1])).not.toMatch(/authorization/i);
     });
+
+    it('reads no more than a fixed number of bytes of a long answer and lets the rest go (an address that streams on and on costs no more than that)', async () => {
+        let pulls = 0;
+        let cancelled = false;
+        const chunk = new TextEncoder().encode('x'.repeat(1024));
+        const endless = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                pulls += 1;
+                // far more than any limit: if the whole body were read this would run until the test times out
+                if (pulls <= 100_000) controller.enqueue(chunk);
+                else controller.close();
+            },
+            cancel() {
+                cancelled = true;
+            },
+        });
+        const result = await probeRelay('https://x.test', (async () => new Response(endless, { status: 200 })) as never);
+        // not JSON, from something that answers 2xx: it is something else
+        expect(result).toEqual({ answer: 'wrong', status: 200 });
+        expect(cancelled).toBe(true);
+        expect(pulls).toBeLessThan(100);
+    });
+
+    it('still reads a small JSON answer in many pieces as the relay’s, and a bodyless 204 as before', async () => {
+        const text = JSON.stringify({ object: 'list', data: [{ id: 'a' }, { id: 'b' }] });
+        const bytes = new TextEncoder().encode(text);
+        const pieces = new ReadableStream<Uint8Array>({
+            start(controller) {
+                for (let at = 0; at < bytes.length; at += 7) controller.enqueue(bytes.slice(at, at + 7));
+                controller.close();
+            },
+        });
+        expect(await probeRelay('https://x.test', (async () => new Response(pieces, { status: 200 })) as never)).toEqual({ answer: 'relay', status: 200 });
+        expect(await probeRelay('https://x.test', (async () => new Response(null, { status: 204 })) as never)).toEqual({ answer: 'wrong', status: 204 });
+    });
 });
 
 describe('saying where the relay is assumed to be', () => {
@@ -2078,6 +2128,9 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
     const sharedRecord = () => {
         const called = new Map<string, number>();
         const accepted = new Map<string, number>();
+        let fenced = false;
+        // The store takes its time to get a command (latency) and then does it as one step: `began` says a close of the turn was sent
+        const latency = { ms: 0, began: undefined as (() => void) | undefined };
         const forServer = (id: string) => ({
             noteCalled: async (_jobId: string, at: number) => void called.set(id, Math.max(at, called.get(id) ?? 0)),
             noteUnrecorded: async () => undefined,
@@ -2085,13 +2138,26 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 const others = [...called].filter(([server]) => server !== id).map(([, at]) => at);
                 return others.length > 0 ? Math.max(...others) : null;
             },
-            noteAccepted: async (_jobId: string, at: number) => void accepted.set(id, Math.max(at, accepted.get(id) ?? 0)),
+            // a turn that was given up (fenced) takes no acceptance, and the fence is written only when no other server took one up: one step, as in the store
+            noteAccepted: async (_jobId: string, at: number) => {
+                if (fenced) return false;
+                accepted.set(id, Math.max(at, accepted.get(id) ?? 0));
+                return true;
+            },
+            closeTurn: async (_jobId: string, _turn: unknown, from: number) => {
+                latency.began?.();
+                if (latency.ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.ms));
+                const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
+                if (others.length > 0 && Math.max(...others) >= from - 2000) return false;
+                fenced = true;
+                return true;
+            },
             lastAcceptedByOthers: async () => {
                 const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
                 return others.length > 0 ? Math.max(...others) : null;
             },
         });
-        return { forServer, accepted };
+        return { forServer, accepted, latency };
     };
 
     it('does not give up on a turn when the pool took up a call of the job on ANOTHER bot server: only a call taken up nowhere is a pool with no room', async () => {
@@ -2113,6 +2179,67 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
             await notes.flush(JOB.jobId);
             expect(sent.some((row) => row.callId.startsWith('pool_busy_gave_up'))).toBe(false);
+        });
+    });
+
+    it('closes the turn on the shared store before it gives it up: a call another server takes up while the close is on its way is seen by the close, and the turn goes on', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const other = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('B') });
+            const { orbit, seen } = fakeOrbit([]);
+            // the close is sent, takes a second to get there, and is done as one step on arrival; the other server's relay takes a call up half a second after it was sent
+            record.latency.ms = 1000;
+            let accepting: Promise<unknown> | undefined;
+            record.latency.began = () => void setTimeout(() => (accepting = Promise.resolve(other.accepted(JOB.jobId)).then((answer) => (taken = answer))), 500);
+            let taken: unknown;
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            await accepting;
+            // the call was taken up before the close was done: the turn is not given up, nothing is cancelled, the call goes on
+            expect(taken).toBe(true);
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
+    it('closes the turn before it gives it up: a call another server tries to take up after the close is refused (nothing is forwarded), so the turn that is stopped never has a call running', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const other = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('B') });
+            const { orbit, seen } = fakeOrbit([]);
+            record.latency.ms = 1000;
+            let accepting: Promise<unknown> | undefined;
+            let taken: unknown = 'not asked';
+            // the call is taken up 1.5 s after the close was sent: after it was done
+            record.latency.began = () => void setTimeout(() => (accepting = Promise.resolve(other.accepted(JOB.jobId)).then((answer) => (taken = answer))), 1500);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            await accepting;
+            // refused: the other server's relay forwards nothing, and the turn is given up
+            expect(taken).toBe(false);
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+        });
+    });
+
+    it('does not give the turn up when the close cannot be made (the store cannot be read or does not answer): no call is known to be taken up or not, so nothing is stopped', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const shared = { ...record.forServer('A'), closeTurn: async () => Promise.reject(new Error('shared store down')) };
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared });
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
         });
     });
 
@@ -2330,6 +2457,32 @@ describe('a turn stopped while its stream is being opened', () => {
         });
     });
 
+    it('ends the job as pool_busy, once, when the pool watchdog gives the turn up while the report after a broken stream on the LAST reconnect is still pending: no ordinary failed turn, no new turn', async () => {
+        await withFakeClock(async () => {
+            // no reconnect is left: the stream that breaks is the last one
+            const rig = rigged([]);
+            let turnsStarted = 0;
+            rig.orbit.turn = async (_jobId, _input, signal) => {
+                turnsStarted += 1;
+                rig.notes.record(JOB.botId, JOB.jobId, poolRefusal);
+                return opening(async function* (): AsyncGenerator<RunnerEvent> {
+                    yield { type: 'created', id: 'r', sessionId: 's' };
+                    await new Promise<void>((resolve) => setTimeout(resolve, 90_000));
+                    throw new Error('terminated');
+                })('', signal);
+            };
+            const original = rig.orbit.action;
+            // the report that follows the break takes 20 s: the pool gives the turn up (95 s) while it is pending
+            rig.orbit.action = async (botId, jobId, body) => (body.action === 'progress' ? new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 20_000)) : original(botId, jobId, body));
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            poolBusyEnd(rig);
+            // and the turn was not started again
+            expect(turnsStarted).toBe(1);
+        });
+    });
+
     it('gives up nothing when the turn ends by its terminal event while the shared pool read is pending: it is looked at again after the read, before the job is cancelled', async () => {
         await withFakeClock(async () => {
             const rig = rigged();
@@ -2340,7 +2493,7 @@ describe('a turn stopped while its stream is being opened', () => {
                 relayUrl: RELAY,
                 sleep: sleeping,
                 log: { warn: rig.warn, error: vi.fn(), info: vi.fn() },
-                refusals: { ...rig.notes, acceptedAnywhereSince: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20_000)) },
+                refusals: { ...rig.notes, closeTurn: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 20_000)) },
                 runId: () => 'run1',
                 timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
             });

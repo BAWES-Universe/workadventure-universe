@@ -2244,7 +2244,7 @@ describe('the shared record of a call, before the call goes on', () => {
     let base2: string;
     const reports: Array<[string, string]> = [];
     const written: string[] = [];
-    const state = { hold: undefined as Promise<void> | undefined, failWrites: 0, failAccept: 0, began: undefined as (() => void) | undefined, turns: [] as Array<{ turn: number; run?: string; at: number }>, turnsDown: false };
+    const state = { clock: undefined as number | undefined, hold: undefined as Promise<void> | undefined, failWrites: 0, failAccept: 0, fenced: false, began: undefined as (() => void) | undefined, turns: [] as Array<{ turn: number; run?: string; at: number }>, turnsDown: false };
     const rowsB: Array<{ jobId: string; rows: CallRow[] }> = [];
     let own!: ReturnType<typeof createRefusalNotes>;
     /** The jobs whose runner is working on this server this moment. */
@@ -2271,8 +2271,12 @@ describe('the shared record of a call, before the call goes on', () => {
                 state.failAccept -= 1;
                 throw new Error('write lost');
             }
+            // the store refuses a call for a turn that its runner gave up
+            if (state.fenced) return false;
             acceptedBy.push({ jobId, ...(turn ? { turn } : {}) });
+            return true;
         },
+        closeTurn: async () => ((state.fenced = true), true),
         // The turns the runner on the other server said
         turnsByOthers: async () => {
             if (state.turnsDown) throw new Error('shared store down');
@@ -2282,7 +2286,8 @@ describe('the shared record of a call, before the call goes on', () => {
     };
 
     beforeAll(async () => {
-        own = createRefusalNotes(Date.now, {
+        // The test's own clock when it sets one, the real one otherwise
+        own = createRefusalNotes(() => state.clock ?? Date.now(), {
             shared,
             report: (what, info) => reports.push([what, info.jobId]),
             runsHere: (jobId) => here.has(jobId),
@@ -2308,10 +2313,12 @@ describe('the shared record of a call, before the call goes on', () => {
         written.length = 0;
         rowsB.length = 0;
         here.clear();
+        state.clock = undefined;
         state.hold = undefined;
         state.began = undefined;
         state.failWrites = 0;
         state.failAccept = 0;
+        state.fenced = false;
         moments.length = 0;
         acceptedBy.length = 0;
         state.turns = [];
@@ -2477,16 +2484,31 @@ describe('the shared record of a call, before the call goes on', () => {
 
         it('writes the moment the call ARRIVED in the shared record, not the time the write was made: a slow identification does not make the call a later arrival', async () => {
             const SLOW = 'job-slow-identify';
+            // The clock is the test's: the request arrives at 1 000 000, and identification is held until the clock says 1 005 000, so the two moments are 5 s apart
+            // however fast or slow the machine is
+            let identifying!: () => void;
+            const entered = new Promise<void>((resolve) => (identifying = resolve));
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
             orbit.identify.mockImplementation(async () => {
-                await new Promise((resolve) => setTimeout(resolve, 350));
+                identifying();
+                await gate;
                 return { ok: true, jobId: SLOW, botId: BOT };
             });
-            const sentAt = Date.now();
-            expect((await askHere(withTools)).status).toBe(200);
-            expect(moments).toHaveLength(1);
-            // it arrived when the request came in, 350 ms or more before the record was written
-            expect(moments[0]).toBeGreaterThanOrEqual(sentAt - 5);
-            expect(Date.now() - moments[0]).toBeGreaterThanOrEqual(350);
+            state.clock = 1_000_000;
+            try {
+                const asking = askHere(withTools);
+                // identification has begun: the request has arrived, and nothing has been written yet
+                await entered;
+                expect(moments).toEqual([]);
+                state.clock = 1_005_000;
+                release();
+                expect((await asking).status).toBe(200);
+                // the arrival, not the moment identification was done (which is also the moment the write was made)
+                expect(moments).toEqual([1_000_000]);
+            } finally {
+                state.clock = undefined;
+            }
         });
 
         it('refuses the model list the same way', async () => {
@@ -2521,6 +2543,45 @@ describe('the shared record of a call, before the call goes on', () => {
                 expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: 503 });
                 // the retry (the second write works) goes through
                 state.failAccept = 1;
+                expect((await askHere(withTools)).status).toBe(200);
+                expect(upstreamRequests).toHaveLength(1);
+            } finally {
+                warned.mockRestore();
+            }
+        });
+
+        it('with the runner on another server that has GIVEN UP the turn: the store refuses the acceptance, nothing is sent to the provider, the room goes back, and a fault of ours is recorded (503)', async () => {
+            const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            try {
+                state.fenced = true;
+                const answer = await askHere(withTools);
+                expect(answer.status).toBe(503);
+                expect(upstreamRequests).toHaveLength(0);
+                expect(acceptedBy).toEqual([]);
+                await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1));
+                expect(orbit.settle.mock.calls[0][0]).toMatchObject({ jobId: ELSE, sent: false });
+                await vi.waitFor(() => expect(rowsB).toHaveLength(1));
+                expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
+            } finally {
+                warned.mockRestore();
+            }
+        });
+
+        it('with the runner on THIS server that has given the turn up: the call of that turn is refused (503) and nothing is sent to the provider, while a call of another job goes on', async () => {
+            const CLOSED = 'job-closed-here';
+            orbit.identify.mockResolvedValue({ ok: true, jobId: CLOSED, botId: BOT });
+            here.add(CLOSED);
+            own.turn(CLOSED, 1, 'run-c');
+            // the runner gives the turn up: from now on nothing is taken up for it
+            expect(await own.closeTurn(CLOSED, own.mark())).toBe(true);
+            const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            try {
+                const answer = await askHere(withTools);
+                expect(answer.status).toBe(503);
+                expect(upstreamRequests).toHaveLength(0);
+                // another job on the same server is untouched
+                orbit.identify.mockResolvedValue({ ok: true, jobId: ELSE, botId: BOT });
+                here.add(ELSE);
                 expect((await askHere(withTools)).status).toBe(200);
                 expect(upstreamRequests).toHaveLength(1);
             } finally {

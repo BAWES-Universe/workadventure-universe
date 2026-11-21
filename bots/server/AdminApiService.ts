@@ -4,6 +4,7 @@
  * This service tracks bot configuration and usage across rooms, worlds, and universes.
  */
 
+import { randomUUID } from 'crypto';
 import axios, { type AxiosResponse } from 'axios';
 import * as Sentry from '@sentry/node';
 import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type MemoryForgetHandler } from '../memory/ForgetNotice';
@@ -539,9 +540,6 @@ const COMPUTER_FINISH_TIMEOUT_MS = 6 * 60_000;
  * ready (READY_WITHIN_MS), so the start call waits longer than that, and the answer is never cut while the machine is still being made.
  */
 export const COMPUTER_START_TIMEOUT_MS = 6 * 60_000;
-/** How far back Orbit is asked to look for the job a slow start made, at most (its own limit), and the seconds added to the wait itself. */
-const COMPUTER_STARTED_LOOK_MAX_SECONDS = 600;
-const COMPUTER_STARTED_LOOK_SLACK_SECONDS = 5;
 /** When Orbit cannot look up who the question is about it answers 503 `retry: true`: the question is asked again after each of these waits (ms), then it is unknown. */
 const COMPUTER_STARTED_RETRY_MS = [1000, 2000];
 /** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
@@ -1511,19 +1509,17 @@ export class AdminApiService {
     }
 
     /**
-     * The job this very start made, when Orbit can prove it (#2000): read only, asked after a start whose answer was slow. Orbit looks for the newest job of
-     * this Brick for this person that began in this conversation (`originRef`, the direct chat), with this title, in the last `sinceSeconds` (an elapsed time:
-     * the two servers' clocks are never compared). `'none'` when Orbit answers that there is none (`started: null`). `'unknown'` when it does not say (an Orbit
-     * without this read answers without `started`, a damaged answer) or cannot be asked: the start may well have made a job, which nobody can tell.
-     * An Orbit that could not look up who the question is about answers HTTP 503 with `retry: true` and no `started`: that is never "no job", so the question
-     * is asked again (after one second, then after two), and when it is still not answered it is `'unknown'`: the job is not started a second time.
+     * The job this very start made (#2000): read only, asked after a start whose answer was slow. Every start carries a `startKey` of its own (one random id per start
+     * the person asked for), Orbit keeps it with the job the start makes, and this asks for the job of THAT key and no other: the title, the conversation and the time
+     * are only what a person reads, so a job of an earlier start (the same title, just before) is never taken for this one. `'none'` when Orbit answers that no job
+     * has that key (`started: null`). `'unknown'` when it does not say (an Orbit without this read answers without `started`, a damaged answer) or cannot be asked:
+     * the start may well have made a job, which nobody can tell. An Orbit that could not look up who the question is about, or whose start with that key is still
+     * going on, answers HTTP 503 with `retry: true` and no `started`: that is never "no job", so the question is asked again (after one second, then after two), and
+     * when it is still not answered it is `'unknown'`: the job is not started a second time.
      */
-    async computerJobStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; originRef: string; title: string; sinceSeconds: number }): Promise<{ id: string; status: string } | 'none' | 'unknown'> {
-        // `find.sinceSeconds` is the elapsed time from the start's own beginning to NOW: each asking after a wait is for the longer elapsed time it then is, or a
-        // job that was made when the start began would fall out of the window of the later askings (and read as "no job")
-        const askedAt = Date.now();
+    async computerJobStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; startKey: string }): Promise<{ id: string; status: string } | 'none' | 'unknown'> {
         for (let attempt = 0; ; attempt++) {
-            const answer = await this.lookAtStarted(viaBotId, userId, { ...find, sinceSeconds: find.sinceSeconds + (Date.now() - askedAt) / 1000 });
+            const answer = await this.lookAtStarted(viaBotId, userId, find);
             if (answer !== 'retry') return answer;
             if (attempt >= COMPUTER_STARTED_RETRY_MS.length) return 'unknown';
             await new Promise((resolve) => setTimeout(resolve, COMPUTER_STARTED_RETRY_MS[attempt]));
@@ -1531,14 +1527,13 @@ export class AdminApiService {
     }
 
     /** One asking of `computerJobStarted`; `'retry'` when Orbit says it could not look up the person (503, or `retry: true`) and the question can be asked again. */
-    private async lookAtStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; originRef: string; title: string; sinceSeconds: number }): Promise<{ id: string; status: string } | 'none' | 'unknown' | 'retry'> {
+    private async lookAtStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; startKey: string }): Promise<{ id: string; status: string } | 'none' | 'unknown' | 'retry'> {
         try {
             const response = await this.brickCall<{ started?: { id?: unknown; status?: unknown } | null }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, {
                 userId,
                 ...(typeof find.isGuest === 'boolean' ? { isGuest: String(find.isGuest) } : {}),
-                originRef: find.originRef,
-                title: find.title,
-                sinceSeconds: String(Math.max(1, Math.min(COMPUTER_STARTED_LOOK_MAX_SECONDS, Math.ceil(find.sinceSeconds)))),
+                // The key of this start and nothing else: Orbit finds the job by it alone (an Orbit that has not got it answers without `started`: unknown)
+                startKey: find.startKey,
             });
             const data = response.data;
             // No `started` at all is an Orbit that does not have this read: it says nothing. Only its own `null` says there is no such job. One that says to
@@ -1705,33 +1700,25 @@ export class AdminApiService {
     }
 
     /**
-     * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. A start that takes longer than we wait (or that a gateway
-     * cut) is not a failure of the computer when Orbit PROVES that this start made a job (one for this person, from this conversation, with this title, begun
-     * since the ask went out, running or waiting): the machine is being made, and it answers `starting`. That the person has some other job going proves
-     * nothing about this one. When Orbit says the job it made has failed or stopped the answer is `ended` (it was made and is over: not a failure to reach the computer). When it
-     * CANNOT say (no origin to ask by, an Orbit without the read, a damaged answer, the read failing) or finds no such job YET (`started: null`: the POST
-     * may still be processed and commit after this one read) the answer is `unknown`: the slow start may well make a job, and telling the person it failed
-     * would have them ask again and pay for a second one.
+     * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. Every start carries a key of its own (`startKey`, one random id
+     * per start), which Orbit keeps with the job it makes. A start that takes longer than we wait (or that a gateway cut) is not a failure of the computer when Orbit
+     * says that the job of THIS key was made: the machine is being made (running, waiting, queued), and it answers `starting`. Another job of the person's, even one of the
+     * same title in the same chat that ran just before, proves nothing about this start and is never read for it. When the job of the key has failed or stopped the answer is
+     * `ended` (it was made and is over: not a failure to reach the computer). When Orbit CANNOT say (an Orbit without the read, a damaged answer, the read failing, a
+     * start with that key still going on) or finds no job of the key YET (`started: null`: the POST may still be processed and commit after this one read) the answer is
+     * `unknown`: the slow start may well make a job, and telling the person it failed would have them ask again and pay for a second one.
      */
     async startComputerJob(
         viaBotId: string,
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
-        const began = Date.now();
+        const startKey = randomUUID();
         try {
-            return await this.sendComputerJob(viaBotId, userId, ask);
+            return await this.sendComputerJob(viaBotId, userId, ask, startKey);
         } catch (error) {
             if (isSlowAnswer(error)) {
-                // Nothing to ask by: it cannot be proved either way
-                if (!ask.origin?.ref) return { ok: false, reason: 'unknown' };
-                const made = await this.computerJobStarted(viaBotId, userId, {
-                    ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
-                    originRef: ask.origin.ref,
-                    title: ask.title,
-                    // The wait itself, and a few seconds more for the time it took the ask to be sent and written
-                    sinceSeconds: (Date.now() - began) / 1000 + COMPUTER_STARTED_LOOK_SLACK_SECONDS,
-                });
+                const made = await this.computerJobStarted(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
                 // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
                 if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };
                 if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
@@ -1748,13 +1735,16 @@ export class AdminApiService {
     private async sendComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
+        ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } },
+        startKey: string
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
             {
                 userId,
+                // This start's own key: Orbit keeps it with the job, and a start that repeats it is answered with that job and never makes a second
+                startKey,
                 ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
                 title: ask.title,
                 ...(ask.brief ? { brief: ask.brief } : {}),

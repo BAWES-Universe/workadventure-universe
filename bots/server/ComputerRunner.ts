@@ -137,7 +137,9 @@ export function whyOf(words: string): string | null {
     // A line of its own ends a sentence too, so it is split before the spaces are made one
     // The text is redacted BEFORE it is split: a stop or a line break inside a quoted secret value is no end of a sentence, and a fragment of the value must never
     // be left to stand as the sentence
-    const before = redactSecrets(words.slice(0, at).replace(/\[\[[^\]]*\]\]/g, ' '));
+    // and BEFORE the standalone markers are taken out: a marker written inside a value (`PASSWORD=[[note]]demo-value`) is part of the value, and taking it out first
+    // would leave the value cut in two, with its second half no pattern can tell from a word
+    const before = redactSecrets(words.slice(0, at)).replace(/\[\[[^\]]*\]\]/g, ' ');
     // A stop inside a name or number ("passport.pdf", "3.5", "e.g. the form") is no end of a sentence: only a stop followed by a space and a capital, a digit or an opening quote is
     const sentences = before.split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9“"'(])/).map((one) => one.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const last = sentences[sentences.length - 1] ?? '';
@@ -192,7 +194,7 @@ export interface RunnerDeps {
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
     /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
     runId?: () => string;
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'turnPublished' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'turnPublished' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince' | 'closeTurn'>>;
     /**
      * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
      * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
@@ -217,6 +219,35 @@ const STOPPED_HERE = Symbol('stopped here');
 /** The one line said to the person when every model call of a turn was refused for want of room: the machine is given up, and nothing was taken. */
 export const POOL_BUSY_WHY = "Computers are busy right now, so we stopped this and you weren't charged.";
 
+/** The most of an answer the probe reads: what is past it is never read (the stream is cancelled), so an address that streams without end costs no more than this. */
+const PROBE_BODY_LIMIT_BYTES = 16 * 1024;
+
+/**
+ * The first `limit` bytes of an answer's body as text, and the rest of the stream cancelled unread. An answer without a body (a 204) is the empty string; a
+ * response that has no stream to read (a stand-in that only has `text()`) is read whole and cut, as it is already in memory.
+ */
+async function readUpTo(answer: Response, limit: number): Promise<string> {
+    if (!answer.body) return answer.bodyUsed ? '' : typeof answer.text === 'function' ? (await answer.text()).slice(0, limit) : '';
+    const reader = answer.body.getReader();
+    const parts: Buffer[] = [];
+    let size = 0;
+    try {
+        while (size < limit) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value || value.byteLength === 0) continue;
+            const room = limit - size;
+            const kept = value.byteLength > room ? value.subarray(0, room) : value;
+            parts.push(Buffer.from(kept.buffer, kept.byteOffset, kept.byteLength));
+            size += kept.byteLength;
+        }
+    } finally {
+        // What is not read is not wanted: the connection is let go of rather than drained
+        await reader.cancel().catch(() => undefined);
+    }
+    return new TextDecoder().decode(Buffer.concat(parts));
+}
+
 /**
  * Asks an address for the relay's model list WITHOUT a key and reads who answers: the relay answers with a JSON error (401 `invalid_api_key`, or 503
  * while Orbit is away) or the list. An error page (an HTML 404 from the wrong host, a proxy's 502) or a body that is not the relay's is `wrong`, but only
@@ -229,7 +260,7 @@ export async function probeRelay(relay: string, fetcher: typeof fetch = fetch, t
     try {
         const answer = await fetcher(`${relay}/v1/models`, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
         const status = answer.status;
-        const text = (await answer.text()).slice(0, 4000);
+        const text = await readUpTo(answer, PROBE_BODY_LIMIT_BYTES);
         // What is not the relay's way of answering says "something else is there" only with a status that a service says it with
         const elseIsThere = (status >= 200 && status < 300) || status === 404 || status >= 500;
         let body: unknown;
@@ -456,16 +487,20 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         // ANOTHER bot server (the machine's calls reach whichever one the load balancer picks, and this server's own notes know only its own)
         const giveUpIfStill = async () => {
             if (turnOver || turnController.signal.aborted || !poolBusy()) return;
-            if (since !== null && deps.refusals?.acceptedAnywhereSince) {
-                let taken = true;
+            if (since !== null && deps.refusals?.closeTurn) {
+                // The turn is CLOSED, not just read: as one step on the shared store, no call of it was taken up by any bot server's relay, and from then on none is (a relay
+                // on another server that takes one up after this is refused, and forwards nothing). A read of what was taken up, and a cancel after it, would stop a turn
+                // whose call another server took up and forwarded in between
+                let closed = false;
                 try {
-                    taken = await deps.refusals.acceptedAnywhereSince(job.jobId, since);
+                    closed = await deps.refusals.closeTurn(job.jobId, since);
                 } catch {
-                    taken = true;
+                    closed = false;
                 }
-                if (taken) return;
-                // The read took a moment: the turn may have ended (its terminal event was read, or it was stopped), or a call been taken up here, meanwhile
-                if (turnOver || turnController.signal.aborted || !poolBusy()) return;
+                // Not closed: a call was taken up (the pool has room again), or it cannot be told: the turn goes on
+                if (!closed) return;
+                // The close took a moment: the turn may have ended (its terminal event was read, or it was stopped) meanwhile
+                if (turnOver || turnController.signal.aborted) return;
             }
             gaveUp = true;
             turnController.abort();
@@ -610,7 +645,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (gaveUp) return { kind: 'poolBusy' };
                 if (lost) return { kind: 'look', cancelled: true };
                 await report(true);
-                // The last report can be the first one the job answers as stale: the turn is lost then, and is not read as ended
+                // The last report can be the first one the job answers as stale: the turn is lost then, and is not read as ended. It can also be a long one: a stop, or the
+                // pool's watchdog giving the turn up (a broken stream on the last reconnect leaves it armed), can come while it is pending, and is read as what it is
+                if (signal.aborted) return { kind: 'stopped' };
+                if (gaveUp) return { kind: 'poolBusy' };
                 if (lost) return { kind: 'look', cancelled: true };
                 if (terminal && terminal.code !== 'stream_broke' && terminal.code !== 'stream_ended') return { kind: 'ended', words, failed: terminal.failed, fenced: terminal.fenced };
                 // The connection ended before the turn did: reconnect to it, a few times, then let the next look decide

@@ -7,7 +7,7 @@
  * stops the bot server starting); an entry older than the time rows are kept is removed.
  */
 import type { CallRow, CallTurn, EvidenceStore, SharedCalls, SharedTurn, SharedTurnList } from './ComputerRefusals';
-import { DEAD_LETTER_KEEP_MS, EVIDENCE_KEEP_MS, REFUSAL_NOTE_KEEP_MS } from './ComputerRefusals';
+import { DEAD_LETTER_KEEP_MS, EVIDENCE_KEEP_MS, REFUSAL_NOTE_KEEP_MS, SHARED_CALL_SKEW_MS } from './ComputerRefusals';
 
 /** The few Redis commands used (a node-redis v4 client has them all). */
 export interface EvidenceRedis {
@@ -252,6 +252,69 @@ redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
 return 1
 `;
 
+/** The field a runner's server writes when it GAVE UP a turn of a job: `fence:<turn>|<run>`, the moment (ms). Not a call's arrival: never read as one. */
+export const FENCE_FIELD = 'fence:';
+/** An acceptance whose turn is not known is refused when a turn of the job was given up within this long before it (ms): it may be a call of that turn. */
+export const FENCE_RECENT_MS = 10_000;
+/** The fence field of a turn (and run). */
+export const fenceFieldOf = (turn: CallTurn): string => `${FENCE_FIELD}${turn.turn}|${turn.run ?? ''}`;
+
+/**
+ * The runner's server gives a turn up (a turn that was refused for want of room the whole time): as ONE step, with no acceptance written for the turn (and run) by
+ * another server since ARGV[4] (ms) it writes the fence of the turn and answers 1; otherwise it writes nothing and answers 0. ARGV: this server's own id (its
+ * own acceptances are in its own notes), the turn ('' when not known: an acceptance with no turn counts for every turn), the run, the earliest moment that
+ * counts, the fence field, its moment, and the hash's life in seconds. Whatever is written after the fence is read by `NOTE_ACCEPTED_UNLESS_CLOSED`, which
+ * refuses it, so a call can no longer be taken up for the turn that is being given up, and a call that was taken up is never given up on.
+ */
+export const CLOSE_TURN = `
+local all = redis.call('HGETALL', KEYS[1])
+for i = 1, #all, 2 do
+  local field = all[i]
+  if string.sub(field, 1, 9) == 'accepted:' then
+    local rest = string.sub(field, 10)
+    local bar = string.find(rest, '|', 1, true)
+    local instance = rest
+    local counts = true
+    if bar then
+      instance = string.sub(rest, 1, bar - 1)
+      if ARGV[2] ~= '' and string.sub(rest, bar + 1) ~= ARGV[2] .. '|' .. ARGV[3] then counts = false end
+    end
+    if instance ~= ARGV[1] and counts then
+      local at = tonumber(all[i + 1])
+      if at ~= nil and at >= tonumber(ARGV[4]) then return 0 end
+    end
+  end
+end
+redis.call('HSET', KEYS[1], ARGV[5], ARGV[6])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]))
+return 1
+`;
+
+/**
+ * A server took up a call of the job (the same write as `KEEP_LATER`: the field ARGV[1] keeps the later moment ARGV[2], the hash lives ARGV[3] seconds) UNLESS
+ * the turn it belongs to was given up: ARGV[4] is the fence field of the call's turn and run ('' when the turn is not known), and ARGV[5] the earliest moment of a
+ * fence that counts against a call whose turn is not known. Answers 1 when it was written, 0 when it was refused (nothing written).
+ */
+export const NOTE_ACCEPTED_UNLESS_CLOSED = `
+if ARGV[4] ~= '' then
+  if redis.call('HEXISTS', KEYS[1], ARGV[4]) == 1 then return 0 end
+else
+  local all = redis.call('HGETALL', KEYS[1])
+  for i = 1, #all, 2 do
+    if string.sub(all[i], 1, 6) == 'fence:' then
+      local at = tonumber(all[i + 1])
+      if at ~= nil and at >= tonumber(ARGV[5]) then return 0 end
+    end
+  end
+end
+local current = tonumber(redis.call('HGET', KEYS[1], ARGV[1]))
+if current == nil or current < tonumber(ARGV[2]) then
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+end
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return 1
+`;
+
 /**
  * Where the bot servers say to each other that a call of a job reached their relay (the runner of a job lives on one server, its machine's calls may land on
  * another): one hash per job, `computer:called:<jobId>`, one field per bot server (its own random id) holding the latest moment (ms) it saw one. It lives an
@@ -310,13 +373,16 @@ export class RedisSharedCalls implements SharedCalls {
                 const { turns, until } = said as { turns?: unknown; until?: unknown };
                 if (!Array.isArray(turns) || typeof until !== 'number' || !Number.isFinite(until)) continue;
                 const list: SharedTurn[] = [];
+                let readable = true;
                 for (const one of turns) {
                     if (typeof one === 'object' && one !== null && Number.isInteger((one as SharedTurn).turn) && (one as SharedTurn).turn >= 0 && Number.isFinite((one as SharedTurn).at)) {
                         const run = (one as SharedTurn).run;
-                        list.push({ turn: (one as SharedTurn).turn, ...(typeof run === 'string' && run !== '' ? { run } : {}), at: (one as SharedTurn).at });
-                    }
+                        list.push({ turn: (one as SharedTurn).turn, ...(typeof run === 'string' && run !== '' ? { run } : {}), at: (one as SharedTurn).at, ...((one as SharedTurn).pending === true ? { pending: true as const } : {}) });
+                    } else readable = false;
                 }
-                out.push({ turns: list, until });
+                // A list with a turn that cannot be read is no list to attribute a call from: without the turn, the one before it would be taken for the turn a call
+                // is in. It still holds its runner's promise (the runner IS there until then), so a call it covers is read as covered by it, and given no turn
+                out.push({ turns: readable ? list : [], until });
             } catch {
                 /* a damaged field is skipped */
             }
@@ -324,10 +390,27 @@ export class RedisSharedCalls implements SharedCalls {
         return out;
     }
 
-    async noteAccepted(jobId: string, at: number, turn?: CallTurn): Promise<void> {
+    async noteAccepted(jobId: string, at: number, turn?: CallTurn): Promise<boolean> {
         // One field per server and turn (and run), so a call of an earlier turn taken up later never takes the place of the later turn's: a call whose turn was
-        // not known is the field of the server alone, which counts for every turn
-        await this.write(jobId, ACCEPTED_FIELD + this.instanceId + (turn ? `|${turn.turn}|${turn.run ?? ''}` : ''), at);
+        // not known is the field of the server alone, which counts for every turn. It is written in the same step that looks at whether the turn was given up: a
+        // turn that was given up takes no more calls (false: the call is not to go on)
+        const answer = await this.within(
+            this.client().eval(NOTE_ACCEPTED_UNLESS_CLOSED, {
+                keys: [CALLED_PREFIX + jobId],
+                arguments: [ACCEPTED_FIELD + this.instanceId + (turn ? `|${turn.turn}|${turn.run ?? ''}` : ''), String(at), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000)), turn ? fenceFieldOf(turn) : '', String(at - FENCE_RECENT_MS)],
+            })
+        );
+        return Number(answer) === 1;
+    }
+
+    async closeTurn(jobId: string, turn: CallTurn | undefined, from: number, at: number): Promise<boolean> {
+        const answer = await this.within(
+            this.client().eval(CLOSE_TURN, {
+                keys: [CALLED_PREFIX + jobId],
+                arguments: [this.instanceId, turn ? String(turn.turn) : '', turn?.run ?? '', String(from - SHARED_CALL_SKEW_MS), turn ? fenceFieldOf(turn) : FENCE_FIELD + '|', String(at), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000))],
+            })
+        );
+        return Number(answer) === 1;
     }
 
     async lastAcceptedByOthers(jobId: string, turn?: CallTurn): Promise<number | null> {
@@ -361,8 +444,8 @@ export class RedisSharedCalls implements SharedCalls {
         const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
         let latest: number | null = null;
         for (const [field, value] of Object.entries(all)) {
-            // That a server took a call up, or which turn its runner is on, is not that a call arrived
-            if (field.startsWith(ACCEPTED_FIELD) || field.startsWith(TURN_FIELD)) continue;
+            // That a server took a call up, which turn its runner is on, or that it gave a turn up, is not that a call arrived
+            if (field.startsWith(ACCEPTED_FIELD) || field.startsWith(TURN_FIELD) || field.startsWith(FENCE_FIELD)) continue;
             // A server's own writes are known to its own notes exactly; a call it could not record counts like one it did
             const instance = field.startsWith(UNRECORDED_FIELD) ? field.slice(UNRECORDED_FIELD.length) : field;
             if (instance === this.instanceId) continue;

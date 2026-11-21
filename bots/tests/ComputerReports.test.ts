@@ -313,9 +313,11 @@ describe('what the bot server tells Orbit about delivery', () => {
     it('starts a job with the conversation it began in, and without one when none is kept', async () => {
         const { service, calls } = admin();
         await service.startComputerJob('brick-1', 'u', { title: 'Visa form', origin: { kind: 'dm', ref: '!dm:chat.test' } });
-        expect(calls[0][2]).toEqual({ userId: 'u', title: 'Visa form', origin: { kind: 'dm', ref: '!dm:chat.test' } });
+        expect(calls[0][2]).toEqual({ userId: 'u', startKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/), title: 'Visa form', origin: { kind: 'dm', ref: '!dm:chat.test' } });
         await service.startComputerJob('brick-1', 'u', { title: 'Visa form' });
-        expect(calls[1][2]).toEqual({ userId: 'u', title: 'Visa form' });
+        expect(calls[1][2]).toEqual({ userId: 'u', startKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/), title: 'Visa form' });
+        // a key of its own for each start
+        expect((calls[0][2] as { startKey: string }).startKey).not.toBe((calls[1][2] as { startKey: string }).startKey);
     });
 });
 

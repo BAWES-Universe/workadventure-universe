@@ -738,7 +738,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             let handedOver = true;
             if (agentCall && !gone && !res.destroyed) {
                 const handoff = deps.refusals?.accepted?.(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
-                if (handoff) handedOver = (await handoff.catch(() => false)) !== false;
+                // `false`: the turn was given up by its runner, and takes no call (nothing is forwarded for it); a promise: the handoff to the runner on another server
+                if (handoff === false) handedOver = false;
+                else if (handoff && handoff !== true) handedOver = (await handoff.catch(() => false)) !== false;
             }
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };

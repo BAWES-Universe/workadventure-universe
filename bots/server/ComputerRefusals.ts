@@ -120,6 +120,11 @@ export interface SharedTurn {
     turn: number;
     run?: string;
     at: number;
+    /**
+     * The runner has put the turn in the list but has not yet told that it began (see `RefusalNotes.turnPublished`): `at` is only the moment it was noted. A call that
+     * arrives at or after that moment may be of the turn before (which can still be making calls) or of this one: it is tied to neither.
+     */
+    pending?: true;
 }
 
 export interface SharedCalls {
@@ -145,7 +150,13 @@ export interface SharedCalls {
      * This server took up a call of the job (the shared pool had room for it), at this moment (ms): `turn` is the turn (and run) the call began in, so the
      * runner of ANOTHER turn does not count it. Not an arrival: `lastCalledByOthers` does not read it. The write is awaited (bounded) before the call goes on.
      */
-    noteAccepted?(jobId: string, at: number, turn?: CallTurn): Promise<void>;
+    noteAccepted?(jobId: string, at: number, turn?: CallTurn): Promise<void | boolean>;
+    /**
+     * The runner's server GIVES UP the turn (and run) it is on, as ONE step in the store: when no other server has written an acceptance for that turn since `from` (ms)
+     * the turn is fenced and this answers true, and a `noteAccepted` made after that is refused (answers false), so a call can never be taken up for a turn that is
+     * being given up, and a turn with a call taken up is never given up. False when an acceptance counts. Rejects when the store cannot be read or written.
+     */
+    closeTurn?(jobId: string, turn: CallTurn | undefined, from: number, at: number): Promise<boolean>;
     /**
      * The latest moment (ms) another bot server took up a call of the job (of that turn and run, when given; a call whose turn was not known counts for every
      * turn), or null for none. Rejects when the shared store cannot be read.
@@ -252,7 +263,14 @@ export interface RefusalNotes {
      * tries) for the relay to wait on BEFORE the provider is called: false when it could not be made, and the relay then releases the room and forwards nothing,
      * so the runner never reads "no call was taken up" while a call of the turn is in flight.
      */
-    accepted(jobId: string, at?: CallTurn): void | Promise<boolean>;
+    accepted(jobId: string, at?: CallTurn): void | boolean | Promise<boolean>;
+    /**
+     * The runner GIVES UP the turn it is on (every call of it was refused for want of room): true only when no call of it was taken up on ANY bot server up to the
+     * moment the turn is closed, and from then on no call is taken up for it (`accepted` refuses, on this server and, through the shared store, on the others). False
+     * when a call was taken up, or when it cannot be told (the store cannot be read or written): the turn is then not given up. A turn closed that is not then given up
+     * (it ended meanwhile) is no harm: nothing more is taken for it, and its job moves on to a turn of its own.
+     */
+    closeTurn(jobId: string, since: Since): Promise<boolean>;
     /** Waits until the turn the runner just began is in a list the other servers can read (bounded), or until the promise of the lists before it has run out. */
     turnPublished?(jobId: string): Promise<void>;
     /** Whether any call of this job was taken up since this point (or at or after this moment, ms): `0` asks whether one ever was. */
@@ -358,7 +376,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const within = (event: { at: number; order: number }, since: Since) => (typeof since === 'number' ? event.at >= since : event.order > since.order);
     // The turns the runner said it was on, newest last, each with its place in the order of events: a short history, so a call can be tied to the
     // turn that was current when it ARRIVED. It is kept short: a call only ever asks about a turn that has just changed
-    const turns = new Map<string, Array<{ turn: number; run?: string; at: number; order: number }>>();
+    // `begun`: the moment the runner went on to work the turn (it is in a list the others can read, or the promise of the lists before it ran out): a call of the machine
+    // cannot be of the turn before that moment. Not set while the runner has not got that far (`turnPublished`)
+    const turns = new Map<string, Array<{ turn: number; run?: string; at: number; order: number; begun?: number }>>();
     const TURN_HISTORY = 16;
     const lastTurn = (jobId: string) => turns.get(jobId)?.at(-1);
     /** A call that began in a turn (or a run) the runner has left says nothing of the turn it is on now. */
@@ -453,6 +473,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0, seen.called?.at ?? 0, seen.accepted?.at ?? 0, seen.pooled?.at ?? 0, seen.other?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
         for (const [jobId, at] of unrecordedTold) if (at < cutoff) unrecordedTold.delete(jobId);
+        for (const [jobId, one] of closed) if (one.at < cutoff) closed.delete(jobId);
         // What the runner told of its turns is only read while a promise could still be read as covering: a promise that has lapsed says nothing (`turn()` copies
         // `before` by value, so dropping a lapsed one is safe), and a publication is kept while a `turnPublished` wait could still read it (its write is going, or
         // the promise of the lists before it still stands), and dropped with the job's turn history
@@ -691,6 +712,33 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 }
             );
         });
+    // The turn (and run) the runner here GAVE UP, by job: no call is taken up for it from the moment it is closed (see `closeTurn`). One per job: a job that is given
+    // up is ended, and a later turn is another key
+    const closed = new Map<string, { key: string; at: number }>();
+    const keyOf = (turn: CallTurn | undefined): string => (turn ? `${turn.turn}|${turn.run ?? ''}` : '');
+    /** A write to the shared store that answers whether it was made: `true`, `false` (the store refused it: final) or `'lost'` (it failed or did not finish in time: it may still land). */
+    const boundedAnswer = (work: () => Promise<void | boolean>) =>
+        new Promise<true | false | 'lost'>((resolve) => {
+            let promise: Promise<void | boolean>;
+            try {
+                promise = work();
+            } catch {
+                resolve('lost');
+                return;
+            }
+            const timer = setTimeout(() => resolve('lost'), SHARED_WRITE_BOUND_MS);
+            timer.unref?.();
+            promise.then(
+                (answer) => {
+                    clearTimeout(timer);
+                    resolve(answer === false ? false : true);
+                },
+                () => {
+                    clearTimeout(timer);
+                    resolve('lost');
+                }
+            );
+        });
     // What this runner has told the other servers of its turns. `attempted`: the latest promise (`until`) of any list it tried to publish, landed or not (a write that
     // timed out may still land), so it is never begun on a turn that no published list holds while such a promise could still be read as covering
     const attempted = new Map<string, number>();
@@ -702,8 +750,25 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         const history = turns.get(jobId) ?? [];
         const until = now() + SHARED_TURN_LEASE_MS;
         attempted.set(jobId, Math.max(until, attempted.get(jobId) ?? 0));
-        const list = history.slice(-SHARED_TURNS).map((one) => ({ turn: one.turn, ...(one.run ? { run: one.run } : {}), at: one.at }));
+        // A turn the runner has not gone on to work is told as pending, from the moment it was noted; one it has is told from the moment it went on (what a call of
+        // the machine can first be of this turn), which is never before the moment it was noted
+        const list = history.slice(-SHARED_TURNS).map((one) => ({
+            turn: one.turn,
+            ...(one.run ? { run: one.run } : {}),
+            at: one.begun ?? one.at,
+            ...(one.begun === undefined ? { pending: true as const } : {}),
+        }));
         return bounded(() => shared.noteTurn!(jobId, list, until));
+    };
+    /** The fence of a turn written in the shared store (two tries, each bounded): true when it was written, false when an acceptance counts or it could not be. */
+    const closeOnStore = async (jobId: string, turn: CallTurn | undefined, from: number): Promise<boolean> => {
+        const shared = options.shared;
+        if (!shared?.closeTurn) return false;
+        for (let tries = 0; tries < 2; tries++) {
+            const answer = await boundedAnswer(() => shared.closeTurn!(jobId, turn, from, now()));
+            if (answer !== 'lost') return answer;
+        }
+        return false;
     };
     /** While the runner works the job its promise is renewed (the full list again), so a call well inside a turn is covered; it lapses when the runner stops. */
     const keepPromise = (jobId: string) => {
@@ -732,7 +797,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             turns.set(jobId, history);
             // The other servers learn which turn the runner is on, for the calls of the machine that reach them (see `turnPublished`)
             if (options.shared?.noteTurn) {
-                const before = attempted.get(jobId) ?? 0;
+                // The promise any earlier list of this job may still make, and that this one cannot see when it has none of its own (a job taken over from a runner on another
+                // server, or after a restart): a list of THAT runner can cover a call for up to one lease more, so it is waited out when this one cannot be published
+                const before = Math.max(attempted.get(jobId) ?? 0, attempted.has(jobId) ? 0 : now() + SHARED_TURN_LEASE_MS);
                 const entry = { done: publishTurns(jobId), before, settled: false };
                 void entry.done.then(() => (entry.settled = true));
                 publishing.set(jobId, entry);
@@ -750,6 +817,13 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             for (let tries = 0; !ok && now() < entry.before && tries < 2 * Math.ceil(SHARED_TURN_LEASE_MS / 250); tries++) {
                 await sleep(250);
                 ok = await publishTurns(jobId);
+            }
+            // The runner goes on to work the turn: from this moment a call of the machine can be of it, and one that arrived before it (after the turn was noted, while the
+            // turn before could still be making its last calls) cannot. That is what the others are told next, in place of the moment the turn was noted
+            const current = lastTurn(jobId);
+            if (current && current.begun === undefined) {
+                current.begun = Math.max(now(), current.at);
+                void publishTurns(jobId);
             }
         },
         turnOf: (jobId) => lastTurn(jobId)?.turn ?? 0,
@@ -788,6 +862,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 if (said.some((one) => Math.abs(arrivedAt - one.at) <= SHARED_CALL_SKEW_MS)) return { turn: null };
                 let chosen: SharedTurn | undefined;
                 for (const one of said) if (one.at <= arrivedAt && (chosen === undefined || one.at > chosen.at)) chosen = one;
+                // A turn the runner has not yet told that it went on to work: a call that arrived after the turn was noted may be of the turn before or of this one
+                if (chosen?.pending) return { turn: null };
                 return chosen ? { turn: chosen.turn, ...(chosen.run ? { run: chosen.run } : {}) } : { turn: null };
             } catch {
                 return { turn: null };
@@ -994,6 +1070,12 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         },
         accepted(jobId, at) {
             const owner = runnerHere(jobId);
+            // A turn the runner here gave up takes no call: refused, so nothing is forwarded for it, and the room goes back (see `closeTurn`)
+            const shutAt = closed.get(jobId);
+            if (shutAt !== undefined) {
+                const going = lastTurn(jobId);
+                if (shutAt.key === keyOf(at ?? (going ? { turn: going.turn, ...(going.run ? { run: going.run } : {}) } : undefined))) return false;
+            }
             // Taken up in the turn that made the call: one taken up after the runner of THIS server moved on belongs to the turn it began in, not to the one that is
             // going now. (A server that no longer runs the job has an old history that says nothing of a call of the runner elsewhere.)
             if (owner && staleCall(jobId, at)) return;
@@ -1013,7 +1095,38 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             }
             // The runner is on another server: the relay waits for the handoff (two tries, each bounded) before the provider is called, so the runner never reads
             // "no call was taken up" while a call of the turn is in flight and gives the turn up on it
-            return (async () => (await bounded(() => shared.noteAccepted!(jobId, moment, at))) || (await bounded(() => shared.noteAccepted!(jobId, moment, at))))();
+            // The store refuses an acceptance for a turn that was given up (the runner's fence): final, no second try
+            return (async () => {
+                for (let tries = 0; tries < 2; tries++) {
+                    const answer = await boundedAnswer(() => shared.noteAccepted!(jobId, moment, at));
+                    if (answer !== 'lost') return answer;
+                }
+                return false;
+            })();
+        },
+        async closeTurn(jobId, since) {
+            // What was taken up here is known at once; what another server took up is in the store, and the fence is written in the same step as the look at it
+            const seen = calls.get(jobId)?.accepted;
+            if (seen !== undefined && within(seen, since)) return false;
+            const shared = options.shared;
+            const current = lastTurn(jobId);
+            const turn = current ? { turn: current.turn, ...(current.run ? { run: current.run } : {}) } : undefined;
+            // From this moment a call of the turn that reaches the relay on this server is refused, and the check of what was taken up here before it has just been made,
+            // with nothing between them
+            const previous = closed.get(jobId);
+            closed.set(jobId, { key: keyOf(turn), at: now() });
+            if (!shared?.noteAccepted) return true;
+            // With other servers' relays about, the fence must be one step with the look at what they took up. A store that cannot do that gives nothing to rest a give-up on
+            const from = typeof since === 'number' ? since : since.at;
+            const fenced = shared.closeTurn && from !== undefined ? await closeOnStore(jobId, turn, from) : false;
+            // A call taken up HERE while the store was asked is not in what it said
+            const meanwhile = calls.get(jobId)?.accepted;
+            if (!fenced || (meanwhile !== undefined && within(meanwhile, since))) {
+                if (previous) closed.set(jobId, previous);
+                else closed.delete(jobId);
+                return false;
+            }
+            return true;
         },
         async acceptedAnywhereSince(jobId, since) {
             const seen = calls.get(jobId)?.accepted;

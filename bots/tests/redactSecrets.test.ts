@@ -579,3 +579,52 @@ describe('an assignment that keeps its name', () => {
         expect(redactSecrets('curl -H "Cookie: a=b" -d MODE=fast url')).toContain('MODE=');
     });
 });
+
+describe('a part of the original text that the replacement copies is never a secret', () => {
+    const bs = '\\';
+
+    it('hides an assignment whose name is a known key only once its continuation lines are joined (a key split across a shell line continuation), and keeps an ordinary continued name', () => {
+        // the pieces are no key on their own in the text as it was written: joined, the name is one
+        const split = `cjt_abc${bs}\ndefghi=value-here next`;
+        const out = redactSecrets(split);
+        expect(out).not.toContain('cjt_abcdefghi');
+        expect(out).not.toContain('defghi');
+        expect(out).not.toContain('value-here');
+        expect(out).toContain(' next');
+        expect(redactSecrets(`AKIA${bs}\nABCDEFGHIJKLMNOP=x`)).not.toContain('AKIAABCDEFGHIJKLMNOP');
+        expect(redactSecrets(`ghp_abcdefghij${bs}\nklmnopqrstuvwxyz0123=x`)).not.toMatch(/ghp_abcdefghijklmnopqrstuvwxyz0123/);
+        // a long opaque run, split
+        const opaque = `${'a1'.repeat(10)}${bs}\n${'b2'.repeat(10)}=x`;
+        expect(redactSecrets(opaque)).not.toMatch(/a1a1a1a1a1a1a1a1a1a1b2/);
+        // ordinary names that run across a continuation are kept
+        expect(redactSecrets(`PASS${bs}\nWORD=hunter2 next`)).toBe(`PASSWORD=${HIDDEN} next`);
+        expect(redactSecrets(`PASSWORD${bs}\n=hunter2`)).toBe(`PASSWORD=${HIDDEN}`);
+        expect(redactSecrets(`API_${bs}\nMODE=fast`)).toBe(`API_MODE=${HIDDEN}`);
+    });
+
+    it('hides a URL whose scheme is itself the shape of a key (`sk-…://user:pw@host`): the scheme is not copied into what is said', () => {
+        for (const text of [
+            'sk-abcdefghijklmnop://user:pw@host.test/x',
+            'curl sk-abcdefghijklmnop://user:pw@host.test/x',
+            `${'a1'.repeat(20)}://user:pw@host.test/x`,
+        ]) {
+            const out = redactSecrets(text);
+            expect(out, text).not.toMatch(/sk-abcdefghijklmnop|a1a1a1a1a1a1a1a1a1a1/);
+            expect(out, text).not.toContain('pw');
+            expect(out, text).toContain(HIDDEN);
+        }
+        // ordinary schemes stay
+        expect(redactSecrets('https://user:pw@host.test/x')).toBe(`https://${HIDDEN}@host.test/x`);
+        expect(redactSecrets('ftp+ssh://user:pw@host.test')).toBe(`ftp+ssh://${HIDDEN}@host.test`);
+        expect(redactSecrets('git clone https://ghp_abcdefghijklmnopqrstuvwxyz0123456789@github.com/x/y')).toBe(`git clone https://${HIDDEN}@github.com/x/y`);
+    });
+
+    it('does the same for a header name, a flag or a bearer word that another secret touches: whatever a replacement copies is checked against every other secret found', () => {
+        // a key in the name position of an assignment still hides the assignment as a whole
+        expect(redactSecrets('sk-abcdefghijklmnop=value next')).not.toContain('sk-abcdefghijklmnop');
+        expect(redactSecrets('Authorization: Bearer hunter2')).toBe(`Authorization: ${HIDDEN}`);
+        expect(redactSecrets('authorization=Bearer hunter2')).toBe(`authorization: ${HIDDEN}`);
+        expect(redactSecrets('curl -H "X-Key: abc" url')).toBe(`curl -H ${HIDDEN} url`);
+        expect(redactSecrets('sent Bearer hunter2abc to the service')).toBe(`sent Bearer ${HIDDEN} to the service`);
+    });
+});

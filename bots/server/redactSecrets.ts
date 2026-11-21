@@ -218,8 +218,11 @@ interface Span {
     text: string;
     /** An assignment: the one to give way when another pass found the same part (a base64 run that ends in `=` reads as an assignment, and its name is the secret). */
     weak?: true;
-    /** An assignment: where its value begins in the original text (what is before it, the name, is kept when the assignment says the part). */
-    valueAt?: number;
+    /**
+     * Where the part of the ORIGINAL text that `text` copies ends (it begins at `start`): the name of a header, a flag, a scheme or an assignment is said as it was
+     * written. When any other secret found in the text touches that part, the copy would show it, so the union is hidden as a whole instead.
+     */
+    keepEnd?: number;
 }
 
 /**
@@ -276,19 +279,27 @@ function assignmentSpans(text: string): Span[] {
         const nameStart = found.index + found[1].length;
         const valueStart = found.index + found[0].length;
         const end = endOfShellWord(logical, valueStart, at);
-        spans.push({ start: at[nameStart], end: at[end], text: `${found[2]}=${HIDDEN}`, weak: true, valueAt: at[valueStart] });
+        // The name is read from the joined text (a name can run across a continuation): joined, it can be a known key or a long opaque run that the original text
+        // does not show whole to any pass, so it is looked at as it will be said, and a name that is one is not said
+        const joinedIsSecret = nameIsSecret(found[2]);
+        spans.push({ start: at[nameStart], end: at[end], text: joinedIsSecret ? HIDDEN : `${found[2]}=${HIDDEN}`, weak: true, ...(joinedIsSecret ? {} : { keepEnd: at[valueStart] }) });
         ASSIGNMENT_START.lastIndex = Math.max(end, valueStart);
     }
     return spans;
 }
 
-/** The parts of the text a pattern finds, each said as `say` makes it. */
-function spansOf(text: string, pattern: RegExp, say: (found: RegExpExecArray) => { start: number; text: string }): Span[] {
+/** Whether a name (an assignment's, as it is about to be said) is a secret by its shape: a known key or a long opaque run. */
+function nameIsSecret(name: string): boolean {
+    return new RegExp(KNOWN_TOKENS.source).test(name) || new RegExp(LONG_OPAQUE.source).test(name);
+}
+
+/** The parts of the text a pattern finds, each said as `say` makes it. `keep` is how much of the front of the match `say` copies as it was written. */
+function spansOf(text: string, pattern: RegExp, say: (found: RegExpExecArray) => { start: number; text: string; keep?: number }): Span[] {
     const spans: Span[] = [];
     pattern.lastIndex = 0;
     for (let found = pattern.exec(text); found !== null; found = pattern.exec(text)) {
         const one = say(found);
-        spans.push({ start: found.index + one.start, end: found.index + found[0].length, text: one.text });
+        spans.push({ start: found.index + one.start, end: found.index + found[0].length, text: one.text, ...(one.keep === undefined ? {} : { keepEnd: found.index + one.start + one.keep }) });
         if (found[0].length === 0) pattern.lastIndex++;
     }
     return spans;
@@ -311,10 +322,10 @@ const COMMAND_SHAPES = /&&|\|\||\$\(|`|\s\|\s|\s>>?\s|\s2>&?1|(^|\s)--?[A-Za-z][
  */
 export function redactSecrets(text: string): string {
     const spans: Span[] = [
-        ...spansOf(text, AUTH_HEADER, (found) => ({ start: 0, text: `${found[1]}: ${HIDDEN}` })),
-        ...spansOf(text, HEADER_FLAG, (found) => ({ start: found[1].length, text: `${found[2]} ${HIDDEN}` })),
-        ...spansOf(text, BEARER, (found) => ({ start: 0, text: `${found[1]} ${HIDDEN}` })),
-        ...spansOf(text, URL_CREDENTIALS, (found) => ({ start: 0, text: `${found[1]}${HIDDEN}@` })),
+        ...spansOf(text, AUTH_HEADER, (found) => ({ start: 0, text: `${found[1]}: ${HIDDEN}`, keep: found[1].length })),
+        ...spansOf(text, HEADER_FLAG, (found) => ({ start: found[1].length, text: `${found[2]} ${HIDDEN}`, keep: found[2].length })),
+        ...spansOf(text, BEARER, (found) => ({ start: 0, text: `${found[1]} ${HIDDEN}`, keep: found[1].length })),
+        ...spansOf(text, URL_CREDENTIALS, (found) => ({ start: 0, text: `${found[1]}${HIDDEN}@`, keep: found[1].length })),
         ...spansOf(text, KNOWN_TOKENS, () => ({ start: 0, text: HIDDEN })),
         ...spansOf(text, LONG_OPAQUE, () => ({ start: 0, text: HIDDEN })),
         ...assignmentSpans(text),
@@ -347,10 +358,21 @@ export function redactSecrets(text: string): string {
         if (unionStart >= at) {
             // All of the union goes. The longest span says it, unless it begins later than the union does (a header that begins inside a URL's login and goes
             // on past it): then what it says would leave the front of the union showing, and the union is hidden as a whole
-            // A shape that is known to be a secret (a key, a long opaque run, a header) that begins before the value of the assignment is in the part the assignment
-            // keeps (its name): saying the part as the assignment does would leave that secret showing, so it is hidden as a whole. An ordinary assignment keeps its name
-            const keepsSecret = chosen.weak === true && chosen.valueAt !== undefined && spans.slice(i, j).some((one) => !one.weak && one.start < (chosen.valueAt as number));
-            out += text.slice(at, unionStart) + (chosen.start === unionStart && !keepsSecret ? chosen.text : HIDDEN);
+            // What the longest span says includes a part of the original text as it was written (a header's name, a flag, a scheme, an assignment's name). When ANY
+            // other secret found in the text touches that part (a key that is the name of an assignment, a scheme that is itself a key's shape: `sk-…://user:pw@host`),
+            // saying the part as it was written would leave that secret showing, so the union is hidden as a whole. An ordinary name, flag or scheme is kept
+            // "Touches" is by what the part says: the secret of another span is what it hides (a header's or an assignment's value, the whole of a key or an opaque
+            // run), and the two meet when some letter or digit of the kept part is in it (the `//` that an opaque run happens to begin with is no secret)
+            const keeps =
+                chosen.keepEnd === undefined
+                    ? false
+                    : spans.slice(i, j).some((one) => {
+                          if (one === chosen) return false;
+                          const from = Math.max(chosen.start, one.keepEnd ?? one.start);
+                          const to = Math.min(chosen.keepEnd as number, one.end);
+                          return from < to && /[A-Za-z0-9_]/.test(text.slice(from, to));
+                      });
+            out += text.slice(at, unionStart) + (chosen.start === unionStart && !keeps ? chosen.text : HIDDEN);
             at = end;
         }
         i = j;
