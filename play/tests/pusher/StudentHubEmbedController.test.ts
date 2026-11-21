@@ -240,6 +240,18 @@ describe("POST /studenthub/embed/attestation", () => {
         expect(res.body).not.toHaveProperty("attestation");
     });
 
+    it("answers 503, not a refusal, when the provider itself fails (5xx)", async () => {
+        verifyJWTToken.mockReturnValue(MEMBER);
+        const failure = new openIdErrors.OPError({ error: "server_error" });
+        Object.defineProperty(failure, "response", { value: { statusCode: 502 } });
+        checkTokenAuth.mockRejectedValue(failure);
+
+        const res = await callAttest({ token: "game-token" });
+
+        expect(res.statusCode).toBe(503);
+        expect(res.body).not.toHaveProperty("attestation");
+    });
+
     it.each([
         ["no challenge", {}],
         ["a short challenge", { challenge: "abc" }],

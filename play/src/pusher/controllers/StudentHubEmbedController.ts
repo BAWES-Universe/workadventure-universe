@@ -19,6 +19,16 @@ function accessTokenRefused(err: unknown): boolean {
     return err instanceof openIdErrors.OPError && (err.error === "invalid_token" || err.response?.statusCode === 401);
 }
 
+/**
+ * A provider answer that refuses the player (4xx) is a refusal; a provider that failed (5xx) or could not be reached is
+ * unavailable. Neither ever gives an attestation.
+ */
+function providerFailure(err: unknown): "refused" | "unavailable" {
+    if (!(err instanceof openIdErrors.OPError)) return "unavailable";
+    const status = err.response?.statusCode;
+    return status !== undefined && status >= 500 ? "unavailable" : "refused";
+}
+
 /** Same rule the sign-in uses to name the player (AuthenticateController): the e-mail, or else the subject. */
 function playerIdentifierOf(userInfo: IntrospectionResponse): string | undefined {
     const email = typeof userInfo.email === "string" && userInfo.email !== "" ? userInfo.email : undefined;
@@ -133,7 +143,7 @@ export class StudentHubEmbedController extends BaseHttpController {
         try {
             return { userInfo: await openIDClient.checkTokenAuth(accessToken) };
         } catch (err) {
-            if (!accessTokenRefused(err)) return err instanceof openIdErrors.OPError ? "refused" : "unavailable";
+            if (!accessTokenRefused(err)) return providerFailure(err);
         }
         const refreshToken = tokenData.refreshToken;
         if (!refreshToken) return "refused";
@@ -168,7 +178,7 @@ export class StudentHubEmbedController extends BaseHttpController {
                 renewedAuthToken: renewed.authToken,
             };
         } catch (err) {
-            return err instanceof openIdErrors.OPError ? "refused" : "unavailable";
+            return providerFailure(err);
         }
     }
 }
