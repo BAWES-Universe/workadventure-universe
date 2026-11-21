@@ -10,6 +10,7 @@ import {
     jobPrompt,
     outputFolderOf,
     probeRelay,
+    POOL_BUSY_WHY,
     RELAY_UNREACHABLE_WHY,
     relayUrlFromEnv,
     type RelayProbeResult,
@@ -1634,5 +1635,106 @@ describe('saying where the relay is assumed to be', () => {
         expect(relayUrlFromEnv({ PUSHER_URL: 'http://pusher:8080' } as never, quietLog)).toBeNull();
         expect(relayUrlFromEnv({} as never, quietLog)).toBeNull();
         expect(quietLog.error).not.toHaveBeenCalled();
+    });
+});
+
+describe('a pool with no room: the machine is given up, not waited for', () => {
+    const poolRefusal = { callId: 'c1', kind: 'fault', reason: 'pool_busy', source: 'universe-ai', route: 'universe-ai:p', providerStatus: 503 } as const;
+
+    /**
+     * A turn that goes on until it is stopped or until `endsAfterMs`, like a machine whose model calls Hermes goes on retrying. What `during` does is done once
+     * the turn has begun (the calls its machine makes reach the relay, which notes them).
+     */
+    const retryingTurn = (orbit: RunnerOrbit, during: (at: (ms: number, what: () => void) => void) => void, endsAfterMs: number | null) => {
+        const state = { aborted: false, turns: 0 };
+        orbit.turn = async (_jobId, _input, signal) => {
+            state.turns += 1;
+            during((ms, what) => void setTimeout(what, ms));
+            const events = (async function* (): AsyncGenerator<RunnerEvent> {
+                yield { type: 'created', id: 'r', sessionId: 's' };
+                await new Promise<void>((resolve) => {
+                    signal?.addEventListener('abort', () => ((state.aborted = true), resolve()), { once: true });
+                    if (endsAfterMs !== null) setTimeout(resolve, endsAfterMs);
+                });
+                if (!state.aborted) yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null };
+            })();
+            return { ok: true, events };
+        };
+        return state;
+    };
+    const withFakeClock = async (test: () => Promise<void>) => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            await test();
+        } finally {
+            vi.useRealTimers();
+        }
+    };
+    const rigged = () => {
+        const sent: CallRow[] = [];
+        const notes = createRefusalNotes(Date.now, { sink: async (_botId, _jobId, rows) => (sent.push(...rows), true) });
+        return { notes, sent };
+    };
+
+    it('stops a turn whose calls were ALL refused for room within about two minutes, records the confirmed fault of ours, and ends the job as ours in plain words', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            // Hermes would go on for six minutes
+            const state = retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)); at(20_000, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'c2', kind: 'uncertain' })); }, 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            // not yet given up while the wait is short
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(finished(seen)).toEqual([]);
+            expect(seen.cancels).toBe(0);
+            await vi.advanceTimersByTimeAsync(60_000);
+            await running;
+            expect(state.aborted).toBe(true);
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            expect(finishedWithRun(seen)[0].run).toBe('run1');
+            expect(POOL_BUSY_WHY).toBe("Computers are busy right now, so we stopped this and you weren't charged.");
+            // the confirmed fault of ours, under this turn and run, reached Orbit's record
+            await notes.flush(JOB.jobId);
+            expect(sent.find((row) => row.callId === 'pool_busy_gave_up_run1_1')).toMatchObject({ kind: 'fault', reason: 'pool_busy', turn: 1, run: 'run1', providerStatus: 503 });
+            // no second turn was begun for the agent
+            expect(state.turns).toBe(1);
+        });
+    });
+
+    it('leaves a turn alone when one of its calls was taken up, whether before or after the refusals', async () => {
+        for (const order of ['before', 'after'] as const) {
+            await withFakeClock(async () => {
+                const { notes } = rigged();
+                const { orbit, seen } = fakeOrbit([]);
+                retryingTurn(
+                    orbit,
+                    (at) => {
+                        if (order === 'before') at(0, () => notes.accepted(JOB.jobId));
+                        at(1_000, () => notes.record(JOB.botId, JOB.jobId, poolRefusal));
+                        if (order === 'after') at(30_000, () => notes.accepted(JOB.jobId));
+                    },
+                    200_000
+                );
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(210_000);
+                await running;
+                expect(seen.cancels, order).toBe(0);
+                expect(finished(seen), order).toEqual([{ action: 'finish', outcome: 'done' }]);
+            });
+        }
+    });
+
+    it('does not give up on a turn with no refusal for room at all, however long it goes on', async () => {
+        await withFakeClock(async () => {
+            const { notes } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, () => undefined, 300_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(310_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
     });
 });

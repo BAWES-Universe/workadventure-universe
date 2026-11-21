@@ -75,9 +75,13 @@ export interface RunnerTiming {
     reconnectMs: number[];
     /** How long to wait before each try to get a machine ready. */
     prepareMs: number[];
+    /** How often a turn that is going on is looked at for calls that were all refused for want of room in the shared pool. */
+    poolCheckMs?: number;
+    /** How long the calls of a turn may ALL be refused for want of room before the machine is given up (Hermes tries a turn for about 6 minutes). */
+    poolGiveUpMs?: number;
 }
 
-export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000] };
+export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000 };
 
 export const RUNNER_GUARDS = {
     /** Jobs the runner works on at once. */
@@ -185,7 +189,7 @@ export interface RunnerDeps {
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
     /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
     runId?: () => string;
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'onlyPoolBusySince'>>;
     /**
      * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
      * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
@@ -203,6 +207,9 @@ export interface RelayProbeResult {
 
 /** The one line said to the person when the machine could not reach our own model service: nothing was taken. */
 export const RELAY_UNREACHABLE_WHY = "We couldn't reach our own service, you weren't charged.";
+
+/** The one line said to the person when every model call of a turn was refused for want of room: the machine is given up, and nothing was taken. */
+export const POOL_BUSY_WHY = "Computers are busy right now, so we stopped this and you weren't charged.";
 
 /**
  * Asks an address for the relay's model list WITHOUT a key and reads who answers: the relay answers with a JSON error (401 `invalid_api_key`, or 503
@@ -278,6 +285,8 @@ type TurnResult =
      * was refused as stale), so it is not there to reconnect to, and the page may have changed since: the next turn is told to look first.
      */
     | { kind: 'look'; cancelled?: true }
+    /** Every call of the turn was refused for want of room in the shared pool for as long as the runner waits: the turn was stopped here and the machine is given up. */
+    | { kind: 'poolBusy' }
     /** Stopped (a restart): nothing more is done, and the turn goes on on the machine. */
     | { kind: 'stopped' };
 
@@ -406,7 +415,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     }
 
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
-    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined): Promise<TurnResult> {
+    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined, since: Since | null): Promise<TurnResult> {
         // A stop that came while the machine was being made ready has already fired: its listener would never be told
         if (signal.aborted) return { kind: 'stopped' };
         const turnController = new AbortController();
@@ -414,6 +423,30 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         signal.addEventListener('abort', onStop, { once: true });
         let renewTimer: ReturnType<typeof setTimeout> | undefined;
         let lost = false;
+        // Every call of this turn refused for want of room in the shared pool, for as long as the runner waits: Hermes would go on trying for minutes with the
+        // machine awake and costing, so the turn is stopped here and the machine given up
+        let poolTimer: ReturnType<typeof setTimeout> | undefined;
+        let poolWatch: ReturnType<typeof setTimeout> | undefined;
+        let gaveUp = false;
+        const poolBusy = () => since !== null && deps.refusals?.onlyPoolBusySince?.(job.jobId, since) === true;
+        const watchPool = () => {
+            if (turnController.signal.aborted) return;
+            if (poolBusy()) {
+                poolTimer ??= setTimeout(() => {
+                    poolTimer = undefined;
+                    // Looked at again: a call taken up meanwhile means the pool has room again
+                    if (turnController.signal.aborted || !poolBusy()) return;
+                    gaveUp = true;
+                    turnController.abort();
+                    void orbit.cancel(job.jobId).catch(() => undefined);
+                }, timing.poolGiveUpMs ?? RUNNER_TIMING.poolGiveUpMs);
+            } else if (poolTimer) {
+                clearTimeout(poolTimer);
+                poolTimer = undefined;
+            }
+            poolWatch = setTimeout(watchPool, timing.poolCheckMs ?? RUNNER_TIMING.poolCheckMs);
+        };
+        if (since !== null && deps.refusals?.onlyPoolBusySince) watchPool();
         const renew = async () => {
             if (turnController.signal.aborted) return;
             try {
@@ -504,6 +537,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     terminal = terminal ?? { failed: true, fenced: false, code: 'stream_broke' };
                 }
                 if (signal.aborted) return { kind: 'stopped' };
+                if (gaveUp) return { kind: 'poolBusy' };
                 if (lost) return { kind: 'look', cancelled: true };
                 await report(true);
                 // The last report can be the first one the job answers as stale: the turn is lost then, and is not read as ended
@@ -520,6 +554,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             }
         } finally {
             if (renewTimer) clearTimeout(renewTimer);
+            if (poolTimer) clearTimeout(poolTimer);
+            if (poolWatch) clearTimeout(poolWatch);
             signal.removeEventListener('abort', onStop);
             turnController.abort();
         }
@@ -534,6 +570,20 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             source: 'universe-ai',
             route: 'unknown',
             providerStatus: null,
+            turn,
+            run,
+        });
+    }
+
+    /** A confirmed fault of ours on a turn: the shared pool had no room for any call of it. Noted for Orbit's record and for this runner. */
+    function notePoolBusy(job: RunnableJob, turn: number, run: string): void {
+        deps.refusals?.record?.(job.botId, job.jobId, {
+            callId: `pool_busy_gave_up_${run}_${turn}`,
+            kind: 'fault',
+            reason: 'pool_busy',
+            source: 'universe-ai',
+            route: 'unknown',
+            providerStatus: 503,
             turn,
             run,
         });
@@ -653,9 +703,22 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 turnNo += 1;
             }
             deps.refusals?.turn?.(job.jobId, turnNo, run);
-            const result = await oneTurn(job, input, signal, renewing, accepted, generation);
+            const result = await oneTurn(job, input, signal, renewing, accepted, generation, turnStartedAt);
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
+            if (result.kind === 'poolBusy') {
+                // Every call of the turn was refused for want of room: a confirmed fault of ours (nothing the job or the person did can cause it), noted on
+                // this turn of this run, and the job is ended in plain words without waiting out the retries of the machine
+                turnStartedAt = null;
+                say('A job ended: every model call of its turn was refused for want of room in the shared pool.');
+                notePoolBusy(job, turnNo, run);
+                if ((await finish(job, 'failed', { cause: 'ours', generation, turns: [turnNo], run, why: POOL_BUSY_WHY })) === 'stale') {
+                    input = follow(RESUME_PROMPT);
+                    await sleep(timing.waitMs, signal);
+                    continue;
+                }
+                return;
+            }
             if (result.kind === 'look') {
                 // A turn that was stopped here is not reconnected to: the agent is told to look at the page again before it goes on
                 // A turn the agent has taken is not sent again: the next try reconnects to it (a turn that is gone says so there)

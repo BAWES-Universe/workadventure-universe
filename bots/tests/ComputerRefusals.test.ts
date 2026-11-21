@@ -740,3 +740,47 @@ describe('whether any call of a job reached the relay', () => {
         expect(notes.calledSince('a', 0)).toBe(false);
     });
 });
+
+describe('whether every call of a turn was refused for want of room in the shared pool', () => {
+    const pool = (notes: ReturnType<typeof createRefusalNotes>, job: string, id: string, kind: 'fault' | 'uncertain' = 'fault') =>
+        notes.record('b', job, { callId: id, kind, reason: 'pool_busy', source: 'universe-ai', route: 'r', providerStatus: 503 });
+
+    it('is true after a refusal for room when no call was taken up since the turn began, for that job only', () => {
+        const notes = createRefusalNotes(() => 1000);
+        const before = notes.mark();
+        expect(notes.onlyPoolBusySince('a', before)).toBe(false);
+        pool(notes, 'a', 'c1');
+        expect(notes.onlyPoolBusySince('a', before)).toBe(true);
+        // the size-refused kind counts too: it is still no room
+        pool(notes, 'c', 'c1', 'uncertain');
+        expect(notes.onlyPoolBusySince('c', before)).toBe(true);
+        expect(notes.onlyPoolBusySince('b', before)).toBe(false);
+        // a turn that began after it does not hold it
+        expect(notes.onlyPoolBusySince('a', notes.mark())).toBe(false);
+    });
+
+    it('is false for a turn with a call taken up, before or after the refusal, and for a refusal that was no refusal for room', () => {
+        const notes = createRefusalNotes(() => 1000);
+        const before = notes.mark();
+        notes.accepted('a');
+        pool(notes, 'a', 'c1');
+        expect(notes.onlyPoolBusySince('a', before)).toBe(false);
+        const second = notes.mark();
+        pool(notes, 'b', 'c1');
+        notes.accepted('b');
+        expect(notes.onlyPoolBusySince('b', second)).toBe(false);
+        // an answer was a call taken up too
+        notes.record('b', 'd', { callId: 'x', kind: 'answered', reason: 'provider_5xx', source: 'universe-ai', route: 'r', providerStatus: 200 });
+        pool(notes, 'd', 'c1');
+        expect(notes.onlyPoolBusySince('d', second)).toBe(false);
+        const third = notes.mark();
+        notes.record('b', 'e', { callId: 'c1', kind: 'fault', reason: 'provider_5xx', source: 'universe-ai', route: 'r', providerStatus: 500 });
+        expect(notes.onlyPoolBusySince('e', third)).toBe(false);
+        // a call taken up in an earlier turn does not make this one mixed
+        const next = notes.mark();
+        pool(notes, 'a', 'c2');
+        expect(notes.acceptedSince('a', 0)).toBe(true);
+        expect(notes.acceptedSince('a', next)).toBe(false);
+        expect(notes.onlyPoolBusySince('a', next)).toBe(true);
+    });
+});

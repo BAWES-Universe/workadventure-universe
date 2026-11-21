@@ -136,6 +136,12 @@ export interface RefusalNotes {
     called(jobId: string): void;
     /** Whether any call of this job reached the relay since this point (or at or after this moment, ms). */
     calledSince(jobId: string, since: Since): boolean;
+    /** A call of this job got past Orbit's room check (the shared pool had room for it): it was taken up, whatever became of it after. */
+    accepted(jobId: string): void;
+    /** Whether any call of this job was taken up since this point (or at or after this moment, ms): `0` asks whether one ever was. */
+    acceptedSince(jobId: string, since: Since): boolean;
+    /** Whether the calls of this job since this point were ALL refused for want of room in the shared pool: at least one was, and none was taken up. */
+    onlyPoolBusySince(jobId: string, since: Since): boolean;
 }
 
 /** A note older than this can no longer belong to a turn that is being read. */
@@ -184,7 +190,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const last = new Map<string, { at: number; order: number }>();
     // The order of events is kept by count, since two can land in the same millisecond
     let count = 0;
-    const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: { at: number; order: number }; answered?: { at: number; order: number }; called?: { at: number; order: number } }>();
+    const calls = new Map<string, { fault?: { at: number; order: number }; confirmed?: { at: number; order: number }; answered?: { at: number; order: number }; called?: { at: number; order: number }; accepted?: { at: number; order: number }; pooled?: { at: number; order: number } }>();
     /** Whether an event is inside a window that begins at `since`. */
     const within = (event: { at: number; order: number }, since: Since) => (typeof since === 'number' ? event.at >= since : event.order > since.order);
     // The turns the runner said it was on, newest last, each with its place in the order of events: a short history, so a call can be tied to the
@@ -264,7 +270,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     const forget = () => {
         const cutoff = now() - REFUSAL_NOTE_KEEP_MS;
         for (const [jobId, seen] of last) if (seen.at < cutoff) last.delete(jobId);
-        for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0, seen.called?.at ?? 0) < cutoff) calls.delete(jobId);
+        for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0, seen.called?.at ?? 0, seen.accepted?.at ?? 0, seen.pooled?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
         // With a store, rows Orbit has not taken are kept (and sent again) as long as in the store
         const queueCutoff = store ? now() - EVIDENCE_KEEP_MS : cutoff;
@@ -275,13 +281,15 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             queued.delete(jobId);
         }
     };
-    const mark = (jobId: string, kind: 'fault' | 'answered' | 'called', confirmed = false) => {
+    const mark = (jobId: string, kind: 'fault' | 'answered' | 'called' | 'accepted' | 'pooled', confirmed = false) => {
         forget();
         const seen = calls.get(jobId) ?? {};
         seen[kind] = { at: now(), order: ++count };
         if (confirmed) seen.confirmed = { at: now(), order: count };
         // A call that ended in any way reached the relay
         if (kind !== 'called') seen.called = { at: now(), order: count };
+        // An answer was a call Orbit found room for
+        if (kind === 'answered') seen.accepted = { at: now(), order: count };
         calls.set(jobId, seen);
     };
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -385,6 +393,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     mark(jobId, 'called');
                 } else {
                     mark(jobId, 'fault', call.kind === 'fault');
+                    // Refused for want of room in the shared pool: the runner reads a turn of nothing but these as a machine to give up
+                    if (call.reason === 'pool_busy') mark(jobId, 'pooled');
                 }
             }
             if (!options.sink && !store) return;
@@ -474,6 +484,15 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         calledSince(jobId, since) {
             const seen = calls.get(jobId)?.called;
             return seen !== undefined && within(seen, since);
+        },
+        accepted: (jobId) => mark(jobId, 'accepted'),
+        acceptedSince(jobId, since) {
+            const seen = calls.get(jobId)?.accepted;
+            return seen !== undefined && within(seen, since);
+        },
+        onlyPoolBusySince(jobId, since) {
+            const seen = calls.get(jobId);
+            return seen?.pooled !== undefined && within(seen.pooled, since) && !(seen.accepted !== undefined && within(seen.accepted, since));
         },
         endedOnFault(jobId, since) {
             const seen = calls.get(jobId);

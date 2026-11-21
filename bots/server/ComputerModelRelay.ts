@@ -668,12 +668,15 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 if (reason === 'pool') {
                     // Confirmed ours only when the pool has no room for even the smallest call: the size of a call grows with what the job sent, so a call
                     // refused for its own size is unresolved
-                    if (!nobody) noteCall('full' in allowed && allowed.full === true ? 'fault' : 'uncertain', 'pool_busy', 503);
+                    // A job none of whose calls was ever taken up has met a pool with no room at all: that is confirmed too, whatever the size of the call
+                    if (!nobody) noteCall(('full' in allowed && allowed.full === true) || !deps.refusals?.acceptedSince?.(jobId, 0) ? 'fault' : 'uncertain', 'pool_busy', 503);
                     return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
                 }
                 return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
             }
 
+            // Orbit found room for this call: it is taken up (a turn whose calls were all refused for room is a different thing from one with a call taken)
+            if (agentCall && !gone && !res.destroyed) deps.refusals?.accepted?.(jobId);
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
                 else {

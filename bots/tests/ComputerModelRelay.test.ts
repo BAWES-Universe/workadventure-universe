@@ -1952,15 +1952,35 @@ describe('the rows the relay sends to Orbit’s fault record', () => {
         expect((await ask(agent)).status).toBe(503);
         expect((await rowsSent('job-r-pool'))[0]).toMatchObject({ kind: 'fault', reason: 'pool_busy' });
 
-        // A call refused for its own size (the pool had room for a smaller one, and a call grows with what the job sent) is unresolved, never confirmed
+        // A call refused for its own size (the pool had room for a smaller one, and a call grows with what the job sent) is unresolved, never confirmed,
+        // when calls of the job were taken up before: the pool had room for them
         asJob('job-r-pool-size');
+        notes.accepted('job-r-pool-size');
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool', full: false });
         expect((await ask(agent)).status).toBe(503);
         expect((await rowsSent('job-r-pool-size'))[0]).toMatchObject({ kind: 'uncertain', reason: 'pool_busy' });
         asJob('job-r-pool-nofield');
+        notes.accepted('job-r-pool-nofield');
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool' });
         expect((await ask(agent)).status).toBe(503);
         expect((await rowsSent('job-r-pool-nofield'))[0]).toMatchObject({ kind: 'uncertain', reason: 'pool_busy' });
+        // The same refusal for a job none of whose calls was ever taken up is confirmed: the pool had no room at all, whatever the size of the call
+        for (const refusal of [{ ok: false, reason: 'pool', full: false }, { ok: false, reason: 'pool' }] as const) {
+            asJob(`job-r-pool-never-${'full' in refusal ? 'sized' : 'plain'}`);
+            orbit.authorize.mockResolvedValue(refusal);
+            expect((await ask(agent)).status).toBe(503);
+            expect((await rowsSent(`job-r-pool-never-${'full' in refusal ? 'sized' : 'plain'}`))[0]).toMatchObject({ kind: 'fault', reason: 'pool_busy' });
+        }
+        // A call Orbit found room for is noted as taken up (and one refused, or from a caller that went away, is not)
+        asJob('job-r-taken');
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'pool', full: true });
+        await ask(agent);
+        expect(notes.acceptedSince('job-r-taken', 0)).toBe(false);
+        // (a call the provider then refused is taken up all the same: the pool had room for it)
+        orbit.authorize.mockResolvedValue({ ok: true });
+        upstreamHandler = refused(401, { message: 'revoked' });
+        await askAndSettle(agent, 1);
+        expect(notes.acceptedSince('job-r-taken', 0)).toBe(true);
 
         orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
         asJob('job-r-allowance');
