@@ -158,6 +158,13 @@ export interface SharedCalls {
      */
     closeTurn?(jobId: string, turn: CallTurn | undefined, from: number, at: number): Promise<boolean>;
     /**
+     * Takes back the fence this server wrote for the turn (and run) at the moment `at` (the `at` of its `closeTurn`), as ONE step: it deletes the fence field only while
+     * the field still holds exactly that moment, so a fence of a later close is never touched, and it is safe to say twice. Used when a close is not the give-up it was
+     * made for (the store did not say whether it ran, or a call was taken up meanwhile): the turn goes on, and a fence that stays would have every other server
+     * refuse the calls of a turn that is alive. Rejects when the store cannot be written.
+     */
+    retractFence?(jobId: string, turn: CallTurn | undefined, at: number): Promise<void>;
+    /**
      * The latest moment (ms) another bot server took up a call of the job (of that turn and run, when given; a call whose turn was not known counts for every
      * turn), or null for none. Rejects when the shared store cannot be read.
      */
@@ -261,9 +268,11 @@ export interface RefusalNotes {
      * A call of this job got past Orbit's room check (the shared pool had room for it): it was taken up, whatever became of it after. When the job's runner works
      * on this server the note is made at once (nothing is returned). When it works on ANOTHER server this returns the handoff of the acceptance (bounded, two
      * tries) for the relay to wait on BEFORE the provider is called: false when it could not be made, and the relay then releases the room and forwards nothing,
-     * so the runner never reads "no call was taken up" while a call of the turn is in flight.
+     * so the runner never reads "no call was taken up" while a call of the turn is in flight. `'closed'`: the turn was given up by its runner (here, or through the
+     * store's fence) and takes no call: refused, and never a confirmed fault of ours, since whether the turn was alive is for the runner's own reading. While the runner is
+     * still closing the turn here the answer waits for the close to be settled, so a close that did not commit refuses nothing.
      */
-    accepted(jobId: string, at?: CallTurn): void | boolean | Promise<boolean>;
+    accepted(jobId: string, at?: CallTurn): void | boolean | 'closed' | Promise<void | boolean | 'closed'>;
     /**
      * The runner GIVES UP the turn it is on (every call of it was refused for want of room): true only when no call of it was taken up on ANY bot server up to the
      * moment the turn is closed, and from then on no call is taken up for it (`accepted` refuses, on this server and, through the shared store, on the others). False
@@ -714,7 +723,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         });
     // The turn (and run) the runner here GAVE UP, by job: no call is taken up for it from the moment it is closed (see `closeTurn`). One per job: a job that is given
     // up is ended, and a later turn is another key
-    const closed = new Map<string, { key: string; at: number }>();
+    const closed = new Map<string, { key: string; at: number; settled?: Promise<void> }>();
     const keyOf = (turn: CallTurn | undefined): string => (turn ? `${turn.turn}|${turn.run ?? ''}` : '');
     /** A write to the shared store that answers whether it was made: `true`, `false` (the store refused it: final) or `'lost'` (it failed or did not finish in time: it may still land). */
     const boundedAnswer = (work: () => Promise<void | boolean>) =>
@@ -760,13 +769,31 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         }));
         return bounded(() => shared.noteTurn!(jobId, list, until));
     };
-    /** The fence of a turn written in the shared store (two tries, each bounded): true when it was written, false when an acceptance counts or it could not be. */
-    const closeOnStore = async (jobId: string, turn: CallTurn | undefined, from: number): Promise<boolean> => {
+    /**
+     * The fence of a turn written in the shared store (two tries, each bounded, both with the same moment so a try that ran late writes what the other did): `fenced`
+     * when it was written, `refused` when an acceptance counts (nothing written), `lost` when the store did not say. `maybeWritten`: a try did not answer, and it may have
+     * run, so a fence of this moment may be there whatever the last answer was.
+     */
+    const closeOnStore = async (jobId: string, turn: CallTurn | undefined, from: number, at: number): Promise<{ state: 'fenced' | 'refused' | 'lost'; maybeWritten: boolean }> => {
         const shared = options.shared;
-        if (!shared?.closeTurn) return false;
+        if (!shared?.closeTurn) return { state: 'refused', maybeWritten: false };
+        let maybeWritten = false;
         for (let tries = 0; tries < 2; tries++) {
-            const answer = await boundedAnswer(() => shared.closeTurn!(jobId, turn, from, now()));
-            if (answer !== 'lost') return answer;
+            const answer = await boundedAnswer(() => shared.closeTurn!(jobId, turn, from, at));
+            if (answer === 'lost') {
+                maybeWritten = true;
+                continue;
+            }
+            return { state: answer ? 'fenced' : 'refused', maybeWritten: maybeWritten || answer };
+        }
+        return { state: 'lost', maybeWritten };
+    };
+    /** Takes this server's fence of that moment back out of the store (three tries, each bounded): true when the store said it ran, false when it could not be confirmed. */
+    const retractOnStore = async (jobId: string, turn: CallTurn | undefined, at: number): Promise<boolean> => {
+        const shared = options.shared;
+        if (!shared?.retractFence) return false;
+        for (let tries = 0; tries < 3; tries++) {
+            if ((await boundedAnswer(() => shared.retractFence!(jobId, turn, at))) !== 'lost') return true;
         }
         return false;
     };
@@ -1068,13 +1095,19 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 return true;
             }
         },
-        accepted(jobId, at) {
+        accepted: function acceptedHere(jobId, at) {
             const owner = runnerHere(jobId);
             // A turn the runner here gave up takes no call: refused, so nothing is forwarded for it, and the room goes back (see `closeTurn`)
             const shutAt = closed.get(jobId);
             if (shutAt !== undefined) {
                 const going = lastTurn(jobId);
-                if (shutAt.key === keyOf(at ?? (going ? { turn: going.turn, ...(going.run ? { run: going.run } : {}) } : undefined))) return false;
+                if (shutAt.key === keyOf(at ?? (going ? { turn: going.turn, ...(going.run ? { run: going.run } : {}) } : undefined))) {
+                    // The close is still being written to the store: whether the turn is given up is not known yet, and a call refused for a close that then does not
+                    // commit would have been refused for nothing. It waits for the close to be settled and is then read again: refused if the turn was given up, taken
+                    // up as any other call if it was not
+                    if (shutAt.settled) return shutAt.settled.then(() => acceptedHere(jobId, at));
+                    return 'closed';
+                }
             }
             // Taken up in the turn that made the call: one taken up after the runner of THIS server moved on belongs to the turn it began in, not to the one that is
             // going now. (A server that no longer runs the job has an old history that says nothing of a call of the runner elsewhere.)
@@ -1099,7 +1132,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             return (async () => {
                 for (let tries = 0; tries < 2; tries++) {
                     const answer = await boundedAnswer(() => shared.noteAccepted!(jobId, moment, at));
-                    if (answer !== 'lost') return answer;
+                    // The store's own refusal is the fence of a given-up turn; no answer at all is a call that could not be handed over
+                    if (answer !== 'lost') return answer ? true : ('closed' as const);
                 }
                 return false;
             })();
@@ -1111,22 +1145,45 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             const shared = options.shared;
             const current = lastTurn(jobId);
             const turn = current ? { turn: current.turn, ...(current.run ? { run: current.run } : {}) } : undefined;
-            // From this moment a call of the turn that reaches the relay on this server is refused, and the check of what was taken up here before it has just been made,
-            // with nothing between them
+            // From this moment a call of the turn that reaches the relay on this server waits for the close to be settled, and the check of what was taken up here before
+            // it has just been made, with nothing between them
             const previous = closed.get(jobId);
-            closed.set(jobId, { key: keyOf(turn), at: now() });
-            if (!shared?.noteAccepted) return true;
-            // With other servers' relays about, the fence must be one step with the look at what they took up. A store that cannot do that gives nothing to rest a give-up on
-            const from = typeof since === 'number' ? since : since.at;
-            const fenced = shared.closeTurn && from !== undefined ? await closeOnStore(jobId, turn, from) : false;
-            // A call taken up HERE while the store was asked is not in what it said
-            const meanwhile = calls.get(jobId)?.accepted;
-            if (!fenced || (meanwhile !== undefined && within(meanwhile, since))) {
-                if (previous) closed.set(jobId, previous);
-                else closed.delete(jobId);
+            const entry: { key: string; at: number; settled?: Promise<void> } = { key: keyOf(turn), at: now() };
+            let settle: () => void = () => undefined;
+            entry.settled = new Promise<void>((resolve) => {
+                settle = resolve;
+            });
+            closed.set(jobId, entry);
+            let committed = false;
+            try {
+                if (!shared?.noteAccepted) {
+                    committed = true;
+                    return true;
+                }
+                // With other servers' relays about, the fence must be one step with the look at what they took up. A store that cannot do that gives nothing to rest a give-up on
+                const from = typeof since === 'number' ? since : since.at;
+                const fenceAt = now();
+                const stored = shared.closeTurn && from !== undefined ? await closeOnStore(jobId, turn, from, fenceAt) : { state: 'refused' as const, maybeWritten: false };
+                // A call taken up HERE while the store was asked is not in what it said
+                const meanwhile = calls.get(jobId)?.accepted;
+                if (stored.state === 'fenced' && !(meanwhile !== undefined && within(meanwhile, since))) {
+                    committed = true;
+                    return true;
+                }
+                // The turn is not given up and goes on. A fence that may be in the store (the answer was lost after the script ran, or an acceptance was counted here
+                // meanwhile) is taken back, or every other server would go on refusing the calls of a turn that is alive. When that cannot be confirmed either the fence
+                // stays, and what it refuses is never read as a fault of ours (`accepted` answers `'closed'`: an unresolved row, no confirmed one), so it never refunds
+                // a turn that is alive
+                if (stored.maybeWritten && !(await retractOnStore(jobId, turn, fenceAt))) {
+                    console.warn('[ComputerRefusals] A turn that was not given up may still be fenced in the shared store: the fence could not be taken back.');
+                }
                 return false;
+            } finally {
+                if (committed) entry.settled = undefined;
+                else if (previous) closed.set(jobId, previous);
+                else closed.delete(jobId);
+                settle();
             }
-            return true;
         },
         async acceptedAnywhereSince(jobId, since) {
             const seen = calls.get(jobId)?.accepted;

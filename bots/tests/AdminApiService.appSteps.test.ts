@@ -227,6 +227,71 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         });
     });
 
+    describe('a start whose answer was lost in a way that is not a timeout (the job may be made all the same)', () => {
+        const lostBy = (failure: () => unknown, read: () => unknown) => {
+            const { orbit } = service(async () => ({ data: {} }));
+            const call = vi.fn(async (method: string, ..._rest: unknown[]) => {
+                if (method === 'post') throw failure();
+                return read();
+            });
+            (orbit as unknown as { brickCall: unknown }).brickCall = call;
+            return { orbit, call };
+        };
+        const network = (code: string) => () => Object.assign(new Error(`read ${code}`), { isAxiosError: true, code });
+        const answered = (status: number, data: unknown = '<html>') => () => Object.assign(new Error(`Request failed with status code ${status}`), { isAxiosError: true, code: status >= 500 ? 'ERR_BAD_RESPONSE' : 'ERR_BAD_REQUEST', response: { status, data } });
+        const LOST: Array<[string, () => unknown]> = [
+            ['ECONNRESET', network('ECONNRESET')],
+            ['EPIPE', network('EPIPE')],
+            ['ECONNREFUSED', network('ECONNREFUSED')],
+            ['no code at all (an axios error with no answer)', () => Object.assign(new Error('Network Error'), { isAxiosError: true })],
+            ['a plain error object with a network code', () => Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })],
+            ['502', answered(502)],
+            ['503 from a proxy', answered(503)],
+            ['503 from Orbit itself', answered(503, { error: 'Try again', retry: true })],
+            ['504', answered(504)],
+            ['500', answered(500)],
+            ['408', answered(408)],
+        ];
+
+        it.each(LOST)('asks Orbit for the job of this start after %s: found live, it is "starting", so the person is not told it failed and does not pay for a second job', async (_name, failure) => {
+            const { orbit, call } = lostBy(failure, () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
+            expect((call.mock.calls[1][3] as { startKey: string }).startKey).toBe((call.mock.calls[0][2] as { startKey: string }).startKey);
+        });
+
+        it.each(LOST)('says the job of this start is over (`ended`) after %s when it was made and has failed', async (_name, failure) => {
+            const { orbit } = lostBy(failure, () => ({ data: { started: { id: 'job-1', status: 'failed' } } }));
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'ended' });
+        });
+
+        it.each(LOST)('says "unknown" after %s when Orbit finds no job of the key yet (it may still commit): never a failure that has the person ask again', async (_name, failure) => {
+            const { orbit } = lostBy(failure, () => ({ data: { started: null } }));
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+        });
+
+        it.each([
+            ['400', answered(400, { error: 'bad' })],
+            ['401', answered(401, { error: 'no' })],
+            ['403', answered(403, { error: 'no' })],
+            ['404', answered(404, { error: 'no' })],
+            ['422', answered(422, { error: 'no' })],
+            ['429', answered(429, { error: 'slow down' })],
+        ])('throws at once after Orbit itself answered %s (its own no): the start made no job, and no look-up is made', async (_name, failure) => {
+            const { orbit, call } = lostBy(failure, () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
+            await expect(orbit.startComputerJob('b', 'u', ASK)).rejects.toThrow(/status code/);
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
+        });
+
+        it('throws at once when nothing was sent (Orbit not set up, a bad address): no look-up, nothing was started', async () => {
+            for (const failure of [() => new Error('Orbit is not set up for Bricks'), () => Object.assign(new Error('Invalid URL'), { isAxiosError: true, code: 'ERR_INVALID_URL' })]) {
+                const { orbit, call } = lostBy(failure, () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
+                await expect(orbit.startComputerJob('b', 'u', ASK)).rejects.toThrow();
+                expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
+            }
+        });
+    });
+
     it('answers `ended`, never the timeout, when the job it made has failed or stopped: it was made and is over, which is no failure to reach the computer', async () => {
         for (const status of ['failed', 'stopped']) {
             const { orbit, call } = slowStart(() => ({ data: { started: { id: 'j', status } } }));

@@ -291,6 +291,19 @@ return 1
 `;
 
 /**
+ * Takes a fence back: deletes the field ARGV[1] only while it still holds exactly the moment ARGV[2] (the fence this very close wrote), so a fence of a later close of the
+ * same turn is never touched. Answers 1 when it deleted it and 0 when there was nothing of that moment to delete (the same answer to say twice). The runner's server
+ * uses it when a close it made did not become a give-up (its answer was lost after the script ran, or a call was taken up meanwhile): the turn goes on.
+ */
+export const RETRACT_FENCE = `
+if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+  redis.call('HDEL', KEYS[1], ARGV[1])
+  return 1
+end
+return 0
+`;
+
+/**
  * A server took up a call of the job (the same write as `KEEP_LATER`: the field ARGV[1] keeps the later moment ARGV[2], the hash lives ARGV[3] seconds) UNLESS
  * the turn it belongs to was given up: ARGV[4] is the fence field of the call's turn and run ('' when the turn is not known), and ARGV[5] the earliest moment of a
  * fence that counts against a call whose turn is not known. Answers 1 when it was written, 0 when it was refused (nothing written).
@@ -411,6 +424,15 @@ export class RedisSharedCalls implements SharedCalls {
             })
         );
         return Number(answer) === 1;
+    }
+
+    async retractFence(jobId: string, turn: CallTurn | undefined, at: number): Promise<void> {
+        await this.within(
+            this.client().eval(RETRACT_FENCE, {
+                keys: [CALLED_PREFIX + jobId],
+                arguments: [turn ? fenceFieldOf(turn) : FENCE_FIELD + '|', String(at)],
+            })
+        );
     }
 
     async lastAcceptedByOthers(jobId: string, turn?: CallTurn): Promise<number | null> {

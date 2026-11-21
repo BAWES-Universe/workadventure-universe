@@ -67,4 +67,33 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
         // the hash keeps its life
         expect(await client.ttl(CALLED_PREFIX + j)).toBeGreaterThan(0);
     });
+    it('takes a fence back only while the field holds the moment it wrote: the turn then takes calls again, and the fence of a later close or another turn stays', async () => {
+        const a = new RedisSharedCalls(() => client as never, 'A');
+        const b = new RedisSharedCalls(() => client as never, 'B');
+        const j = job('retract');
+        expect(await a.closeTurn(j, { turn: 4, run: 'r' }, 0, 7000)).toBe(true);
+        expect(await b.noteAccepted(j, 7100, { turn: 4, run: 'r' })).toBe(false);
+        // another moment, another run, another turn: nothing goes
+        await a.retractFence(j, { turn: 4, run: 'r' }, 6999);
+        await a.retractFence(j, { turn: 4, run: 'other' }, 7000);
+        await a.retractFence(j, { turn: 5, run: 'r' }, 7000);
+        expect(await b.noteAccepted(j, 7100, { turn: 4, run: 'r' })).toBe(false);
+        // the moment it wrote goes, and saying it twice is no harm
+        await a.retractFence(j, { turn: 4, run: 'r' }, 7000);
+        await a.retractFence(j, { turn: 4, run: 'r' }, 7000);
+        expect(await client.hExists(CALLED_PREFIX + j, 'fence:4|r')).toBe(false);
+        expect(await b.noteAccepted(j, 7200, { turn: 4, run: 'r' })).toBe(true);
+        // a close with no turn known: its field goes the same way
+        const k = job('retract-unknown');
+        expect(await a.closeTurn(k, undefined, 0, 9000)).toBe(true);
+        expect(await b.noteAccepted(k, 9100)).toBe(false);
+        await a.retractFence(k, undefined, 9000);
+        expect(await b.noteAccepted(k, 9100)).toBe(true);
+        // a close that ran twice with the same moment (a try whose answer was lost, then its second) is the one fence, and one retraction takes it back
+        const l = job('retract-twice');
+        expect(await a.closeTurn(l, { turn: 2 }, 0, 500)).toBe(true);
+        expect(await a.closeTurn(l, { turn: 2 }, 0, 500)).toBe(true);
+        await a.retractFence(l, { turn: 2 }, 500);
+        expect(await b.noteAccepted(l, 600, { turn: 2 })).toBe(true);
+    });
 });

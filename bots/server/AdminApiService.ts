@@ -553,6 +553,24 @@ export function isSlowAnswer(error: unknown): boolean {
     const { code, response } = error as { code?: unknown; response?: { status?: unknown } };
     return code === 'ECONNABORTED' || code === 'ETIMEDOUT' || response?.status === 504 || response?.status === 524;
 }
+/**
+ * Whether a failed start proves NOTHING about what Orbit decided, so the start may well have made a job behind it and the question "did this start make one?" has to be asked
+ * before anyone is told it failed: no HTTP answer at all (a connection reset, a broken pipe, a refused or dropped connection, a timeout: any network code on a failed request),
+ * and any server or gateway answer that is not Orbit's own (408 and every 5xx, which includes 502, 503, 504 and 524). Only an answer that Orbit itself gave to say no (a 4xx) is
+ * final, and so is an error raised before anything was sent (no setup, a bad address): there nothing was started, and the caller is told it failed.
+ */
+export function mayHaveStarted(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const { code, response, isAxiosError } = error as { code?: unknown; response?: { status?: unknown }; isAxiosError?: unknown };
+    if (response && typeof response === 'object') {
+        const status = typeof response.status === 'number' ? response.status : 0;
+        return status === 408 || status >= 500;
+    }
+    // Raised before the request went out: nothing was sent, so nothing was started
+    if (typeof code === 'string' && (code === 'ERR_INVALID_URL' || code.startsWith('ERR_BAD_OPTION'))) return false;
+    // A failed request with no answer: the network code says how it broke, and says nothing of whether Orbit had already taken the start
+    return isAxiosError === true || typeof code === 'string';
+}
 /** A file a computer job made can be as big as Limits allow, so its fetch gets longer than a call for a list. */
 const COMPUTER_FILE_TIMEOUT_MS = 120_000;
 /** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
@@ -1701,8 +1719,9 @@ export class AdminApiService {
 
     /**
      * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. Every start carries a key of its own (`startKey`, one random id
-     * per start), which Orbit keeps with the job it makes. A start that takes longer than we wait (or that a gateway cut) is not a failure of the computer when Orbit
-     * says that the job of THIS key was made: the machine is being made (running, waiting, queued), and it answers `starting`. Another job of the person's, even one of the
+     * per start), which Orbit keeps with the job it makes. A start whose answer did not come back whole (it took longer than we wait, a gateway cut it, the connection
+     * was reset or broken, or a server or proxy answered 5xx: see `mayHaveStarted`) is not a failure of the computer when Orbit says that the job of THIS key was made.
+     * Only an answer Orbit itself gave to say no (a 4xx) or an error raised before anything was sent is thrown at once, with no look-up. When the job of the key is running, waiting or queued the machine is being made, and the answer is `starting`. Another job of the person's, even one of the
      * same title in the same chat that ran just before, proves nothing about this start and is never read for it. When the job of the key has failed or stopped the answer is
      * `ended` (it was made and is over: not a failure to reach the computer). When Orbit CANNOT say (an Orbit without the read, a damaged answer, the read failing, a
      * start with that key still going on) or finds no job of the key YET (`started: null`: the POST may still be processed and commit after this one read) the answer is
@@ -1717,7 +1736,7 @@ export class AdminApiService {
         try {
             return await this.sendComputerJob(viaBotId, userId, ask, startKey);
         } catch (error) {
-            if (isSlowAnswer(error)) {
+            if (isSlowAnswer(error) || mayHaveStarted(error)) {
                 const made = await this.computerJobStarted(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
                 // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
                 if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };

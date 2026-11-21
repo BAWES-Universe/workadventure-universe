@@ -736,15 +736,25 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             // When the runner of the job is on another server the acceptance is handed over to it first (bounded): a call that is forwarded without the runner being
             // able to see that it was taken up could be given up on for want of room while it is being answered. When that fails nothing is forwarded and the room goes back
             let handedOver = true;
+            // `'closed'`: the turn was given up by its runner, here or through the store's fence. Nothing is forwarded for it, and the refusal is never a confirmed fault: a
+            // close that did not become a give-up (the runner goes on with the turn) must not leave a row that refunds a turn that is alive
+            let turnClosed = false;
             if (agentCall && !gone && !res.destroyed) {
                 const handoff = deps.refusals?.accepted?.(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
-                // `false`: the turn was given up by its runner, and takes no call (nothing is forwarded for it); a promise: the handoff to the runner on another server
-                if (handoff === false) handedOver = false;
-                else if (handoff && handoff !== true) handedOver = (await handoff.catch(() => false)) !== false;
+                // A promise: the handoff to the runner on another server, or the wait for a close of the turn that is being settled here
+                const outcome = handoff && typeof handoff === 'object' ? await handoff.catch(() => false as const) : handoff;
+                if (outcome === 'closed') turnClosed = true;
+                else if (outcome === false) handedOver = false;
             }
             try {
                 if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
-                else if (!handedOver) {
+                else if (turnClosed) {
+                    // The turn was given up (or is being, and the close may not hold): nothing was sent to the provider, so the room is released with the call. Unresolved
+                    // for Orbit, never confirmed: the runner judged the turn by what it saw before it closed it
+                    noteCall('uncertain', 'relay_down', 503);
+                    problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+                    ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
+                } else if (!handedOver) {
                     // A fault of ours (the machine tries again): nothing was sent to the provider, so the room is released with the call
                     console.warn('[ComputerRelay] A call that Orbit took up could not be handed to the server of its runner; it was refused (503).');
                     fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');

@@ -2244,7 +2244,7 @@ describe('the shared record of a call, before the call goes on', () => {
     let base2: string;
     const reports: Array<[string, string]> = [];
     const written: string[] = [];
-    const state = { clock: undefined as number | undefined, hold: undefined as Promise<void> | undefined, failWrites: 0, failAccept: 0, fenced: false, began: undefined as (() => void) | undefined, turns: [] as Array<{ turn: number; run?: string; at: number }>, turnsDown: false };
+    const state = { clock: undefined as number | undefined, hold: undefined as Promise<void> | undefined, failWrites: 0, failAccept: 0, fenced: false, holdClose: undefined as Promise<void> | undefined, lostAfterClose: 0, retracted: 0, began: undefined as (() => void) | undefined, turns: [] as Array<{ turn: number; run?: string; at: number }>, turnsDown: false };
     const rowsB: Array<{ jobId: string; rows: CallRow[] }> = [];
     let own!: ReturnType<typeof createRefusalNotes>;
     /** The jobs whose runner is working on this server this moment. */
@@ -2276,7 +2276,20 @@ describe('the shared record of a call, before the call goes on', () => {
             acceptedBy.push({ jobId, ...(turn ? { turn } : {}) });
             return true;
         },
-        closeTurn: async () => ((state.fenced = true), true),
+        closeTurn: async () => {
+            if (state.holdClose) await state.holdClose;
+            state.fenced = true;
+            // the script ran and the fence is written, but its answer never comes back
+            if (state.lostAfterClose > 0) {
+                state.lostAfterClose -= 1;
+                throw new Error('the answer was lost after the script ran');
+            }
+            return true;
+        },
+        retractFence: async () => {
+            state.retracted += 1;
+            state.fenced = false;
+        },
         // The turns the runner on the other server said
         turnsByOthers: async () => {
             if (state.turnsDown) throw new Error('shared store down');
@@ -2319,6 +2332,9 @@ describe('the shared record of a call, before the call goes on', () => {
         state.failWrites = 0;
         state.failAccept = 0;
         state.fenced = false;
+        state.holdClose = undefined;
+        state.lostAfterClose = 0;
+        state.retracted = 0;
         moments.length = 0;
         acceptedBy.length = 0;
         state.turns = [];
@@ -2550,7 +2566,7 @@ describe('the shared record of a call, before the call goes on', () => {
             }
         });
 
-        it('with the runner on another server that has GIVEN UP the turn: the store refuses the acceptance, nothing is sent to the provider, the room goes back, and a fault of ours is recorded (503)', async () => {
+        it('with the runner on another server that has GIVEN UP the turn: the store refuses the acceptance, nothing is sent to the provider, the room goes back, and an unresolved row is recorded, never a confirmed fault (503)', async () => {
             const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
             try {
                 state.fenced = true;
@@ -2561,7 +2577,8 @@ describe('the shared record of a call, before the call goes on', () => {
                 await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1));
                 expect(orbit.settle.mock.calls[0][0]).toMatchObject({ jobId: ELSE, sent: false });
                 await vi.waitFor(() => expect(rowsB).toHaveLength(1));
-                expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
+                // a fence that stands (the runner gave the turn up, or a close that did not commit left it) is never a confirmed fault of ours: a turn that is alive is never refunded for it
+                expect(rowsB[0].rows[0]).toMatchObject({ kind: 'uncertain', reason: 'relay_down', providerStatus: 503 });
             } finally {
                 warned.mockRestore();
             }
@@ -2586,6 +2603,35 @@ describe('the shared record of a call, before the call goes on', () => {
                 expect(upstreamRequests).toHaveLength(1);
             } finally {
                 warned.mockRestore();
+            }
+        });
+
+        it('a call that arrives while the runner’s close is being written, and the close does not commit (its answer is lost after the script ran): the fence is taken back, the call is forwarded (200), and no confirmed fault is recorded', async () => {
+            const OPEN = 'job-close-uncommitted';
+            orbit.identify.mockResolvedValue({ ok: true, jobId: OPEN, botId: BOT });
+            here.add(OPEN);
+            own.turn(OPEN, 1, 'run-u');
+            let release!: () => void;
+            state.holdClose = new Promise<void>((resolve) => (release = resolve));
+            state.lostAfterClose = 2;
+            const closing = own.closeTurn(OPEN, own.mark());
+            try {
+                const answer = askHere(withTools);
+                // the call is held by the close that is being written, not refused: nothing reached the provider yet
+                await new Promise((resolve) => setTimeout(resolve, 50));
+                expect(upstreamRequests).toHaveLength(0);
+                release();
+                expect(await closing).toBe(false);
+                expect((await answer).status).toBe(200);
+                expect(upstreamRequests).toHaveLength(1);
+                // the fence is out of the store again, and no row of ours that could refund a turn that is alive was written
+                expect(state.retracted).toBe(1);
+                expect(state.fenced).toBe(false);
+                await own.flush(OPEN);
+                expect(rowsB.flatMap((one) => one.rows).filter((row) => row.kind === 'fault')).toEqual([]);
+            } finally {
+                release();
+                orbit.identify.mockResolvedValue({ ok: true, jobId: ELSE, botId: BOT });
             }
         });
 
