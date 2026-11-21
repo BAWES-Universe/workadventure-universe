@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CLOSE_TURN, FENCE_LIFE_MS, KEEP_LATER, NOTE_ACCEPTED_UNLESS_CLOSED, RETRACT_FENCE, RedisSharedCalls, SET_AND_RENEW, type EvidenceRedis } from '../server/ComputerEvidenceStore';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, SHARED_TURN_LEASE_MS, SHARED_TURN_RENEW_MS, type CallRow, type EvidenceStore, type SharedCalls, type SharedTurn, type SharedTurnList, type CallTurn } from '../server/ComputerRefusals';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, SHARED_TURN_LEASE_MS, SHARED_TURN_RENEW_MS, type CallRow, type EvidenceStore, type SharedCalls, type SharedTurn, type SharedTurnList, type CallTurn, type CloseAttempt } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -2361,6 +2361,61 @@ describe('calls of a job that arrive at another bot server', () => {
                     release();
                     expect(await closing).toBe(false);
                     expect(a.accepted('order', { turn: 1, run: 'run-1' })).not.toBe(false);
+                });
+
+                it('a late reopen of an OLDER close never lifts a NEWER close on this server or in the store: the guard of reopenTurn names the very close (turn and moment)', async () => {
+                    // (a) the same turn closed again at a new moment: the newer fence still refuses calls here and on another server
+                    {
+                        const { a, b, advance } = rigTurns();
+                        await begin(a, 'same', 1, 'run-1');
+                        advance(10);
+                        const first: CloseAttempt = {};
+                        expect(await a.closeTurn('same', a.mark(), first)).toBe(true);
+                        advance(10);
+                        const newer: CloseAttempt = {};
+                        expect(await a.closeTurn('same', a.mark(), newer)).toBe(true);
+                        expect(newer.at).not.toBe(first.at);
+                        await a.reopenTurn('same', first);
+                        expect(a.accepted('same', { turn: 1, run: 'run-1' })).toBe(false);
+                        expect(await b.accepted('same', { turn: 1, run: 'run-1' })).toBe(false);
+                        // and the newer close is taken back by its own attempt: then both take calls
+                        await a.reopenTurn('same', newer);
+                        expect(a.accepted('same', { turn: 1, run: 'run-1' })).not.toBe(false);
+                        expect(await b.accepted('same', { turn: 1, run: 'run-1' })).toBe(true);
+                    }
+                    // (b) a later turn closed: the older turn's attempt leaves the newer turn's close alone
+                    {
+                        const { a, b, advance } = rigTurns();
+                        await begin(a, 'later', 1, 'run-1');
+                        advance(10);
+                        const first: CloseAttempt = {};
+                        expect(await a.closeTurn('later', a.mark(), first)).toBe(true);
+                        advance(10);
+                        await begin(a, 'later', 2, 'run-1');
+                        advance(10);
+                        const newer: CloseAttempt = {};
+                        expect(await a.closeTurn('later', a.mark(), newer)).toBe(true);
+                        await a.reopenTurn('later', first);
+                        expect(a.accepted('later', { turn: 2, run: 'run-1' })).toBe(false);
+                        expect(await b.accepted('later', { turn: 2, run: 'run-1' })).toBe(false);
+                        // the older turn's fence is the one that went
+                        expect(await b.accepted('later', { turn: 1, run: 'run-1' })).toBe(true);
+                    }
+                    // (c) two closes of two turns in the SAME millisecond: the moment alone does not name a close, the turn does too
+                    {
+                        const { a, b, advance } = rigTurns();
+                        await begin(a, 'tie', 1, 'run-1');
+                        advance(10);
+                        const first: CloseAttempt = {};
+                        expect(await a.closeTurn('tie', a.mark(), first)).toBe(true);
+                        await begin(a, 'tie', 2, 'run-1');
+                        const newer: CloseAttempt = {};
+                        expect(await a.closeTurn('tie', a.mark(), newer)).toBe(true);
+                        expect(newer.at).toBe(first.at);
+                        await a.reopenTurn('tie', first);
+                        expect(a.accepted('tie', { turn: 2, run: 'run-1' })).toBe(false);
+                        expect(await b.accepted('tie', { turn: 2, run: 'run-1' })).toBe(false);
+                    }
                 });
 
                 it('when the fence cannot be taken back either, it clears itself after FENCE_LIFE_MS: the other server’s call is refused until then (a fault of ours, the machine tries again), and taken after', async () => {
