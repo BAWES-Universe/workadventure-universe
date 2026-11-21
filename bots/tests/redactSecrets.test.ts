@@ -140,6 +140,72 @@ describe('a value is read whole, as the shell reads a word', () => {
         }
     });
 
+    it('reads a comment inside a substitution as a comment: a `)` or a quote in it closes and opens nothing', () => {
+        const cases: Array<[string, string]> = [
+            ["PASSWORD=$(printf '%s' foo # )\nprintf '%s' 'hunter2')", `PASSWORD=${HIDDEN}`],
+            ["PASSWORD=$(printf '%s' foo # )\nprintf '%s' 'hunter2') next", `PASSWORD=${HIDDEN} next`],
+            ["PASSWORD=$(echo a # don't ) \necho hunter2) next", `PASSWORD=${HIDDEN} next`],
+            ["PASSWORD=$(# ) first\nprintf hunter2) next", `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(echo a\n# ) one\n# ) two\necho hunter2) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(echo a; # ) c\necho hunter2) next', `PASSWORD=${HIDDEN} next`],
+            // a comment with no line end after it runs to the end of the text, and so does the value
+            ['PASSWORD=$(printf x # hunter2 ) next', `PASSWORD=${HIDDEN}`],
+            // a nested substitution's comment too
+            ['PASSWORD=$(echo $(echo a # ) \necho hunter2) b) next', `PASSWORD=${HIDDEN} next`],
+        ];
+        for (const [text, hidden] of cases) {
+            expect(redactSecrets(text), text).toBe(hidden);
+            expect(redactSecrets(text), text).not.toContain('hunter2');
+        }
+    });
+
+    it('does not read a `#` as a comment where it is not one: in quotes, `$#`, `${#x}`, in the middle of a word', () => {
+        const cases: Array<[string, string]> = [
+            ["PASSWORD=$(printf '%s' '# )' hunter2) next", `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(printf "# (" hunter2) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(echo $# hunter2) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(echo ${#x} hunter2) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(echo a#b hunter2) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$((16#ff + 1)) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=abc#def next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=#abc next', `PASSWORD=${HIDDEN} next`],
+        ];
+        for (const [text, hidden] of cases) {
+            expect(redactSecrets(text), text).toBe(hidden);
+            expect(redactSecrets(text), text).not.toContain('hunter2');
+        }
+    });
+
+    it('hides the rest of the text where the end of the value cannot be told: a here-document, a `case` pattern', () => {
+        for (const text of [
+            'PASSWORD=$(cat <<EOF\nx )\nhunter2\nEOF\n) next',
+            "PASSWORD=$(cat <<-'EOF'\n\tx )\n\thunter2\n\tEOF\n) next",
+            'PASSWORD=$(cat <<EOF)',
+            'PASSWORD=`cat <<EOF\nx `\nhunter2\nEOF\n` next',
+            'PASSWORD=$(case $x in a) printf hunter2 ;; esac) next',
+            'PASSWORD=$(case "$x" in (a) printf hunter2 ;; *) true ;; esac) next',
+        ]) {
+            expect(redactSecrets(text), text).toBe(`PASSWORD=${HIDDEN}`);
+        }
+        // a here-string is no here-document, and a word that only contains `case` is no case
+        expect(redactSecrets("PASSWORD=$(cat <<< 'x ) y') next")).toBe(`PASSWORD=${HIDDEN} next`);
+        expect(redactSecrets('PASSWORD=$(echo showcase suitcase) next')).toBe(`PASSWORD=${HIDDEN} next`);
+    });
+
+    it('reads a backslash before a line break, an ANSI-C quote and an array as part of the value', () => {
+        const cases: Array<[string, string]> = [
+            ['PASSWORD=ab\\\ncd hunter2 next', `PASSWORD=${HIDDEN} hunter2 next`],
+            ["PASSWORD=$'it\\'s hunter2' next", `PASSWORD=${HIDDEN} next`],
+            ["PASSWORD=$'a\\nb c' next", `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=(hunter2 other) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=(a "b c" $(echo d)) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(echo a \\\n hunter2) next', `PASSWORD=${HIDDEN} next`],
+        ];
+        for (const [text, hidden] of cases) expect(redactSecrets(text), text).toBe(hidden);
+        expect(redactSecrets("PASSWORD=$'it\\'s hunter2' next")).not.toContain('hunter2');
+        expect(redactSecrets('PASSWORD=(hunter2 other) next')).not.toContain('other');
+    });
+
     it('also hides it where the computer says why it could not go on, and in a label', () => {
         expect(whyOf('It refused me: PASSWORD=two\\ words [[failed]]')).not.toContain('words');
         expect(safeStepLabel('Signing in with PASSWORD=two\\ words now')).toBe(`Signing in with PASSWORD=${HIDDEN} now`);

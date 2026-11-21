@@ -30,43 +30,63 @@ const ASSIGNMENT_START = /(^|[\s;&|?(])([A-Za-z_][A-Za-z0-9_]*)=/g;
 
 /**
  * Where the value that starts at `from` ends, read as the shell reads one word: plain characters, an escaped character (`two\ words`, `a\"b`, a lone
- * backslash at the end), a double-quoted part (escapes inside it), a single-quoted part, a command substitution (`$(…)` with its own quotes and
- * parentheses, `$((…))`, backticks) and a `${…}` expansion, any of them joined (`a"b c"d`). A quote, a substitution or a brace that is never closed runs to
- * the end of the text, since where its value ends cannot be told, and nothing of it may be left showing.
+ * backslash at the end, a backslash before a line break), a double-quoted part (escapes inside it), a single-quoted part, an ANSI-C quoted part
+ * (`$'it\'s'`), a command substitution (`$(…)` with its own quotes, parentheses and comments, `$((…))`, backticks), a `${…}` expansion and an array
+ * `(…)`, any of them joined (`a"b c"d`).
+ *
+ * Where the end cannot be told for sure, the value runs to the end of the text and nothing of it is left showing: a quote, a substitution, a brace or a
+ * parenthesis that is never closed; a here-document (`<<EOF`), whose body is free text; a `case` inside a substitution, whose patterns hold a `)` that
+ * closes nothing. A `#` that begins a word inside `$(…)` starts a comment to the end of its line, and nothing in it (a `)`, a quote) closes or opens anything;
+ * a `#` anywhere else (inside quotes, `$#`, `${#x}`, in the middle of a word) is an ordinary character.
  */
 function endOfShellWord(text: string, from: number): number {
-    const quoted = (start: number, quote: '"' | "'"): number => {
+    const end = text.length;
+    // The character before `at` begins a new word: the start of the text, a blank, or one of `;&|(` and a line break
+    const wordStart = (at: number): boolean => at === 0 || /[\s;&|(]/.test(text[at - 1]);
+    // After a `<<` that is a here-document (not the `<<<` here-string)
+    const heredocAt = (at: number): boolean => text[at] === '<' && text[at + 1] === '<' && text[at + 2] !== '<' && text[at - 1] !== '<';
+    const quoted = (start: number, quote: '"' | "'", ansi = false): number => {
         // `start` is the character after the opening quote; returns the index after the closing quote (or the end)
         let i = start;
-        while (i < text.length) {
+        while (i < end) {
             const c = text[i];
-            if (quote === '"' && c === '\\') i += 2;
+            if ((quote === '"' || ansi) && c === '\\') i += 2;
             else if (c === quote) return i + 1;
             else if (quote === '"' && c === '$' && (text[i + 1] === '(' || text[i + 1] === '{')) i = nested(i + 1);
             else if (quote === '"' && c === '`') i = backticks(i + 1);
             else i++;
         }
-        return text.length;
+        return end;
     };
     const backticks = (start: number): number => {
         let i = start;
-        while (i < text.length) {
+        while (i < end) {
             if (text[i] === '\\') i += 2;
             else if (text[i] === '`') return i + 1;
+            else if (heredocAt(i)) return end;
             else i++;
         }
-        return text.length;
+        return end;
     };
     // `open` is the index of the `(` or `{` after a `$`; returns the index after its balanced close (or the end)
     const nested = (open: number): number => {
         const stack: string[] = [text[open] === '(' ? ')' : '}'];
         let i = open + 1;
-        while (i < text.length && stack.length > 0) {
+        while (i < end && stack.length > 0) {
             const c = text[i];
+            const inCommand = stack[stack.length - 1] === ')';
             if (c === '\\') i += 2;
             else if (c === "'") i = quoted(i + 1, "'");
             else if (c === '"') i = quoted(i + 1, '"');
+            else if (c === '$' && text[i + 1] === "'") i = quoted(i + 2, "'", true);
             else if (c === '`') i = backticks(i + 1);
+            else if (inCommand && c === '#' && wordStart(i)) {
+                // A comment: to the end of its line, whatever it holds. No line break after it: it runs to the end, and so does the value
+                const lineEnd = text.indexOf('\n', i);
+                if (lineEnd < 0) return end;
+                i = lineEnd;
+            } else if (inCommand && heredocAt(i)) return end;
+            else if (inCommand && c === 'c' && wordStart(i) && /^case\s/.test(text.slice(i, i + 5))) return end;
             else if (c === '(') {
                 stack.push(')');
                 i++;
@@ -78,19 +98,22 @@ function endOfShellWord(text: string, from: number): number {
                 i++;
             } else i++;
         }
-        return stack.length > 0 ? text.length : i;
+        return stack.length > 0 ? end : i;
     };
     let i = from;
-    while (i < text.length) {
+    // An array: `NAME=(a b)`
+    if (text[i] === '(') i = nested(i);
+    while (i < end) {
         const c = text[i];
         if (c === '\\') i += 2;
         else if (c === '"' || c === "'") i = quoted(i + 1, c);
+        else if (c === '$' && text[i + 1] === "'") i = quoted(i + 2, "'", true);
         else if (c === '`') i = backticks(i + 1);
         else if (c === '$' && (text[i + 1] === '(' || text[i + 1] === '{')) i = nested(i + 1);
         else if (/[\s&;|)]/.test(c)) break;
         else i++;
     }
-    return Math.min(i, text.length);
+    return Math.min(i, end);
 }
 
 /** Hides the value of every shell assignment in the text (and of every query parameter), keeping the name. */
