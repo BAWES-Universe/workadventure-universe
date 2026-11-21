@@ -183,9 +183,9 @@ export interface RefusalNotes {
     /**
      * `called`, for a relay about to forward a call: the call is also recorded for the other bot servers and this WAITS for that (each of two tries bounded at
      * `SHARED_WRITE_BOUND_MS`, the same moment both times), so a runner on another server never reads "no call" for a call that did arrive. Resolves true
-     * when it was recorded (and with no shared store). When both tries fail the operators are told once per job and: if this server runs the job's runner (its
-     * notes have a turn of the job) the call may go ahead, since the runner's own notes see it: the other servers are told apart that a call was not recorded
-     * and it resolves false; if it does NOT, no runner can ever see this call, so it must not be forwarded: resolves `'unservable'` (the relay answers 503
+     * when it was recorded (and with no shared store). When both tries fail the operators are told once per job and: if this server's runner is working the
+     * job NOW (`runsHere`) the call may go ahead, since the runner's own notes see it: the other servers are told apart that a call was not recorded
+     * and it resolves false; if it is not (or nothing says so), no runner can ever see this call, so it must not be forwarded: resolves `'unservable'` (the relay answers 503
      * and records a fault of ours for the call through the sink, which does not rest on the shared store). Never rejects.
      */
     reached(jobId: string, at?: CallTurn): Promise<boolean | 'unservable'>;
@@ -231,6 +231,11 @@ export interface RefusalOptions {
     flushBudgetMs?: number;
     /** Where rows are kept until Orbit takes them, so they survive a restart. Without one they are kept in memory only. */
     store?: EvidenceStore;
+    /**
+     * Whether THIS process's runner is working the job right now (it is in the runner's active jobs this moment). Not what the notes remember: a server whose
+     * runner stopped the job, or lost it to another server, no longer runs it, whatever turns its notes still hold. Without it nothing is run here.
+     */
+    runsHere?: (jobId: string) => boolean;
     /** Where the bot servers say to each other that a call of a job arrived, so a runner can tell "no call reached the relay" from "none reached this server". */
     shared?: SharedCalls;
     /** With a store: how long to wait between tries once the later ones are used up (rows are kept `EVIDENCE_KEEP_MS` in all). */
@@ -754,10 +759,16 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 unrecordedTold.set(jobId, moment);
                 tell('called_unrecorded', jobId, '');
             }
-            // The runner of the job is not here (this server's notes have no turn of it), so it can never see this call, and the record it would have read could
+            // The runner of the job is not working it here now (a turn in the notes proves nothing: the job may have been taken over by another server), so it can never see this call, and the record it would have read could
             // not be written: the call is not forwarded. Saying so apart would not help (the store is failing for this server, and the runner reads a store that
             // may be well): the refusal is the fact, and it is a fault of ours that Orbit hears of through the sink
-            if (lastTurn(jobId) === undefined) return 'unservable';
+            let here = false;
+            try {
+                here = options.runsHere?.(jobId) === true;
+            } catch {
+                here = false;
+            }
+            if (!here) return 'unservable';
             // The runner is here: its own notes see the call. The other servers are told apart that a call was not recorded, all the same
             await attempt('unrecorded');
             return false;

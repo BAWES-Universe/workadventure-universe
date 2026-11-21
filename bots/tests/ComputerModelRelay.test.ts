@@ -2245,6 +2245,8 @@ describe('the shared record of a call, before the call goes on', () => {
     const state = { hold: undefined as Promise<void> | undefined, failWrites: 0 };
     const rowsB: Array<{ jobId: string; rows: CallRow[] }> = [];
     let own!: ReturnType<typeof createRefusalNotes>;
+    /** The jobs whose runner is working on this server this moment. */
+    const here = new Set<string>();
     const shared = {
         noteCalled: async (jobId: string) => {
             if (state.hold) await state.hold;
@@ -2262,6 +2264,7 @@ describe('the shared record of a call, before the call goes on', () => {
         own = createRefusalNotes(Date.now, {
             shared,
             report: (what, info) => reports.push([what, info.jobId]),
+            runsHere: (jobId) => here.has(jobId),
             retryMs: [0],
             sink: async (_bot, jobId, rows) => {
                 rowsB.push({ jobId, rows });
@@ -2283,6 +2286,7 @@ describe('the shared record of a call, before the call goes on', () => {
         reports.length = 0;
         written.length = 0;
         rowsB.length = 0;
+        here.clear();
         state.hold = undefined;
         state.failWrites = 0;
     });
@@ -2311,7 +2315,7 @@ describe('the shared record of a call, before the call goes on', () => {
     });
 
     it('lets the call go ahead when the record cannot be written twice and the job’s runner is on this server: says so apart, and tells the operators once for the job', async () => {
-        own.turn(JOB, 1);
+        here.add(JOB);
         state.failWrites = 4;
         expect((await askHere()).status).toBe(200);
         expect((await askHere()).status).toBe(200);
@@ -2340,6 +2344,25 @@ describe('the shared record of a call, before the call goes on', () => {
             expect((await askHere()).status).toBe(503);
             expect(reports).toEqual([['called_unrecorded', OTHER]]);
             state.failWrites = 0;
+            expect((await askHere()).status).toBe(200);
+            expect(upstreamRequests).toHaveLength(1);
+        });
+
+        it('refuses the call when this server ran the job a minute ago but the runner has since stopped it and another server took it over', async () => {
+            const TAKEN_OVER = 'job-taken-over';
+            orbit.identify.mockResolvedValue({ ok: true, jobId: TAKEN_OVER, botId: BOT });
+            // this server's notes still hold a turn of the job; its runner no longer works it
+            own.turn(TAKEN_OVER, 4, 'run-before');
+            state.failWrites = 100;
+            const answer = await askHere();
+            expect(answer.status).toBe(503);
+            expect(upstreamRequests).toHaveLength(0);
+            expect(orbit.authorize).not.toHaveBeenCalled();
+            await vi.waitFor(() => expect(rowsB.map((one) => one.jobId)).toEqual([TAKEN_OVER]));
+            expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down' });
+            expect(reports).toEqual([['called_unrecorded', TAKEN_OVER]]);
+            // the runner working it here now: the call is forwarded
+            here.add(TAKEN_OVER);
             expect((await askHere()).status).toBe(200);
             expect(upstreamRequests).toHaveLength(1);
         });

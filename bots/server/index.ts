@@ -110,6 +110,8 @@ const computerRefusals = createRefusalNotes(Date.now, {
     // A machine's calls reach whichever bot server the load balancer picks (a rolling deploy runs two for a while), the runner of its job lives on one:
     // the servers tell each other where a call arrived, so a runner never concludes "no call reached the relay" from its own notes alone
     shared: new RedisSharedCalls(() => botRegistry.evidenceClient(), randomUUID()),
+    // Whether this process's runner is working the job this moment (a server that lost the job to another one, or has no runner, runs nothing)
+    runsHere: (jobId) => computerRunner?.active().includes(jobId) === true,
     // Told once: a row the shared store could not keep (it is still in memory and still sent), a row Orbit has not taken for an hour, and a row Orbit
     // refused alone while it took others (set aside, kept 30 days), and one Orbit refused with none taken lately (kept, sent again). Ids only.
     report: (what, info) =>

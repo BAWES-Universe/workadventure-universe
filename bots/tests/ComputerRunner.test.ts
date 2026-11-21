@@ -1786,9 +1786,8 @@ describe('a machine that cannot reach our own model service', () => {
                 Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 2), void other.reached(JOB.jobId), silent())),
                 { shared: store.forServer('A') }
             );
-            other = createRefusalNotes(clock, { shared: store.forServer('B') });
-            // the runner of the job is on B too (a turn of the job in its notes), so its call goes ahead and says apart that it was not recorded
-            other.turn(JOB.jobId, 1);
+            // the runner of the job is working on B too (a stale one, a job both servers think they run), so its call goes ahead and says apart that it was not recorded
+            other = createRefusalNotes(clock, { shared: store.forServer('B'), runsHere: () => true });
             await run();
             expect(rows).toEqual([]);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);

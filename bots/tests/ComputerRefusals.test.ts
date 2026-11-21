@@ -1210,9 +1210,11 @@ describe('calls of a job that arrive at another bot server', () => {
     const rig = () => {
         let at = 100_000;
         const store = sharedStore();
+        /** The jobs whose runner is working on B this moment. */
+        const here = new Set<string>();
         const a = createRefusalNotes(() => at, { shared: store.forServer('A') });
-        const b = createRefusalNotes(() => at, { shared: store.forServer('B') });
-        return { a, b, store, advance: (ms: number) => (at += ms) };
+        const b = createRefusalNotes(() => at, { shared: store.forServer('B'), runsHere: (jobId) => here.has(jobId) });
+        return { a, b, store, here, advance: (ms: number) => (at += ms) };
     };
 
     it('says a call arrived when the other server saw it, though this server’s own notes have none', async () => {
@@ -1318,13 +1320,11 @@ describe('calls of a job that arrive at another bot server', () => {
             const store = sharedStore();
             let at = 100_000;
             const a = createRefusalNotes(() => at, { shared: store.forServer('A') });
-            const b = createRefusalNotes(() => at, { shared: store.forServer('B'), report: (what, info) => told.push([what, info.jobId]) });
+            const b = createRefusalNotes(() => at, { shared: store.forServer('B'), report: (what, info) => told.push([what, info.jobId]), runsHere: (jobId) => ['j', 'other'].includes(jobId) });
             const mark = a.mark();
             at += 10;
             store.state.failCalled = 2;
-            // the runner of these jobs is on this server (its notes have a turn of each): the call may go ahead
-            b.turn('j', 1);
-            b.turn('other', 1);
+            // the runner of these jobs is working on this server now: the call may go ahead
             expect(await b.reached('j')).toBe(false);
             expect(store.state.unrecorded).toEqual(['B:j']);
             expect(told).toEqual([['called_unrecorded', 'j']]);
@@ -1339,10 +1339,10 @@ describe('calls of a job that arrive at another bot server', () => {
         });
 
         it('when even the apart note cannot be written the store is failing: A’s read fails too, and nothing is concluded', async () => {
-            const { a, b, store } = rig();
+            const { a, b, store, here } = rig();
             const mark = a.mark();
             store.state.down = true;
-            b.turn('j', 1);
+            here.add('j');
             expect(await b.reached('j')).toBe(false);
             expect(store.state.unrecorded).toEqual([]);
             expect(await a.calledAnywhereSince('j', mark)).toBe(true);
@@ -1351,8 +1351,8 @@ describe('calls of a job that arrive at another bot server', () => {
         it('does not hold the call for a store that does not answer: each try is bounded, and the call goes on', async () => {
             vi.useFakeTimers();
             try {
-                const { b, store } = rig();
-                b.turn('j', 1);
+                const { b, store, here } = rig();
+                here.add('j');
                 store.state.hold = new Promise<void>(() => undefined);
                 let done = false;
                 const reached = b.reached('j').then((recorded) => {
@@ -1373,7 +1373,7 @@ describe('calls of a job that arrive at another bot server', () => {
         it('is unservable when both writes fail and the job’s runner is not on this server: the call cannot be seen by anyone, so it is not forwarded', async () => {
             const told: Array<[string, string]> = [];
             const store = sharedStore();
-            const b = createRefusalNotes(() => 1000, { shared: store.forServer('B'), report: (what, info) => told.push([what, info.jobId]) });
+            const b = createRefusalNotes(() => 1000, { shared: store.forServer('B'), report: (what, info) => told.push([what, info.jobId]), runsHere: (jobId) => jobId === 'here' });
             store.state.failCalled = 2;
             expect(await b.reached('j')).toBe('unservable');
             // nothing was said apart: a runner on another server reads the store, which may be well
@@ -1385,10 +1385,36 @@ describe('calls of a job that arrive at another bot server', () => {
             store.state.failCalled = 2;
             expect(await b.reached('j')).toBe('unservable');
             expect(told).toHaveLength(1);
-            // with the runner here it may go ahead
-            b.turn('here', 1);
+            // with the runner working here now it may go ahead
             store.state.failCalled = 2;
             expect(await b.reached('here')).toBe(false);
+        });
+
+        it('does not count a turn the notes remember as a runner that is here: a job taken over by another server, or stopped, is not run here now', async () => {
+            const { b, store, here } = rig();
+            // this server ran the job a minute ago (its notes hold the turn), then the runner stopped it and another server took it over
+            b.turn('j', 3, 'run-old');
+            here.add('j');
+            here.delete('j');
+            store.state.failCalled = 2;
+            expect(await b.reached('j')).toBe('unservable');
+            // nothing that says whether a runner is here: nothing is run here
+            const without = createRefusalNotes(() => 1000, { shared: store.forServer('B') });
+            without.turn('j', 1);
+            store.state.failCalled = 2;
+            expect(await without.reached('j')).toBe('unservable');
+            const throwing = createRefusalNotes(() => 1000, {
+                shared: store.forServer('B'),
+                runsHere: () => {
+                    throw new Error('runner gone');
+                },
+            });
+            store.state.failCalled = 2;
+            expect(await throwing.reached('j')).toBe('unservable');
+            // the runner working it now: forwarded
+            here.add('j');
+            store.state.failCalled = 2;
+            expect(await b.reached('j')).toBe(false);
         });
 
         it('notes the call for this server as `called` does, leaves a call of a turn the runner has left alone, and is true with no shared store', async () => {
