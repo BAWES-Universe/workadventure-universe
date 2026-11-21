@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CLOSE_TURN, FENCE_RECENT_MS, KEEP_LATER, NOTE_ACCEPTED_UNLESS_CLOSED, RETRACT_FENCE, RedisSharedCalls, SET_AND_RENEW, type EvidenceRedis } from '../server/ComputerEvidenceStore';
+import { CLOSE_TURN, FENCE_LIFE_MS, KEEP_LATER, NOTE_ACCEPTED_UNLESS_CLOSED, RETRACT_FENCE, RedisSharedCalls, SET_AND_RENEW, type EvidenceRedis } from '../server/ComputerEvidenceStore';
 import { createRefusalNotes, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, SHARED_TURN_LEASE_MS, SHARED_TURN_RENEW_MS, type CallRow, type EvidenceStore, type SharedCalls, type SharedTurn, type SharedTurnList, type CallTurn } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
@@ -1179,7 +1179,7 @@ describe('whether any call of a job reached the relay', () => {
 /** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
 const sharedStore = () => {
     const seen = new Map<string, Map<string, number>>();
-    const state = { moments: [] as Array<[string, number]>, down: false, failCalled: 0, failTurns: 0, failAccepted: 0, failClose: 0, lostAfterClose: 0, failRetract: 0, retracted: 0, holdClose: undefined as Promise<void> | undefined, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
+    const state = { moments: [] as Array<[string, number]>, down: false, failCalled: 0, failTurns: 0, failAccepted: 0, failClose: 0, lostAfterClose: 0, failRetract: 0, retracted: 0, holdClose: undefined as Promise<void> | undefined, betweenTries: undefined as (() => Promise<unknown>) | undefined, holdRetract: undefined as Promise<void> | undefined, retractWaiting: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
     /** The turns each server's runner said, per job: the field `turn:<server>` of the shared record. */
     const turns = new Map<string, Map<string, SharedTurnList>>();
     /** The acceptances each server noted, per job: its moment and the turn (and run) the call began in (`undefined`: not known). */
@@ -1231,7 +1231,8 @@ const sharedStore = () => {
             }
             // as the store does it, in one step: a turn that was given up takes no acceptance (a turn that is not known: none lately given up)
             const shut = fences.get(jobId) ?? [];
-            if (turn ? shut.some((one) => one.key === `${turn.turn}|${turn.run ?? ''}`) : shut.some((one) => one.at >= at - FENCE_RECENT_MS)) return false;
+            // a fence counts for FENCE_LIFE_MS from its moment, a known turn or not
+            if (shut.some((one) => (!turn || one.key === `${turn.turn}|${turn.run ?? ''}`) && one.at >= at - FENCE_LIFE_MS)) return false;
             accepted.push({ server: id, jobId, at, ...(turn ? { turn } : {}) });
             return true;
         },
@@ -1239,6 +1240,10 @@ const sharedStore = () => {
             if (state.holdClose) await state.holdClose;
             if (state.down || state.failClose > 0) {
                 if (state.failClose > 0) state.failClose -= 1;
+                // a try that did not run, and something happens before the next one (another server takes a call up)
+                const between = state.betweenTries;
+                state.betweenTries = undefined;
+                if (between) await between();
                 throw new Error('shared store down');
             }
             // as the store does it, in one step: an acceptance by ANOTHER server that counts for the turn since `from` minus the skew stops it; otherwise the turn is fenced
@@ -1256,6 +1261,8 @@ const sharedStore = () => {
             return true;
         },
         retractFence: async (jobId, turn, at) => {
+            state.retractWaiting += 1;
+            if (state.holdRetract) await state.holdRetract;
             if (state.down || state.failRetract > 0) {
                 if (state.failRetract > 0) state.failRetract -= 1;
                 throw new Error('shared store down');
@@ -2190,17 +2197,18 @@ describe('calls of a job that arrive at another bot server', () => {
 
         describe('giving a turn up (closing it) against a call another server takes up', () => {
             it('closes the turn so that a call another server tries to take up afterwards is refused (that call and any call whose turn is not known), while other turns and other jobs are untouched', async () => {
-                const { a, b, advance } = rigTurns();
+                const { a, b, advance, now } = rigTurns();
                 await begin(a, 'k', 1, 'run-1');
                 const since = a.mark();
                 advance(10);
                 expect(await a.closeTurn('k', since)).toBe(true);
+                const fencedAt = now();
                 // another server: refused for the turn that was closed, and for a call whose turn is not known (it may be of that turn)
-                expect(await b.accepted('k', { turn: 1, run: 'run-1' })).toBe('closed');
-                expect(await b.accepted('k')).toBe('closed');
+                expect(await b.accepted('k', { turn: 1, run: 'run-1' })).toBe(false);
+                expect(await b.accepted('k')).toBe(false);
                 // the server of the runner: refused too, and nothing is marked as taken up
-                expect(a.accepted('k', { turn: 1, run: 'run-1' })).toBe('closed');
-                expect(a.accepted('k')).toBe('closed');
+                expect(a.accepted('k', { turn: 1, run: 'run-1' })).toBe(false);
+                expect(a.accepted('k')).toBe(false);
                 expect(a.acceptedSince('k', since)).toBe(false);
                 // a turn before it (still making its last calls) and a turn of another run are other turns; another job is another job
                 expect(await b.accepted('k', { turn: 0, run: 'run-1' })).toBe(true);
@@ -2212,8 +2220,13 @@ describe('calls of a job that arrive at another bot server', () => {
                 await begin(a, 'k', 2, 'run-1');
                 expect(await b.accepted('k', { turn: 2, run: 'run-1' })).toBe(true);
                 expect(a.accepted('k', { turn: 2, run: 'run-1' })).toBeUndefined();
-                // and a call whose turn is not known is taken again once a fence is long past
-                advance(20_000);
+                // and a fence no longer counts once it is long past (FENCE_LIFE_MS), a call whose turn is known or not
+                expect(await b.accepted('k')).toBe(false);
+                expect(await b.accepted('k', { turn: 1, run: 'run-1' })).toBe(false);
+                advance(fencedAt + FENCE_LIFE_MS - now());
+                expect(await b.accepted('k', { turn: 1, run: 'run-1' })).toBe(false);
+                advance(1);
+                expect(await b.accepted('k', { turn: 1, run: 'run-1' })).toBe(true);
                 expect(await b.accepted('k')).toBe(true);
             });
 
@@ -2248,7 +2261,7 @@ describe('calls of a job that arrive at another bot server', () => {
                     const [closed, taken] = closeFirst ? answers : [...answers].reverse();
                     expect(closed !== taken, `closeFirst ${closeFirst}`).toBe(true);
                     // and the later of the two is the one refused
-                    expect(closeFirst ? taken : closed).toBe(closeFirst ? 'closed' : false);
+                    expect(closeFirst ? taken : closed).toBe(false);
                 }
             });
 
@@ -2263,22 +2276,53 @@ describe('calls of a job that arrive at another bot server', () => {
                 expect(a.acceptedSince('j', since)).toBe(true);
             });
 
-            describe('a close that does not become a give-up leaves no fence behind', () => {
-                it('takes the fence back when the store ran the script and its answer was lost (both tries): the turn goes on, and a call another server takes up afterwards is taken, not refused', async () => {
+            describe('a close whose answer is lost', () => {
+                it('asks again when the answer is lost: lost then confirmed gives the turn up once (one fence, no retraction)', async () => {
+                    const { a, b, store, advance } = rigTurns();
+                    await begin(a, 'lost-then-1', 1, 'run-1');
+                    const since = a.mark();
+                    advance(10);
+                    // the script ran and its answer was lost; the second try (the script is idempotent) says it is done
+                    store.state.lostAfterClose = 1;
+                    expect(await a.closeTurn('lost-then-1', since)).toBe(true);
+                    expect(store.state.retracted).toBe(0);
+                    expect(await b.accepted('lost-then-1', { turn: 1, run: 'run-1' })).toBe(false);
+                    // up to two more tries: a third that answers is still the give-up
+                    await begin(a, 'third', 1, 'run-1');
+                    store.state.lostAfterClose = 2;
+                    expect(await a.closeTurn('third', a.mark())).toBe(true);
+                    expect(store.state.retracted).toBe(0);
+                });
+
+                it('lost, then the store answers 0 (a call was taken up meanwhile): the fence of the lost try is retracted and the turn goes on', async () => {
+                    const { a, b, store, advance } = rigTurns();
+                    await begin(a, 'lost-then-0', 1, 'run-1');
+                    const since = a.mark();
+                    advance(10);
+                    store.state.failClose = 1;
+                    // between the tries another server takes a call of the turn up
+                    store.state.betweenTries = async () => b.accepted('lost-then-0', { turn: 1, run: 'run-1' });
+                    expect(await a.closeTurn('lost-then-0', since)).toBe(false);
+                    expect(store.state.retracted).toBe(1);
+                    // the turn goes on: this server takes calls again, and the other server's are taken
+                    expect(a.accepted('lost-then-0', { turn: 1, run: 'run-1' })).not.toBe(false);
+                    expect(await b.accepted('lost-then-0', { turn: 1, run: 'run-1' })).toBe(true);
+                });
+
+                it('no try answers (three lost): the fence is retracted, and a later acceptance from another server is taken, not refused', async () => {
                     const { a, b, store, advance } = rigTurns();
                     await begin(a, 'lost', 1, 'run-1');
                     const since = a.mark();
                     advance(10);
-                    store.state.lostAfterClose = 2;
+                    store.state.lostAfterClose = 3;
                     expect(await a.closeTurn('lost', since)).toBe(false);
                     expect(store.state.retracted).toBe(1);
-                    // no fence in the store: the other server's call of that very turn is taken up, and no call is refused here either
                     expect(await b.accepted('lost', { turn: 1, run: 'run-1' })).toBe(true);
                     expect(await b.accepted('lost')).toBe(true);
-                    expect(a.accepted('lost', { turn: 1, run: 'run-1' })).not.toBe('closed');
+                    expect(a.accepted('lost', { turn: 1, run: 'run-1' })).not.toBe(false);
                 });
 
-                it('does not take back what it did not write: the store refusing the close (a call was taken up) leaves nothing to retract, and a second give-up is no worse for the first', async () => {
+                it('does not retract what it did not write: the store refusing the close (a call was taken up) leaves nothing to retract', async () => {
                     const { a, b, store, advance } = rigTurns();
                     await begin(a, 'taken', 1, 'run-1');
                     const since = a.mark();
@@ -2293,27 +2337,51 @@ describe('calls of a job that arrive at another bot server', () => {
                     await begin(a, 'again', 1, 'run-1');
                     const since = a.mark();
                     advance(10);
-                    store.state.lostAfterClose = 2;
+                    store.state.lostAfterClose = 3;
                     store.state.failRetract = 2;
                     expect(await a.closeTurn('again', since)).toBe(false);
                     expect(store.state.retracted).toBe(1);
                     expect(await b.accepted('again', { turn: 1, run: 'run-1' })).toBe(true);
                 });
 
-                it('when the fence cannot be taken back either, the turn is not given up and the calls the fence refuses are `closed` (never a boolean "could not be handed over")', async () => {
+                it('the local close is rolled back only after the retraction is settled: a call here while the fence is being taken back is still refused, and is taken again after', async () => {
+                    const { a, store, advance } = rigTurns();
+                    await begin(a, 'order', 1, 'run-1');
+                    const since = a.mark();
+                    advance(10);
+                    store.state.lostAfterClose = 3;
+                    let release!: () => void;
+                    store.state.holdRetract = new Promise<void>((resolve) => (release = resolve));
+                    const closing = a.closeTurn('order', since);
+                    // the retraction is being asked: the turn is still closed here
+                    await vi.waitFor(() => expect(store.state.retractWaiting).toBe(1));
+                    expect(a.accepted('order', { turn: 1, run: 'run-1' })).toBe(false);
+                    release();
+                    expect(await closing).toBe(false);
+                    expect(a.accepted('order', { turn: 1, run: 'run-1' })).not.toBe(false);
+                });
+
+                it('when the fence cannot be taken back either, it clears itself after FENCE_LIFE_MS: the other server’s call is refused until then (a fault of ours, the machine tries again), and taken after', async () => {
                     const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
                     try {
                         const { a, b, store, advance } = rigTurns();
                         await begin(a, 'stuck', 1, 'run-1');
                         const since = a.mark();
                         advance(10);
-                        store.state.lostAfterClose = 2;
+                        store.state.lostAfterClose = 3;
                         store.state.failRetract = 3;
+                        const closedAt = Date.now();
                         expect(await a.closeTurn('stuck', since)).toBe(false);
                         expect(warned).toHaveBeenCalled();
-                        // the runner's own server takes calls again, and the other server's call is refused by the fence that stayed as `closed`: the relay records it unresolved
-                        expect(a.accepted('stuck', { turn: 1, run: 'run-1' })).not.toBe('closed');
-                        expect(await b.accepted('stuck', { turn: 1, run: 'run-1' })).toBe('closed');
+                        // the runner's own server takes calls again
+                        expect(a.accepted('stuck', { turn: 1, run: 'run-1' })).not.toBe(false);
+                        // the fence is in the store: the other server's call of that turn is refused (and one whose turn is not known)
+                        expect(await b.accepted('stuck', { turn: 1, run: 'run-1' })).toBe(false);
+                        expect(await b.accepted('stuck')).toBe(false);
+                        // a long while later the fence no longer counts
+                        advance(FENCE_LIFE_MS + 5);
+                        expect(await b.accepted('stuck', { turn: 1, run: 'run-1' })).toBe(true);
+                        void closedAt;
                     } finally {
                         warned.mockRestore();
                     }
@@ -2324,8 +2392,8 @@ describe('calls of a job that arrive at another bot server', () => {
                     await begin(a, 'later', 1, 'run-1');
                     const since = a.mark();
                     advance(10);
-                    // a first close that did not commit, then a second that did
-                    store.state.lostAfterClose = 2;
+                    // a first close that did not commit and could not be retracted, then a second that did
+                    store.state.lostAfterClose = 3;
                     store.state.failRetract = 3;
                     const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
                     try {
@@ -2335,33 +2403,7 @@ describe('calls of a job that arrive at another bot server', () => {
                     }
                     advance(10);
                     expect(await a.closeTurn('later', since)).toBe(true);
-                    expect(await b.accepted('later', { turn: 1, run: 'run-1' })).toBe('closed');
-                });
-
-                it('a call that reaches the runner’s server while the close is being written waits for it: when the close does not commit it is taken up like any call, and when it does it is refused as `closed`', async () => {
-                    for (const commits of [false, true]) {
-                        const { a, store, advance } = rigTurns();
-                        await begin(a, 'wait', 1, 'run-1');
-                        const since = a.mark();
-                        advance(10);
-                        let release!: () => void;
-                        store.state.holdClose = new Promise<void>((resolve) => (release = resolve));
-                        if (!commits) store.state.lostAfterClose = 2;
-                        const closing = a.closeTurn('wait', since);
-                        const call = a.accepted('wait', { turn: 1, run: 'run-1' });
-                        // not answered before the close is: neither refused nor taken up yet
-                        expect(call).toBeInstanceOf(Promise);
-                        let answered = false;
-                        void Promise.resolve(call).then(() => (answered = true));
-                        await Promise.resolve();
-                        await Promise.resolve();
-                        expect(answered).toBe(false);
-                        store.state.holdClose = undefined;
-                        release();
-                        expect(await closing).toBe(commits);
-                        expect(await call, `commits ${commits}`).toBe(commits ? 'closed' : undefined);
-                        expect(a.acceptedSince('wait', since)).toBe(!commits);
-                    }
+                    expect(await b.accepted('later', { turn: 1, run: 'run-1' })).toBe(false);
                 });
             });
 
@@ -2372,10 +2414,10 @@ describe('calls of a job that arrive at another bot server', () => {
                 advance(10);
                 a.accepted('j', { turn: 1, run: 'run-1' });
                 expect(await a.closeTurn('j', since)).toBe(false);
-                // the store failing both tries
+                // the store failing all three tries
                 await begin(a, 'down', 1, 'run-1');
                 const s2 = a.mark();
-                store.state.failClose = 2;
+                store.state.failClose = 3;
                 expect(await a.closeTurn('down', s2)).toBe(false);
                 expect(a.accepted('down', { turn: 1, run: 'run-1' })).not.toBe(false);
                 expect(await b.accepted('down', { turn: 1, run: 'run-1' })).toBe(true);
@@ -2392,7 +2434,7 @@ describe('calls of a job that arrive at another bot server', () => {
                 const alone = createRefusalNotes(() => 1000, { runsHere: () => true });
                 alone.turn('j', 1);
                 expect(await alone.closeTurn('j', alone.mark())).toBe(true);
-                expect(alone.accepted('j', { turn: 1 })).toBe('closed');
+                expect(alone.accepted('j', { turn: 1 })).toBe(false);
             });
         });
 
@@ -2535,7 +2577,8 @@ describe('calls of a job that arrive at another bot server', () => {
                         const [field, moment, seconds, fenceField, earliestFence] = options.arguments;
                         const hash = hashes.get(options.keys[0]) ?? {};
                         if (fenceField !== '') {
-                            if (fenceField in hash) return 0;
+                            // a fence counts for FENCE_LIFE_MS from its moment (one whose moment cannot be read counts)
+                            if (fenceField in hash && !(Number(hash[fenceField]) < Number(earliestFence))) return 0;
                         } else {
                             for (const [name, value] of Object.entries(hash)) if (name.startsWith('fence:') && Number(value) >= Number(earliestFence)) return 0;
                         }
@@ -2628,6 +2671,11 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(await b.lastCalledByOthers('j')).toBe(9000);
         });
 
+        it('lets an orphan fence clear itself in about one give-up period: long enough for the calls of a turn that is being given up, short enough that a live turn is blocked for no more than a minute', () => {
+            expect(FENCE_LIFE_MS).toBeGreaterThanOrEqual(10_000);
+            expect(FENCE_LIFE_MS).toBeLessThanOrEqual(60_000);
+        });
+
         it('takes a fence back only while the field still holds the moment it wrote, and says it twice without harm', async () => {
             const r = redis();
             const a = new RedisSharedCalls(() => r.client, 'A');
@@ -2690,7 +2738,11 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(await c.noteAccepted('j', 12_100)).toBe(false);
             expect(await c.noteAccepted('j', 12_100, { turn: 7, run: 'r' })).toBe(true);
             expect(await c.noteAccepted('j', 12_100, { turn: 6, run: 'other' })).toBe(true);
-            expect(await c.noteAccepted('j', 12_000 + FENCE_RECENT_MS + 1)).toBe(true);
+            // a fence counts for FENCE_LIFE_MS from its moment, a turn that is known or not: an orphan clears itself
+            expect(await c.noteAccepted('j', 12_000 + FENCE_LIFE_MS, { turn: 6, run: 'r' })).toBe(false);
+            expect(await c.noteAccepted('j', 12_000 + FENCE_LIFE_MS)).toBe(false);
+            expect(await c.noteAccepted('j', 12_000 + FENCE_LIFE_MS + 1, { turn: 6, run: 'r' })).toBe(true);
+            expect(await c.noteAccepted('j', 12_000 + FENCE_LIFE_MS + 1)).toBe(true);
             // the fence is not a call that arrived, and not a turn list
             expect(await c.lastCalledByOthers('j')).toBeNull();
             expect(await c.turnsByOthers('j')).toEqual([]);

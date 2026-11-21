@@ -542,6 +542,8 @@ const COMPUTER_FINISH_TIMEOUT_MS = 6 * 60_000;
 export const COMPUTER_START_TIMEOUT_MS = 6 * 60_000;
 /** When Orbit cannot look up who the question is about it answers 503 `retry: true`: the question is asked again after each of these waits (ms), then it is unknown. */
 const COMPUTER_STARTED_RETRY_MS = [1000, 2000];
+/** The header a start carries its own key in, and the query parameter the read asks for it by (Orbit's contract: ^[A-Za-z0-9_-]{8,64}$, a uuid fits). */
+export const COMPUTER_START_ATTEMPT_HEADER = 'X-Computer-Start-Attempt';
 /** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
 const COMPUTER_JOB_LIVE = ['running', 'waiting', 'queued'];
 /** The states of a job that was made and is over. */
@@ -555,16 +557,19 @@ export function isSlowAnswer(error: unknown): boolean {
 }
 /**
  * Whether a failed start proves NOTHING about what Orbit decided, so the start may well have made a job behind it and the question "did this start make one?" has to be asked
- * before anyone is told it failed: no HTTP answer at all (a connection reset, a broken pipe, a refused or dropped connection, a timeout: any network code on a failed request),
- * and any server or gateway answer that is not Orbit's own (408 and every 5xx, which includes 502, 503, 504 and 524). Only an answer that Orbit itself gave to say no (a 4xx) is
- * final, and so is an error raised before anything was sent (no setup, a bad address): there nothing was started, and the caller is told it failed.
+ * before anyone is told it failed. Only an answer Orbit ITSELF gave is final: a 4xx with its own JSON body (a refusal, a bad request). Everything else may have been
+ * committed behind it: no HTTP answer at all (a connection reset, a broken pipe, a refused or dropped connection, a timeout: any network code), 408, every 5xx (502, 503,
+ * 504, 524...), and a 4xx that is not Orbit's own (a gateway's or proxy's page with no JSON body). An error raised before anything was sent (no setup, a bad address) is no
+ * failure of a start that was made: nothing was started, and the caller is told it failed.
  */
 export function mayHaveStarted(error: unknown): boolean {
     if (!error || typeof error !== 'object') return false;
-    const { code, response, isAxiosError } = error as { code?: unknown; response?: { status?: unknown }; isAxiosError?: unknown };
+    const { code, response, isAxiosError } = error as { code?: unknown; response?: { status?: unknown; data?: unknown }; isAxiosError?: unknown };
     if (response && typeof response === 'object') {
         const status = typeof response.status === 'number' ? response.status : 0;
-        return status === 408 || status >= 500;
+        if (status === 408 || status >= 500) return true;
+        // A 4xx is Orbit's own no only when it comes with Orbit's own JSON body; a page or an empty answer is a gateway's
+        return !(typeof response.data === 'object' && response.data !== null && !Array.isArray(response.data));
     }
     // Raised before the request went out: nothing was sent, so nothing was started
     if (typeof code === 'string' && (code === 'ERR_INVALID_URL' || code.startsWith('ERR_BAD_OPTION'))) return false;
@@ -1154,7 +1159,7 @@ export class AdminApiService {
         };
     }
 
-    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS): Promise<AxiosResponse<T>> {
+    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1162,7 +1167,7 @@ export class AdminApiService {
             url: resolveAdminApiEndpoint(this.adminApiUrl, path),
             ...(body === undefined ? {} : { data: body }),
             ...(params ? { params } : {}),
-            headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+            headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...(extraHeaders ?? {}) },
             timeout: timeoutMs,
         });
     }
@@ -1547,11 +1552,11 @@ export class AdminApiService {
     /** One asking of `computerJobStarted`; `'retry'` when Orbit says it could not look up the person (503, or `retry: true`) and the question can be asked again. */
     private async lookAtStarted(viaBotId: string, userId: string, find: { isGuest?: boolean; startKey: string }): Promise<{ id: string; status: string } | 'none' | 'unknown' | 'retry'> {
         try {
-            const response = await this.brickCall<{ started?: { id?: unknown; status?: unknown } | null }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, {
+            const response = await this.brickCall<{ started?: { id?: unknown; status?: unknown; attempt?: unknown } | null }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, {
                 userId,
                 ...(typeof find.isGuest === 'boolean' ? { isGuest: String(find.isGuest) } : {}),
                 // The key of this start and nothing else: Orbit finds the job by it alone (an Orbit that has not got it answers without `started`: unknown)
-                startKey: find.startKey,
+                attempt: find.startKey,
             });
             const data = response.data;
             // No `started` at all is an Orbit that does not have this read: it says nothing. Only its own `null` says there is no such job. One that says to
@@ -1560,7 +1565,8 @@ export class AdminApiService {
             if (!data || typeof data !== 'object' || !('started' in data) || data.started === undefined) return 'unknown';
             const started = data.started;
             if (started === null) return 'none';
-            return typeof started === 'object' && typeof started.id === 'string' && started.id !== '' && typeof started.status === 'string' ? { id: started.id, status: started.status } : 'unknown';
+            // The job counts for THIS start only when Orbit says it is the job of this very key: a missing or a different attempt is no proof of anything
+            return typeof started === 'object' && typeof started.id === 'string' && started.id !== '' && typeof started.status === 'string' && started.attempt === find.startKey ? { id: started.id, status: started.status } : 'unknown';
         } catch (error) {
             console.warn("[AdminApiService] Could not read whether a Brick's computer job was started:", error instanceof Error ? error.message : error);
             // Orbit's own "could not look the person up": 503, with `retry: true` in its answer. A bare 503 (a gateway) is a failed read, asked again the same way
@@ -1762,8 +1768,6 @@ export class AdminApiService {
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
             {
                 userId,
-                // This start's own key: Orbit keeps it with the job, and a start that repeats it is answered with that job and never makes a second
-                startKey,
                 ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
                 title: ask.title,
                 ...(ask.brief ? { brief: ask.brief } : {}),
@@ -1772,7 +1776,9 @@ export class AdminApiService {
                 ...(ask.origin ? { origin: ask.origin } : {}),
             },
             undefined,
-            COMPUTER_START_TIMEOUT_MS
+            COMPUTER_START_TIMEOUT_MS,
+            // This start's own key, in a header (the body stays as it was): Orbit keeps it with the job, and a start that repeats it is answered with that job and never makes a second
+            { [COMPUTER_START_ATTEMPT_HEADER]: startKey }
         );
         const data = response.data;
         const job = data?.job;

@@ -2566,7 +2566,7 @@ describe('the shared record of a call, before the call goes on', () => {
             }
         });
 
-        it('with the runner on another server that has GIVEN UP the turn: the store refuses the acceptance, nothing is sent to the provider, the room goes back, and an unresolved row is recorded, never a confirmed fault (503)', async () => {
+        it('with the runner on another server that has GIVEN UP the turn: the store refuses the acceptance, nothing is sent to the provider, the room goes back, and a fault of ours is recorded (503)', async () => {
             const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
             try {
                 state.fenced = true;
@@ -2577,8 +2577,7 @@ describe('the shared record of a call, before the call goes on', () => {
                 await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1));
                 expect(orbit.settle.mock.calls[0][0]).toMatchObject({ jobId: ELSE, sent: false });
                 await vi.waitFor(() => expect(rowsB).toHaveLength(1));
-                // a fence that stands (the runner gave the turn up, or a close that did not commit left it) is never a confirmed fault of ours: a turn that is alive is never refunded for it
-                expect(rowsB[0].rows[0]).toMatchObject({ kind: 'uncertain', reason: 'relay_down', providerStatus: 503 });
+                expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
             } finally {
                 warned.mockRestore();
             }
@@ -2606,31 +2605,33 @@ describe('the shared record of a call, before the call goes on', () => {
             }
         });
 
-        it('a call that arrives while the runner’s close is being written, and the close does not commit (its answer is lost after the script ran): the fence is taken back, the call is forwarded (200), and no confirmed fault is recorded', async () => {
+        it('a call that reaches the runner’s server while its close is being written is refused (a fault of ours, the row stays), and when the close does not commit (its answer is lost) the fence is taken back and the next call goes on', async () => {
             const OPEN = 'job-close-uncommitted';
             orbit.identify.mockResolvedValue({ ok: true, jobId: OPEN, botId: BOT });
             here.add(OPEN);
             own.turn(OPEN, 1, 'run-u');
             let release!: () => void;
             state.holdClose = new Promise<void>((resolve) => (release = resolve));
-            state.lostAfterClose = 2;
+            state.lostAfterClose = 3;
+            const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
             const closing = own.closeTurn(OPEN, own.mark());
             try {
-                const answer = askHere(withTools);
-                // the call is held by the close that is being written, not refused: nothing reached the provider yet
-                await new Promise((resolve) => setTimeout(resolve, 50));
+                // the close is being written: the turn is closed here, and the call is refused, with its row
+                const during = await askHere(withTools);
+                expect(during.status).toBe(503);
                 expect(upstreamRequests).toHaveLength(0);
+                await vi.waitFor(() => expect(rowsB).toHaveLength(1));
+                expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', providerStatus: 503 });
                 release();
                 expect(await closing).toBe(false);
-                expect((await answer).status).toBe(200);
-                expect(upstreamRequests).toHaveLength(1);
-                // the fence is out of the store again, and no row of ours that could refund a turn that is alive was written
+                // the close did not commit: the fence is out of the store, and the turn takes calls again
                 expect(state.retracted).toBe(1);
                 expect(state.fenced).toBe(false);
-                await own.flush(OPEN);
-                expect(rowsB.flatMap((one) => one.rows).filter((row) => row.kind === 'fault')).toEqual([]);
+                expect((await askHere(withTools)).status).toBe(200);
+                expect(upstreamRequests).toHaveLength(1);
             } finally {
                 release();
+                warned.mockRestore();
                 orbit.identify.mockResolvedValue({ ok: true, jobId: ELSE, botId: BOT });
             }
         });

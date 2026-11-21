@@ -212,9 +212,9 @@ describe('asking Orbit for a computer (#2000)', () => {
         expect(JSON.stringify(request.mock.calls.at(-1))).not.toContain('plan');
     });
 
-    it('throws when Orbit itself answers with a failure status (a 4xx), since every refusal comes as a 200 with a reason', async () => {
+    it('throws when Orbit itself answers with a failure status (a 4xx with its own JSON body), since every refusal comes as a 200 with a reason', async () => {
         process.env.BOT_SERVICE_TOKEN = 'secret';
-        request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 403'), { isAxiosError: true, response: { status: 403 } }));
+        request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 403'), { isAxiosError: true, response: { status: 403, data: { error: 'Not allowed' } } }));
         await expect(service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).rejects.toThrow(/403/);
         expect(request).toHaveBeenCalledTimes(1);
     });
@@ -222,7 +222,7 @@ describe('asking Orbit for a computer (#2000)', () => {
     it('looks for the job of the start after a 5xx (the answer may be a gateway\u2019s, and the job made behind it), and does not throw: the person is not told it failed', async () => {
         process.env.BOT_SERVICE_TOKEN = 'secret';
         request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 500'), { isAxiosError: true, response: { status: 500 } }));
-        request.mockResolvedValueOnce({ data: { started: { id: 'j-made', status: 'running' } } });
+        request.mockImplementationOnce(async (config: { params?: { attempt?: string } }) => ({ data: { started: { id: 'j-made', status: 'running', attempt: config.params?.attempt } } }));
         expect(await service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).toEqual({ ok: false, reason: 'starting' });
         expect(request).toHaveBeenCalledTimes(2);
     });

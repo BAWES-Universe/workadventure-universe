@@ -254,8 +254,12 @@ return 1
 
 /** The field a runner's server writes when it GAVE UP a turn of a job: `fence:<turn>|<run>`, the moment (ms). Not a call's arrival: never read as one. */
 export const FENCE_FIELD = 'fence:';
-/** An acceptance whose turn is not known is refused when a turn of the job was given up within this long before it (ms): it may be a call of that turn. */
-export const FENCE_RECENT_MS = 10_000;
+/**
+ * How long a fence counts, whatever it is for (a known turn or not), from its moment (ms): a call whose moment is later than the fence's by more than this is taken up. A fence that a
+ * runner could not take back (the close did not commit, and the retraction did not answer) clears itself, so an orphan blocks a live turn for this long and no longer.
+ * About one give-up period.
+ */
+export const FENCE_LIFE_MS = 30_000;
 /** The fence field of a turn (and run). */
 export const fenceFieldOf = (turn: CallTurn): string => `${FENCE_FIELD}${turn.turn}|${turn.run ?? ''}`;
 
@@ -306,11 +310,16 @@ return 0
 /**
  * A server took up a call of the job (the same write as `KEEP_LATER`: the field ARGV[1] keeps the later moment ARGV[2], the hash lives ARGV[3] seconds) UNLESS
  * the turn it belongs to was given up: ARGV[4] is the fence field of the call's turn and run ('' when the turn is not known), and ARGV[5] the earliest moment of a
- * fence that counts against a call whose turn is not known. Answers 1 when it was written, 0 when it was refused (nothing written).
+ * fence that counts (the call's moment minus FENCE_LIFE_MS: an older fence has cleared itself, known turn or not; a fence whose moment cannot be read counts).
+ * Answers 1 when it was written, 0 when it was refused (nothing written).
  */
 export const NOTE_ACCEPTED_UNLESS_CLOSED = `
 if ARGV[4] ~= '' then
-  if redis.call('HEXISTS', KEYS[1], ARGV[4]) == 1 then return 0 end
+  local fenced = redis.call('HGET', KEYS[1], ARGV[4])
+  if fenced then
+    local at = tonumber(fenced)
+    if at == nil or at >= tonumber(ARGV[5]) then return 0 end
+  end
 else
   local all = redis.call('HGETALL', KEYS[1])
   for i = 1, #all, 2 do
@@ -410,7 +419,7 @@ export class RedisSharedCalls implements SharedCalls {
         const answer = await this.within(
             this.client().eval(NOTE_ACCEPTED_UNLESS_CLOSED, {
                 keys: [CALLED_PREFIX + jobId],
-                arguments: [ACCEPTED_FIELD + this.instanceId + (turn ? `|${turn.turn}|${turn.run ?? ''}` : ''), String(at), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000)), turn ? fenceFieldOf(turn) : '', String(at - FENCE_RECENT_MS)],
+                arguments: [ACCEPTED_FIELD + this.instanceId + (turn ? `|${turn.turn}|${turn.run ?? ''}` : ''), String(at), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000)), turn ? fenceFieldOf(turn) : '', String(at - FENCE_LIFE_MS)],
             })
         );
         return Number(answer) === 1;

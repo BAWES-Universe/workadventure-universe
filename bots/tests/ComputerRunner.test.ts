@@ -2222,7 +2222,7 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             await running;
             await accepting;
             // refused: the other server's relay forwards nothing, and the turn is given up
-            expect(taken).toBe('closed');
+            expect(taken).toBe(false);
             expect(seen.cancels).toBe(1);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
         });

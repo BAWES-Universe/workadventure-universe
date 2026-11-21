@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { createClient } from 'redis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CALLED_PREFIX, RedisSharedCalls } from '../server/ComputerEvidenceStore';
+import { CALLED_PREFIX, FENCE_LIFE_MS, RedisSharedCalls } from '../server/ComputerEvidenceStore';
 
 /**
  * The two Lua scripts of the fence of a turn against a real Redis: the unit tests run their JavaScript twins in memory, so a change to the Lua would not show
@@ -47,9 +47,16 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
         expect(await b.noteAccepted(j, 2100, { turn: 6, run: 'r' })).toBe(false);
         expect(await b.noteAccepted(j, 2100, { turn: 7, run: 'r' })).toBe(true);
         expect(await c.noteAccepted(j, 2100, { turn: 6, run: 'other' })).toBe(true);
-        // unknown turn: refused within 10 s of a fence, accepted later
+        // unknown turn: refused within FENCE_LIFE_MS of a fence, accepted later; a known turn too: a fence that nobody took back clears itself
         expect(await b.noteAccepted(j, 2200)).toBe(false);
-        expect(await b.noteAccepted(j, 2000 + 10_001)).toBe(true);
+        expect(await b.noteAccepted(j, 2000 + FENCE_LIFE_MS, { turn: 6, run: 'r' })).toBe(false);
+        expect(await b.noteAccepted(j, 2000 + FENCE_LIFE_MS)).toBe(false);
+        expect(await b.noteAccepted(j, 2000 + FENCE_LIFE_MS + 1, { turn: 6, run: 'r' })).toBe(true);
+        expect(await b.noteAccepted(j, 2000 + FENCE_LIFE_MS + 1)).toBe(true);
+        // a fence whose moment cannot be read counts (it is never read as an old one)
+        const g = job('garbage');
+        await client.hSet(CALLED_PREFIX + g, 'fence:3|r', 'not-a-number');
+        expect(await b.noteAccepted(g, 10 ** 9, { turn: 3, run: 'r' })).toBe(false);
         // an old acceptance (before the window minus the skew) does not count
         const k = job('k');
         await b.noteAccepted(k, 100, { turn: 1 });
