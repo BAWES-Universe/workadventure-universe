@@ -190,7 +190,7 @@ export interface RunnerDeps {
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
     /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
     runId?: () => string;
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'onlyPoolBusySince'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince'>>;
     /**
      * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
      * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
@@ -594,6 +594,18 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         }
     }
 
+    /** True only when no call of the job's turn reached the relay of ANY bot server (this one's notes first, then the others'). Without the notes to tell: false. */
+    async function noCallReachedAnyRelay(jobId: string, since: Since): Promise<boolean> {
+        const refusals = deps.refusals;
+        if (!refusals) return false;
+        try {
+            if (refusals.calledAnywhereSince) return !(await refusals.calledAnywhereSince(jobId, since));
+            return refusals.calledSince ? !refusals.calledSince(jobId, since) : false;
+        } catch {
+            return false;
+        }
+    }
+
     /** A confirmed fault of ours on a turn: the machine could not get to the relay (nothing of the job's can cause that). Noted for Orbit's record and for this runner. */
     function noteNoRelay(job: RunnableJob, turn: number, run: string, why: 'prepare' | 'no_call'): void {
         deps.refusals?.record?.(job.botId, job.jobId, {
@@ -904,7 +916,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 // A turn that failed or said nothing and in which no call of the job ever reached the relay: the machine could not get to it (or never
                 // tried), and the model is ours, so no word of the job's made it fail. A confirmed fault of ours, noted before the streak is read
                 // Only for a turn this process saw from its beginning: one taken up by reconnecting (after a restart of the bot server) may have made calls before
-                if (sawItAll && readFrom !== null && deps.refusals?.calledSince && !deps.refusals.calledSince(job.jobId, readFrom)) noteNoRelay(job, turnNo, run, 'no_call');
+                // Calls land on whichever bot server the load balancer picks, so "none reached this server" is not "none reached the relay": the other servers are
+                // asked too (through the shared store), and when that cannot be told nothing is concluded
+                if (sawItAll && readFrom !== null && (await noCallReachedAnyRelay(job.jobId, readFrom))) noteNoRelay(job, turnNo, run, 'no_call');
                 bad += 1;
                 badTurns.push(turnNo);
                 // A confirmed fault of Universe's in any turn of the streak (our key refused, no route, no room, a model gone) makes the ending ours, whatever

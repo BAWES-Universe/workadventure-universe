@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createRefusalNotes, EVIDENCE_KEEP_MS, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow, type EvidenceStore } from '../server/ComputerRefusals';
+import { RedisSharedCalls, type EvidenceRedis } from '../server/ComputerEvidenceStore';
+import { createRefusalNotes, EVIDENCE_KEEP_MS, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, type CallRow, type EvidenceStore, type SharedCalls } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -970,6 +971,163 @@ describe('whether any call of a job reached the relay', () => {
         at = REFUSAL_NOTE_KEEP_MS + 5000;
         notes.called('new');
         expect(notes.calledSince('a', 0)).toBe(false);
+    });
+});
+
+
+/** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
+const sharedStore = () => {
+    const seen = new Map<string, Map<string, number>>();
+    const state = { down: false, told: [] as string[] };
+    const forServer = (id: string): SharedCalls => ({
+        noteCalled: async (jobId, at) => {
+            state.told.push(`${id}:${jobId}`);
+            const byServer = seen.get(jobId) ?? new Map<string, number>();
+            byServer.set(id, at);
+            seen.set(jobId, byServer);
+        },
+        lastCalledByOthers: async (jobId) => {
+            if (state.down) throw new Error('shared store down');
+            let latest: number | null = null;
+            for (const [server, at] of seen.get(jobId) ?? []) if (server !== id && (latest === null || at > latest)) latest = at;
+            return latest;
+        },
+    });
+    return { forServer, state };
+};
+
+describe('calls of a job that arrive at another bot server', () => {
+    const call = (callId: string) => ({ callId, kind: 'fault' as const, reason: 'relay_down' as const, source: 'universe-ai' as const, route: 'r', providerStatus: 503 as number | null });
+    const rig = () => {
+        let at = 100_000;
+        const store = sharedStore();
+        const a = createRefusalNotes(() => at, { shared: store.forServer('A') });
+        const b = createRefusalNotes(() => at, { shared: store.forServer('B') });
+        return { a, b, store, advance: (ms: number) => (at += ms) };
+    };
+
+    it('says a call arrived when the other server saw it, though this server’s own notes have none', async () => {
+        const { a, b, advance } = rig();
+        a.turn('j', 1);
+        advance(10);
+        const mark = a.mark();
+        advance(10);
+        // the machine's call lands on B (a rolling deploy, a second replica); the runner of the job is on A
+        b.called('j');
+        expect(a.calledSince('j', mark)).toBe(false);
+        expect(await a.calledAnywhereSince('j', mark)).toBe(true);
+        // the other way round the same: B's own notes say it, and A's call is not B's to hear of
+        expect(await b.calledAnywhereSince('j', b.mark())).toBe(false);
+    });
+
+    it('says none arrived only when no server saw one in the window', async () => {
+        const { a, b, advance } = rig();
+        // a call of an earlier window (more than the clocks can differ before it) is not in this one, at either server
+        b.called('j');
+        a.called('j');
+        advance(60_000);
+        const mark = a.mark();
+        expect(await a.calledAnywhereSince('j', mark)).toBe(false);
+        // another job's call is not this job's
+        b.called('other');
+        expect(await a.calledAnywhereSince('j', mark)).toBe(false);
+        advance(10);
+        b.called('j');
+        expect(await a.calledAnywhereSince('j', mark)).toBe(true);
+    });
+
+    it('lets the clocks of two servers differ a little: a call the other server saw just before this server’s turn began still counts', async () => {
+        const { a, b, advance } = rig();
+        b.called('j');
+        advance(1000);
+        expect(await a.calledAnywhereSince('j', a.mark())).toBe(true);
+        advance(60_000);
+        expect(await a.calledAnywhereSince('j', a.mark())).toBe(false);
+    });
+
+    it('does not conclude "no call" when it cannot tell: the shared store cannot be read, or the window has no moment in it', async () => {
+        const { a, store } = rig();
+        store.state.down = true;
+        expect(await a.calledAnywhereSince('j', a.mark())).toBe(true);
+        expect(await a.calledAnywhereSince('j', Date.now())).toBe(true);
+        store.state.down = false;
+        // a window given as a place in the order only (no moment) cannot be put in the other servers' time
+        expect(await a.calledAnywhereSince('j', { order: a.mark().order })).toBe(true);
+        expect(await a.calledAnywhereSince('j', a.mark())).toBe(false);
+    });
+
+    it('is what this server saw when there is no shared store', async () => {
+        const notes = createRefusalNotes(() => 1000);
+        const mark = notes.mark();
+        expect(await notes.calledAnywhereSince('j', mark)).toBe(false);
+        notes.called('j');
+        expect(await notes.calledAnywhereSince('j', mark)).toBe(true);
+    });
+
+    it('tells the other servers of a call it noted, and of none it left out as a call of a turn the runner has left', async () => {
+        const { a, store } = rig();
+        a.turn('j', 2);
+        a.called('j', { turn: 1 });
+        expect(store.state.told).toEqual([]);
+        a.called('j', { turn: 2 });
+        expect(store.state.told).toEqual(['A:j']);
+        a.record('b', 'j', call('c1'));
+        expect(store.state.told.length).toBeGreaterThan(1);
+        expect(new Set(store.state.told)).toEqual(new Set(['A:j']));
+    });
+
+    it('is not held up or broken by a shared store that fails or throws', async () => {
+        const notes = createRefusalNotes(() => 1000, {
+            shared: {
+                noteCalled: () => {
+                    throw new Error('sync');
+                },
+                lastCalledByOthers: async () => null,
+            },
+        });
+        expect(() => notes.called('j')).not.toThrow();
+        const rejecting = createRefusalNotes(() => 1000, { shared: { noteCalled: async () => Promise.reject(new Error('async')), lastCalledByOthers: async () => null } });
+        expect(() => rejecting.called('j')).not.toThrow();
+        await Promise.resolve();
+    });
+
+    describe('in Redis', () => {
+        const redis = () => {
+            const hashes = new Map<string, Record<string, string>>();
+            const ttl = new Map<string, number>();
+            const client = {
+                hSet: async (key: string, field: string, value: string) => void (hashes.set(key, { ...(hashes.get(key) ?? {}), [field]: value })),
+                expire: async (key: string, seconds: number) => void ttl.set(key, seconds),
+                hGetAll: async (key: string) => ({ ...(hashes.get(key) ?? {}) }),
+            } as unknown as EvidenceRedis;
+            return { client, hashes, ttl };
+        };
+
+        it('keeps one latest moment per server for an hour, and reads the other servers’ only', async () => {
+            const r = redis();
+            const a = new RedisSharedCalls(() => r.client, 'A');
+            const b = new RedisSharedCalls(() => r.client, 'B');
+            await a.noteCalled('j', 5000);
+            expect(await a.lastCalledByOthers('j')).toBeNull();
+            expect(await b.lastCalledByOthers('j')).toBe(5000);
+            await a.noteCalled('j', 7000);
+            await b.noteCalled('j', 6000);
+            expect(await a.lastCalledByOthers('j')).toBe(6000);
+            expect(await b.lastCalledByOthers('j')).toBe(7000);
+            expect(await b.lastCalledByOthers('other')).toBeNull();
+            expect(r.ttl.get('computer:called:j')).toBe(3600);
+            expect(Object.keys(r.hashes.get('computer:called:j') ?? {}).sort()).toEqual(['A', 'B']);
+        });
+
+        it('ignores a damaged field, and rejects when the store is not connected or does not answer', async () => {
+            const r = redis();
+            r.hashes.set('computer:called:j', { X: 'not a number', Y: '4000' });
+            expect(await new RedisSharedCalls(() => r.client, 'A').lastCalledByOthers('j')).toBe(4000);
+            await expect(new RedisSharedCalls(() => null, 'A').lastCalledByOthers('j')).rejects.toThrow();
+            await expect(new RedisSharedCalls(() => null, 'A').noteCalled('j', 1)).rejects.toThrow();
+            const silent = { hGetAll: () => new Promise(() => undefined) } as unknown as EvidenceRedis;
+            await expect(new RedisSharedCalls(() => silent, 'A', 20).lastCalledByOthers('j')).rejects.toThrow(/in time/);
+        });
     });
 });
 

@@ -6,8 +6,8 @@
  * last write. A row holds ids, a reason, a source, a route and times: nothing anyone said, no key. A damaged or foreign entry is skipped (and never
  * stops the bot server starting); an entry older than the time rows are kept is removed.
  */
-import type { CallRow, EvidenceStore } from './ComputerRefusals';
-import { EVIDENCE_KEEP_MS } from './ComputerRefusals';
+import type { CallRow, EvidenceStore, SharedCalls } from './ComputerRefusals';
+import { EVIDENCE_KEEP_MS, REFUSAL_NOTE_KEEP_MS } from './ComputerRefusals';
 
 /** The few Redis commands used (a node-redis v4 client has them all). */
 export interface EvidenceRedis {
@@ -159,5 +159,58 @@ export class RedisEvidenceStore implements EvidenceStore {
             if (botId && rows.length > 0) jobs.push({ botId, jobId, rows });
         }
         return jobs;
+    }
+}
+
+export const CALLED_PREFIX = 'computer:called:';
+
+/**
+ * Where the bot servers say to each other that a call of a job reached their relay (the runner of a job lives on one server, its machine's calls may land on
+ * another): one hash per job, `computer:called:<jobId>`, one field per bot server (its own random id) holding the latest moment (ms) it saw one. It lives an
+ * hour from the last write, as long as the runner's own notes. Holds ids and times only.
+ */
+export class RedisSharedCalls implements SharedCalls {
+    constructor(
+        private readonly redis: () => EvidenceRedis | null,
+        /** This server's id: what it wrote is not read back as another's (its own notes know exactly). */
+        private readonly instanceId: string,
+        private readonly deadlineMs = 3000
+    ) {}
+
+    private async within<T>(work: Promise<T>): Promise<T> {
+        let timer: NodeJS.Timeout | undefined;
+        const late = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Shared store did not answer in time')), this.deadlineMs);
+            timer.unref?.();
+        });
+        try {
+            return await Promise.race([work, late]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    private client(): EvidenceRedis {
+        const client = this.redis();
+        if (!client) throw new Error('Shared store is not connected');
+        return client;
+    }
+
+    async noteCalled(jobId: string, at: number): Promise<void> {
+        const client = this.client();
+        const key = CALLED_PREFIX + jobId;
+        await this.within(client.hSet(key, this.instanceId, String(at)));
+        await this.within(client.expire(key, Math.round(REFUSAL_NOTE_KEEP_MS / 1000)));
+    }
+
+    async lastCalledByOthers(jobId: string): Promise<number | null> {
+        const all = await this.within(this.client().hGetAll(CALLED_PREFIX + jobId));
+        let latest: number | null = null;
+        for (const [instance, value] of Object.entries(all)) {
+            if (instance === this.instanceId) continue;
+            const at = Number(value);
+            if (Number.isFinite(at) && (latest === null || at > latest)) latest = at;
+        }
+        return latest;
     }
 }

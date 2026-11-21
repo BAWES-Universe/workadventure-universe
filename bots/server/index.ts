@@ -12,6 +12,7 @@
 import "./instrument";
 import { installAxiosErrorRedaction } from "./redactAxiosErrors";
 
+import { randomUUID } from 'crypto';
 import { BotManager } from './BotManager';
 import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
@@ -35,7 +36,7 @@ import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
 import { createRefusalNotes } from './ComputerRefusals';
-import { RedisEvidenceStore } from './ComputerEvidenceStore';
+import { RedisEvidenceStore, RedisSharedCalls } from './ComputerEvidenceStore';
 import { createComputerRunner, probeRelay, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
@@ -98,6 +99,9 @@ const aiService = botManager.getAIService();
 const computerRefusals = createRefusalNotes(Date.now, {
     sink: (botId, jobId, rows) => adminApiService.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
     store: new RedisEvidenceStore(() => botRegistry.evidenceClient()),
+    // A machine's calls reach whichever bot server the load balancer picks (a rolling deploy runs two for a while), the runner of its job lives on one:
+    // the servers tell each other where a call arrived, so a runner never concludes "no call reached the relay" from its own notes alone
+    shared: new RedisSharedCalls(() => botRegistry.evidenceClient(), randomUUID()),
     // Told once: a row the shared store could not keep (it is still in memory and still sent), a row Orbit has not taken for an hour, and a row Orbit
     // refused alone (dropped: sending it again cannot change the answer). Ids only.
     report: (what, info) =>

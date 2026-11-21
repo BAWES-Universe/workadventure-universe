@@ -21,7 +21,7 @@ import {
     type TurnOpened,
 } from '../server/ComputerRunner';
 import { readRunnerEvents, runnerEventOf, streamLimits } from '../server/ComputerTurnStream';
-import { createRefusalNotes, type CallRow } from '../server/ComputerRefusals';
+import { createRefusalNotes, type CallRow, type SharedCalls } from '../server/ComputerRefusals';
 
 const JOB: RunnableJob = { jobId: 'job-1', botId: 'brick-1', title: 'Visa form', brief: 'Two people, Kuwait', writes: true, hasTurn: false };
 const RELAY = 'https://bot-server.example.test';
@@ -1514,11 +1514,12 @@ describe('which turns of a failed streak are named, and whose the ending is, fro
 describe('a machine that cannot reach our own model service', () => {
     const WHY = RELAY_UNREACHABLE_WHY;
     /** A runner with real notes whose rows are caught on their way to Orbit. */
-    const rig = (scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, options: { probe?: (relay: string) => Promise<RelayProbeResult> } = {}) => {
+    const rig = (scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, options: { probe?: (relay: string) => Promise<RelayProbeResult>; shared?: SharedCalls } = {}) => {
         let t = 0;
         const clock = () => ++t;
         const rows: CallRow[] = [];
         const notes = createRefusalNotes(clock, {
+            ...(options.shared ? { shared: options.shared } : {}),
             sink: async (_botId, _jobId, sent) => {
                 rows.push(...sent);
                 return true;
@@ -1527,7 +1528,7 @@ describe('a machine that cannot reach our own model service', () => {
         const fake = fakeOrbit(scripts);
         const runner = createComputerRunner({ orbit: fake.orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, runId: () => 'run1', ...(options.probe ? { relayProbe: options.probe } : {}), timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
         fake.orbit.running = async () => [JOB];
-        return { ...fake, notes, rows, run: async () => { await runner.tick(); await runner.idle(); } };
+        return { ...fake, notes, rows, clock, run: async () => { await runner.tick(); await runner.idle(); } };
     };
     const unreachable = () => ({ ok: false as const, reason: 'relay_unreachable' });
 
@@ -1695,6 +1696,67 @@ describe('a machine that cannot reach our own model service', () => {
         await run();
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
         expect(rows).toEqual([]);
+    });
+
+
+/** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
+    const sharedStore = () => {
+        const seen = new Map<string, Map<string, number>>();
+        const state = { down: false, told: [] as string[] };
+        const forServer = (id: string): SharedCalls => ({
+            noteCalled: async (jobId, at) => {
+                state.told.push(`${id}:${jobId}`);
+                const byServer = seen.get(jobId) ?? new Map<string, number>();
+                byServer.set(id, at);
+                seen.set(jobId, byServer);
+            },
+            lastCalledByOthers: async (jobId) => {
+                if (state.down) throw new Error('shared store down');
+                let latest: number | null = null;
+                for (const [server, at] of seen.get(jobId) ?? []) if (server !== id && (latest === null || at > latest)) latest = at;
+                return latest;
+            },
+        });
+        return { forServer, state };
+    };
+
+    describe('two bot servers: the runner of the job is on one, the machine’s calls arrive at the other', () => {
+        const silent = () => done('');
+
+        it('writes no fault, and does not make the ending ours, when the other server saw the calls of every turn', async () => {
+            const store = sharedStore();
+            let other!: ReturnType<typeof createRefusalNotes>;
+            const { seen, rows, clock, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (other.called(JOB.jobId), silent())),
+                { shared: store.forServer('A') }
+            );
+            other = createRefusalNotes(clock, { shared: store.forServer('B') });
+            await run();
+            // silent turns after calls are the agent's, as on one server; no_call is not written, so the streak is not ours
+            expect(rows).toEqual([]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('still writes the fault of ours when no server saw a call: the shared notes make it surer, not blind', async () => {
+            const store = sharedStore();
+            const { seen, rows, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => silent), { shared: store.forServer('A') });
+            await run();
+            expect(rows.map((row) => [row.turn, row.kind, row.reason])).toEqual([
+                [1, 'fault', 'relay_down'],
+                [2, 'fault', 'relay_down'],
+                [3, 'fault', 'relay_down'],
+            ]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        });
+
+        it('writes no fault when the shared store cannot be read: a call may have arrived elsewhere, and nothing is concluded', async () => {
+            const store = sharedStore();
+            store.state.down = true;
+            const { seen, rows, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => silent), { shared: store.forServer('A') });
+            await run();
+            expect(rows).toEqual([]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
     });
 
     it('leaves a turn alone when a call did reach the relay: a silent turn after a call is still the agent’s, and nothing is noted', async () => {

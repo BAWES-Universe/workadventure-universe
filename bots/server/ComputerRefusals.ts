@@ -90,7 +90,22 @@ export type CallInput = Omit<CallRow, 'turn' | 'run' | 'at' | 'kind'> & {
  * Where a turn's window begins: a point in the order of events (from `mark`), or a moment in ms. A point in the order tells events of one millisecond apart,
  * which a moment cannot: what was noted before the mark is not in the window, whatever the clock said.
  */
-export type Since = number | { order: number };
+export type Since = number | { order: number; at?: number };
+
+/**
+ * What the bot servers share about where a job's model calls arrive. A machine's calls (/v1/*) reach whichever bot server the load balancer picks (a
+ * rolling deploy keeps the old one up while the new one takes traffic), while the runner of the job lives on one of them: its own notes know only the calls
+ * that arrived at it.
+ */
+export interface SharedCalls {
+    /** This server saw a call of the job reach the relay, at this moment (ms). Fire and forget: never held up for it. */
+    noteCalled(jobId: string, at: number): Promise<void>;
+    /** The latest moment (ms) another bot server saw a call of the job reach its relay, or null for none. Rejects when the shared store cannot be read. */
+    lastCalledByOthers(jobId: string): Promise<number | null>;
+}
+
+/** The bot servers' clocks can differ a little: a call of another server counts for a turn that began up to this long after it. */
+export const SHARED_CALL_SKEW_MS = 2000;
 
 export interface RefusalNotes {
     /** The runner says which turn of this job it is on (and in which run of the runner), so the rows of the calls made in it carry both. */
@@ -122,7 +137,7 @@ export interface RefusalNotes {
      */
     resume(): Promise<boolean>;
     /** The point in the order of events from which a turn's window starts: what is noted after this call, and only that, is in the window. */
-    mark(): { order: number };
+    mark(): { order: number; at: number };
     /** Whether a confirmed Universe fault (kind `fault`) was recorded for this job since this point (or at or after this moment, ms). */
     confirmedSince(jobId: string, since: Since): boolean;
     /** The relay refused a call of this job for the person's allowance or a rule of theirs, or the person's own provider failed it. */
@@ -137,8 +152,14 @@ export interface RefusalNotes {
     endedOnFault(jobId: string, since: Since): boolean;
     /** A call of this job REACHED the relay (its key was known to Orbit): whatever became of the call, the machine can reach the relay. */
     called(jobId: string, at?: CallTurn): void;
-    /** Whether any call of this job reached the relay since this point (or at or after this moment, ms). */
+    /** Whether any call of this job reached the relay since this point (or at or after this moment, ms), as THIS server saw it. */
     calledSince(jobId: string, since: Since): boolean;
+    /**
+     * Whether any call of this job reached any bot server's relay since this point: this server's own notes, and the other servers' through the shared
+     * store. True when it cannot be told (the store cannot be read, or the point has no moment): a missing note must never become a confirmed fault of
+     * ours. Without a shared store it is `calledSince`.
+     */
+    calledAnywhereSince(jobId: string, since: Since): Promise<boolean>;
     /** A call of this job got past Orbit's room check (the shared pool had room for it): it was taken up, whatever became of it after. */
     accepted(jobId: string, at?: CallTurn): void;
     /** Whether any call of this job was taken up since this point (or at or after this moment, ms): `0` asks whether one ever was. */
@@ -173,6 +194,8 @@ export interface RefusalOptions {
     flushBudgetMs?: number;
     /** Where rows are kept until Orbit takes them, so they survive a restart. Without one they are kept in memory only. */
     store?: EvidenceStore;
+    /** Where the bot servers say to each other that a call of a job arrived, so a runner can tell "no call reached the relay" from "none reached this server". */
+    shared?: SharedCalls;
     /** With a store: how long to wait between tries once the later ones are used up (rows are kept `EVIDENCE_KEEP_MS` in all). */
     storeLaterMs?: number;
     /**
@@ -312,6 +335,14 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         if (confirmed) seen.confirmed = { at: now(), order: count };
         // A call that ended in any way reached the relay
         if (kind !== 'called') seen.called = { at: now(), order: count };
+        // The other bot servers are told (a call of a turn the runner here has left is not noted by anything above, so it is not told either)
+        if (options.shared) {
+            try {
+                options.shared.noteCalled(jobId, now()).catch(() => undefined);
+            } catch {
+                /* telling the other servers never holds a call */
+            }
+        }
         // An answer was a call Orbit found room for
         if (kind === 'answered') seen.accepted = { at: now(), order: count };
         calls.set(jobId, seen);
@@ -521,7 +552,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             }
             return true;
         },
-        mark: () => ({ order: count }),
+        mark: () => ({ order: count, at: now() }),
         confirmedSince(jobId, since) {
             const seen = calls.get(jobId);
             if (seen?.confirmed === undefined || !within(seen.confirmed, since)) return false;
@@ -546,6 +577,20 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         calledSince(jobId, since) {
             const seen = calls.get(jobId)?.called;
             return seen !== undefined && within(seen, since);
+        },
+        async calledAnywhereSince(jobId, since) {
+            const seen = calls.get(jobId)?.called;
+            if (seen !== undefined && within(seen, since)) return true;
+            if (!options.shared) return false;
+            const from = typeof since === 'number' ? since : since.at;
+            // A window with no moment in it cannot be placed in the other servers' time: it is not said that no call arrived
+            if (from === undefined) return true;
+            try {
+                const other = await options.shared.lastCalledByOthers(jobId);
+                return other !== null && other >= from - SHARED_CALL_SKEW_MS;
+            } catch {
+                return true;
+            }
         },
         accepted(jobId, at) {
             // Taken up in the turn that made the call: one taken up after the runner moved on belongs to the turn it began in, not to the one that is going now
