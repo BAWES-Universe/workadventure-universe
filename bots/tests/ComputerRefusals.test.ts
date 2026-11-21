@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { CLOSE_TURN, FENCE_LIFE_MS, KEEP_LATER, NOTE_ACCEPTED_UNLESS_CLOSED, RETRACT_FENCE, RedisSharedCalls, SET_AND_RENEW, type EvidenceRedis } from '../server/ComputerEvidenceStore';
-import { createRefusalNotes, DEAD_LETTER_AGED_MS, DEAD_LETTER_KEEP_MS, EVIDENCE_AGED_MS, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, SHARED_TURN_LEASE_MS, SHARED_TURN_RENEW_MS, type CallRow, type FaultReportKind, type EvidenceStore, type SharedCalls, type SharedTurn, type SharedTurnList, type CallTurn, type CloseAttempt } from '../server/ComputerRefusals';
+import { createRefusalNotes, DEAD_LETTER_AGED_MS, DEAD_LETTER_KEEP_MS, EVIDENCE_AGED_EVERY_MS, EVIDENCE_AGED_MS, startAgedEvidence, EVIDENCE_KEEP_MS, FAULT_EVIDENCE_MESSAGES, EVIDENCE_UNACKED_MS, FAULT_ROWS_PER_CALL, REFUSAL_NOTE_KEEP_MS, ORBIT_TAKING_ROWS_MS, SHARED_WRITE_BOUND_MS, SHARED_CALL_SKEW_MS, SHARED_TURN_LEASE_MS, SHARED_TURN_RENEW_MS, type CallRow, type FaultReportKind, type SinkAnswer, type EvidenceStore, type SharedCalls, type SharedTurn, type SharedTurnList, type CallTurn, type CloseAttempt } from '../server/ComputerRefusals';
 
 describe('what the relay refused for a person’s allowance or rules', () => {
     it('answers for a job only from the moment asked, and for no other job', () => {
@@ -1093,6 +1095,68 @@ describe('the evidence kept before the money decision is final, and delivered af
             await expect(notes.tellAged()).resolves.toBe(true);
         });
 
+        describe('the hourly look (startAgedEvidence)', () => {
+            const stub = (over: () => Promise<boolean> = async () => true) => ({ tellAged: vi.fn(over) });
+
+            it('looks now, then once an hour, and never more often', async () => {
+                vi.useFakeTimers();
+                try {
+                    expect(EVIDENCE_AGED_EVERY_MS).toBe(60 * 60 * 1000);
+                    const notes = stub();
+                    const timer = startAgedEvidence(notes);
+                    expect(notes.tellAged).toHaveBeenCalledTimes(1);
+                    await vi.advanceTimersByTimeAsync(EVIDENCE_AGED_EVERY_MS - 1);
+                    expect(notes.tellAged).toHaveBeenCalledTimes(1);
+                    await vi.advanceTimersByTimeAsync(1);
+                    expect(notes.tellAged).toHaveBeenCalledTimes(2);
+                    await vi.advanceTimersByTimeAsync(3 * EVIDENCE_AGED_EVERY_MS);
+                    expect(notes.tellAged).toHaveBeenCalledTimes(5);
+                    clearInterval(timer);
+                    await vi.advanceTimersByTimeAsync(EVIDENCE_AGED_EVERY_MS);
+                    expect(notes.tellAged).toHaveBeenCalledTimes(5);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            it('goes on after a look that failed, throwing or rejecting, and does not hold the process open', async () => {
+                const unhandled: unknown[] = [];
+                const seen = (reason: unknown) => void unhandled.push(reason);
+                process.on('unhandledRejection', seen);
+                vi.useFakeTimers();
+                try {
+                    let n = 0;
+                    // a plain function, not a mock: a mock keeps the promise it returned and so counts a rejection as seen
+                    const notes = {
+                        tellAged: () => {
+                            n += 1;
+                            if (n === 1) throw new Error('sync');
+                            if (n === 2) return Promise.reject(new Error('async'));
+                            return Promise.resolve(true);
+                        },
+                    };
+                    const timer = startAgedEvidence(notes, 1000);
+                    await vi.advanceTimersByTimeAsync(3000);
+                    expect(n).toBe(4);
+                    expect(timer.hasRef()).toBe(false);
+                    clearInterval(timer);
+                } finally {
+                    vi.useRealTimers();
+                }
+                // the rejected look was handled: nothing is left unhandled for the process to see
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                expect(unhandled).toEqual([]);
+                process.off('unhandledRejection', seen);
+            });
+
+            it('is started by the server at start-up with its own refusal notes (the server cannot be started in a test, so its source is read: an empty timer would silently never tell)', () => {
+                const source = readFileSync(join(__dirname, '..', 'server', 'index.ts'), 'utf8');
+                expect(source).toMatch(/import \{[^}]*\bstartAgedEvidence\b[^}]*\} from '\.\/ComputerRefusals';/);
+                expect(source).toMatch(/^\s*startAgedEvidence\(computerRefusals\);$/m);
+                expect(source).not.toMatch(/setInterval\([^)]*tellAged/);
+            });
+        });
+
         it('says in words what it is and what to do, and carries ids only', () => {
             expect(FAULT_EVIDENCE_MESSAGES.pending_aging).toMatch(/6 days/);
             expect(FAULT_EVIDENCE_MESSAGES.pending_aging).toMatch(/dropped at 7/);
@@ -1157,6 +1221,102 @@ describe('the evidence kept before the money decision is final, and delivered af
             expect(await notes.flush('job')).toBe(true);
             expect(o.calls.length).toBe(before);
             expect(told).toHaveLength(1);
+        });
+
+        describe('an Orbit that reads each row on its own and names the rows it could not read (rejected: [{ callId }]): exactly those rows are refused alone', () => {
+            /** A sink that takes the batch and names the rows in `bad`. */
+            const naming = (bad: Set<string>) => {
+                const calls: string[][] = [];
+                const taken: string[] = [];
+                // The first row goes at once on its own: every answer is held until `open()`, so the rows recorded meanwhile are sent together in one batch
+                let open!: () => void;
+                const gate = new Promise<void>((resolve) => (open = resolve));
+                const sink = async (_botId: string, _jobId: string, rows: CallRow[]): Promise<SinkAnswer> => {
+                    await gate;
+                    calls.push(rows.map((row) => row.callId));
+                    const named = rows.filter((row) => bad.has(row.callId)).map((row) => row.callId);
+                    taken.push(...rows.filter((row) => !bad.has(row.callId)).map((row) => row.callId));
+                    return named.length > 0 ? { rejected: named } : true;
+                };
+                return { sink, calls, taken, open };
+            };
+
+            it('moves exactly the named rows to the dead letters (same 30-day keep, told once with its ids) and takes the rest of the batch as delivered, in ONE call (no splitting)', async () => {
+                const mem = memoryStore();
+                const o = naming(new Set(['bad1', 'bad2']));
+                const told: Array<[string, { jobId: string; callId: string }]> = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what, info) => told.push([what, info]) });
+                for (const id of ['a', 'bad1', 'b', 'bad2', 'c']) notes.record('bot', 'job', call(id));
+                await vi.waitFor(() => expect(mem.held.size).toBe(5));
+                o.open();
+                expect(await notes.flush('job')).toBe(true);
+                expect(o.calls.filter((ids) => ids.length > 1)).toHaveLength(1);
+                expect(o.taken.sort()).toEqual(['a', 'b', 'c']);
+                expect(told.filter(([what]) => what === 'dead_letter').map(([, info]) => info.callId).sort()).toEqual(['bad1', 'bad2']);
+                await vi.waitFor(() => expect(mem.held.size).toBe(0));
+                expect([...mem.dead.keys()].sort()).toEqual(['job|bad1', 'job|bad2']);
+                // the rows that were named are the rows as they were made, under their own ids
+                expect(mem.dead.get('job|bad1')?.row).toMatchObject({ callId: 'bad1', kind: 'fault' });
+                // not sent again, not told again
+                const before = o.calls.length;
+                expect(await notes.flush('job')).toBe(true);
+                expect(o.calls.length).toBe(before);
+                expect(told.filter(([what]) => what === 'dead_letter')).toHaveLength(2);
+                // and they can be replayed under the same ids once Orbit reads them
+                const replay = naming(new Set());
+                replay.open();
+                const again = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: replay.sink });
+                expect(await again.replayDeadLetters()).toBe(2);
+                await again.flush('job');
+                expect(replay.taken.sort()).toEqual(['bad1', 'bad2']);
+                await vi.waitFor(() => expect(mem.dead.size).toBe(0));
+            });
+
+            it('names ids that are not in the batch: they refuse nothing; and a batch that names every row has taken none, so it is the same as Orbit being away (kept, sent again, told once)', async () => {
+                const first = naming(new Set(['ghost']));
+                first.open();
+                const ids = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: async (b, j, rows) => (await first.sink(b, j, rows)) && { rejected: ['ghost', 'not-sent'] } });
+                ids.record('bot', 'job', call('a'));
+                expect(await ids.flush('job')).toBe(true);
+                expect(first.taken).toEqual(['a']);
+
+                const told: string[] = [];
+                const all = naming(new Set(['x', 'y']));
+                all.open();
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: all.sink, report: (what) => told.push(what) });
+                notes.record('bot', 'other', call('x'));
+                notes.record('bot', 'other', call('y'));
+                expect(await notes.flush('other')).toBe(false);
+                expect(told).toEqual(['all_refused']);
+                expect(all.taken).toEqual([]);
+            });
+
+            it('a row put back from the dead letters that Orbit now takes leaves them, while one it names again stays there without a second alert', async () => {
+                const mem = memoryStore();
+                const told: string[] = [];
+                const o = naming(new Set(['d2']));
+                o.open();
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                mem.dead.set('job|d1', { botId: 'bot', jobId: 'job', row: call('d1') as CallRow });
+                mem.dead.set('job|d2', { botId: 'bot', jobId: 'job', row: call('d2') as CallRow });
+                expect(await notes.replayDeadLetters()).toBe(2);
+                await notes.flush('job');
+                expect(o.taken).toEqual(['d1']);
+                await vi.waitFor(() => expect([...mem.dead.keys()]).toEqual(['job|d2']));
+                expect(told).toEqual([]);
+            });
+
+            it('a row taken in the same pass as a named one does not leave Orbit "away": the named row is set aside as a dead letter even when it is alone in a later batch', async () => {
+                const o = naming(new Set(['bad']));
+                o.open();
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: o.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                notes.record('bot', 'job', call('ok'));
+                expect(await notes.flush('job')).toBe(true);
+                notes.record('bot', 'job', call('bad'));
+                expect(await notes.flush('job')).toBe(true);
+                expect(told).toEqual(['dead_letter bad']);
+            });
         });
 
         it('lets the rows that came after a bad one through when there are more rows than one batch holds', async () => {

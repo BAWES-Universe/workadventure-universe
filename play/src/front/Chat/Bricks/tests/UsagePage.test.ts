@@ -820,6 +820,43 @@ describe("the Usage page (#1999)", () => {
                 expect(receiptText()).toContain("Given back $0.03");
                 expect(receiptText()).not.toContain("Nothing taken");
                 expect(receiptText()).not.toContain("Refunded");
+                // nothing was owed: no "Paid by" line under it (Orbit says $0)
+                expect(receiptText()).not.toContain("Paid by");
+                expect(byId("usageReceipt")?.querySelector(".paid:not([data-testid])")).toBeNull();
+            });
+
+            it("keeps the Paid by line when something was owed (a partly done task that charged)", async () => {
+                game.getMyUsage.mockResolvedValue(live({}, { activity: [{ ...receipt(), spentMicros: 9_000, actions: [{ ...delivered, amountMicros: 9_000 }] }] }));
+                await open();
+                row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+                expect(receiptText()).toContain("Paid by you");
+            });
+
+            it("keeps the Paid by line for a task that is simply done at $0 (only a partly done task with nothing owed hides it)", async () => {
+                game.getMyUsage.mockResolvedValue(live({}, { activity: [{ ...receipt(), outcome: "done", outcomeText: undefined, outcomeNote: undefined, actions: [] }] }));
+                await open();
+                row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+                expect(receiptText()).toContain("Paid by you");
+            });
+
+            it("keeps the Paid by line for a partly done task whose total Orbit did not send (only a total of exactly $0 hides it)", async () => {
+                game.getMyUsage.mockResolvedValue(live({}, { activity: [{ ...receipt(), spentMicros: null }] }));
+                await open();
+                row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+                expect(receiptText()).toContain("Paid by you");
+            });
+
+            it("says nothing about who paid on the collapsed row either when nothing was paid by anyone else (a sponsor or Universe paying a $0 partial)", async () => {
+                for (const payer of ["universe", "sponsor"]) {
+                    game.getMyUsage.mockResolvedValue(live({}, { activity: [{ ...receipt(), payer, payerName: payer === "sponsor" ? "Dana" : undefined }] }));
+                    await open();
+                    const hint = row()?.querySelector(".m")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+                    expect(hint, payer).toMatch(/Partly done/);
+                    expect(hint, payer).not.toMatch(/Paid by/);
+                }
             });
         });
 

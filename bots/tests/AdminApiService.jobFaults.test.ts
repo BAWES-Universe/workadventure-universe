@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
 import { AdminApiService } from '../server/AdminApiService';
@@ -48,6 +48,82 @@ describe('the fault record Orbit keeps of a computer job’s model calls', () =>
         expect(seen.url).toBe('/api/bots/bot%201/computer-jobs/job%2F1/faults');
         expect(seen.authorization).toBe('Bearer bot-token');
         expect(seen.body).toEqual({ faults: [row] });
+    });
+
+    describe('an Orbit that reads each row on its own and names the rows it could not read', () => {
+        const rows = [row, { ...row, callId: 'call-2' }, { ...row, callId: 'call-3' }];
+
+        it('answers the named call ids, only those that were sent, once, and takes the rest as delivered', async () => {
+            answer = { status: 200, body: { ok: true, stored: 1, rejected: [{ callId: 'call-2', why: 'bad reason' }, { callId: 'call-2', why: 'again' }, { callId: 'not-sent', why: 'x' }] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-2'] });
+        });
+
+        it('is true when the list is empty or absent, and false when Orbit did not say ok', async () => {
+            answer = { status: 200, body: { ok: true, rejected: [] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe(true);
+            answer = { status: 200, body: { ok: true } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe(true);
+            answer = { status: 200, body: { rejected: [{ callId: 'call-2' }] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe(false);
+        });
+
+        it('dead-letters nothing extra and says so, with the count only, when Orbit gives a count or entries with no usable call id (an older Orbit)', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            for (const rejected of [2, [{ why: 'x' }, {}], [null, 7, { callId: 5 }], [{ callId: '' }]]) {
+                warn.mockClear();
+                answer = { status: 200, body: { ok: true, rejected } };
+                expect(await service.computerJobFaults('b', 'j', rows), JSON.stringify(rejected)).toBe(true);
+                expect(warn).toHaveBeenCalledTimes(1);
+                expect(String(warn.mock.calls[0][0])).toMatch(/could not read \d+ fault row/);
+                expect(String(warn.mock.calls[0][0])).not.toContain('call-');
+            }
+            // some named, some not: the named are refused alone, the rest said
+            warn.mockClear();
+            answer = { status: 200, body: { ok: true, rejected: [{ callId: 'call-3' }, { why: 'x' }] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-3'] });
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(String(warn.mock.calls[0][0])).toMatch(/could not read 1 fault row/);
+            // a count of zero, or nothing, says nothing
+            warn.mockClear();
+            answer = { status: 200, body: { ok: true, rejected: 0 } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe(true);
+            expect(warn).not.toHaveBeenCalled();
+            warn.mockRestore();
+        });
+    });
+
+    describe('rejectedCount and a 400 that names the rows', () => {
+        const rows = [row, { ...row, callId: 'call-2' }];
+
+        it('counts rows it names and rows it only counts (rejectedCount): the named are refused alone, the rest is said once with the count', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            answer = { status: 200, body: { ok: true, rejected: [{ callId: 'call-2', why: 'x' }], rejectedCount: 3 } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-2'] });
+            expect(String(warn.mock.calls.at(-1)?.[0])).toMatch(/could not read 2 fault row/);
+            warn.mockClear();
+            answer = { status: 200, body: { ok: true, rejectedCount: 1 } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe(true);
+            expect(String(warn.mock.calls.at(-1)?.[0])).toMatch(/could not read 1 fault row/);
+            warn.mockClear();
+            answer = { status: 200, body: { ok: true, rejected: [{ callId: 'call-2' }], rejectedCount: 1 } };
+            await service.computerJobFaults('b', 'j', rows);
+            expect(warn).not.toHaveBeenCalled();
+            warn.mockRestore();
+        });
+
+        it('takes a 400 that names every row of the batch as those rows refused alone (nothing to split), and any other 400 as before: split the batch', async () => {
+            answer = { status: 400, body: { error: 'Invalid request', rejected: [{ callId: 'call-1', why: 'a' }, { callId: 'call-2', why: 'b' }], rejectedCount: 2 } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-1', 'call-2'] });
+            answer = { status: 400, body: { error: 'Invalid request', rejected: [{ callId: 'call-1' }] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe('rejected');
+            answer = { status: 400, body: { error: 'Invalid request', rejected: [{ callId: 'elsewhere' }, { callId: 'else' }] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe('rejected');
+            answer = { status: 400, body: { error: 'Invalid request' } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe('rejected');
+            // a bare 400 (a gateway) says nothing of the rows, with a list or without
+            answer = { status: 400, body: { rejected: [{ callId: 'call-1' }, { callId: 'call-2' }] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe(false);
+        });
     });
 
     it('is "missing", not true, when Orbit answers that it has no such job: there is nothing to keep the rows for, but Orbit read none of them', async () => {

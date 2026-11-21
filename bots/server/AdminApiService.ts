@@ -705,6 +705,23 @@ export type BotAiCredentialsAnswer =
 /** How long keepItemDelivered waits before trying a call again that failed for a reason that is not a refusal (so it tries three times) */
 const KEEP_DELIVERED_RETRY_MS = [300, 900] as const;
 
+/**
+ * The rows an Orbit that reads each row on its own says it could not read: `rejected: [{ callId, why }]` (and `rejectedCount`). `named` are the call ids that were really
+ * sent (each once); `unnamed` is how many Orbit counts that it does not name (an older Orbit sends a count, or entries with no call id).
+ */
+function rejectedRowsOf(data: unknown, faults: Array<Record<string, unknown>>): { named: string[]; unnamed: number } {
+    const body = (typeof data === 'object' && data !== null ? data : {}) as { rejected?: unknown; rejectedCount?: unknown };
+    const list = Array.isArray(body.rejected) ? body.rejected : [];
+    const sent = new Set(faults.map((fault) => fault.callId));
+    const ids = new Set<string>();
+    for (const one of list) {
+        const id = typeof one === 'object' && one !== null ? (one as { callId?: unknown }).callId : undefined;
+        if (typeof id === 'string' && id !== '' && sent.has(id)) ids.add(id);
+    }
+    const counted = Math.max(list.length, typeof body.rejected === 'number' ? body.rejected : 0, typeof body.rejectedCount === 'number' ? body.rejectedCount : 0);
+    return { named: [...ids], unnamed: Math.max(0, counted - ids.size) };
+}
+
 export class AdminApiService {
     private adminApiUrl: string;
     // Cache for room metadata (room URL -> metadata, cached for 5 minutes)
@@ -1885,16 +1902,26 @@ export class AdminApiService {
      * so they are still there once Orbit is upgraded. `'rejected'` when Orbit answered with its own 400 ("Invalid request": one row it cannot read
      * rejects the whole batch, and the same rows are refused every time): the caller splits the batch to find the row.
      */
-    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected' | 'missing'> {
+    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected' | 'missing' | { rejected: string[] }> {
         try {
-            const response = await this.brickCall<{ ok?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
+            const response = await this.brickCall<{ ok?: unknown; rejected?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
             // Only Orbit's own positive answer (200 with `ok: true`) says it took the rows: a 200 from something on the way, or a body without it, does not
-            return response.status === 200 && response.data?.ok === true;
+            if (!(response.status === 200 && response.data?.ok === true)) return false;
+            // An Orbit that reads each row on its own keeps the readable rows and names the ones it could not read (`rejected: [{ callId, why }]`): exactly those are refused
+            // alone. A `rejected` it does not name the rows of (a count, or entries without a call id: an older Orbit) refuses nothing extra here, but is said, with the count only
+            const { named, unnamed } = rejectedRowsOf(response.data, faults);
+            if (unnamed > 0) console.warn(`[AdminApiService] Orbit says it could not read ${unnamed} fault row(s) of a batch and does not say which: they are treated as delivered`);
+            return named.length > 0 ? { rejected: named } : true;
         } catch (error) {
             // Only Orbit's own answer for an unknown job is final; a missing route answers 404 or 405 with something else
             if (axios.isAxiosError(error) && error.response?.status === 404 && (error.response.data as { error?: unknown } | undefined)?.error === 'Job not found') return 'missing';
             // Likewise only Orbit's own words for a refused body: a bare 400 (a proxy, a gateway) says nothing of the rows and is tried again
-            if (axios.isAxiosError(error) && error.response?.status === 400 && (error.response.data as { error?: unknown } | undefined)?.error === 'Invalid request') return 'rejected';
+            if (axios.isAxiosError(error) && error.response?.status === 400 && (error.response.data as { error?: unknown } | undefined)?.error === 'Invalid request') {
+                // Orbit that names the rows it could not read says so here too (nothing could be kept): when it names EVERY row of the batch there is nothing to split for
+                const { named } = rejectedRowsOf(error.response.data, faults);
+                const sent = new Set(faults.map((fault) => fault.callId));
+                return named.length > 0 && named.length === sent.size ? { rejected: named } : 'rejected';
+            }
             return false;
         }
     }

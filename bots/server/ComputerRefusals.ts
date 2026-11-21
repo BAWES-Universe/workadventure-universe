@@ -368,7 +368,7 @@ export interface RefusalOptions {
      * Orbit says it has no such job (its own "Job not found"): there is nothing to keep the rows for, so they are removed, but it is NOT proof that Orbit
      * accepts evidence (it did not read the rows), so it never counts as Orbit taking rows.
      */
-    sink?: (botId: string, jobId: string, rows: CallRow[]) => Promise<boolean | 'rejected' | 'missing'>;
+    sink?: (botId: string, jobId: string, rows: CallRow[]) => Promise<SinkAnswer>;
     /** How long to wait before each new try to send rows. */
     retryMs?: number[];
     /** How long to wait, after those tries all failed, before each later try in the background (rows are kept an hour in all). */
@@ -399,6 +399,13 @@ export interface RefusalOptions {
     report?: (what: FaultReportKind, info: { jobId: string; callId: string }) => void;
 }
 
+/**
+ * What the sink answers for a batch: true (Orbit took every row), false (not reached: try again), `'rejected'` (a 400: one row cannot be read, split the batch), `'missing'`
+ * (no such job), or, from an Orbit that reads each row on its own, the ids of the rows it kept OUT of the batch it took (`rejected`): the rest was taken, and exactly
+ * those rows go the way of a row refused alone (the dead letters, kept 30 days, told once).
+ */
+export type SinkAnswer = boolean | 'rejected' | 'missing' | { rejected: string[] };
+
 /** Everything `report` can tell. */
 export type FaultReportKind = 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded' | 'pending_aging' | 'dead_aging';
 
@@ -427,6 +434,8 @@ export const EVIDENCE_UNACKED_MS = 60 * 60 * 1000;
 export const EVIDENCE_AGED_MS = 6 * 24 * 60 * 60 * 1000;
 /** A dead letter this old is told to the operators, a day before the 30 days it is kept run out: 29 days. */
 export const DEAD_LETTER_AGED_MS = 29 * 24 * 60 * 60 * 1000;
+/** How often rows close to the end of the time they are kept are looked for: hourly, so no row slips past its day. */
+export const EVIDENCE_AGED_EVERY_MS = 60 * 60 * 1000;
 const DEFAULT_STORE_LATER_MS = 5 * 60 * 1000;
 
 /** The most rows Orbit takes in one call. */
@@ -620,7 +629,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
      * a batch for one bad row), the batch is split in halves so the good rows get through.
      */
     const deliver = async (entry: Queue, jobId: string, batch: CallRow[], sink: NonNullable<RefusalOptions['sink']>, pass: { suspects: Set<CallRow> }): Promise<boolean> => {
-        let answer: boolean | 'rejected' | 'missing' = false;
+        let answer: SinkAnswer = false;
         try {
             answer = await sink(entry.botId, jobId, batch);
         } catch {
@@ -638,6 +647,20 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             allRefusedTold = false;
             settle(entry, jobId, batch);
             leaveDead(entry, jobId, batch);
+            return true;
+        }
+        if (typeof answer === 'object') {
+            // Orbit read each row on its own: the named rows are refused alone (the batch is not split, they are known), the others were taken
+            const named = new Set(answer.rejected);
+            const refused = batch.filter((row) => named.has(row.callId));
+            const taken = batch.filter((row) => !named.has(row.callId));
+            if (taken.length > 0) {
+                orbitTookAt = now();
+                allRefusedTold = false;
+                settle(entry, jobId, taken);
+                leaveDead(entry, jobId, taken);
+            }
+            for (const row of refused) pass.suspects.add(row);
             return true;
         }
         if (answer !== 'rejected') return false;
@@ -1424,4 +1447,22 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             return !seen.answered || seen.answered.order < seen.fault.order;
         },
     };
+}
+
+/**
+ * Starts the look for rows close to the end of the time they are kept: now (the shared store may not be up yet: the next look is an hour on) and then every
+ * `EVIDENCE_AGED_EVERY_MS`. Never throws into the timer, and never holds the process open. Called once by the server at start-up (`server/index.ts`, which a test reads).
+ */
+export function startAgedEvidence(notes: Pick<RefusalNotes, 'tellAged'>, everyMs: number = EVIDENCE_AGED_EVERY_MS): ReturnType<typeof setInterval> {
+    const look = () => {
+        try {
+            void notes.tellAged().catch(() => undefined);
+        } catch {
+            /* telling the operators never stops the server */
+        }
+    };
+    look();
+    const timer = setInterval(look, everyMs);
+    timer.unref?.();
+    return timer;
 }

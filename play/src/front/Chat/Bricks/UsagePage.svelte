@@ -183,15 +183,20 @@
         return item.unknownOutcome && item.outcomeText ? item.outcomeText : "";
     }
 
-    /** A task that did not finish and took nothing: nobody paid, so no "Paid by" line (the note says what happened) */
+    /**
+     * A task that did not finish and took nothing: nobody paid, so no "Paid by" line (the note says what happened). A partly done task
+     * that owes nothing (an App delivered after its hold was let go, with the computer given back) is the same: Orbit says $0, and "Paid by you"
+     * under it would say otherwise.
+     */
     const nothingPaid = (item: ActivityItem): boolean =>
-        (item.outcome === "failed" ||
+        ((item.outcome === "failed" ||
             item.outcome === "unconfirmed" ||
             item.outcome === "stopped" ||
             item.outcome === "deciding" ||
             item.outcome === "refund_pending") &&
-        item.spentMicros === null &&
-        !priceUnknown(item);
+            item.spentMicros === null &&
+            !priceUnknown(item)) ||
+        (item.outcome === "partial" && item.spentMicros === 0);
 
     function activityHint(item: ActivityItem, text: Words, locale: string | undefined): string {
         const when = activityWhen(item.at, text, locale);
