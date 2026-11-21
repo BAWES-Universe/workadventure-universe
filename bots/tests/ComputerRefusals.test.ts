@@ -1322,6 +1322,9 @@ describe('calls of a job that arrive at another bot server', () => {
             const mark = a.mark();
             at += 10;
             store.state.failCalled = 2;
+            // the runner of these jobs is on this server (its notes have a turn of each): the call may go ahead
+            b.turn('j', 1);
+            b.turn('other', 1);
             expect(await b.reached('j')).toBe(false);
             expect(store.state.unrecorded).toEqual(['B:j']);
             expect(told).toEqual([['called_unrecorded', 'j']]);
@@ -1339,6 +1342,7 @@ describe('calls of a job that arrive at another bot server', () => {
             const { a, b, store } = rig();
             const mark = a.mark();
             store.state.down = true;
+            b.turn('j', 1);
             expect(await b.reached('j')).toBe(false);
             expect(store.state.unrecorded).toEqual([]);
             expect(await a.calledAnywhereSince('j', mark)).toBe(true);
@@ -1348,6 +1352,7 @@ describe('calls of a job that arrive at another bot server', () => {
             vi.useFakeTimers();
             try {
                 const { b, store } = rig();
+                b.turn('j', 1);
                 store.state.hold = new Promise<void>(() => undefined);
                 let done = false;
                 const reached = b.reached('j').then((recorded) => {
@@ -1363,6 +1368,27 @@ describe('calls of a job that arrive at another bot server', () => {
             } finally {
                 vi.useRealTimers();
             }
+        });
+
+        it('is unservable when both writes fail and the job’s runner is not on this server: the call cannot be seen by anyone, so it is not forwarded', async () => {
+            const told: Array<[string, string]> = [];
+            const store = sharedStore();
+            const b = createRefusalNotes(() => 1000, { shared: store.forServer('B'), report: (what, info) => told.push([what, info.jobId]) });
+            store.state.failCalled = 2;
+            expect(await b.reached('j')).toBe('unservable');
+            // nothing was said apart: a runner on another server reads the store, which may be well
+            expect(store.state.unrecorded).toEqual([]);
+            expect(told).toEqual([['called_unrecorded', 'j']]);
+            // a write that lands is all right whoever runs the job
+            expect(await b.reached('j')).toBe(true);
+            // told once for the job
+            store.state.failCalled = 2;
+            expect(await b.reached('j')).toBe('unservable');
+            expect(told).toHaveLength(1);
+            // with the runner here it may go ahead
+            b.turn('here', 1);
+            store.state.failCalled = 2;
+            expect(await b.reached('here')).toBe(false);
         });
 
         it('notes the call for this server as `called` does, leaves a call of a turn the runner has left alone, and is true with no shared store', async () => {

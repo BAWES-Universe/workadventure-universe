@@ -1787,6 +1787,8 @@ describe('a machine that cannot reach our own model service', () => {
                 { shared: store.forServer('A') }
             );
             other = createRefusalNotes(clock, { shared: store.forServer('B') });
+            // the runner of the job is on B too (a turn of the job in its notes), so its call goes ahead and says apart that it was not recorded
+            other.turn(JOB.jobId, 1);
             await run();
             expect(rows).toEqual([]);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);

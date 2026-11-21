@@ -2243,6 +2243,8 @@ describe('the shared record of a call, before the call goes on', () => {
     const reports: Array<[string, string]> = [];
     const written: string[] = [];
     const state = { hold: undefined as Promise<void> | undefined, failWrites: 0 };
+    const rowsB: Array<{ jobId: string; rows: CallRow[] }> = [];
+    let own!: ReturnType<typeof createRefusalNotes>;
     const shared = {
         noteCalled: async (jobId: string) => {
             if (state.hold) await state.hold;
@@ -2257,7 +2259,15 @@ describe('the shared record of a call, before the call goes on', () => {
     };
 
     beforeAll(async () => {
-        const own = createRefusalNotes(Date.now, { shared, report: (what, info) => reports.push([what, info.jobId]) });
+        own = createRefusalNotes(Date.now, {
+            shared,
+            report: (what, info) => reports.push([what, info.jobId]),
+            retryMs: [0],
+            sink: async (_bot, jobId, rows) => {
+                rowsB.push({ jobId, rows });
+                return true;
+            },
+        });
         const app = express();
         app.use(createComputerModelRelay({ orbit, routeFor: async () => route, settleDelaysMs: [1, 1], refusals: own }));
         app2 = await listen(app);
@@ -2272,6 +2282,7 @@ describe('the shared record of a call, before the call goes on', () => {
     beforeEach(() => {
         reports.length = 0;
         written.length = 0;
+        rowsB.length = 0;
         state.hold = undefined;
         state.failWrites = 0;
     });
@@ -2299,13 +2310,44 @@ describe('the shared record of a call, before the call goes on', () => {
         expect(reports).toEqual([]);
     });
 
-    it('lets the call go ahead when the record cannot be written twice, says so apart, and tells the operators once for the job', async () => {
+    it('lets the call go ahead when the record cannot be written twice and the job’s runner is on this server: says so apart, and tells the operators once for the job', async () => {
+        own.turn(JOB, 1);
         state.failWrites = 4;
         expect((await askHere()).status).toBe(200);
         expect((await askHere()).status).toBe(200);
         expect(upstreamRequests).toHaveLength(2);
         expect(written).toEqual([`unrecorded:${JOB}`, `unrecorded:${JOB}`]);
         expect(reports).toEqual([['called_unrecorded', JOB]]);
+    });
+
+    describe('when the record cannot be written twice and the runner of the job is on another server', () => {
+        const OTHER = 'job-runs-elsewhere';
+        beforeEach(() => orbit.identify.mockResolvedValue({ ok: true, jobId: OTHER, botId: BOT }));
+
+        it('refuses the call (503), forwards nothing, records a fault of ours for it through the sink, and tells the operators once', async () => {
+            state.failWrites = 100;
+            const answer = await askHere();
+            expect(answer.status).toBe(503);
+            expect((await answer.json()).error.code).toBe('service_unavailable');
+            expect(orbit.authorize).not.toHaveBeenCalled();
+            expect(upstreamRequests).toHaveLength(0);
+            await vi.waitFor(() => expect(rowsB).toHaveLength(1));
+            expect(rowsB[0].jobId).toBe(OTHER);
+            expect(rowsB[0].rows).toHaveLength(1);
+            expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: 503 });
+            expect(written).toEqual([]);
+            // the retry: told once for the job, refused again the same way, and goes through once the record can be written
+            expect((await askHere()).status).toBe(503);
+            expect(reports).toEqual([['called_unrecorded', OTHER]]);
+            state.failWrites = 0;
+            expect((await askHere()).status).toBe(200);
+            expect(upstreamRequests).toHaveLength(1);
+        });
+
+        it('refuses the model list the same way', async () => {
+            state.failWrites = 100;
+            expect((await fetch(`${base2}/v1/models`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status).toBe(503);
+        });
     });
 
     it('records the model list asked with the job’s key too', async () => {

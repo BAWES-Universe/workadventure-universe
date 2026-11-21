@@ -553,18 +553,26 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
      * A call reached the relay: noted for the runner here, and recorded for the runner of the job on another bot server before the call goes on (it waits a
      * moment for that, bounded; when it cannot be recorded the call still goes ahead, and the notes tell the operators and the other servers).
      */
-    async function reachedRelay(jobId: string, at?: { turn: number; run?: string }): Promise<void> {
+    async function reachedRelay(jobId: string, at?: { turn: number; run?: string }): Promise<'forward' | 'unservable'> {
         const notes = deps.refusals;
-        if (!notes) return;
+        if (!notes) return 'forward';
         if (!notes.reached) {
             notes.called?.(jobId, at);
-            return;
+            return 'forward';
         }
         try {
-            if (!(await notes.reached(jobId, at))) console.warn('[ComputerRelay] A call of a job could not be recorded for the other bot servers; it went ahead.');
+            const recorded = await notes.reached(jobId, at);
+            if (recorded === 'unservable') {
+                // The runner of this job is on another server and this call cannot be recorded for it: it is refused here, so the machine tries again (and the
+                // load balancer may send the retry to the server that has the runner)
+                console.warn('[ComputerRelay] A call of a job could not be recorded for the server of its runner; it was refused (503).');
+                return 'unservable';
+            }
+            if (!recorded) console.warn('[ComputerRelay] A call of a job could not be recorded for the other bot servers; it went ahead (its runner is here).');
         } catch {
             /* the call is never held for it */
         }
+        return 'forward';
     }
 
     router.get('/v1/models', async (req: Request, res: Response) => {
@@ -578,7 +586,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         }
         if (!who?.ok) return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
         // The machine of this job reached the relay (the runner reads that: a turn that failed with no call at all never got here)
-        await reachedRelay(who.jobId);
+        if ((await reachedRelay(who.jobId)) === 'unservable') return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
         // One name: Hermes never chooses the model, the Brick's own AI does
         res.json({ object: 'list', data: [{ id: 'universe-ai', object: 'model', created: 0, owned_by: 'universe' }] });
     });
@@ -615,7 +623,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         const startedRun = at ? at.run : deps.refusals?.runOf?.(jobId);
         // The call reached the relay: for the turn it ARRIVED in. Asking Orbit who the caller is can take longer than a turn change, and a call of the turn
         // before must not read as a call of the one that is going now (a turn that made none would then not be seen to have made none)
-        await reachedRelay(jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+        const reachedAnswer = await reachedRelay(jobId, { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
         let routeName = 'unknown';
         let rowSource: 'universe-ai' | 'own-key' = 'universe-ai';
         // How the call ended, for the runner (in this process) and for Orbit's durable fault record. Only the agent's own calls count.
@@ -626,6 +634,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             noteCall('fault', reason, status);
             return problem(res, status, message, code, type);
         };
+        // The runner of this job is on another server and this call could not be recorded for it: refused, as a fault of ours (the row reaches Orbit through the
+        // sink, which does not rest on the shared store), so the machine tries again and the load balancer may send the retry to the runner's server
+        if (reachedAnswer === 'unservable') return fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
 
         const body = req.body;
         if (!isRecord(body) || !Array.isArray(body.messages) || body.messages.length === 0) {

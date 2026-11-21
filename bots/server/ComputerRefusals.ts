@@ -182,11 +182,13 @@ export interface RefusalNotes {
     called(jobId: string, at?: CallTurn): void;
     /**
      * `called`, for a relay about to forward a call: the call is also recorded for the other bot servers and this WAITS for that (each of two tries bounded at
-     * `SHARED_WRITE_BOUND_MS`, the same moment both times), so a runner on another server never reads "no call" for a call that did arrive. When both fail the
-     * other servers are told apart that a call was not recorded, and the operators once per job. Resolves false when the call could not be recorded (it
-     * must still go ahead), true otherwise (and with no shared store). Never rejects.
+     * `SHARED_WRITE_BOUND_MS`, the same moment both times), so a runner on another server never reads "no call" for a call that did arrive. Resolves true
+     * when it was recorded (and with no shared store). When both tries fail the operators are told once per job and: if this server runs the job's runner (its
+     * notes have a turn of the job) the call may go ahead, since the runner's own notes see it: the other servers are told apart that a call was not recorded
+     * and it resolves false; if it does NOT, no runner can ever see this call, so it must not be forwarded: resolves `'unservable'` (the relay answers 503
+     * and records a fault of ours for the call through the sink, which does not rest on the shared store). Never rejects.
      */
-    reached(jobId: string, at?: CallTurn): Promise<boolean>;
+    reached(jobId: string, at?: CallTurn): Promise<boolean | 'unservable'>;
     /** Whether any call of this job reached the relay since this point (or at or after this moment, ms), as THIS server saw it. */
     calledSince(jobId: string, since: Since): boolean;
     /**
@@ -748,12 +750,16 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 }
             };
             if ((await attempt('call')) || (await attempt('call'))) return true;
-            // Both failed: the runner of the job may be on another server, so that is said apart (a runner that reads nothing at all concludes nothing)
-            await attempt('unrecorded');
             if (!unrecordedTold.has(jobId)) {
                 unrecordedTold.set(jobId, moment);
                 tell('called_unrecorded', jobId, '');
             }
+            // The runner of the job is not here (this server's notes have no turn of it), so it can never see this call, and the record it would have read could
+            // not be written: the call is not forwarded. Saying so apart would not help (the store is failing for this server, and the runner reads a store that
+            // may be well): the refusal is the fact, and it is a fault of ours that Orbit hears of through the sink
+            if (lastTurn(jobId) === undefined) return 'unservable';
+            // The runner is here: its own notes see the call. The other servers are told apart that a call was not recorded, all the same
+            await attempt('unrecorded');
             return false;
         },
         calledSince(jobId, since) {
