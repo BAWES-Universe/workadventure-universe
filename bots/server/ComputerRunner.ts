@@ -848,6 +848,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (ready === 'unreachable') {
                 // The machine cannot reach our own model service: a confirmed fault of ours (nothing the job or the person did can cause it), noted on
                 // a turn of this run so Orbit reads it against the turn it is told of, and said to the person in plain words
+                // The row takes a number of its own, so the number is spent and the window (kept for a turn that was only to be reconnected to) goes with it: the turn that
+                // comes after a finish refused as stale begins with its own number and its own window, never the one this row is noted on with the window of an earlier turn
+                turnStartedAt = null;
                 turnNo += 1;
                 deps.refusals?.turn?.(job.jobId, turnNo, run);
                 say('A job ended: the machine could not reach the model relay (check COMPUTER_RELAY_URL).');

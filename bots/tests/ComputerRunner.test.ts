@@ -1671,6 +1671,37 @@ describe('a machine that cannot reach our own model service', () => {
         expect(rows[0]).toMatchObject({ turn: 1, run: 'run1', kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: null });
     });
 
+    it('a turn that is begun after a finish refused as stale begins with its own number and window: not the number the relay-down row used, with the window of the turn before it (a turn that was only to be reconnected to)', async () => {
+        const { seen, setPrepare, rows, notes, orbit, run } = rig([{ ok: false, reason: 'not_now' }, done('[[done]]')]);
+        const numbers: number[] = [];
+        let windows = 0;
+        const turn = notes.turn.bind(notes);
+        notes.turn = (job, number, runId) => (numbers.push(number), turn(job, number, runId));
+        const mark = notes.mark.bind(notes);
+        notes.mark = () => (windows++, mark());
+        // turn 1 is not taken (the agent is not ready: a look, not cancelled, so the same turn would be reconnected to); then the machine cannot reach the relay on all
+        // three tries, and the finish is refused as stale with the generation unchanged; then the machine is ready and the next turn goes on
+        let prepares = 0;
+        setPrepare(() => (++prepares === 1 || prepares > 4 ? { ok: true } : unreachable()));
+        const original = orbit.action;
+        let refused = false;
+        orbit.action = async (botId, jobId, body) => {
+            if (body.action === 'finish' && !refused) {
+                refused = true;
+                seen.actions.push(body);
+                throw Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true, response: { status: 409, data: { ok: false, reason: 'stale' } } });
+            }
+            return original(botId, jobId, body);
+        };
+        await run();
+        // the relay-down row took number 2; the turn that went on after it is turn 3, and it has a window of its own (two windows were begun: turn 1's and turn 3's)
+        expect(rows.filter((row) => row.reason === 'relay_down').map((row) => row.turn)).toEqual([2]);
+        expect(numbers.filter((n, i) => numbers.indexOf(n) === i)).toEqual([1, 2, 3]);
+        expect(numbers[numbers.length - 1]).toBe(3);
+        expect(windows).toBe(2);
+        expect(finished(seen).filter((one) => one.outcome === 'done')).toHaveLength(1);
+    });
+
     it('goes on when the relay came back between two tries', async () => {
         const { seen, setPrepare, rows, run } = rig([done('[[done]]')]);
         let asked = 0;
