@@ -132,6 +132,7 @@ import {
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
+import type { StartKeyStore } from '../server/ComputerStartKeys';
 import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
@@ -3971,6 +3972,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000) or reminders (#2002). */
     private ownBricks = new Set<string>();
     private computerOnCache = new Map<string, { on: boolean; at: number }>();
+    /** Where the key of a computer job's start waits while its outcome is open, so a restart of this server finds it (see `ComputerStartKeys`). Set by the server when it has a shared store. */
+    private computerStartKeys: StartKeyStore | undefined;
+    setComputerStartKeys(store: StartKeyStore | undefined): void {
+        this.computerStartKeys = store;
+    }
 
     /**
      * Whether this Brick's computer is on for the person in this direct message. Orbit answers; the answer is kept a short while so
@@ -4139,6 +4145,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             reviewed: where.reviewed,
             // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
             ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
+            ...(this.computerStartKeys ? { startKeyStore: this.computerStartKeys } : {}),
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time

@@ -9,6 +9,7 @@
  * No count, no price, no provider or machine name ever reaches the model, so none reaches the chat.
  */
 import { randomUUID } from 'node:crypto';
+import type { StartKeyStore } from '../server/ComputerStartKeys';
 import type { AdminApiService } from '../server/AdminApiService';
 
 export const COMPUTER_TOOL = 'use_computer';
@@ -79,6 +80,11 @@ export interface ComputerToolContext {
      * title, or another chat, has a key of its own. Without it every ask has a key of its own.
      */
     startKeys?: Map<string, StartKeyEntry>;
+    /**
+     * Where the key of an ask whose outcome is open is also kept, so a restart of this server between a start and its answer still finds it (see `ComputerStartKeys`): looked
+     * at before the key of a new ask is made, set BEFORE the start is sent, and deleted when the outcome is final. Without it (or when it fails) the process's own memory is all there is.
+     */
+    startKeyStore?: StartKeyStore;
 }
 
 /** A start key of an ask, when it was first sent, and whether the outcome of that ask is still open (`unknown`, `starting`). */
@@ -228,27 +234,39 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const plan = planned ? { app: planned, ...(steps !== undefined ? { steps } : {}), ...(appCannot ? { appCannot } : {}) } : undefined;
     // The key of this ask: the one an earlier ask of the same title in this chat sent while its outcome is open (or in this turn), else a new one (see `startKeys`)
     const asked = askedOf(job, context.origin);
+    const scope = `${context.botId}|${context.userId}|${asked}`;
     const now = Date.now();
-    const earlier = context.startKeys?.get(asked);
-    const entry: StartKeyEntry = earlier && now - earlier.at < START_KEY_KEEP_MS ? earlier : { key: randomUUID(), at: now, open: false };
+    let earlier = context.startKeys?.get(asked);
+    // A restart of this server forgot the process's own memory: the key of an ask whose outcome was still open is where it was kept
+    if (!(earlier && now - earlier.at < START_KEY_KEEP_MS) && context.startKeyStore) {
+        const stored = await context.startKeyStore.get(scope).catch(() => undefined);
+        if (stored) earlier = { key: stored.key, at: stored.at, open: true };
+    }
+    // Open until the answer says otherwise: a start in flight whose key a new message of the person cleared would be sent again under another key (a second job)
+    const entry: StartKeyEntry = earlier && now - earlier.at < START_KEY_KEEP_MS ? earlier : { key: randomUUID(), at: now, open: true };
     const startKey = entry.key;
     context.startKeys?.set(asked, entry);
+    // Kept BEFORE the start is sent: a restart between the send and the answer must still find the key. Its life is what is left of the ten minutes
+    if (context.startKeyStore) await context.startKeyStore.set(scope, { key: startKey, at: entry.at }, START_KEY_KEEP_MS - (now - entry.at)).catch(() => undefined);
     // An ask that went nowhere (Orbit said no before it made anything, or the request itself failed with an answer that is final) is not kept: asking again is a new ask
-    const dropKey = () => {
+    const dropKey = async () => {
         if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
+        await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
     };
     let started;
     try {
         started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) });
     } catch (error) {
         // Thrown only when the start is known to have made nothing (Orbit's own no, or nothing was sent): the ask is over
-        dropKey();
+        await dropKey();
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
     }
-    if (!started.ok && !UNCERTAIN_REASONS.includes(started.reason)) dropKey();
-    // Only an outcome that is not known, or a job found live, keeps its key across turns
+    const refused = !started.ok && !UNCERTAIN_REASONS.includes(started.reason);
+    if (refused) await dropKey();
+    // Only an outcome that is not known, or a job found live, keeps its key across turns (and across a restart: the stored key is deleted when the outcome is settled)
     entry.open = !started.ok && OPEN_REASONS.includes(started.reason);
+    if (!entry.open && !refused) await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
     if (!started.ok) {
         switch (started.reason) {
             case 'cheaper_route':

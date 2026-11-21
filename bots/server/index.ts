@@ -38,6 +38,7 @@ import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
 import { createFaultReplayRoute } from './ComputerFaultReplayRoute';
 import { createRefusalNotes, FAULT_EVIDENCE_MESSAGES } from './ComputerRefusals';
 import { RedisEvidenceStore, RedisSharedCalls } from './ComputerEvidenceStore';
+import { RedisStartKeys } from './ComputerStartKeys';
 import { createComputerRunner, probeRelay, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
@@ -92,6 +93,8 @@ let dmCards: CardSurface | undefined;
 // bubble to the person who asked alone, with one plain line for everyone (#1658). Built before direct messages, so a bubble
 // has its cards with or without them.
 const aiService = botManager.getAIService();
+// The key of a computer job's start waits in the shared store while its outcome is open, so a restart between a start and its answer never makes a second job (a second charge)
+aiService.setComputerStartKeys(new RedisStartKeys(() => botRegistry.evidenceClient()));
 // The address a Brick's computer calls for its AI (OpenAI format, /v1): Orbit checks the key and the room, the provider's key stays here
 // The relay notes what it refused for a person's allowance or rules, and the runner of the same job reads it to tell whose failure a turn was
 // and records how each model call ended in Orbit's durable fault record, which Orbit judges a failed job's refund by (never held up for it)
