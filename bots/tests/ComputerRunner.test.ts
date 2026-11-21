@@ -1593,6 +1593,64 @@ describe('a machine that cannot reach our own model service', () => {
         expect(rows.every((row) => row.run === 'run1')).toBe(true);
     });
 
+    describe('a turn this process did not start (the bot server restarted while the agent was on it)', () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'No route' }];
+        const taken = (rigged: ReturnType<typeof rig>) => (rigged.orbit.running = async () => [{ ...JOB, hasTurn: true }]);
+
+        it('writes no fault for a turn it only reconnected to that ends failed with no call noted: it may have made calls before the restart', async () => {
+            const r = rig([failing(), done('[[done]]')]);
+            taken(r);
+            await r.run();
+            // the first turn was taken up with orbit.stream (no input), and nothing was concluded from the absence of calls in it
+            expect(r.seen.turns).toHaveLength(1);
+            expect(r.seen.streams).toBe(1);
+            expect(r.rows).toEqual([]);
+            expect(finished(r.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('does not make the streak confirmed from it, but still judges the turns it started itself after it', async () => {
+            const r = rig([failing(), failing(), failing()]);
+            taken(r);
+            await r.run();
+            // turn 1 was taken up (no row); turns 2 and 3 were started here (the no-call rule stays in force for them)
+            expect(r.rows.map((row) => [row.turn, row.kind, row.reason])).toEqual([
+                [2, 'fault', 'relay_down'],
+                [3, 'fault', 'relay_down'],
+            ]);
+            expect(finished(r.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        });
+
+        it('says the same for a turn it asked for but that Orbit said the agent was already on (busy): that turn was not started here', async () => {
+            const r = rig([{ ok: false, reason: 'busy' }, failing(), done('[[done]]')]);
+            await r.run();
+            // the first turn was asked for (busy) and read with orbit.stream; the next one was started here and ended well
+            expect(r.seen.turns).toHaveLength(2);
+            expect(r.seen.streams).toBe(1);
+            expect(r.rows).toEqual([]);
+        });
+
+        it('keeps the rule for a turn it started, also when it reconnected to it after the stream broke in this same process', async () => {
+            const broken = (): TurnOpened => ({
+                ok: true,
+                events: (async function* (): AsyncGenerator<RunnerEvent> {
+                    yield { type: 'created', id: 'r', sessionId: 's' };
+                    throw new Error('terminated');
+                })(),
+            });
+            const r = rig([broken(), failing(), failing(), failing()]);
+            await r.run();
+            // the reconnect (orbit.stream) is to a turn this process started and saw from the beginning: turn 1 is counted like the others
+            expect(r.seen.streams).toBe(1);
+            expect(r.rows.map((row) => [row.turn, row.reason])).toEqual([[1, 'relay_down'], [2, 'relay_down'], [3, 'relay_down']]);
+        });
+
+        it('keeps the rule for a turn it started itself, for a job it took up with no turn yet', async () => {
+            const r = rig([failing(), failing(), failing()]);
+            await r.run();
+            expect(r.rows.map((row) => row.turn)).toEqual([1, 2, 3]);
+        });
+    });
+
     it('does the same for silent turns with no call at all (a model answers even to say nothing)', async () => {
         const { seen, rows, run } = rig([done(''), done(''), done('')]);
         await run();

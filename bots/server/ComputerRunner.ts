@@ -416,6 +416,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     /** Whether the agent has taken a turn of this job yet: until it has, the job's own first words are still the ones to send. */
     interface Accepted {
         turn: boolean;
+        /** Set by `oneTurn` when it took up a turn that was already going (a reconnect to it, or Orbit said the agent was busy with one) instead of starting it. */
+        joined?: boolean;
     }
 
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
@@ -518,11 +520,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 }
             };
             const stoppedHere = (): TurnResult => (signal.aborted ? { kind: 'stopped' } : gaveUp ? { kind: 'poolBusy' } : { kind: 'look', cancelled: true });
+            // A turn taken up with no input is one that was already going: this process has not seen its beginning
+            if (input === null) accepted.joined = true;
             const first = await opening(() => (input === null ? orbit.stream(job.jobId, turnController.signal) : orbit.turn(job.jobId, input, turnController.signal)));
             if (first === STOPPED_HERE) return stoppedHere();
             let opened: TurnOpened = first;
             // The agent is still on a turn of its own (we lost it, or Orbit restarted): read that one instead of starting another
             if ('reason' in opened && opened.reason === 'busy') {
+                // The agent was on a turn that this process did not start
+                accepted.joined = true;
                 const again = await opening(() => orbit.stream(job.jobId, turnController.signal));
                 if (again === STOPPED_HERE) return stoppedHere();
                 opened = again;
@@ -641,6 +647,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         // Where the turn being read began. It is kept while the same turn is read again after a reconnect that could not be made (a refusal
         // that came before it must still be seen), and starts again with the next turn or after the person had the machine
         let turnStartedAt: Since | null = null;
+        // Whether this process saw the turn being read from its beginning: it sent the turn's input itself (and the agent was not already on one). The relay's
+        // notes of the calls live in this process, so after a restart of the bot server a turn that is taken up by reconnecting has calls this process
+        // never saw: nothing is concluded from their absence
+        let seenFromStart = false;
         for (;;) {
             if (signal.aborted) return;
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
@@ -719,13 +729,18 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
             // A turn is numbered when it begins, and keeps its number while it is read again after a reconnect: the relay stamps the rows of the calls
             // made in it with the number, and the number is what the finish names, so both must mean the same turn
+            let freshWindow = false;
             if (turnStartedAt === null) {
                 // A point in the order of events when the notes can give one (events of the same millisecond are told apart), else the moment
                 turnStartedAt = deps.refusals?.mark?.() ?? now();
                 turnNo += 1;
+                freshWindow = true;
+                seenFromStart = true;
             }
             deps.refusals?.turn?.(job.jobId, turnNo, run);
+            accepted.joined = false;
             const result = await oneTurn(job, input, signal, renewing, accepted, generation, turnStartedAt);
+            if (freshWindow && accepted.joined) seenFromStart = false;
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
             if (result.kind === 'poolBusy') {
@@ -756,6 +771,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
             // The turn has ended: its refusal window is read once, and the next turn starts its own
             const readFrom = turnStartedAt;
+            const sawItAll = seenFromStart;
             turnStartedAt = null;
 
             // Only what Orbit still says is Brick's is acted on: if the person took over meanwhile, their hands win and the words are dropped.
@@ -882,7 +898,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 const refused = (readFrom !== null && deps.refusals?.sawSince(job.jobId, readFrom)) || false;
                 // A turn that failed or said nothing and in which no call of the job ever reached the relay: the machine could not get to it (or never
                 // tried), and the model is ours, so no word of the job's made it fail. A confirmed fault of ours, noted before the streak is read
-                if (readFrom !== null && deps.refusals?.calledSince && !deps.refusals.calledSince(job.jobId, readFrom)) noteNoRelay(job, turnNo, run, 'no_call');
+                // Only for a turn this process saw from its beginning: one taken up by reconnecting (after a restart of the bot server) may have made calls before
+                if (sawItAll && readFrom !== null && deps.refusals?.calledSince && !deps.refusals.calledSince(job.jobId, readFrom)) noteNoRelay(job, turnNo, run, 'no_call');
                 bad += 1;
                 badTurns.push(turnNo);
                 // A confirmed fault of Universe's in any turn of the streak (our key refused, no route, no room, a model gone) makes the ending ours, whatever
