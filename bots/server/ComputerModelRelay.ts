@@ -611,8 +611,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         const { jobId, botId } = who as { ok: true; jobId: string; botId: string };
         // A call that failed for a fault of ours is noted for the runner (see ComputerRefusals): Hermes may hand its error back as a finished turn
         // Only the agent's own calls (they carry its tools) count: a side call Hermes makes with the same key (a summary, a title) that fails
-        // after the turn was answered is no failure of the turn. Set once the body is read.
-        let agentCall = true;
+        // after the turn was answered is no failure of the turn. Decided from the body BEFORE anything else is done with the call (the body is read by the
+        // json parser ahead of this handler): a call that is refused before it is read further, as an unrecordable one is, is no fault of the turn when it is a side call
+        const body = req.body;
+        const agentCall = isRecord(body) && Array.isArray(body.tools) && body.tools.length > 0;
         // The call's own id: Orbit's fault record keeps one row per job and call, so the same id is sent when a row is sent again
         const callId = randomUUID();
         // The turn the call starts in: its row names that turn even when the runner has moved on by the time the call ends
@@ -638,12 +640,10 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // sink, which does not rest on the shared store), so the machine tries again and the load balancer may send the retry to the runner's server
         if (reachedAnswer === 'unservable') return fault('relay_down', 503, 'The service is busy. Try again in a moment.', 'service_unavailable');
 
-        const body = req.body;
         if (!isRecord(body) || !Array.isArray(body.messages) || body.messages.length === 0) {
             return problem(res, 400, 'A request needs a list of messages.', 'invalid_request');
         }
         const streaming = body.stream === true;
-        agentCall = Array.isArray(body.tools) && body.tools.length > 0;
 
         let asked: RelayRoute | RelayRestingOwnKey | null;
         try {

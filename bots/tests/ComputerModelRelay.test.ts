@@ -2290,7 +2290,9 @@ describe('the shared record of a call, before the call goes on', () => {
         state.hold = undefined;
         state.failWrites = 0;
     });
-    const askHere = () => fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ messages }) });
+    // The agent's own calls carry its tools; a side call (a title, a summary) does not
+    const withTools = { messages, tools: [{ type: 'function', function: { name: 'x' } }] };
+    const askHere = (body: Record<string, unknown> = { messages }) => fetch(`${base2}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(body) });
 
     it('waits for the record of the call before it asks the provider, and goes on once it is written', async () => {
         let release!: () => void;
@@ -2330,7 +2332,7 @@ describe('the shared record of a call, before the call goes on', () => {
 
         it('refuses the call (503), forwards nothing, records a fault of ours for it through the sink, and tells the operators once', async () => {
             state.failWrites = 100;
-            const answer = await askHere();
+            const answer = await askHere(withTools);
             expect(answer.status).toBe(503);
             expect((await answer.json()).error.code).toBe('service_unavailable');
             expect(orbit.authorize).not.toHaveBeenCalled();
@@ -2341,10 +2343,10 @@ describe('the shared record of a call, before the call goes on', () => {
             expect(rowsB[0].rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: 503 });
             expect(written).toEqual([]);
             // the retry: told once for the job, refused again the same way, and goes through once the record can be written
-            expect((await askHere()).status).toBe(503);
+            expect((await askHere(withTools)).status).toBe(503);
             expect(reports).toEqual([['called_unrecorded', OTHER]]);
             state.failWrites = 0;
-            expect((await askHere()).status).toBe(200);
+            expect((await askHere(withTools)).status).toBe(200);
             expect(upstreamRequests).toHaveLength(1);
         });
 
@@ -2354,7 +2356,7 @@ describe('the shared record of a call, before the call goes on', () => {
             // this server's notes still hold a turn of the job; its runner no longer works it
             own.turn(TAKEN_OVER, 4, 'run-before');
             state.failWrites = 100;
-            const answer = await askHere();
+            const answer = await askHere(withTools);
             expect(answer.status).toBe(503);
             expect(upstreamRequests).toHaveLength(0);
             expect(orbit.authorize).not.toHaveBeenCalled();
@@ -2363,8 +2365,29 @@ describe('the shared record of a call, before the call goes on', () => {
             expect(reports).toEqual([['called_unrecorded', TAKEN_OVER]]);
             // the runner working it here now: the call is forwarded
             here.add(TAKEN_OVER);
-            expect((await askHere()).status).toBe(200);
+            expect((await askHere(withTools)).status).toBe(200);
             expect(upstreamRequests).toHaveLength(1);
+        });
+
+        it('refuses a side call that carries no tools the same way (503, nothing forwarded) but records NO fault for it, so it can never count against the turn', async () => {
+            const SIDE = 'job-side-elsewhere';
+            orbit.identify.mockResolvedValue({ ok: true, jobId: SIDE, botId: BOT });
+            state.failWrites = 100;
+            const answer = await askHere({ messages });
+            expect(answer.status).toBe(503);
+            expect((await answer.json()).error.code).toBe('service_unavailable');
+            expect(orbit.authorize).not.toHaveBeenCalled();
+            expect(upstreamRequests).toHaveLength(0);
+            // the operators are still told (the record could not be written), but no row is made for the call
+            expect(reports).toEqual([['called_unrecorded', SIDE]]);
+            await own.flush(SIDE);
+            await new Promise((resolve) => setTimeout(resolve, 60));
+            expect(rowsB).toEqual([]);
+            expect(own.endedOnFault(SIDE, 0)).toBe(false);
+            // a body that is no request at all is no agent call either
+            expect((await askHere({})).status).toBe(503);
+            await own.flush(SIDE);
+            expect(rowsB).toEqual([]);
         });
 
         it('refuses the model list the same way', async () => {
