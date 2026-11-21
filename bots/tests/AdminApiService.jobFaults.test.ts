@@ -2,11 +2,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import http from 'http';
 import type { AddressInfo } from 'net';
 import { AdminApiService } from '../server/AdminApiService';
+import { createRefusalNotes, type CallRow } from '../server/ComputerRefusals';
 
 let server: http.Server;
 let service: AdminApiService;
 let seen: { method?: string; url?: string; authorization?: string; body?: unknown } = {};
 let answer: { status: number; body: unknown };
+/** When set, answers from what was sent (an Orbit that reads each row on its own). */
+let respond: ((body: { faults?: Array<{ callId: string }> }) => { status: number; body: unknown }) | undefined;
 const savedToken = process.env.BOT_SERVICE_TOKEN;
 
 beforeAll(async () => {
@@ -15,9 +18,10 @@ beforeAll(async () => {
         request.on('data', (chunk) => (text += chunk));
         request.on('end', () => {
             seen = { method: request.method, url: request.url, authorization: request.headers.authorization, body: text ? JSON.parse(text) : undefined };
-            response.statusCode = answer.status;
+            const said = respond ? respond(seen.body as { faults?: Array<{ callId: string }> }) : answer;
+            response.statusCode = said.status;
             response.setHeader('content-type', 'application/json');
-            response.end(JSON.stringify(answer.body));
+            response.end(JSON.stringify(said.body));
         });
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -27,6 +31,7 @@ beforeAll(async () => {
 beforeEach(() => {
     process.env.BOT_SERVICE_TOKEN = 'bot-token';
     seen = {};
+    respond = undefined;
 });
 
 afterEach(() => {
@@ -53,9 +58,11 @@ describe('the fault record Orbit keeps of a computer job’s model calls', () =>
     describe('an Orbit that reads each row on its own and names the rows it could not read', () => {
         const rows = [row, { ...row, callId: 'call-2' }, { ...row, callId: 'call-3' }];
 
-        it('answers the named call ids, only those that were sent, once, and takes the rest as delivered', async () => {
-            answer = { status: 200, body: { ok: true, stored: 1, rejected: [{ callId: 'call-2', why: 'bad reason' }, { callId: 'call-2', why: 'again' }, { callId: 'not-sent', why: 'x' }] } };
+        it('answers the named call ids, only those that were sent, each once; a row named twice is one row, and a call that was not sent is a refusal it does not account for', async () => {
+            answer = { status: 200, body: { ok: true, stored: 1, rejected: [{ callId: 'call-2', why: 'bad reason' }, { callId: 'call-2', why: 'again' }] } };
             expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-2'] });
+            answer = { status: 200, body: { ok: true, stored: 1, rejected: [{ callId: 'call-2', why: 'bad reason' }, { callId: 'call-2', why: 'again' }, { callId: 'not-sent', why: 'x' }] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-2'], unnamed: 1 });
         });
 
         it('is true when the list is empty or absent, and false when Orbit did not say ok', async () => {
@@ -67,48 +74,43 @@ describe('the fault record Orbit keeps of a computer job’s model calls', () =>
             expect(await service.computerJobFaults('b', 'j', rows)).toBe(false);
         });
 
-        it('dead-letters nothing extra and says so, with the count only, when Orbit gives a count or entries with no usable call id (an older Orbit)', async () => {
+        it('never takes rows as delivered that Orbit says it refused without saying which: it answers how many are unaccounted for (a count, entries with no usable call id, an id that was not sent)', async () => {
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-            for (const rejected of [2, [{ why: 'x' }, {}], [null, 7, { callId: 5 }], [{ callId: '' }]]) {
-                warn.mockClear();
+            for (const [rejected, count] of [
+                [2, 2],
+                [[{ why: 'x' }, {}], 2],
+                [[null, 7, { callId: 5 }], 3],
+                [[{ callId: '' }], 1],
+                [[{ callId: 'elsewhere', why: 'not ours' }], 1],
+            ] as Array<[unknown, number]>) {
                 answer = { status: 200, body: { ok: true, rejected } };
-                expect(await service.computerJobFaults('b', 'j', rows), JSON.stringify(rejected)).toBe(true);
-                expect(warn).toHaveBeenCalledTimes(1);
-                expect(String(warn.mock.calls[0][0])).toMatch(/could not read \d+ fault row/);
-                expect(String(warn.mock.calls[0][0])).not.toContain('call-');
+                expect(await service.computerJobFaults('b', 'j', rows), JSON.stringify(rejected)).toEqual({ rejected: [], unnamed: count });
             }
-            // some named, some not: the named are refused alone, the rest said
-            warn.mockClear();
+            // some named, some not: the named are refused alone, the rest is counted
             answer = { status: 200, body: { ok: true, rejected: [{ callId: 'call-3' }, { why: 'x' }] } };
-            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-3'] });
-            expect(warn).toHaveBeenCalledTimes(1);
-            expect(String(warn.mock.calls[0][0])).toMatch(/could not read 1 fault row/);
-            // a count of zero, or nothing, says nothing
-            warn.mockClear();
-            answer = { status: 200, body: { ok: true, rejected: 0 } };
-            expect(await service.computerJobFaults('b', 'j', rows)).toBe(true);
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-3'], unnamed: 1 });
+            // the operators are told through the report hook, not by a line in a log nobody reads
             expect(warn).not.toHaveBeenCalled();
             warn.mockRestore();
+            // a count of zero, or nothing, says nothing
+            answer = { status: 200, body: { ok: true, rejected: 0 } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe(true);
+            answer = { status: 200, body: { ok: true, rejected: [] } };
+            expect(await service.computerJobFaults('b', 'j', rows)).toBe(true);
         });
     });
 
     describe('rejectedCount and a 400 that names the rows', () => {
         const rows = [row, { ...row, callId: 'call-2' }];
 
-        it('counts rows it names and rows it only counts (rejectedCount): the named are refused alone, the rest is said once with the count', async () => {
-            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        it('counts rows it names and rows it only counts (rejectedCount): the named are refused alone, the rest is counted as unnamed, never taken as delivered', async () => {
             answer = { status: 200, body: { ok: true, rejected: [{ callId: 'call-2', why: 'x' }], rejectedCount: 3 } };
-            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-2'] });
-            expect(String(warn.mock.calls.at(-1)?.[0])).toMatch(/could not read 2 fault row/);
-            warn.mockClear();
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-2'], unnamed: 2 });
             answer = { status: 200, body: { ok: true, rejectedCount: 1 } };
-            expect(await service.computerJobFaults('b', 'j', rows)).toBe(true);
-            expect(String(warn.mock.calls.at(-1)?.[0])).toMatch(/could not read 1 fault row/);
-            warn.mockClear();
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: [], unnamed: 1 });
+            // a count that is only the rows it names is nothing more
             answer = { status: 200, body: { ok: true, rejected: [{ callId: 'call-2' }], rejectedCount: 1 } };
-            await service.computerJobFaults('b', 'j', rows);
-            expect(warn).not.toHaveBeenCalled();
-            warn.mockRestore();
+            expect(await service.computerJobFaults('b', 'j', rows)).toEqual({ rejected: ['call-2'] });
         });
 
         it('takes a 400 that names every row of the batch as those rows refused alone (nothing to split), and any other 400 as before: split the batch', async () => {
@@ -177,5 +179,33 @@ describe('the fault record Orbit keeps of a computer job’s model calls', () =>
     it('is false when Orbit cannot be reached', async () => {
         const gone = new AdminApiService('http://127.0.0.1:1', 'admin-token');
         expect(await gone.computerJobFaults('b', 'j', [row])).toBe(false);
+    });
+});
+
+describe('through the notes: an Orbit that counts refused rows without naming them (Sentry on #2114)', () => {
+    const rowOf = (callId: string) => ({ ...row, callId }) as unknown as CallRow;
+
+    it('does not drop the batch: the refused row is found and set aside, the operators are told, and the others are taken', async () => {
+        const taken = new Set<string>();
+        const told: string[] = [];
+        // Orbit reads each row on its own, keeps the readable ones and only COUNTS the refused (an older Orbit, or a body without call ids)
+        respond = (body) => {
+            const ids = (body.faults ?? []).map((fault) => fault.callId);
+            for (const id of ids.filter((one) => one !== 'bad')) taken.add(id);
+            return { status: 200, body: ids.includes('bad') ? { ok: true, rejected: 1 } : { ok: true } };
+        };
+        const notes = createRefusalNotes(() => 1000, {
+            retryMs: [0],
+            laterMs: [],
+            sink: (botId, jobId, rows) => service.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
+            report: (what, info) => told.push(`${what} ${info.jobId} ${info.callId}`),
+        });
+        for (const id of ['a', 'bad', 'b']) notes.record('bot', 'job', rowOf(id));
+        expect(await notes.flush('job')).toBe(true);
+        expect([...taken].sort()).toEqual(['a', 'b']);
+        // told through the report hook (Sentry), which is what was missing: the row that Orbit refused is set aside, never taken as delivered
+        expect(told).toContain('unnamed_rejection job ');
+        expect(told).toContain('dead_letter job bad');
+        expect(told.filter((one) => one.startsWith('dead_letter'))).toHaveLength(1);
     });
 });

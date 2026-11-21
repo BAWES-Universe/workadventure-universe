@@ -1319,6 +1319,205 @@ describe('the evidence kept before the money decision is final, and delivered af
             });
         });
 
+        describe('an Orbit that says it refused rows without saying which (Sentry on #2114): no row is taken as delivered unseen, the refused ones are found, nothing is dropped in silence', () => {
+            /**
+             * A sink that takes every row it reads and says, for a batch that holds rows of `bad`, how many it refused: `unnamed` of them without naming (`namedToo` of them by name).
+             * `alwaysRefuses` makes it refuse something of every batch, even a batch of one row.
+             */
+            const counting = (bad: Set<string>, opts: { named?: Set<string>; alwaysRefuses?: boolean } = {}) => {
+                const calls: string[][] = [];
+                const taken: string[] = [];
+                let open!: () => void;
+                const gate = new Promise<void>((resolve) => (open = resolve));
+                const sink = async (_botId: string, _jobId: string, rows: CallRow[]): Promise<SinkAnswer> => {
+                    await gate;
+                    const ids = rows.map((row) => row.callId);
+                    calls.push(ids);
+                    const refused = ids.filter((id) => bad.has(id));
+                    const named = refused.filter((id) => opts.named?.has(id));
+                    const unnamed = opts.alwaysRefuses ? Math.max(1, refused.length - named.length) : refused.length - named.length;
+                    if (!opts.alwaysRefuses) taken.push(...ids.filter((id) => !bad.has(id)));
+                    if (unnamed <= 0 && named.length === 0) return true;
+                    return { rejected: named, ...(unnamed > 0 ? { unnamed } : {}) };
+                };
+                return { sink, calls, taken, open };
+            };
+            const record = (notes: ReturnType<typeof createRefusalNotes>, ids: string[], jobId = 'job') => {
+                for (const id of ids) notes.record('bot', jobId, call(id));
+            };
+
+            it('a count with no names: the rows are split until the refused one is alone, it is set aside as a dead letter (kept 30 days, told once with its ids), and the others are taken', async () => {
+                const mem = memoryStore();
+                const o = counting(new Set(['bad']));
+                const told: Array<[string, { jobId: string; callId: string }]> = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what, info) => told.push([what, info]) });
+                record(notes, ['a', 'b', 'bad', 'c', 'd']);
+                await vi.waitFor(() => expect(mem.held.size).toBe(5));
+                o.open();
+                expect(await notes.flush('job')).toBe(true);
+                expect([...new Set(o.taken)].sort()).toEqual(['a', 'b', 'c', 'd']);
+                expect(told.filter(([what]) => what === 'dead_letter').map(([, info]) => info.callId)).toEqual(['bad']);
+                await vi.waitFor(() => expect(mem.held.size).toBe(0));
+                expect([...mem.dead.keys()]).toEqual(['job|bad']);
+                // and the row that is set aside is the row as it was made, under its own id
+                expect(mem.dead.get('job|bad')?.row).toMatchObject({ callId: 'bad', kind: 'fault' });
+            });
+
+            it('the operators are told through the report hook, ONCE for the job, with ids only (no call id), however many times the batch is split; another job is told on its own', async () => {
+                const o = counting(new Set(['bad1', 'bad2', 'bad3', 'bad4']));
+                const told: Array<[string, { jobId: string; callId: string }]> = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: o.sink, report: (what, info) => told.push([what, info]) });
+                record(notes, ['a', 'bad1', 'b', 'bad2', 'c']);
+                o.open();
+                await notes.flush('job');
+                expect(told.filter(([what]) => what === 'unnamed_rejection')).toEqual([['unnamed_rejection', { jobId: 'job', callId: '' }]]);
+                expect(told.filter(([what]) => what === 'dead_letter').map(([, info]) => info.callId).sort()).toEqual(['bad1', 'bad2']);
+                // a later batch of the same job that is refused the same way is not told again
+                record(notes, ['x', 'bad3']);
+                await notes.flush('job');
+                expect(told.filter(([what]) => what === 'unnamed_rejection')).toHaveLength(1);
+                expect(told.filter(([what]) => what === 'dead_letter')).toHaveLength(3);
+                // another job is told on its own
+                record(notes, ['y', 'bad4'], 'job2');
+                await notes.flush('job2');
+                expect(told.filter(([what]) => what === 'unnamed_rejection').map(([, info]) => info.jobId)).toEqual(['job', 'job2']);
+            });
+
+            it('names some rows and only counts the rest: the named are set aside at once, the rest is split to find the others', async () => {
+                const mem = memoryStore();
+                const o = counting(new Set(['named', 'quiet']), { named: new Set(['named']) });
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                record(notes, ['a', 'named', 'b', 'quiet', 'c']);
+                await vi.waitFor(() => expect(mem.held.size).toBe(5));
+                o.open();
+                expect(await notes.flush('job')).toBe(true);
+                expect([...new Set(o.taken)].sort()).toEqual(['a', 'b', 'c']);
+                expect(told.filter((one) => one.startsWith('dead_letter')).sort()).toEqual(['dead_letter named', 'dead_letter quiet']);
+                expect(told.filter((one) => one.startsWith('unnamed_rejection'))).toEqual(['unnamed_rejection ']);
+                await vi.waitFor(() => expect(mem.held.size).toBe(0));
+                expect([...mem.dead.keys()].sort()).toEqual(['job|named', 'job|quiet']);
+            });
+
+            it('a count of zero is nothing: the rows Orbit did not name are taken as delivered in ONE call, as before', async () => {
+                const taken: string[] = [];
+                const calls: string[][] = [];
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => 1000, {
+                    retryMs: [0],
+                    laterMs: [],
+                    sink: async (_b, _j, rows) => {
+                        calls.push(rows.map((row) => row.callId));
+                        taken.push(...rows.filter((row) => row.callId !== 'bad').map((row) => row.callId));
+                        return { rejected: ['bad'], unnamed: 0 };
+                    },
+                    report: (what) => told.push(what),
+                });
+                record(notes, ['a', 'bad', 'b']);
+                expect(await notes.flush('job')).toBe(true);
+                expect(told).not.toContain('unnamed_rejection');
+                expect(calls.flat().filter((id) => id === 'a')).toHaveLength(1);
+                expect(told).toEqual(['dead_letter']);
+            });
+
+            it('a row Orbit named is set aside at once: it is sent only the once, not again with the rest', async () => {
+                const mem = memoryStore();
+                const o = counting(new Set(['named', 'quiet']), { named: new Set(['named']) });
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink });
+                record(notes, ['a', 'named', 'b', 'quiet', 'c']);
+                await vi.waitFor(() => expect(mem.held.size).toBe(5));
+                o.open();
+                await notes.flush('job');
+                expect(o.calls.flat().filter((id) => id === 'named')).toHaveLength(1);
+            });
+
+            it('names every row of the batch and counts one more it does not name: the named rows are set aside, the batch still counts as dealt with', async () => {
+                const mem = memoryStore();
+                const told: string[] = [];
+                let step = 0;
+                const notes = createRefusalNotes(() => 1000, {
+                    retryMs: [0],
+                    laterMs: [],
+                    store: mem.store,
+                    sink: async (_b, _j, rows) => (++step === 1 ? true : { rejected: rows.map((row) => row.callId), unnamed: 1 }),
+                    report: (what, info) => told.push(`${what} ${info.callId}`),
+                });
+                record(notes, ['ok']);
+                expect(await notes.flush('job')).toBe(true);
+                record(notes, ['bad']);
+                expect(await notes.flush('job')).toBe(true);
+                expect(told).toEqual(['unnamed_rejection ', 'dead_letter bad']);
+                await vi.waitFor(() => expect([...mem.dead.keys()]).toEqual(['job|bad']));
+            });
+
+            it('tells again for the same job once the notes have forgotten it (an hour), never twice inside the hour', async () => {
+                let clock = 1000;
+                const o = counting(new Set(['bad1', 'bad2']));
+                o.open();
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => clock, { retryMs: [0], laterMs: [], sink: o.sink, report: (what) => told.push(what) });
+                record(notes, ['a', 'bad1']);
+                await notes.flush('job');
+                expect(told.filter((what) => what === 'unnamed_rejection')).toHaveLength(1);
+                clock += REFUSAL_NOTE_KEEP_MS + 1000;
+                record(notes, ['b', 'bad2']);
+                await notes.flush('job');
+                expect(told.filter((what) => what === 'unnamed_rejection')).toHaveLength(2);
+            });
+
+            it('a batch of one row that Orbit says it refused is that row: set aside, never dropped', async () => {
+                const mem = memoryStore();
+                const o = counting(new Set(['bad']));
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                o.open();
+                // Orbit has taken a row lately, so the contract works and the refused row is its own fault
+                record(notes, ['ok']);
+                expect(await notes.flush('job')).toBe(true);
+                record(notes, ['bad']);
+                expect(await notes.flush('job')).toBe(true);
+                expect(told).toEqual(['unnamed_rejection ', 'dead_letter bad']);
+                await vi.waitFor(() => expect([...mem.dead.keys()]).toEqual(['job|bad']));
+                expect(mem.held.size).toBe(0);
+            });
+
+            it('an Orbit that refuses something of every batch, even one row, and has taken none: every row is KEPT and sent again (like Orbit being away), the operators are told, nothing is taken or dropped', async () => {
+                const mem = memoryStore();
+                const o = counting(new Set(['a', 'b', 'c']), { alwaysRefuses: true });
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what) => told.push(what) });
+                record(notes, ['a', 'b', 'c']);
+                await vi.waitFor(() => expect(mem.held.size).toBe(3));
+                o.open();
+                expect(await notes.flush('job')).toBe(false);
+                expect(o.taken).toEqual([]);
+                expect(mem.held.size).toBe(3);
+                expect(mem.dead.size).toBe(0);
+                expect(told.filter((what) => what === 'unnamed_rejection')).toHaveLength(1);
+                expect(told.filter((what) => what === 'all_refused')).toHaveLength(1);
+            });
+
+            it('a row put back from the dead letters that Orbit refuses again without a name stays there, without a second dead-letter alert', async () => {
+                const mem = memoryStore();
+                const o = counting(new Set(['d2']));
+                o.open();
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], store: mem.store, sink: o.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                mem.dead.set('job|d1', { botId: 'bot', jobId: 'job', row: call('d1') as CallRow });
+                mem.dead.set('job|d2', { botId: 'bot', jobId: 'job', row: call('d2') as CallRow });
+                expect(await notes.replayDeadLetters()).toBe(2);
+                await notes.flush('job');
+                expect([...new Set(o.taken)]).toEqual(['d1']);
+                await vi.waitFor(() => expect([...mem.dead.keys()]).toEqual(['job|d2']));
+                expect(told.filter((one) => one.startsWith('dead_letter'))).toEqual([]);
+            });
+
+            it('says in words what it is, and that nothing is dropped', () => {
+                expect(FAULT_EVIDENCE_MESSAGES.unnamed_rejection).toMatch(/without saying which/);
+                expect(FAULT_EVIDENCE_MESSAGES.unnamed_rejection).toMatch(/nothing is dropped/);
+            });
+        });
+
         it('lets the rows that came after a bad one through when there are more rows than one batch holds', async () => {
             const o = orbit(new Set(['c000']));
             const told: string[] = [];
@@ -3824,7 +4023,7 @@ describe('Orbit saying it has no such job', () => {
 
 describe('what the operators are told about calls that could not be recorded', () => {
     it('says every kind in words, and does not claim that a refused call went ahead', () => {
-        expect(Object.keys(FAULT_EVIDENCE_MESSAGES).sort()).toEqual(['all_refused', 'called_unrecorded', 'dead_aging', 'dead_letter', 'not_durable', 'pending_aging', 'unacked']);
+        expect(Object.keys(FAULT_EVIDENCE_MESSAGES).sort()).toEqual(['all_refused', 'called_unrecorded', 'dead_aging', 'dead_letter', 'not_durable', 'pending_aging', 'unacked', 'unnamed_rejection']);
         // with the runner elsewhere the relay answers 503 and forwards nothing: the alert must not say the call went ahead as a fact
         expect(FAULT_EVIDENCE_MESSAGES.called_unrecorded).toMatch(/refused/);
         expect(FAULT_EVIDENCE_MESSAGES.called_unrecorded).toMatch(/or have gone ahead/);

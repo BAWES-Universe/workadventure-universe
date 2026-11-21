@@ -394,7 +394,8 @@ export interface RefusalOptions {
      * once until Orbit takes a row again), `called_unrecorded` when the shared record of a call of a job could not be written twice (once per job: the call
      * may have gone ahead or been refused (503), that depends on whether the job's runner works here, so this says only that it was not recorded), and, from `tellAged`,
      * `pending_aging` (a row still waiting for Orbit after `EVIDENCE_AGED_MS`, 6 days, a day before the store lets go of it) and `dead_aging` (a dead letter of
-     * `DEAD_LETTER_AGED_MS`, 29 days, a day before it expires), once per row, so operators replay it through the dead-letter route in time. Carries ids only (callId is empty for that one). Never throws into the caller's way.
+     * `DEAD_LETTER_AGED_MS`, 29 days, a day before it expires), once per row, so operators replay it through the dead-letter route in time, and `unnamed_rejection` when Orbit says it
+     * refused rows and does not name them (once per job: those rows are split to find them, never taken as delivered; callId is empty). Carries ids only (callId is empty for that one). Never throws into the caller's way.
      */
     report?: (what: FaultReportKind, info: { jobId: string; callId: string }) => void;
 }
@@ -402,12 +403,13 @@ export interface RefusalOptions {
 /**
  * What the sink answers for a batch: true (Orbit took every row), false (not reached: try again), `'rejected'` (a 400: one row cannot be read, split the batch), `'missing'`
  * (no such job), or, from an Orbit that reads each row on its own, the ids of the rows it kept OUT of the batch it took (`rejected`): the rest was taken, and exactly
- * those rows go the way of a row refused alone (the dead letters, kept 30 days, told once).
+ * those rows go the way of a row refused alone (the dead letters, kept 30 days, told once). `unnamed` is how many more Orbit says it refused without saying which (a count, or entries
+ * with no usable call id): the rows it did not name are then NOT taken as delivered, they are split to find the refused ones and the operators are told once for the job.
  */
-export type SinkAnswer = boolean | 'rejected' | 'missing' | { rejected: string[] };
+export type SinkAnswer = boolean | 'rejected' | 'missing' | { rejected: string[]; unnamed?: number };
 
 /** Everything `report` can tell. */
-export type FaultReportKind = 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded' | 'pending_aging' | 'dead_aging';
+export type FaultReportKind = 'not_durable' | 'unacked' | 'dead_letter' | 'all_refused' | 'called_unrecorded' | 'pending_aging' | 'dead_aging' | 'unnamed_rejection';
 
 /**
  * What each thing `report` tells is called for the operators (Sentry). `called_unrecorded` claims nothing about what became of the call: with the job's runner
@@ -421,6 +423,7 @@ export const FAULT_EVIDENCE_MESSAGES = {
     called_unrecorded: 'A computer model call could not be recorded for the other bot servers (the call may have been refused with a 503 or have gone ahead: the relay log of the job says which)',
     pending_aging: 'Fault evidence row still not taken by Orbit after 6 days: it is dropped at 7, so look at Orbit now (the rows are sent again every 5 minutes)',
     dead_aging: 'Fault evidence dead letter is 29 days old: it is dropped at 30, so replay it now through the dead letter route (the job and call ids are in this event)',
+    unnamed_rejection: 'Orbit says it refused fault evidence rows without saying which: the rows are split and sent again to find them, and one it still refuses alone is set aside (nothing is dropped)',
 } as const;
 
 /** How many of the latest turns a runner tells the other servers (a call that began before the latest turn began is tied to the one before). */
@@ -495,6 +498,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     let allRefusedTold = false;
     /** Jobs whose call the shared record could not hold (told to the operators once each; forgotten with the notes). */
     const unrecordedTold = new Map<string, number>();
+    /** Jobs whose batch Orbit refused rows of without naming them (told to the operators once each; forgotten with the notes). */
+    const unnamedTold = new Map<string, number>();
     /** Dead letters when there is no store to keep them in (kept as long as the process lives: never deleted). */
     const deadInMemory = new Map<string, { botId: string; jobId: string; row: CallRow }>();
     const tell = (what: FaultReportKind, jobId: string, callId: string) => {
@@ -559,6 +564,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         for (const [jobId, seen] of calls) if (Math.max(seen.fault?.at ?? 0, seen.answered?.at ?? 0, seen.called?.at ?? 0, seen.accepted?.at ?? 0, seen.pooled?.at ?? 0, seen.other?.at ?? 0) < cutoff) calls.delete(jobId);
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
         for (const [jobId, at] of unrecordedTold) if (at < cutoff) unrecordedTold.delete(jobId);
+        for (const [jobId, at] of unnamedTold) if (at < cutoff) unnamedTold.delete(jobId);
         for (const [jobId, one] of closed) if (one.at < cutoff) closed.delete(jobId);
         for (const [jobId, one] of arrivals) if (one.at < cutoff) arrivals.delete(jobId);
         for (const [jobId, one] of closeRefused) if (one.at < cutoff) closeRefused.delete(jobId);
@@ -654,6 +660,22 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             const named = new Set(answer.rejected);
             const refused = batch.filter((row) => named.has(row.callId));
             const taken = batch.filter((row) => !named.has(row.callId));
+            if (typeof answer.unnamed === 'number' && answer.unnamed > 0) {
+                // Orbit also says it refused rows it does not name: which of the others it took is not known, so none of them is taken as delivered (that could drop refund
+                // evidence unseen). The named rows are set apart; the others are split like a batch Orbit refuses, until the refused row is alone, and the operators are told once
+                if (!unnamedTold.has(jobId)) {
+                    unnamedTold.set(jobId, now());
+                    tell('unnamed_rejection', jobId, '');
+                }
+                for (const row of refused) pass.suspects.add(row);
+                if (taken.length === 0) return true;
+                if (taken.length === 1) {
+                    pass.suspects.add(taken[0]);
+                    return true;
+                }
+                const half = Math.ceil(taken.length / 2);
+                return (await deliver(entry, jobId, taken.slice(0, half), sink, pass)) && (await deliver(entry, jobId, taken.slice(half), sink, pass));
+            }
             if (taken.length > 0) {
                 orbitTookAt = now();
                 allRefusedTold = false;

@@ -707,18 +707,24 @@ const KEEP_DELIVERED_RETRY_MS = [300, 900] as const;
 
 /**
  * The rows an Orbit that reads each row on its own says it could not read: `rejected: [{ callId, why }]` (and `rejectedCount`). `named` are the call ids that were really
- * sent (each once); `unnamed` is how many Orbit counts that it does not name (an older Orbit sends a count, or entries with no call id).
+ * sent (each once); `unnamed` is how many Orbit counts that it does not name (an older Orbit sends a count, or entries with no call id, or one that names a call that was
+ * not sent).
  */
 function rejectedRowsOf(data: unknown, faults: Array<Record<string, unknown>>): { named: string[]; unnamed: number } {
     const body = (typeof data === 'object' && data !== null ? data : {}) as { rejected?: unknown; rejectedCount?: unknown };
     const list = Array.isArray(body.rejected) ? body.rejected : [];
     const sent = new Set(faults.map((fault) => fault.callId));
     const ids = new Set<string>();
+    // An entry that names a row already named is the same row said twice, not another one
+    let repeats = 0;
     for (const one of list) {
         const id = typeof one === 'object' && one !== null ? (one as { callId?: unknown }).callId : undefined;
-        if (typeof id === 'string' && id !== '' && sent.has(id)) ids.add(id);
+        if (typeof id === 'string' && id !== '' && sent.has(id)) {
+            if (ids.has(id)) repeats += 1;
+            else ids.add(id);
+        }
     }
-    const counted = Math.max(list.length, typeof body.rejected === 'number' ? body.rejected : 0, typeof body.rejectedCount === 'number' ? body.rejectedCount : 0);
+    const counted = Math.max(list.length - repeats, typeof body.rejected === 'number' ? body.rejected : 0, typeof body.rejectedCount === 'number' ? body.rejectedCount : 0);
     return { named: [...ids], unnamed: Math.max(0, counted - ids.size) };
 }
 
@@ -1902,17 +1908,20 @@ export class AdminApiService {
      * call, idempotent. True when Orbit took the rows. `'missing'` when it answered with its own "Job not found" (it has no such job, so there is nothing to keep
      * them for: the rows are dropped, but Orbit read none of them, so this is not Orbit taking evidence). False when it could not be reached, failed, or has no such route yet (a bare 404 or 405 from an older Orbit): the rows are kept and sent again,
      * so they are still there once Orbit is upgraded. `'rejected'` when Orbit answered with its own 400 ("Invalid request": one row it cannot read
-     * rejects the whole batch, and the same rows are refused every time): the caller splits the batch to find the row.
+     * rejects the whole batch, and the same rows are refused every time): the caller splits the batch to find the row. `{ rejected, unnamed }` when Orbit read the rows
+     * on their own and refused some: `rejected` are the call ids it names (only ids that were sent), `unnamed` how many more it says it refused without saying which
+     * (a count, entries with no call id, an id that was not sent): the caller never takes the rows it did not name as delivered, it splits them to find the refused ones.
      */
-    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected' | 'missing' | { rejected: string[] }> {
+    async computerJobFaults(viaBotId: string, jobId: string, faults: Array<Record<string, unknown>>): Promise<boolean | 'rejected' | 'missing' | { rejected: string[]; unnamed?: number }> {
         try {
             const response = await this.brickCall<{ ok?: unknown; rejected?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}/faults`, { faults });
             // Only Orbit's own positive answer (200 with `ok: true`) says it took the rows: a 200 from something on the way, or a body without it, does not
             if (!(response.status === 200 && response.data?.ok === true)) return false;
             // An Orbit that reads each row on its own keeps the readable rows and names the ones it could not read (`rejected: [{ callId, why }]`): exactly those are refused
-            // alone. A `rejected` it does not name the rows of (a count, or entries without a call id: an older Orbit) refuses nothing extra here, but is said, with the count only
+            // alone. A `rejected` it does not name the rows of (a count, or entries without a call id: an older Orbit) is NOT taken as "delivered": the caller is told how many
+            // rows are unaccounted for, keeps the rows it cannot vouch for, finds the refused ones by splitting, and tells the operators. Nothing is dropped in silence.
             const { named, unnamed } = rejectedRowsOf(response.data, faults);
-            if (unnamed > 0) console.warn(`[AdminApiService] Orbit says it could not read ${unnamed} fault row(s) of a batch and does not say which: they are treated as delivered`);
+            if (unnamed > 0) return { rejected: named, unnamed };
             return named.length > 0 ? { rejected: named } : true;
         } catch (error) {
             // Only Orbit's own answer for an unknown job is final; a missing route answers 404 or 405 with something else
