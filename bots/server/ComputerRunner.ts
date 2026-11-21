@@ -45,14 +45,9 @@ export type FinishCause = 'ours' | 'agent';
 
 export type TurnOpened = { ok: true; events: AsyncIterable<RunnerEvent> } | { ok: false; reason: string; responseId?: string };
 
-/**
- * What the bot server tells Orbit with a prepare: the run of this runner the job's turns are numbered in, and, when the relay's address answered as
- * something that is not the relay, `relayReached: false` with the HTTP status it saw (null when none).
- */
+/** What the bot server tells Orbit with a prepare, besides the relay's address: the run of this runner the job's turns are numbered in. */
 export interface PrepareFacts {
     run?: string;
-    relayReached?: false;
-    relayStatus?: number | null;
 }
 
 export interface RunnerOrbit {
@@ -63,7 +58,7 @@ export interface RunnerOrbit {
      */
     job(botId: string, jobId: string): Promise<{ status: string; control: string; generation?: number } | null>;
     action(botId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
-    /** `extra` is what the bot server itself saw of the relay (see `PrepareFacts`): sent along, for Orbit's record. */
+    /** `extra` goes along with the address (see `PrepareFacts`). */
     prepare(jobId: string, relay: string, extra?: PrepareFacts): Promise<{ ok: true } | { ok: false; reason: string }>;
     turn(jobId: string, input: string, signal: AbortSignal): Promise<TurnOpened>;
     stream(jobId: string, signal: AbortSignal): Promise<TurnOpened>;
@@ -370,7 +365,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     /**
      * Gets the machine ready. `unreachable` when the machine's own way to the relay is proven closed: the address answers as something that is not
      * the relay, or Orbit (which asks the machine itself to call the relay with its own key) says the relay could not be reached. It is tried again
-     * as a failure is, since a relay may be coming back up, and only then said. Orbit is told the run, and what the bot server saw of the address.
+     * as a failure is, since a relay may be coming back up, and only then said. Orbit is told the run with each prepare.
      */
     async function prepared(job: RunnableJob, relay: string, run: string, signal: AbortSignal): Promise<'ready' | 'look' | 'failed' | 'unreachable' | 'stopped'> {
         for (let attempt = 0; ; attempt++) {
@@ -379,9 +374,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             let answer: { ok: true } | { ok: false; reason: string } = { ok: true };
             const seen = await relayAnswer(relay);
             if (seen.answer === 'wrong') {
+                // The job ends here (its own fault row says so): Orbit is not asked to prepare a machine for it
                 unreachable = true;
-                // Orbit is told what was seen, for its record; it is not asked to prepare a machine for a job that ends here
-                await orbit.prepare(job.jobId, relay, { run, relayReached: false, relayStatus: seen.status }).catch(() => undefined);
             } else {
                 answer = await orbit.prepare(job.jobId, relay, { run }).catch(() => ({ ok: false as const, reason: 'failed' }));
                 if ('reason' in answer && answer.reason === 'relay_unreachable') unreachable = true;
@@ -531,10 +525,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     /** A confirmed fault of ours on a turn: the machine could not get to the relay (nothing of the job's can cause that). Noted for Orbit's record and for this runner. */
     function noteNoRelay(job: RunnableJob, turn: number, run: string, why: 'prepare' | 'no_call'): void {
         deps.refusals?.record?.(job.botId, job.jobId, {
-            // The row Orbit keeps for a machine that could not reach the relay at prepare has one id (and Orbit may write it too: it is the same row)
-            callId: why === 'prepare' ? 'relay_unreachable' : `relay_unreachable_${run}_${turn}`,
+            callId: `${why === 'prepare' ? 'relay_unreachable' : 'no_call'}_${run}_${turn}`,
             kind: 'fault',
-            reason: 'relay_unreachable',
+            reason: 'relay_down',
             source: 'universe-ai',
             route: 'unknown',
             providerStatus: null,

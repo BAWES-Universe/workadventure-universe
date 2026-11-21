@@ -32,7 +32,7 @@ const stream = (events: RunnerEvent[]): TurnOpened => ({ ok: true, events: (asyn
 
 /** A scripted Orbit: each turn answers with the next script, and `look` says how the job stands each time the runner asks. */
 function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number } | null = () => ({ status: 'running', control: 'brick' })) {
-    const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], prepareFacts: [] as Array<{ run?: string; relayReached?: false; relayStatus?: number | null } | undefined>, actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
+    const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], prepareFacts: [] as Array<{ run?: string } | undefined>, actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
     let renewAnswer: (n: number) => Record<string, unknown> = () => ({ ok: true, renewInSeconds: 240 });
     let handoverFails = 0;
     let prepareAnswer: () => { ok: true } | { ok: false; reason: string } = () => ({ ok: true });
@@ -1151,7 +1151,7 @@ describe('the bot server’s calls to Orbit', () => {
             computerRunningJobs: vi.fn(async () => [JOB]),
             getComputerJob: vi.fn(async () => ({ id: 'job-1', status: 'running', control: 'brick' })),
             computerJobAction: vi.fn(async () => ({})),
-            computerBroker: vi.fn(async (_id: string, step: string) => (step === 'prepare' ? { status: 409, data: { ok: false, reason: 'person_has_it' } } : { status: 200, data: {} })),
+            computerBroker: vi.fn(async (_id: string, step: string, _body?: unknown) => (step === 'prepare' ? { status: 409, data: { ok: false, reason: 'person_has_it' } } : { status: 200, data: {} })),
             computerOpenTurn: vi.fn(async (_id: string, step: string) =>
                 step === 'turn'
                     ? { ok: false as const, status: 409, reason: 'busy', responseId: 'r9' }
@@ -1170,15 +1170,13 @@ describe('the bot server’s calls to Orbit', () => {
         // a server error is "failed", never a reason of Orbit's own
         admin.computerBroker.mockResolvedValueOnce({ status: 502, data: { ok: false, reason: 'failed' } });
         expect(await orbit.prepare('j', RELAY)).toEqual({ ok: false, reason: 'failed' });
-        // what the bot server saw of the relay goes with the address, and nothing else is added
+        // the run goes with the address, and nothing else is added
         admin.computerBroker.mockClear();
         await orbit.prepare('j', RELAY);
         await orbit.prepare('j', RELAY, { run: 'run1' });
-        await orbit.prepare('j', RELAY, { run: 'run1', relayReached: false, relayStatus: 404 });
         expect(admin.computerBroker.mock.calls.map((call) => [call[1], call[2]])).toEqual([
             ['prepare', { relay: RELAY }],
             ['prepare', { relay: RELAY, run: 'run1' }],
-            ['prepare', { relay: RELAY, run: 'run1', relayReached: false, relayStatus: 404 }],
         ]);
     });
 
@@ -1512,7 +1510,7 @@ describe('a machine that cannot reach our own model service', () => {
         expect(finishedWithRun(seen)[0].run).toBe('run1');
         // the record Orbit judges by: one confirmed fault of ours on that turn of that run, sent before the finish
         expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ turn: 1, run: 'run1', kind: 'fault', reason: 'relay_unreachable', source: 'universe-ai', providerStatus: null });
+        expect(rows[0]).toMatchObject({ turn: 1, run: 'run1', kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: null });
     });
 
     it('goes on when the relay came back between two tries', async () => {
@@ -1529,13 +1527,12 @@ describe('a machine that cannot reach our own model service', () => {
     it('ends it the same way, without asking Orbit to prepare, when the relay’s address answers as something else (an error page)', async () => {
         const { seen, rows, run } = rig([], { probe: async () => ({ answer: 'wrong', status: 404 }) });
         await run();
-        // Orbit is only told what the bot server saw (the run and that the address is not the relay, with the status), for its record
-        expect(seen.prepareFacts.length).toBeGreaterThan(0);
-        expect(seen.prepareFacts.every((facts) => facts?.run === 'run1' && facts.relayReached === false && facts.relayStatus === 404)).toBe(true);
+        // The job ends on its own fault row: Orbit is not asked to prepare a machine for it
+        expect(seen.prepares).toEqual([]);
         expect(seen.turns).toEqual([]);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
         expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_unreachable', turn: 1, run: 'run1' });
+        expect(rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', turn: 1, run: 'run1' });
     });
 
     it('goes on when the address is the relay, and when it could not be asked from here (that proves nothing about the machine)', async () => {
@@ -1563,9 +1560,9 @@ describe('a machine that cannot reach our own model service', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
         // a confirmed fault for each turn, under ids of their own, so Orbit never counts it against the goodwill a month allows
         expect(rows.map((row) => [row.turn, row.kind, row.reason])).toEqual([
-            [1, 'fault', 'relay_unreachable'],
-            [2, 'fault', 'relay_unreachable'],
-            [3, 'fault', 'relay_unreachable'],
+            [1, 'fault', 'relay_down'],
+            [2, 'fault', 'relay_down'],
+            [3, 'fault', 'relay_down'],
         ]);
         expect(new Set(rows.map((row) => row.callId)).size).toBe(3);
         expect(rows.every((row) => row.run === 'run1')).toBe(true);
