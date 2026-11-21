@@ -158,6 +158,19 @@ describe('a call that reached the relay is noted for the runner', () => {
         expect(notes.calledSince(JOB, afterList)).toBe(true);
         expect(notes.calledSince('another-job', before)).toBe(false);
     });
+
+    it('does not note a chat call whose key Orbit refuses (401) or that could not be checked because Orbit is away (503): the runner reads such a turn as one no call reached', async () => {
+        const before = notes.mark();
+        orbit.identify.mockResolvedValueOnce({ ok: false });
+        expect((await ask({ messages })).status).toBe(401);
+        expect(notes.calledSince(JOB, before)).toBe(false);
+        orbit.identify.mockRejectedValueOnce(new Error('down'));
+        expect((await ask({ messages })).status).toBe(503);
+        expect(notes.calledSince(JOB, before)).toBe(false);
+        // no key at all
+        expect((await ask({ messages }, null)).status).toBe(401);
+        expect(notes.calledSince(JOB, before)).toBe(false);
+    });
 });
 
 describe('room before the call', () => {
