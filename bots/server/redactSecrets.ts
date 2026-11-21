@@ -41,8 +41,31 @@ const ASSIGNMENT_START = /(^|[\s;&|?(])([A-Za-z_][A-Za-z0-9_]*)=/g;
  */
 function endOfShellWord(text: string, from: number): number {
     const end = text.length;
-    // The character before `at` begins a new word: the start of the text, a blank, or one of `;&|(` and a line break
-    const wordStart = (at: number): boolean => at === 0 || /[\s;&|(]/.test(text[at - 1]);
+    // The line break that ended the last comment: a backslash before it was part of the comment, not a line continuation
+    let commentEnd = -1;
+    // The character at `at` is escaped by a backslash before it (an odd run of them): `\ #` is one word, not a blank and a comment
+    const escapedAt = (at: number): boolean => {
+        if (at === commentEnd) return false;
+        let run = 0;
+        while (at - 1 - run >= 0 && text[at - 1 - run] === '\\') run++;
+        return run % 2 === 1;
+    };
+    // The index of the character before `at`, a backslash and a line break (a line continuation, which Bash takes out) not counted; -1 at the start
+    const indexBefore = (at: number): number => {
+        let j = at - 1;
+        while (j >= 1 && j !== commentEnd && text[j] === '\n' && text[j - 1] === '\\' && !escapedAt(j - 1)) j -= 2;
+        return j;
+    };
+    const charBefore = (at: number): string => {
+        const j = indexBefore(at);
+        return j >= 0 ? text[j] : '';
+    };
+    // The character before `at` begins a new word (as in Bash, where `#` starts a comment only then): the start of the text, a blank or line break, or one
+    // of `; & | ( ) < >`, none of them escaped; a line continuation before it is taken out first
+    const wordStart = (at: number): boolean => {
+        const j = indexBefore(at);
+        return j < 0 || (/[\s;&|()<>]/.test(text[j]) && !escapedAt(j));
+    };
     // After a `<<` that is a here-document (not the `<<<` here-string)
     const heredocAt = (at: number): boolean => text[at] === '<' && text[at + 1] === '<' && text[at + 2] !== '<' && text[at - 1] !== '<';
     const quoted = (start: number, quote: '"' | "'", ansi = false): number => {
@@ -68,6 +91,29 @@ function endOfShellWord(text: string, from: number): number {
         }
         return end;
     };
+    // `open` is the index of a `[` that follows a name (`a[`, `echodo[[`): Bash reads what is up to the matching `]` as one word, a `)` or a blank in it
+    // included (the subscript of an array assignment, read wherever a command may begin). Returns the index after the `]`, or the end when there is none
+    const subscript = (open: number): number => {
+        let depth = 1;
+        let i = open + 1;
+        while (i < end) {
+            const c = text[i];
+            if (c === '\\') i += 2;
+            else if (c === "'") i = quoted(i + 1, "'");
+            else if (c === '"') i = quoted(i + 1, '"');
+            else if (c === '`') i = backticks(i + 1);
+            else if (c === '$' && (text[i + 1] === '(' || text[i + 1] === '{')) i = nested(i + 1);
+            else if (c === '[') {
+                depth++;
+                i++;
+            } else if (c === ']') {
+                depth--;
+                i++;
+                if (depth === 0) return i;
+            } else i++;
+        }
+        return end;
+    };
     // `open` is the index of the `(` or `{` after a `$`; returns the index after its balanced close (or the end)
     const nested = (open: number): number => {
         const stack: string[] = [text[open] === '(' ? ')' : '}'];
@@ -84,9 +130,11 @@ function endOfShellWord(text: string, from: number): number {
                 // A comment: to the end of its line, whatever it holds. No line break after it: it runs to the end, and so does the value
                 const lineEnd = text.indexOf('\n', i);
                 if (lineEnd < 0) return end;
+                commentEnd = lineEnd;
                 i = lineEnd;
             } else if (inCommand && heredocAt(i)) return end;
             else if (inCommand && c === 'c' && wordStart(i) && /^case\s/.test(text.slice(i, i + 5))) return end;
+            else if (inCommand && c === '[' && /[A-Za-z0-9_]/.test(charBefore(i))) i = subscript(i);
             else if (c === '(') {
                 stack.push(')');
                 i++;

@@ -159,6 +159,69 @@ describe('a value is read whole, as the shell reads a word', () => {
         }
     });
 
+    it('reads a `#` as a comment wherever Bash does: after a blank, a line break, or any of ; & | ( ) (and < >)', () => {
+        // Each of these is a script Bash accepts, with the comment ending at its line
+        for (const text of [
+            'PASSWORD=$(echo a # )\nprintf hunter2) next',
+            'PASSWORD=$(echo a\n# )\nprintf hunter2) next',
+            'PASSWORD=$(echo a;# )\nprintf hunter2) next',
+            'PASSWORD=$(echo a &# )\nprintf hunter2) next',
+            'PASSWORD=$(echo a |# )\nprintf hunter2) next',
+            'PASSWORD=$( (# )\nprintf hunter2) ) next',
+            'PASSWORD=$( ( echo a )# )\nprintf hunter2) next',
+            'PASSWORD=$( (printf ok)# )\nprintf hunter2) next',
+        ]) expect(redactSecrets(text), JSON.stringify(text)).toBe(`PASSWORD=${HIDDEN} next`);
+        expect(redactSecrets("PASSWORD=$( (printf ok)# )\nprintf '%s' 'hunter2')")).toBe(`PASSWORD=${HIDDEN}`);
+        // after `<` or `>` a `#` is a comment too (Bash then wants a target and refuses the script): nothing of it closes anything
+        for (const before of ['<', '>']) expect(redactSecrets(`PASSWORD=$(echo a ${before}# )\nprintf hunter2) next`), before).not.toContain('hunter2');
+    });
+
+    it('does not read an escaped blank or metacharacter as the end of a word: `\ #` is one word, and a `#` after it is no comment', () => {
+        const cases: Array<[string, string]> = [
+            ['PASSWORD=$(echo a # c )\n\n\n a \\ #echo $(echo a) echo $(# )\n hunter2) ; echo hunter2)', `PASSWORD=${HIDDEN}`],
+            ['PASSWORD=$(echo \\ # ; hunter2) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(echo a\\;# ; hunter2) next', `PASSWORD=${HIDDEN} next`],
+            // an even run of backslashes escapes nothing: the blank after it is a blank, and the comment is one
+            ['PASSWORD=$(echo \\\\ # )\nprintf hunter2) next', `PASSWORD=${HIDDEN} next`],
+            // a line continuation joins the lines: no word begins after it
+            ['PASSWORD=$(echo a\\\n# ; hunter2) next', `PASSWORD=${HIDDEN} next`],
+        ];
+        for (const [text, hidden] of cases) {
+            expect(redactSecrets(text), JSON.stringify(text)).toBe(hidden);
+            expect(redactSecrets(text), JSON.stringify(text)).not.toContain('hunter2');
+        }
+    });
+
+    it('reads what follows a name and `[` up to the matching `]` as one word (Bash does, for an array assignment): a `)` or a blank in it closes nothing', () => {
+        const cases: Array<[string, string]> = [
+            ['PASSWORD=$(echodo\\\n[[ || })) || \\\n && echo hunter2 ]])', `PASSWORD=${HIDDEN}`],
+            ['PASSWORD=$(a[[)echo ${#x}; echo "hunter2 )" echo ]] < if)', `PASSWORD=${HIDDEN}`],
+            ['PASSWORD=$(a[ ) ]=x; echo hunter2) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(ls a[0-9]* ; echo hunter2) next', `PASSWORD=${HIDDEN} next`],
+            ['PASSWORD=$(echo ${a[1]} hunter2) next', `PASSWORD=${HIDDEN} next`],
+            // no matching `]`: where the value ends cannot be told, so the rest goes
+            ['PASSWORD=$(a[ ; echo hunter2) next', `PASSWORD=${HIDDEN}`],
+        ];
+        for (const [text, hidden] of cases) {
+            expect(redactSecrets(text), JSON.stringify(text)).toBe(hidden);
+            expect(redactSecrets(text), JSON.stringify(text)).not.toContain('hunter2');
+        }
+    });
+
+    it('reads a comment as the end of its line even when it ends in a backslash, and joins a line continuation before it is judged', () => {
+        // Each of these is a script Bash accepts whole (found by the differential test against Bash): the comment's backslash continues nothing, and a
+        // line continuation joins what is before it to what is after it (so a `#` right after `$(` and a `case` after it keep their place)
+        for (const text of [
+            'PASSWORD=$(#xdo$; echo a\\\n# )\n hunter2 )',
+            'PASSWORD=$(\\\n#);hunter2><  then$(( \' \\\n)',
+            'PASSWORD=$(\\\ncase x in x) echo hunter2;; esac;echo ${#x})',
+            'PASSWORD=$(echo a \\\n b\nx=1 # || # ${# && echo a\\\n# )\n hunter2  echo \')\')',
+            'PASSWORD=$(# if ; { echo a; }; echo a\\\n# )\nhunter2)',
+        ]) {
+            expect(redactSecrets(text), JSON.stringify(text)).toBe(`PASSWORD=${HIDDEN}`);
+        }
+    });
+
     it('does not read a `#` as a comment where it is not one: in quotes, `$#`, `${#x}`, in the middle of a word', () => {
         const cases: Array<[string, string]> = [
             ["PASSWORD=$(printf '%s' '# )' hunter2) next", `PASSWORD=${HIDDEN} next`],
