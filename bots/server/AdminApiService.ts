@@ -1504,7 +1504,8 @@ export class AdminApiService {
      * record proves. Throws when Orbit cannot be asked, so nothing is taken for "nothing to tell".
      */
     async computerReports(): Promise<ComputerReport[]> {
-        const response = await this.brickCall<{ reports?: unknown }>('get', 'api/computer/jobs/reports');
+        // `accepts=late`: this game knows the late follow-up. Orbit never offers that kind to a game that does not ask for it (an older game is untouched while Orbit is deployed first)
+        const response = await this.brickCall<{ reports?: unknown }>('get', 'api/computer/jobs/reports', undefined, { accepts: 'late' });
         const reports = Array.isArray(response.data?.reports) ? response.data.reports : [];
         return reports.map(computerReportOf).filter((report): report is ComputerReport => report !== null);
     }
@@ -1512,7 +1513,8 @@ export class AdminApiService {
     /** That a report was said, or can never be: Orbit does not offer it again. False when Orbit did not take it (it is offered again and said as the same message). Never throws. */
     async keepComputerReportTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>): Promise<boolean> {
         try {
-            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }) });
+            // The late follow-up says outright that it was delivered (Orbit stops offering it either way); every other kind is told as before
+            await this.brickCall('post', 'api/computer/jobs/reports', { jobId: report.jobId, kind: report.kind, ...(report.seq === null ? {} : { seq: report.seq }), ...(report.kind === 'late' ? { outcome: 'delivered' } : {}) });
             return true;
         } catch (error) {
             // A job that is gone has nothing left to be told: that is an answer, not a failure

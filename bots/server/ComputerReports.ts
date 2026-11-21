@@ -12,6 +12,10 @@
  *    given back. The computer's own sentence is only ever why it could not go on, and Orbit has cleaned it of links and markup.
  * The person's own Stop, a computer turned off and a Brick deleted are never offered: they just did it.
  *
+ * The late follow-up (`late`): an App that was let go unconfirmed (so its hold was released and nothing was charged) may be confirmed later by the provider's log. Orbit then offers
+ * one more message for the job, once, in the same conversation: "Update: <App> did go out after all. We couldn't confirm it earlier. You weren't charged for it." The game only says
+ * it, from Orbit's facts: it never charges, refunds or decides anything. Orbit offers it only to a game that asks for it (`accepts=late`), so an older game never meets the kind.
+ *
  * The file card: the files a finished job made come as `handed`: they are the person's own, kept by Orbit (and shown in their Files) whether or not the chat took them.
  * Each is fetched from Orbit one at a time, uploaded to the chat and sent as a file message under its own transaction id, after the message, and Orbit is told
  * as soon as each one is in, so a restart never sends one twice. A file that cannot go (too big for the chat, the chat kept refusing) is said so in a short
@@ -20,7 +24,7 @@
 
 import type { StepsField } from '../ai/ToolSteps';
 
-export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule';
+export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule' | 'late';
 export type Waiting = 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer';
 
 /** A file a finished job made, handed over to be put in the chat as a card. */
@@ -62,9 +66,39 @@ export interface ComputerReport {
     givenBack: boolean;
     /** Whole micros of a refund Orbit has promised and not paid yet (0 when none, or from an older Orbit): said as pending, never as given back. */
     refundPendingMicros: number;
+    /** Only for `late`: the Apps (display names, in the order they were confirmed) that went out after all. Empty for every other kind. */
+    apps: string[];
+    /** Only for `late`: Orbit let the Apps go unconfirmed, released their hold and was never paid for them: the one fact "you weren't charged" rests on. False for every other kind. */
+    holdReleased: boolean;
 }
 
-const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule'];
+const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late'];
+
+/** The longest an App's name is said, and how many are named before "and N more": a follow-up is one short message. */
+const APP_NAME_MAX = 40;
+const APPS_NAMED = 5;
+const APPS_KEPT = 12;
+
+/** The Apps of a late report as plain names: no markup or control characters, whole characters, no repeats, in the order Orbit gave them. */
+function appsOf(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const one of raw) {
+        if (typeof one !== 'string') continue;
+        // A name is a name: nothing a chat could read as a link, a tag or a line of its own
+        // eslint-disable-next-line no-control-regex
+        const plain = Array.from(one.replace(/[\u0000-\u001f\u007f<>[\]`]+/g, ' ').replace(/\s+/g, ' ').trim())
+            .slice(0, APP_NAME_MAX)
+            .join('')
+            .trim();
+        if (!plain || seen.has(plain.toLowerCase())) continue;
+        seen.add(plain.toLowerCase());
+        out.push(plain);
+        if (out.length >= APPS_KEPT) break;
+    }
+    return out;
+}
 const WAITINGS: readonly Waiting[] = ['details', 'signin', 'upload', 'pay', 'submit', 'answer'];
 
 /** The files handed over, each kept only when it has what a card needs. */
@@ -98,7 +132,11 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     }
     const origin = report.origin as { kind?: unknown; ref?: unknown } | null | undefined;
     const kind = report.kind as ReportKind;
-    const seq = typeof report.seq === 'number' ? report.seq : null;
+    // A late report is told once for the whole job: it has no number, and one that came with a number is told without it
+    const seq = kind !== 'late' && typeof report.seq === 'number' ? report.seq : null;
+    const apps = kind === 'late' ? appsOf(report.apps) : [];
+    // "You weren't charged" is only said when Orbit says the hold was released, and an App is only named when there is a name to say: otherwise there is nothing true to tell
+    if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true)) return null;
     // A wait is told by its number: without one it could not be marked as told for that wait only
     if (kind === 'needs' && (seq === null || waiting(report.waitingFor) === null)) return null;
     return {
@@ -121,6 +159,8 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         handed: handedOf(report.handed),
         givenBack: report.givenBack === true,
         refundPendingMicros: typeof report.refundPendingMicros === 'number' && Number.isFinite(report.refundPendingMicros) && report.refundPendingMicros > 0 ? Math.round(report.refundPendingMicros) : 0,
+        apps,
+        holdReleased: kind === 'late' && report.holdReleased === true,
     };
 }
 
@@ -236,6 +276,11 @@ export function reportText(report: ComputerReport): string {
         case 'rule': {
             const said = report.why ? ` You said: “${report.why.replace(/[.!?]+$/, '')}”.` : '';
             return `I stopped ${name} because of a rule you set.${said} ${receiptOf(report)} My computer kept what I had ready.`;
+        }
+        case 'late': {
+            // Only what Orbit's record proves: the provider's log confirmed it later, nothing was ever charged for it. Said once, as one message, whatever the number of Apps
+            const named = report.apps.length > APPS_NAMED ? [...report.apps.slice(0, APPS_NAMED - 1), `${report.apps.length - (APPS_NAMED - 1)} more`] : report.apps;
+            return `Update: ${list(named)} did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.`;
         }
     }
 }
