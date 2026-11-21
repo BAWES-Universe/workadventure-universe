@@ -1726,6 +1726,38 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
         });
     });
 
+    it('does not give up on a turn whose calls were all refused for their own size (unresolved, not confirmed), and writes no confirmed fault for it', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            // an older turn had a call taken up: these refusals are for the size of the call, which the relay sends as uncertain
+            const state = retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, kind: 'uncertain' })); at(20_000, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'c2', kind: 'uncertain' })); }, 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(state.turns).toBe(1);
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.some((row) => row.kind === 'fault')).toBe(false);
+            expect(sent.map((row) => row.kind)).toEqual(['uncertain', 'uncertain']);
+        });
+    });
+
+    it('gives up after one confirmed refusal and one for size in the same turn, as for confirmed ones alone', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, kind: 'uncertain' })); at(20_000, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'c2' })); }, 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.find((row) => row.callId === 'pool_busy_gave_up_run1_1')).toMatchObject({ kind: 'fault' });
+        });
+    });
+
     it('leaves a turn alone when one of its calls was taken up, whether before or after the refusals', async () => {
         for (const order of ['before', 'after'] as const) {
             await withFakeClock(async () => {

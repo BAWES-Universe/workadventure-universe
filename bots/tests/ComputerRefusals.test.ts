@@ -751,9 +751,16 @@ describe('whether every call of a turn was refused for want of room in the share
         expect(notes.onlyPoolBusySince('a', before)).toBe(false);
         pool(notes, 'a', 'c1');
         expect(notes.onlyPoolBusySince('a', before)).toBe(true);
-        // the size-refused kind counts too: it is still no room
+        // a call refused for its own size is unresolved: it is not a confirmed refusal for room, alone it starts nothing
         pool(notes, 'c', 'c1', 'uncertain');
+        expect(notes.onlyPoolBusySince('c', before)).toBe(false);
+        // beside a confirmed one in the same turn, it does not hide it
+        pool(notes, 'c', 'c2');
         expect(notes.onlyPoolBusySince('c', before)).toBe(true);
+        const order = notes.mark();
+        pool(notes, 'e', 'c1');
+        pool(notes, 'e', 'c2', 'uncertain');
+        expect(notes.onlyPoolBusySince('e', order)).toBe(true);
         expect(notes.onlyPoolBusySince('b', before)).toBe(false);
         // a turn that began after it does not hold it
         expect(notes.onlyPoolBusySince('a', notes.mark())).toBe(false);

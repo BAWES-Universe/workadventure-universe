@@ -140,7 +140,7 @@ export interface RefusalNotes {
     accepted(jobId: string): void;
     /** Whether any call of this job was taken up since this point (or at or after this moment, ms): `0` asks whether one ever was. */
     acceptedSince(jobId: string, since: Since): boolean;
-    /** Whether the calls of this job since this point were ALL refused for want of room in the shared pool: at least one was, and none was taken up. */
+    /** Whether the calls of this job since this point were ALL refused for want of room in the shared pool: at least one was, CONFIRMED (kind `fault`), and none was taken up. */
     onlyPoolBusySince(jobId: string, since: Since): boolean;
 }
 
@@ -393,8 +393,10 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     mark(jobId, 'called');
                 } else {
                     mark(jobId, 'fault', call.kind === 'fault');
-                    // Refused for want of room in the shared pool: the runner reads a turn of nothing but these as a machine to give up
-                    if (call.reason === 'pool_busy') mark(jobId, 'pooled');
+                    // Refused for want of room in the shared pool and CONFIRMED so (no room for even the smallest call, or none of the job's calls was ever taken
+                    // up): the runner reads a turn of nothing but these as a machine to give up. A call refused for its own size (`uncertain`) is unresolved,
+                    // so it neither starts the give-up nor ends a job as a confirmed fault of ours
+                    if (call.reason === 'pool_busy' && call.kind === 'fault') mark(jobId, 'pooled');
                 }
             }
             if (!options.sink && !store) return;
