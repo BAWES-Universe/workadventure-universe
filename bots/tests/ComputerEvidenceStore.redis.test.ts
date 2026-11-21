@@ -16,7 +16,8 @@ describe.runIf(process.env.BOTS_REQUIRE_REDIS === '1' && !REAL_REDIS)('the real 
     });
 });
 describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts themselves)', () => {
-    let client: ReturnType<typeof createClient>;
+    let client!: ReturnType<typeof createClient>;
+    let opened = false;
     const run = randomUUID();
     const jobs: string[] = [];
     const job = (name: string) => {
@@ -25,10 +26,16 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
         return id;
     };
     beforeAll(async () => {
-        client = createClient({ url: REAL_REDIS });
+        // A Redis that is not there fails the setup at once and cleanly: the 'error' listener is on before the connection is tried (an error event with no listener is
+        // thrown), and the client does not try to connect again for ever
+        client = createClient({ url: REAL_REDIS, socket: { reconnectStrategy: false } });
+        client.on('error', () => undefined);
         await client.connect();
+        opened = true;
     });
     afterAll(async () => {
+        // Setup that never opened the client has nothing to delete, and nothing to quit (quit on a client that never connected waits for ever)
+        if (!opened || !client.isOpen) return;
         if (jobs.length > 0) await client.del(jobs.map((id) => CALLED_PREFIX + id));
         await client.quit();
     });
@@ -57,6 +64,23 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
         const g = job('garbage');
         await client.hSet(CALLED_PREFIX + g, 'fence:3|r', 'not-a-number');
         expect(await b.noteAccepted(g, 10 ** 9, { turn: 3, run: 'r' })).toBe(false);
+        // a close made when the runner's turn was not known (`fence:|`) refuses a call of a KNOWN turn too, for FENCE_LIFE_MS; a fence of ANOTHER known turn does not
+        const u = job('unscoped');
+        expect(await a.closeTurn(u, undefined, 0, 4000)).toBe(true);
+        expect(await b.noteAccepted(u, 4100, { turn: 2, run: 'r' })).toBe(false);
+        expect(await b.noteAccepted(u, 4100, { turn: 2 })).toBe(false);
+        expect(await b.noteAccepted(u, 4100)).toBe(false);
+        expect(await b.noteAccepted(u, 4000 + FENCE_LIFE_MS, { turn: 2, run: 'r' })).toBe(false);
+        expect(await b.noteAccepted(u, 4000 + FENCE_LIFE_MS + 1, { turn: 2, run: 'r' })).toBe(true);
+        const other = job('other-turn');
+        expect(await a.closeTurn(other, { turn: 1, run: 'r' }, 0, 4000)).toBe(true);
+        expect(await b.noteAccepted(other, 4100, { turn: 2, run: 'r' })).toBe(true);
+        expect(await b.noteAccepted(other, 4100, { turn: 1, run: 'x' })).toBe(true);
+        expect(await b.noteAccepted(other, 4100, { turn: 1, run: 'r' })).toBe(false);
+        // a fence whose moment cannot be read counts for a call whose turn is not known too, as it does for a known one
+        const g2 = job('garbage-unknown');
+        await client.hSet(CALLED_PREFIX + g2, 'fence:3|r', 'not-a-number');
+        expect(await b.noteAccepted(g2, 10 ** 9)).toBe(false);
         // an old acceptance (before the window minus the skew) does not count
         const k = job('k');
         await b.noteAccepted(k, 100, { turn: 1 });
@@ -78,10 +102,13 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
         const a = new RedisSharedCalls(() => client as never, 'A');
         const b = new RedisSharedCalls(() => client as never, 'B');
         const j = job('retract');
+        // a first close, then a LATER close of the same turn that writes its own moment over it, then the first close's retraction arrives late: the second fence stays
+        expect(await a.closeTurn(j, { turn: 4, run: 'r' }, 0, 6999)).toBe(true);
         expect(await a.closeTurn(j, { turn: 4, run: 'r' }, 0, 7000)).toBe(true);
-        expect(await b.noteAccepted(j, 7100, { turn: 4, run: 'r' })).toBe(false);
-        // another moment, another run, another turn: nothing goes
         await a.retractFence(j, { turn: 4, run: 'r' }, 6999);
+        expect(await client.hGet(CALLED_PREFIX + j, 'fence:4|r')).toBe('7000');
+        expect(await b.noteAccepted(j, 7100, { turn: 4, run: 'r' })).toBe(false);
+        // another run, another turn: nothing goes
         await a.retractFence(j, { turn: 4, run: 'other' }, 7000);
         await a.retractFence(j, { turn: 5, run: 'r' }, 7000);
         expect(await b.noteAccepted(j, 7100, { turn: 4, run: 'r' })).toBe(false);

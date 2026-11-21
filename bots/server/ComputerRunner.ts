@@ -17,7 +17,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { AdminApiService } from './AdminApiService';
-import type { RefusalNotes, Since } from './ComputerRefusals';
+import type { CloseAttempt, RefusalNotes, Since } from './ComputerRefusals';
 import { readRunnerEvents } from './ComputerTurnStream';
 import { redactSecrets, safeStepLabel } from './redactSecrets';
 
@@ -194,7 +194,7 @@ export interface RunnerDeps {
     /** What the model relay refused for the person's allowance or a rule of theirs: a turn that ended on one is not Universe's failure. */
     /** Names a run of the runner on a job (tests give fixed ones); each run of a job has its own. */
     runId?: () => string;
-    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'turnPublished' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince' | 'closeTurn'>>;
+    refusals?: Pick<RefusalNotes, 'sawSince'> & Partial<Pick<RefusalNotes, 'endedOnFault' | 'turn' | 'turnPublished' | 'flush' | 'confirmedSince' | 'mark' | 'record' | 'calledSince' | 'calledAnywhereSince' | 'onlyPoolBusySince' | 'acceptedAnywhereSince' | 'closeTurn' | 'reopenTurn'>>;
     /**
      * Asks the relay's own address whether it answers as the relay (see `probeRelay`): `wrong` when something else answers there (an error page,
      * another service), `unknown` when it could not be asked from here at all (no proof either way). Without it nothing is asked.
@@ -242,8 +242,18 @@ async function readUpTo(answer: Response, limit: number): Promise<string> {
             size += kept.byteLength;
         }
     } finally {
-        // What is not read is not wanted: the connection is let go of rather than drained
-        await reader.cancel().catch(() => undefined);
+        // What is not read is not wanted: the connection is let go of rather than drained. The cancel is asked and NOT waited for (a stream whose cancel never
+        // settles would hold the probe for ever, whatever was read): its refusal is handled, the reader is let go, and the bytes already read are parsed
+        try {
+            reader.cancel().catch(() => undefined);
+        } catch {
+            /* a stream that cannot be cancelled is not read any more either way */
+        }
+        try {
+            reader.releaseLock();
+        } catch {
+            /* a reader that is already released has nothing to let go of */
+        }
     }
     return new TextDecoder().decode(Buffer.concat(parts));
 }
@@ -492,15 +502,26 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 // on another server that takes one up after this is refused, and forwards nothing). A read of what was taken up, and a cancel after it, would stop a turn
                 // whose call another server took up and forwarded in between
                 let closed = false;
+                // What names THIS close, so that exactly this one can be taken back
+                const attempt: CloseAttempt = {};
                 try {
-                    closed = await deps.refusals.closeTurn(job.jobId, since);
+                    closed = await deps.refusals.closeTurn(job.jobId, since, attempt);
                 } catch {
                     closed = false;
                 }
                 // Not closed: a call was taken up (the pool has room again), or it cannot be told: the turn goes on
                 if (!closed) return;
-                // The close took a moment: the turn may have ended (its terminal event was read, or it was stopped) meanwhile
-                if (turnOver || turnController.signal.aborted) return;
+                // The close took a moment, and the turn is NOT given up when it ended meanwhile (its terminal event was read, or the worker stopped), or when a refusal of
+                // another kind arrived meanwhile (a provider's error, the person's allowance...: the turn is no pool-only turn after all; a call the close itself had the
+                // relay refuse is not such evidence). Then the close is taken back (the fence of THIS close, even one that committed only now), and the turn goes on
+                if (turnOver || turnController.signal.aborted || !poolBusy()) {
+                    try {
+                        await deps.refusals.reopenTurn(job.jobId, attempt);
+                    } catch {
+                        /* the fence expires on its own */
+                    }
+                    return;
+                }
             }
             gaveUp = true;
             turnController.abort();

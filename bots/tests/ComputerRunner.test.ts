@@ -1996,6 +1996,33 @@ describe('asking an address whether it is the relay', () => {
         expect(pulls).toBeLessThan(100);
     });
 
+    it('does not wait for the cancel of a stream that never settles, and handles one that fails: the bytes already read are parsed either way', async () => {
+        const chunk = new TextEncoder().encode('x'.repeat(1024));
+        const endlessWith = (cancel: () => Promise<void>) =>
+            new ReadableStream<Uint8Array>({
+                pull(controller) {
+                    controller.enqueue(chunk);
+                },
+                cancel,
+            });
+        const within = async (run: Promise<unknown>) => Promise.race([run, new Promise((resolve) => setTimeout(() => resolve('hung'), 1500))]);
+        // a cancel that never settles: the probe is answered, not held by it
+        const never = await within(probeRelay('https://x.test', (async () => new Response(endlessWith(() => new Promise<void>(() => undefined)), { status: 200 })) as never));
+        expect(never).toEqual({ answer: 'wrong', status: 200 });
+        // a cancel that fails is handled: no unhandled rejection, and the answer is the same
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown) => unhandled.push(reason);
+        process.on('unhandledRejection', onUnhandled);
+        try {
+            const failing = await within(probeRelay('https://x.test', (async () => new Response(endlessWith(() => Promise.reject(new Error('cancel failed'))), { status: 200 })) as never));
+            expect(failing).toEqual({ answer: 'wrong', status: 200 });
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off('unhandledRejection', onUnhandled);
+        }
+    });
+
     it('still reads a small JSON answer in many pieces as the relay’s, and a bodyless 204 as before', async () => {
         const text = JSON.stringify({ object: 'list', data: [{ id: 'a' }, { id: 'b' }] });
         const bytes = new TextEncoder().encode(text);
@@ -2129,6 +2156,8 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
         const called = new Map<string, number>();
         const accepted = new Map<string, number>();
         let fenced = false;
+        /** The moments of the fences written and not taken back. */
+        const fences: number[] = [];
         // The store takes its time to get a command (latency) and then does it as one step: `began` says a close of the turn was sent
         const latency = { ms: 0, began: undefined as (() => void) | undefined };
         const forServer = (id: string) => ({
@@ -2139,25 +2168,32 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 return others.length > 0 ? Math.max(...others) : null;
             },
             // a turn that was given up (fenced) takes no acceptance, and the fence is written only when no other server took one up: one step, as in the store
-            noteAccepted: async (_jobId: string, at: number) => {
+            noteAccepted: async (_jobId: string, at: number, _turn?: unknown) => {
                 if (fenced) return false;
                 accepted.set(id, Math.max(at, accepted.get(id) ?? 0));
                 return true;
             },
-            closeTurn: async (_jobId: string, _turn: unknown, from: number) => {
+            closeTurn: async (_jobId: string, _turn: unknown, from: number, at?: number) => {
                 latency.began?.();
                 if (latency.ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.ms));
                 const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
                 if (others.length > 0 && Math.max(...others) >= from - 2000) return false;
                 fenced = true;
+                fences.push(at ?? 0);
                 return true;
+            },
+            // as the store does it: only the fence that holds exactly that moment goes
+            retractFence: async (_jobId: string, _turn: unknown, at: number) => {
+                const index = fences.indexOf(at);
+                if (index >= 0) fences.splice(index, 1);
+                fenced = fences.length > 0;
             },
             lastAcceptedByOthers: async () => {
                 const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
                 return others.length > 0 ? Math.max(...others) : null;
             },
         });
-        return { forServer, accepted, latency };
+        return { forServer, accepted, latency, fences };
     };
 
     it('does not give up on a turn when the pool took up a call of the job on ANOTHER bot server: only a call taken up nowhere is a pool with no room', async () => {
@@ -2225,6 +2261,74 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             expect(taken).toBe(false);
             expect(seen.cancels).toBe(1);
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            // the runner goes on with the give-up: the fence of the close stays
+            expect(record.fences).toHaveLength(1);
+        });
+    });
+
+    it('does not give the turn up when a refusal of another kind (a provider error of ours) arrives while the close is being written: the close is taken back, the fence leaves the store, and the turn goes on', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            record.latency.ms = 1000;
+            // 500 ms after the close was sent, a call of the turn fails some other way of ours: the turn is no pool-only turn any more
+            record.latency.began = () => void setTimeout(() => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'other-kind', reason: 'provider_5xx', providerStatus: 502 }), 500);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            // the fence of that close is out of the store: another server's call of the turn is taken up
+            expect(record.fences).toEqual([]);
+            expect(await record.forServer('B').noteAccepted!(JOB.jobId, Date.now(), { turn: 1, run: 'run1' })).toBe(true);
+        });
+    });
+
+    it('still gives the turn up when the only refusal that arrived while the close was being written is a call that the close itself had refused: it is no evidence of its own', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            record.latency.ms = 1000;
+            // 500 ms after the close was sent a call reaches this server's relay: the turn is closed here, so it is refused, and its row is a fault of ours (relay_down)
+            let refused: unknown = 'not asked';
+            record.latency.began = () =>
+                void setTimeout(() => {
+                    refused = notes.accepted(JOB.jobId, undefined, 'refused-by-close');
+                    notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'refused-by-close', reason: 'relay_down', providerStatus: 503 });
+                }, 500);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            expect(refused).toBe(false);
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            expect(record.fences).toHaveLength(1);
+        });
+    });
+
+    it('takes back the fence of THAT close when the worker stops while it is being written, even though the close commits afterwards: nothing is cancelled, and a later close is never touched', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            record.latency.ms = 1000;
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+            // the worker stops 300 ms after the close was sent; the store commits it at 1000 ms
+            record.latency.began = () => void setTimeout(() => runner.stop(), 300);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await vi.advanceTimersByTimeAsync(130_000);
+            await runner.idle();
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([]);
+            expect(record.fences).toEqual([]);
+            // the turn takes calls again on this server too
+            expect(notes.accepted(JOB.jobId, { turn: 1, run: 'run1' })).not.toBe(false);
         });
     });
 

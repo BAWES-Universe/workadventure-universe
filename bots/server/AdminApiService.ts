@@ -1739,22 +1739,29 @@ export class AdminApiService {
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
         const startKey = randomUUID();
+        // Asks Orbit which job THIS start made (by its key), and says what is true of it: the same for a start whose answer was lost and for one whose answer came but
+        // did not say what happened
+        const lookUp = async (): Promise<{ ok: false; reason: string }> => {
+            const made = await this.computerJobStarted(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
+            // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
+            if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };
+            if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
+            // A job that failed or stopped: it WAS made and is over. That is no connection failure of the start (nothing was unreachable), and the person is
+            // told what is true of it: `ended`
+            if (COMPUTER_JOB_OVER.includes(made.status)) return { ok: false, reason: 'ended' };
+            // A state this server does not know: nothing can be said of it
+            return { ok: false, reason: 'unknown' };
+        };
+        let answer: Awaited<ReturnType<AdminApiService['sendComputerJob']>>;
         try {
-            return await this.sendComputerJob(viaBotId, userId, ask, startKey);
+            answer = await this.sendComputerJob(viaBotId, userId, ask, startKey);
         } catch (error) {
-            if (isSlowAnswer(error) || mayHaveStarted(error)) {
-                const made = await this.computerJobStarted(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
-                // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
-                if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };
-                if (COMPUTER_JOB_LIVE.includes(made.status)) return { ok: false, reason: 'starting' };
-                // A job that failed or stopped: it WAS made and is over. That is no connection failure of the start (nothing was unreachable), and the person is
-                // told what is true of it: `ended`
-                if (COMPUTER_JOB_OVER.includes(made.status)) return { ok: false, reason: 'ended' };
-                // A state this server does not know: nothing can be said of it
-                return { ok: false, reason: 'unknown' };
-            }
+            if (isSlowAnswer(error) || mayHaveStarted(error)) return lookUp();
             throw error;
         }
+        // An answer that says it worked (`ok: true`) but not what was made, or that says neither one thing nor the other: the job may well have been made, so it is
+        // asked for by its key like a lost answer, and when that cannot confirm it nothing is said of it (never a second job, never "failed")
+        return answer === 'unclear' ? lookUp() : answer;
     }
 
     private async sendComputerJob(
@@ -1762,7 +1769,7 @@ export class AdminApiService {
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } },
         startKey: string
-    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string } | 'unclear'> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
@@ -1789,7 +1796,11 @@ export class AdminApiService {
                 restoredFrom: typeof data.restoredFrom === 'string' ? data.restoredFrom : null,
             };
         }
-        return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown', ...(typeof data?.app === 'string' ? { app: data.app } : {}) };
+        // Only an explicit refusal (Orbit says no, and why) is final here; an answer that is neither a whole success nor that is `'unclear'`
+        if (data && typeof data === 'object' && data.ok !== true && (data.ok === false || typeof data.reason === 'string')) {
+            return { ok: false, reason: typeof data.reason === 'string' ? data.reason : 'unknown', ...(typeof data.app === 'string' ? { app: data.app } : {}) };
+        }
+        return 'unclear';
     }
 
     /** Whether the steps an app has taken in one answer already cost what the job would on the computer, so the Brick should look again at the way. Throws when Orbit cannot be reached. */

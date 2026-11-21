@@ -1232,7 +1232,7 @@ const sharedStore = () => {
             // as the store does it, in one step: a turn that was given up takes no acceptance (a turn that is not known: none lately given up)
             const shut = fences.get(jobId) ?? [];
             // a fence counts for FENCE_LIFE_MS from its moment, a known turn or not
-            if (shut.some((one) => (!turn || one.key === `${turn.turn}|${turn.run ?? ''}`) && one.at >= at - FENCE_LIFE_MS)) return false;
+            if (shut.some((one) => (!turn || one.key === '' || one.key === `${turn.turn}|${turn.run ?? ''}`) && one.at >= at - FENCE_LIFE_MS)) return false;
             accepted.push({ server: id, jobId, at, ...(turn ? { turn } : {}) });
             return true;
         },
@@ -2068,6 +2068,8 @@ describe('calls of a job that arrive at another bot server', () => {
             const store = sharedStore();
             const here = createRefusalNotes(() => 2000, { shared: store.forServer('A'), runsHere: () => true });
             here.turn('j', 7, 'run-1');
+            // the runner goes on to work the turn (a call that arrives before that is in the transition between turns: unattributed, see below)
+            await here.turnPublished!('j');
             const arrived = here.mark();
             // another server's runner said something else: the runner is here, its own history is the one to use
             await store.forServer('Z').noteTurn!('j', [{ turn: 99, run: 'run-z', at: 1 }], 10_000_000);
@@ -2520,6 +2522,70 @@ describe('calls of a job that arrive at another bot server', () => {
             }
         });
 
+        describe('which turn a call is of when it reaches the runner’s own server while the runner changes turns', () => {
+            it('does not give a call the turn that was merely noted: a call that arrived after turn 5 was noted and before the runner went on to work it is of no clear turn, while calls before and after keep theirs', async () => {
+                const { a, advance } = rigTurns();
+                await begin(a, 'j', 4, 'run-1');
+                advance(10);
+                const duringFour = a.mark();
+                advance(10);
+                // turn 5 is noted (its list is being published) but the runner has not gone on to work it
+                a.turn('j', 5, 'run-1');
+                const inTransition = a.mark();
+                advance(10);
+                const stillInTransition = a.mark();
+                // before the turn was noted: turn 4; between the two events: neither, by either way of asking
+                expect(a.turnAt('j', duringFour)).toEqual({ turn: 4, run: 'run-1' });
+                expect(a.turnAt('j', inTransition)).toEqual({ turn: null });
+                expect(await a.turnOfCall('j', { ...inTransition })).toEqual({ turn: null });
+                expect(await a.turnOfCall('j', { ...stillInTransition })).toEqual({ turn: null });
+                // the runner goes on to work turn 5: a call that arrived BEFORE that stays unattributed (it is not read as turn 5 once turn 5 has begun), one after is turn 5
+                await a.turnPublished!('j');
+                advance(10);
+                const after = a.mark();
+                expect(a.turnAt('j', inTransition)).toEqual({ turn: null });
+                expect(await a.turnOfCall('j', { ...stillInTransition })).toEqual({ turn: null });
+                expect(a.turnAt('j', duringFour)).toEqual({ turn: 4, run: 'run-1' });
+                expect(a.turnAt('j', after)).toEqual({ turn: 5, run: 'run-1' });
+                expect(await a.turnOfCall('j', { ...after })).toEqual({ turn: 5, run: 'run-1' });
+            });
+
+            it('a call that arrives while the very first turn of a job is being published is unattributed too, and a reconnect to the turn going (the same turn said again) changes nothing', async () => {
+                const { a, advance } = rigTurns();
+                a.turn('first', 1, 'run-1');
+                const during = a.mark();
+                expect(a.turnAt('first', during)).toEqual({ turn: null });
+                await a.turnPublished!('first');
+                advance(10);
+                const after = a.mark();
+                expect(a.turnAt('first', after)).toEqual({ turn: 1, run: 'run-1' });
+                // the same turn said again is the same turn: it keeps the moment it began
+                a.turn('first', 1, 'run-1');
+                expect(a.turnAt('first', a.mark())).toEqual({ turn: 1, run: 'run-1' });
+                expect(a.turnAt('first', during)).toEqual({ turn: null });
+            });
+
+            it('with no shared store there is nothing to wait for: the turn that was noted is the turn begun, as before', async () => {
+                const alone = createRefusalNotes(() => 1000, { runsHere: () => true });
+                alone.turn('j', 4, 'run-1');
+                alone.turn('j', 5, 'run-1');
+                expect(alone.turnAt('j', alone.mark())).toEqual({ turn: 5, run: 'run-1' });
+                expect(await alone.turnOfCall('j', alone.mark())).toEqual({ turn: 5, run: 'run-1' });
+            });
+
+            it('writes the row of such a call with no turn (Orbit reads it with every turn it judges), and leaves the row of a call that is clearly in turn 5 with turn 5', async () => {
+                const rows: CallRow[] = [];
+                const keeper = createRefusalNotes(() => 100_000, { shared: sharedStore().forServer('K'), runsHere: () => true, sink: async (_bot, _job, sent) => (rows.push(...sent), true) });
+                await begin(keeper, 'j', 4, 'run-1');
+                keeper.turn('j', 5, 'run-1');
+                const arrived = keeper.mark();
+                const there = await keeper.turnOfCall('j', arrived);
+                keeper.record('bot', 'j', { ...fault('x'), turn: there.turn, ...(there.run ? { run: there.run } : {}) });
+                await keeper.flush('j');
+                expect(rows.map((row) => row.turn)).toEqual([null]);
+            });
+        });
+
         it('never ends a turn the runner is on as a fault of its own for a call made on the other server: a null-turn row leaves the runner’s own notes of the turn alone', async () => {
             const { a, b, advance } = rigTurns();
             await begin(a, 'j', 1, 'run-1');
@@ -2578,9 +2644,10 @@ describe('calls of a job that arrive at another bot server', () => {
                         const hash = hashes.get(options.keys[0]) ?? {};
                         if (fenceField !== '') {
                             // a fence counts for FENCE_LIFE_MS from its moment (one whose moment cannot be read counts)
-                            if (fenceField in hash && !(Number(hash[fenceField]) < Number(earliestFence))) return 0;
+                            // (the fence of its own turn, and the one of a close made when the turn was not known)
+                            for (const field of [fenceField, 'fence:|']) if (field in hash && !(Number(hash[field]) < Number(earliestFence))) return 0;
                         } else {
-                            for (const [name, value] of Object.entries(hash)) if (name.startsWith('fence:') && Number(value) >= Number(earliestFence)) return 0;
+                            for (const [name, value] of Object.entries(hash)) if (name.startsWith('fence:') && !(Number(value) < Number(earliestFence))) return 0;
                         }
                         const current = Number(hash[field]);
                         if (Number.isNaN(current) || current < Number(moment)) hashes.set(options.keys[0], { ...hash, [field]: moment });
@@ -2671,6 +2738,24 @@ describe('calls of a job that arrive at another bot server', () => {
             expect(await b.lastCalledByOthers('j')).toBe(9000);
         });
 
+        it('refuses a call of a known turn by the fence of a close made when no turn was known (`fence:|`), for FENCE_LIFE_MS, while a fence of another known turn leaves it eligible', async () => {
+            const r = redis();
+            const a = new RedisSharedCalls(() => r.client, 'A');
+            const c = new RedisSharedCalls(() => r.client, 'C');
+            expect(await a.closeTurn('u', undefined, 0, 4000)).toBe(true);
+            expect(Object.keys(r.hashes.get('computer:called:u') ?? {})).toEqual(['fence:|']);
+            expect(await c.noteAccepted('u', 4100, { turn: 2, run: 'r' })).toBe(false);
+            expect(await c.noteAccepted('u', 4000 + FENCE_LIFE_MS, { turn: 2, run: 'r' })).toBe(false);
+            expect(await c.noteAccepted('u', 4000 + FENCE_LIFE_MS + 1, { turn: 2, run: 'r' })).toBe(true);
+            expect(await a.closeTurn('o', { turn: 1, run: 'r' }, 0, 4000)).toBe(true);
+            expect(await c.noteAccepted('o', 4100, { turn: 2, run: 'r' })).toBe(true);
+            expect(await c.noteAccepted('o', 4100, { turn: 1, run: 'r' })).toBe(false);
+            // a fence whose moment cannot be read counts for a call whose turn is not known, as for a known one
+            r.hashes.set('computer:called:g', { 'fence:3|r': 'not-a-number' });
+            expect(await c.noteAccepted('g', 10 ** 9)).toBe(false);
+            expect(await c.noteAccepted('g', 10 ** 9, { turn: 3, run: 'r' })).toBe(false);
+        });
+
         it('lets an orphan fence clear itself in about one give-up period: long enough for the calls of a turn that is being given up, short enough that a live turn is blocked for no more than a minute', () => {
             expect(FENCE_LIFE_MS).toBeGreaterThanOrEqual(10_000);
             expect(FENCE_LIFE_MS).toBeLessThanOrEqual(60_000);
@@ -2680,9 +2765,14 @@ describe('calls of a job that arrive at another bot server', () => {
             const r = redis();
             const a = new RedisSharedCalls(() => r.client, 'A');
             const c = new RedisSharedCalls(() => r.client, 'C');
+            // a first close, and a LATER close of the same turn that writes its own moment over it; then the first close's retraction arrives (late)
+            expect(await a.closeTurn('j', { turn: 6, run: 'r' }, 9000, 11_000)).toBe(true);
             expect(await a.closeTurn('j', { turn: 6, run: 'r' }, 9000, 12_000)).toBe(true);
-            // a fence of ANOTHER moment (a later close of the same turn) and another turn or run stays
             await a.retractFence('j', { turn: 6, run: 'r' }, 11_000);
+            // the second fence is still there and still refuses a call of the turn
+            expect(r.hashes.get('computer:called:j')?.['fence:6|r']).toBe('12000');
+            expect(await c.noteAccepted('j', 12_100, { turn: 6, run: 'r' })).toBe(false);
+            // another turn or run stays too
             await a.retractFence('j', { turn: 6, run: 'other' }, 12_000);
             await a.retractFence('j', { turn: 7, run: 'r' }, 12_000);
             expect(Object.keys(r.hashes.get('computer:called:j') ?? {})).toEqual(['fence:6|r']);

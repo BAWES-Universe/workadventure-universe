@@ -310,22 +310,26 @@ return 0
 /**
  * A server took up a call of the job (the same write as `KEEP_LATER`: the field ARGV[1] keeps the later moment ARGV[2], the hash lives ARGV[3] seconds) UNLESS
  * the turn it belongs to was given up: ARGV[4] is the fence field of the call's turn and run ('' when the turn is not known), and ARGV[5] the earliest moment of a
- * fence that counts (the call's moment minus FENCE_LIFE_MS: an older fence has cleared itself, known turn or not; a fence whose moment cannot be read counts).
- * Answers 1 when it was written, 0 when it was refused (nothing written).
+ * fence that counts (the call's moment minus FENCE_LIFE_MS: an older fence has cleared itself, known turn or not). A fence whose moment cannot be read counts, in
+ * every branch. A call of a KNOWN turn is refused by the fence of its own turn and run, and by the fence of a close made when the runner's turn was not known
+ * (`fence:|`, written by `closeTurn` with no turn: it may be a fence of any turn); a fence of a DIFFERENT known turn leaves it eligible. A call whose turn is not known is
+ * refused by any fence. Answers 1 when it was written, 0 when it was refused (nothing written).
  */
 export const NOTE_ACCEPTED_UNLESS_CLOSED = `
 if ARGV[4] ~= '' then
-  local fenced = redis.call('HGET', KEYS[1], ARGV[4])
-  if fenced then
-    local at = tonumber(fenced)
-    if at == nil or at >= tonumber(ARGV[5]) then return 0 end
+  for _, field in ipairs({ ARGV[4], 'fence:|' }) do
+    local fenced = redis.call('HGET', KEYS[1], field)
+    if fenced then
+      local at = tonumber(fenced)
+      if at == nil or at >= tonumber(ARGV[5]) then return 0 end
+    end
   end
 else
   local all = redis.call('HGETALL', KEYS[1])
   for i = 1, #all, 2 do
     if string.sub(all[i], 1, 6) == 'fence:' then
       local at = tonumber(all[i + 1])
-      if at ~= nil and at >= tonumber(ARGV[5]) then return 0 end
+      if at == nil or at >= tonumber(ARGV[5]) then return 0 end
     end
   end
 end

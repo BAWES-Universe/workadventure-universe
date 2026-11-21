@@ -737,7 +737,7 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             // able to see that it was taken up could be given up on for want of room while it is being answered. When that fails nothing is forwarded and the room goes back
             let handedOver = true;
             if (agentCall && !gone && !res.destroyed) {
-                const handoff = deps.refusals?.accepted?.(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) });
+                const handoff = deps.refusals?.accepted?.(jobId, startedTurn === null ? undefined : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) }, callId);
                 // `false`: the turn was given up by its runner, and takes no call (nothing is forwarded for it); a promise: the handoff to the runner on another server
                 if (handoff === false) handedOver = false;
                 else if (handoff && handoff !== true) handedOver = (await handoff.catch(() => false)) !== false;

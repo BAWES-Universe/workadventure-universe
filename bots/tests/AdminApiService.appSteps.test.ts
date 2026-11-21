@@ -308,6 +308,51 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         });
     });
 
+    describe('an answer that came but does not say what happened (an incomplete success)', () => {
+        /** The POST answers as told, and the read about this start answers as told. */
+        const answers = (post: unknown, read: () => unknown) => {
+            const { orbit } = service(async () => ({ data: {} }));
+            const call = vi.fn(async (method: string, ..._rest: unknown[]) => (method === 'post' ? { data: post } : echoing(await read(), _rest[2])));
+            (orbit as unknown as { brickCall: unknown }).brickCall = call;
+            return { orbit, call };
+        };
+        const INCOMPLETE: Array<[string, unknown]> = [
+            ['ok:true with an empty job', { ok: true, job: {} }],
+            ['ok:true with no job', { ok: true }],
+            ['ok:true with a job that has no state', { ok: true, job: { id: 'j' } }],
+            ['ok:true with a job that has no id', { ok: true, job: { status: 'running' } }],
+            ['nothing that says what happened', {}],
+            ['no body at all', undefined],
+        ];
+
+        it.each(INCOMPLETE)('asks for the job of this start by its key after %s, and says "starting" when it is live: the person is not told it failed and does not pay for a second job', async (_name, post) => {
+            const { orbit, call } = answers(post, () => ({ data: { started: { id: 'job-1', status: 'running' } } }));
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
+            expect((call.mock.calls[1][3] as { attempt: string }).attempt).toBe(sentKey(call));
+        });
+
+        it.each(INCOMPLETE)('says `ended` after %s when the job of the key has failed, and stays "unknown" when the look-up cannot confirm a job (none, no echo, a failing read)', async (_name, post) => {
+            expect(await answers(post, () => ({ data: { started: { id: 'j', status: 'failed' } } })).orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'ended' });
+            expect(await answers(post, () => ({ data: { started: null } })).orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+            expect(await answers(post, () => ({ data: { started: { id: 'j', status: 'running', attempt: 'another-key-xyz' } } })).orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            expect(await answers(post, () => { throw new Error('down'); }).orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+            warn.mockRestore();
+        });
+
+        it('keeps a whole success and an explicit refusal on the direct path: no look-up is made', async () => {
+            const whole = answers({ ok: true, job: { id: 'j', status: 'queued', queuedFor: null } }, () => ({ data: { started: { id: 'x', status: 'running' } } }));
+            expect(await whole.orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: true, job: { id: 'j' } });
+            expect(whole.call.mock.calls.map((one) => one[0])).toEqual(['post']);
+            for (const refusal of [{ ok: false, reason: 'off' }, { ok: false }, { reason: 'busy' }]) {
+                const refused = answers(refusal, () => ({ data: { started: { id: 'x', status: 'running' } } }));
+                expect(await refused.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: (refusal as { reason?: string }).reason ?? 'unknown' });
+                expect(refused.call.mock.calls.map((one) => one[0])).toEqual(['post']);
+            }
+        });
+    });
+
     it('answers `ended`, never the timeout, when the job it made has failed or stopped: it was made and is over, which is no failure to reach the computer', async () => {
         for (const status of ['failed', 'stopped']) {
             const { orbit, call } = slowStart(() => ({ data: { started: { id: 'j', status } } }));

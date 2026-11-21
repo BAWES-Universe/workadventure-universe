@@ -188,6 +188,14 @@ export const SHARED_WRITE_BOUND_MS = 1000;
 /** The bot servers' clocks can differ a little: a call of another server counts for a turn that began up to this long after it. */
 export const SHARED_CALL_SKEW_MS = 2000;
 
+/** What `closeTurn` says of the close it makes, so the runner can take back exactly that close: filled in when the close is begun, before the store is asked. */
+export interface CloseAttempt {
+    /** The turn (and run) the close was for; absent when the runner's turn was not known. */
+    turn?: CallTurn;
+    /** The moment the close wrote (or would have written) in its fence: the fence of this attempt is the field that holds exactly this. */
+    at?: number;
+}
+
 export interface RefusalNotes {
     /** The runner says which turn of this job it is on (and in which run of the runner), so the rows of the calls made in it carry both. */
     turn(jobId: string, turn: number, run?: string): void;
@@ -196,9 +204,10 @@ export interface RefusalNotes {
     /**
      * The turn (and its run) that was current at a point in the order of events (from `mark`), for a call that arrived at that point and was
      * only tied to its job later (the relay knows the job after it has identified the caller, which can take longer than a turn change). Nothing
-     * known of the job's turns before that point reads as turn 0, with no run.
+     * known of the job's turns before that point reads as turn 0, with no run. When the runner tells the other servers its turns, a point between the moment a turn
+     * was noted and the moment the runner went on to work it is in the transition between two turns: `turn: null` (not attributed), never the turn merely noted.
      */
-    turnAt(jobId: string, at: { order: number }): { turn: number; run?: string };
+    turnAt(jobId: string, at: { order: number }): { turn: number | null; run?: string };
     /** The turn the runner says this job is on now (0 when none is known): read when a call starts, so its row names the turn it began in. */
     turnOf(jobId: string): number;
     /**
@@ -271,14 +280,20 @@ export interface RefusalNotes {
      * so the runner never reads "no call was taken up" while a call of the turn is in flight. False too when the turn was given up by its runner (here, or through
      * the store's fence): a call that our relay refuses is refused by us, whatever the reason, and the relay records it as a fault of ours.
      */
-    accepted(jobId: string, at?: CallTurn): void | boolean | Promise<boolean>;
+    accepted(jobId: string, at?: CallTurn, callId?: string): void | boolean | Promise<boolean>;
     /**
      * The runner GIVES UP the turn it is on (every call of it was refused for want of room): true only when no call of it was taken up on ANY bot server up to the
      * moment the turn is closed, and from then on no call is taken up for it (`accepted` refuses, on this server and, through the shared store, on the others). False
      * when a call was taken up, or when it cannot be told (the store cannot be read or written): the turn is then not given up. A turn closed that is not then given up
      * (it ended meanwhile) is no harm: nothing more is taken for it, and its job moves on to a turn of its own.
      */
-    closeTurn(jobId: string, since: Since): Promise<boolean>;
+    closeTurn(jobId: string, since: Since, attempt?: CloseAttempt): Promise<boolean>;
+    /**
+     * Takes back the close that `attempt` names (the one `closeTurn` filled it in for), and only that one: the turn is not given up after all (a refusal of another kind
+     * arrived while the close was being written, or the worker stopped), so the fence of THAT close is retracted in the shared store (exactly the one it wrote, a later
+     * close of the turn is never touched) and the turn is taken up again here. Safe to say twice and after a close that did not commit. Never throws.
+     */
+    reopenTurn(jobId: string, attempt: CloseAttempt): Promise<void>;
     /** Waits until the turn the runner just began is in a list the other servers can read (bounded), or until the promise of the lists before it has run out. */
     turnPublished?(jobId: string): Promise<void>;
     /** Whether any call of this job was taken up since this point (or at or after this moment, ms): `0` asks whether one ever was. */
@@ -386,7 +401,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
     // turn that was current when it ARRIVED. It is kept short: a call only ever asks about a turn that has just changed
     // `begun`: the moment the runner went on to work the turn (it is in a list the others can read, or the promise of the lists before it ran out): a call of the machine
     // cannot be of the turn before that moment. Not set while the runner has not got that far (`turnPublished`)
-    const turns = new Map<string, Array<{ turn: number; run?: string; at: number; order: number; begun?: number }>>();
+    const turns = new Map<string, Array<{ turn: number; run?: string; at: number; order: number; begun?: number; beganOrder?: number }>>();
     const TURN_HISTORY = 16;
     const lastTurn = (jobId: string) => turns.get(jobId)?.at(-1);
     /** A call that began in a turn (or a run) the runner has left says nothing of the turn it is on now. */
@@ -482,6 +497,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         for (const [jobId, seen] of turns) if ((seen.at(-1)?.at ?? 0) < cutoff) turns.delete(jobId);
         for (const [jobId, at] of unrecordedTold) if (at < cutoff) unrecordedTold.delete(jobId);
         for (const [jobId, one] of closed) if (one.at < cutoff) closed.delete(jobId);
+        for (const [jobId, one] of closeRefused) if (one.at < cutoff) closeRefused.delete(jobId);
         // What the runner told of its turns is only read while a promise could still be read as covering: a promise that has lapsed says nothing (`turn()` copies
         // `before` by value, so dropping a lapsed one is safe), and a publication is kept while a `turnPublished` wait could still read it (its write is going, or
         // the promise of the lists before it still stands), and dropped with the job's turn history
@@ -722,7 +738,9 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         });
     // The turn (and run) the runner here GAVE UP, by job: no call is taken up for it from the moment it is closed (see `closeTurn`). One per job: a job that is given
     // up is ended, and a later turn is another key
-    const closed = new Map<string, { key: string; at: number }>();
+    const closed = new Map<string, { key: string; at: number; fenceAt?: number }>();
+    /** The calls this server refused BECAUSE the turn was closed (by call id), per job: the relay writes their rows as faults of ours, and the runner does not read them as evidence of its own. */
+    const closeRefused = new Map<string, { ids: Set<string>; at: number }>();
     const keyOf = (turn: CallTurn | undefined): string => (turn ? `${turn.turn}|${turn.run ?? ''}` : '');
     /** A write to the shared store that answers whether it was made: `true`, `false` (the store refused it: final) or `'lost'` (it failed or did not finish in time: it may still land). */
     const boundedAnswer = (work: () => Promise<void | boolean>) =>
@@ -850,13 +868,17 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             const current = lastTurn(jobId);
             if (current && current.begun === undefined) {
                 current.begun = Math.max(now(), current.at);
+                // and its place in the order of events: a call of the machine that arrived (here, by `mark`) before this point cannot be told to be of this turn
+                current.beganOrder = ++count;
                 void publishTurns(jobId);
             }
         },
         turnOf: (jobId) => lastTurn(jobId)?.turn ?? 0,
         async turnOfCall(jobId, arrived) {
-            const here = (): { turn: number; run?: string } => {
+            const here = (): { turn: number | null; run?: string } => {
                 const at = arrived !== undefined ? this.turnAt(jobId, arrived) : undefined;
+                // A call that arrived while the runner was changing turns is of neither clearly
+                if (at && at.turn === null) return { turn: null };
                 const turn = at ? at.turn : lastTurn(jobId)?.turn ?? 0;
                 const run = at ? at.run : lastTurn(jobId)?.run;
                 return { turn, ...(run ? { run } : {}) };
@@ -900,7 +922,13 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         turnAt(jobId, at) {
             // The last turn said at or before that point (a turn said after it is a later one)
             const seen = [...(turns.get(jobId) ?? [])].reverse().find((one) => one.order <= at.order);
-            return seen ? { turn: seen.turn, ...(seen.run ? { run: seen.run } : {}) } : { turn: 0 };
+            if (!seen) return { turn: 0 };
+            // When the runner tells the other servers which turn it is on, a turn is two events: it is NOTED, and some moments later the runner goes on to work it
+            // (`turnPublished`). In between, the turn before can still be making its last calls and the machine has not been sent this one, so a call that arrived
+            // between the two is of neither clearly: it is not given the turn that was merely noted (its row would carry the wrong turn). Calls before the turn was
+            // noted keep the turn before, calls after the runner went on keep this one. Without a shared store there is no such wait: the turn noted is the turn begun
+            if (options.shared?.noteTurn && (seen.beganOrder === undefined || seen.beganOrder > at.order)) return { turn: null };
+            return { turn: seen.turn, ...(seen.run ? { run: seen.run } : {}) };
         },
         record(botId, jobId, call) {
             // A call that belongs to a turn (or a run) the runner has left says nothing of the turn it is on now: its row is still sent under its own
@@ -920,7 +948,8 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     if (call.reason === 'pool_busy' && call.kind === 'fault') mark(jobId, 'pooled');
                     // Any other way a call failed (the relay could not look up the route, a provider error, a key refused...) is no refusal for room: a turn that
                     // had one is no pool-only turn, whatever else it had
-                    else if (call.reason !== 'pool_busy') mark(jobId, 'other');
+                    // (a relay_down row of a call that this server refused because the runner CLOSED the turn is the close's own doing, and is no evidence of its own)
+                    else if (call.reason !== 'pool_busy' && !(call.reason === 'relay_down' && closeRefused.get(jobId)?.ids.has(call.callId.slice(0, 120)))) mark(jobId, 'other');
                 }
             }
             if (!options.sink && !store) return;
@@ -1095,13 +1124,22 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 return true;
             }
         },
-        accepted(jobId, at) {
+        accepted(jobId, at, callId) {
             const owner = runnerHere(jobId);
             // A turn the runner here gave up takes no call: refused, so nothing is forwarded for it, and the room goes back (see `closeTurn`)
             const shutAt = closed.get(jobId);
             if (shutAt !== undefined) {
                 const going = lastTurn(jobId);
-                if (shutAt.key === keyOf(at ?? (going ? { turn: going.turn, ...(going.run ? { run: going.run } : {}) } : undefined))) return false;
+                if (shutAt.key === keyOf(at ?? (going ? { turn: going.turn, ...(going.run ? { run: going.run } : {}) } : undefined))) {
+                    // Remember which call this refusal was: its row is the close's doing, not evidence of the turn's own
+                    if (callId !== undefined) {
+                        const refused = closeRefused.get(jobId) ?? { ids: new Set<string>(), at: now() };
+                        refused.ids.add(callId.slice(0, 120));
+                        refused.at = now();
+                        closeRefused.set(jobId, refused);
+                    }
+                    return false;
+                }
             }
             // Taken up in the turn that made the call: one taken up after the runner of THIS server moved on belongs to the turn it began in, not to the one that is
             // going now. (A server that no longer runs the job has an old history that says nothing of a call of the runner elsewhere.)
@@ -1131,7 +1169,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 return false;
             })();
         },
-        async closeTurn(jobId, since) {
+        async closeTurn(jobId, since, attempt) {
             // What was taken up here is known at once; what another server took up is in the store, and the fence is written in the same step as the look at it
             const seen = calls.get(jobId)?.accepted;
             if (seen !== undefined && within(seen, since)) return false;
@@ -1141,7 +1179,13 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             // From this moment a call of the turn that reaches the relay on this server is refused, and the check of what was taken up here before it has just been made,
             // with nothing between them
             const previous = closed.get(jobId);
-            closed.set(jobId, { key: keyOf(turn), at: now() });
+            const fenceAt = now();
+            closed.set(jobId, { key: keyOf(turn), at: fenceAt, fenceAt });
+            // The caller can take back exactly this close later: what names it is told before the store is asked
+            if (attempt) {
+                attempt.turn = turn;
+                attempt.at = fenceAt;
+            }
             let committed = false;
             try {
                 if (!shared?.noteAccepted) {
@@ -1150,7 +1194,6 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 }
                 // With other servers' relays about, the fence must be one step with the look at what they took up. A store that cannot do that gives nothing to rest a give-up on
                 const from = typeof since === 'number' ? since : since.at;
-                const fenceAt = now();
                 const stored = shared.closeTurn && from !== undefined ? await closeOnStore(jobId, turn, from, fenceAt) : { state: 'refused' as const, maybeWritten: false };
                 // A call taken up HERE while the store was asked is not in what it said
                 const meanwhile = calls.get(jobId)?.accepted;
@@ -1170,6 +1213,20 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                     if (previous) closed.set(jobId, previous);
                     else closed.delete(jobId);
                 }
+            }
+        },
+        async reopenTurn(jobId, attempt) {
+            if (attempt.at === undefined) return;
+            // The turn takes calls here again, but only if the close that stands here is THIS one
+            const shut = closed.get(jobId);
+            if (shut !== undefined && shut.fenceAt === attempt.at && shut.key === keyOf(attempt.turn)) closed.delete(jobId);
+            // and the fence of THIS attempt leaves the store (the close may have committed, or may commit later: the field holds exactly this moment either way)
+            try {
+                if (options.shared?.retractFence && !(await retractOnStore(jobId, attempt.turn, attempt.at))) {
+                    console.warn('[ComputerRefusals] A close that was taken back may still be fenced in the shared store: the fence could not be retracted (it expires on its own).');
+                }
+            } catch {
+                /* the fence expires on its own */
             }
         },
         async acceptedAnywhereSince(jobId, since) {
