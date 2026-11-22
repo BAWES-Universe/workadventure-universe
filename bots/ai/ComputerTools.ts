@@ -348,7 +348,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             }
             await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
         }
-        return answerOf(started, context);
+        // The answer to a look-up of a start sent EARLIER is said as that earlier job's, never as this ask's: the game cannot tell a reworded ask from a different one
+        return answerOf(started, context, looked !== undefined);
     };
     entry.inflight = go().finally(() => {
         delete entry.inflight;
@@ -361,12 +362,13 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
 type StartAnswer = { ok: boolean; reason: string; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null };
 
 /** What the model is told of the answer to a start (or to the look-up of one). */
-function answerOf(started: StartAnswer, context: ComputerToolContext): Record<string, unknown> {
+function answerOf(started: StartAnswer, context: ComputerToolContext, earlier = false): Record<string, unknown> {
     if (!started.ok) {
         switch (started.reason) {
             case 'cheaper_route':
                 return { started: false, success: false, note: `${started.app ?? 'An app you have'} can do this job: do it through ${started.app ?? 'that app'}. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
             case 'starting':
+                if (earlier) return { started: false, found: true, earlier: true, note: 'Orbit found the job you asked for earlier, and its state shows in the bar above this chat. Say in one short sentence that the job you asked for earlier was found and its state shows in the bar above this chat. Do not say your computer is starting, that the job has begun, or will begin by itself. Do not say how long it will take. If they are asking for something different now, say it was not started and that they can ask for it again once the earlier job is over.' };
                 // The answer was slow and Orbit found THIS job (one for this person, from this chat, with this title, begun since the ask went out), queued,
                 // waiting or running. That says the job exists, nothing about the machine: no claim is made that it is starting or has begun, only that Orbit
                 // has the job and where its state shows
@@ -376,9 +378,11 @@ function answerOf(started: StartAnswer, context: ComputerToolContext): Record<st
                 // the person must not be told it failed, or they ask again and a second job is paid for behind the first. Nothing new is sent while it is open: the same request is used
                 return { started: false, unknown: true, note: COULD_NOT_CHECK_NOTE };
             case 'done':
+                if (earlier) return { started: false, done: true, earlier: true, note: 'Orbit found the job you asked for earlier and it has finished. Say in one short sentence that the job you asked for earlier finished, and that its result and receipt are with this chat and in [Usage](#usage). Do not say it is running or starting, and do not say this new request finished. If they are asking for something different now, say it was not started and that they can ask for it again in their next message.' };
                 // The job of this ask is made and has finished (a start that was asked for again, or a slow one that Orbit found over): its result and its receipt are the ones it has
                 return { started: false, done: true, note: 'Orbit found this job and it has finished. Say in one short sentence that your job finished, and that its result and receipt are with this chat and in [Usage](#usage). Do not say it is running or starting, and do not start it again unless they ask you to.' };
             case 'ended':
+                if (earlier) return { started: false, ended: true, earlier: true, note: 'Orbit found the job you asked for earlier and it has already ended (it failed or was stopped). Say in one short sentence that the job you asked for earlier has already ended, and that the bar above this chat shows how. Do not say your computer could not be reached or that it is running. If they are asking for something different now, say it was not started and that they can ask for it again in their next message.' };
                 // The answer was slow, and Orbit shows that the job THIS start made has already failed or been stopped: it was made, so it is no connection failure
                 return { started: false, ended: true, note: 'Orbit found this job and it has already ended (it failed or was stopped). Say in one short sentence that the job was found but has already ended, and that the bar above this chat shows how. Do not say your computer could not be reached or that it is running. Do not start it again unless they ask you to.' };
             case 'off':

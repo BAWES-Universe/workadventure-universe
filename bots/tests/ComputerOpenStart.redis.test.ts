@@ -283,6 +283,51 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
         expect(orbit.lookups).toEqual([]);
     });
 
+    describe('G63-1: the look-up of an EARLIER ask\'s start is said as that earlier job, never as the ask the person makes now', () => {
+        for (const [found, says] of [['done', /the job you asked for earlier finished/], ['failed', /the job you asked for earlier has already ended/], ['running', /the job you asked for earlier was found/]] as const) {
+            it(`the earlier start is ${found}: the note names the earlier job, says this ask was not started, never says this ask finished; asked again in the next message it gets a new key and starts`, async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                orbit.onPost = 'lose-after-commit';
+                orbit.onGet = 'silent';
+                const server = process_(orbit, who);
+                // 1. job A comes back unknown
+                expect(await server.ask('Fill in my visa form')).toMatchObject({ started: false, unknown: true });
+                const first = orbit.posts[0].key;
+                // 2. a new message, a different job B; 3. the look-up finds A (done, ended or still going)
+                forgetSettledStarts(server.memory);
+                orbit.onGet = 'truth';
+                orbit.status = found;
+                for (const [, job] of orbit.jobs) job.status = found;
+                orbit.posts = [];
+                const answer = await server.ask('Book me a table for Friday');
+                expect(orbit.posts).toEqual([]);
+                expect(answer).toMatchObject({ started: false, earlier: true });
+                const note = String(answer.note);
+                expect(note).toMatch(says);
+                expect(note).toContain('the job you asked for earlier');
+                expect(note).toMatch(/something different now, say it was not started/);
+                expect(note).toMatch(found === 'running' ? /once the earlier job is over/ : /in their next message/);
+                // it never tells the person that THIS ask finished, or that Orbit found "this job"
+                expect(note).not.toMatch(/found this job/i);
+                expect(note).not.toMatch(/that your job finished/);
+                expect(note).not.toMatch(/(?<!earlier )(?<!ask )\bis done\b/);
+                if (found === 'running') return;
+                // B asked in the next message: a new key, a new job, started
+                forgetSettledStarts(server.memory);
+                orbit.status = 'running';
+                orbit.onPost = 'whole';
+                const next = await server.ask('Book me a table for Friday');
+                expect(next).toMatchObject({ started: true });
+                expect(orbit.posts).toHaveLength(1);
+                expect(orbit.posts[0].key).not.toBe(first);
+                expect(orbit.posts[0].title).toBe('Book me a table for Friday');
+                expect(orbit.jobs.size).toBe(2);
+                expect(orbit.reservations).toBe(2);
+            });
+        }
+    });
+
     it('a no from Orbit to a LATER send of an open start (the key looked up found no job yet) does not end the start', async () => {
         const who = ids();
         const orbit = new FakeOrbit();
