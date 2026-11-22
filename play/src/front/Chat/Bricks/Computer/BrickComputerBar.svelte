@@ -11,7 +11,7 @@
         dismissComputerNotice,
         followBrickComputer,
     } from "./BrickComputerStore";
-    import { barState, canWatch, noticeToTell, type WaitingFor } from "./BrickComputer";
+    import { barJob, barState, canWatch, inLine, noticeToTell, sentenceStart, type WaitingFor } from "./BrickComputer";
     import { openBrickScreen, type BrickRef } from "./BrickScreenStore";
     import { IconDeviceDesktop } from "@wa-icons";
 
@@ -20,7 +20,14 @@
     $: view = $brickComputers.get(brick.id);
     $: state = barState(view);
     $: job = view?.job ?? null;
-    $: queued = view?.queued.length ?? 0;
+    // Only the jobs that start by themselves are "waiting": a paused one waits for the person's Resume
+    $: waitingInLine = inLine(view);
+    $: queued = waitingInLine.length;
+    $: pausedJob = state === "paused" ? barJob(view) : null;
+    $: pausedWords =
+        pausedJob?.pausedWhy === "allowance"
+            ? $LL.chat.brick.computer.barPausedMonth()
+            : $LL.chat.brick.computer.barPaused();
     // Nothing is happening, and the last job ended in a way the person should hear about: said once, until dismissed or a new job starts
     $: notice = state ? null : noticeToTell(view);
     $: noticeLine = !notice
@@ -63,9 +70,13 @@
                 ? $LL.chat.brick.computer.barJob({ job: job.title, step })
                 : step
             : state === "queued"
-            ? view?.queued[0]?.queuedFor === "allowance"
+            ? waitingInLine[0]?.queuedFor === "allowance"
                 ? $LL.chat.brick.computer.barUsedUp()
                 : $LL.chat.brick.computer.barInLine()
+            : state === "paused" && pausedJob
+            ? pausedJob.title
+                ? $LL.chat.brick.computer.barJob({ job: pausedJob.title, step: pausedWords })
+                : sentenceStart(pausedWords)
             : "";
     $: fullLine =
         queued > 0 && (state === "working" || state === "waiting")

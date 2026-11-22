@@ -1607,6 +1607,9 @@ const chat: BaseTranslation = {
             barAskYou: "Waiting for you · {what}",
             barInLine: "Waiting its turn",
             barUsedUp: "Waiting · this month's computer time is used up",
+            // A paused job on the bar: "<title> · paused", and why when the month's computer time ran out (decided 23 Nov)
+            barPaused: "paused",
+            barPausedMonth: "paused · this month's computer time is used up",
             // How the last job ended, told once on the page and in the chat until it is dismissed or a new job starts
             noticeUnanswered: "{name}'s computer stopped waiting for you. Its files are kept.",
             noticeMonth: "This month's computer time ran out, so {name}'s computer stopped. Its files are kept.",

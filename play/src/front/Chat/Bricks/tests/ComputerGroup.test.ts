@@ -209,6 +209,49 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(byId("brickComputerBar")).not.toBeNull();
     });
 
+    it("counts only jobs that start by themselves as waiting on the bar: a paused one is not waiting", async () => {
+        game.getBrickComputer.mockResolvedValue(
+            computer({
+                machine: "working",
+                job: job(),
+                queued: [
+                    { id: "p1", title: "Visa form", status: "queued", queuedFor: "paused", pausedWhy: "person" },
+                    { id: "w1", title: "Hotel", status: "queued", queuedFor: "turn" },
+                ],
+            })
+        );
+        await loadBrickComputer(BRICK);
+        piece = new BrickComputerBar({ target, props: { brick } });
+        await settle();
+        expect(byId("brickComputerBar")?.textContent).toContain("Book the table");
+        expect(byId("brickComputerBar")?.textContent).toContain("1 waiting");
+    });
+
+    it("says a job is paused on the bar when only paused jobs are left, and why when the month ran out", async () => {
+        game.getBrickComputer.mockResolvedValue(
+            computer({
+                queued: [{ id: "p1", title: "Visa form", status: "queued", queuedFor: "paused", pausedWhy: "person" }],
+            })
+        );
+        await loadBrickComputer(BRICK);
+        piece = new BrickComputerBar({ target, props: { brick } });
+        await settle();
+        expect(byId("brickComputerBar")?.textContent).toContain("Visa form · paused");
+        expect(byId("brickComputerBar")?.textContent).not.toContain("Waiting its turn");
+        game.getBrickComputer.mockResolvedValue(
+            computer({
+                queued: [
+                    { id: "p1", title: "Visa form", status: "queued", queuedFor: "paused", pausedWhy: "allowance" },
+                ],
+            })
+        );
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickComputerBar")?.textContent).toContain(
+            "Visa form · paused · this month's computer time is used up"
+        );
+    });
+
     it("shows the screen only for a working computer, and the one tap names exactly what goes in", async () => {
         game.getBrickComputer.mockResolvedValue(
             computer({
