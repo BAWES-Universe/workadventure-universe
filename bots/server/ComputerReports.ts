@@ -153,10 +153,9 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     const searchApps = kind === 'late' ? appsOf(report.searchApps, Number.POSITIVE_INFINITY).names : [];
     // "You weren't charged" is only said when Orbit says the hold was released, and an App is only named when there is a name to say: otherwise there is nothing true to tell
     // Orbit numbers every late report, and refuses (400) the acknowledgement of one that has no number: a late report without a number is never told, so it is never acknowledged without one (a refusal that would come back for ever)
-    // The acknowledgement of a late report names how far the report went (`through`, the moment of the latest confirmation it lists): Orbit marks only what was confirmed up to it as told. One that does not
-    // say it cannot be acknowledged for what it listed (Orbit would cover whatever was confirmed by the time of the acknowledgement, App steps the chat never read), so it is never told
+    // Orbit numbers every late report (a batch) and marks as told only the runs of THAT batch when it is acknowledged with the number, so the report is told with its number and `through` is optional: passed back when Orbit says it
     const through = kind === 'late' && typeof report.through === 'string' && Number.isFinite(Date.parse(report.through)) ? report.through : null;
-    if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true || seq === null || through === null)) return null;
+    if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true || seq === null)) return null;
     // A wait is told by its number: without one it could not be marked as told for that wait only
     if (kind === 'needs' && (seq === null || waiting(report.waitingFor) === null)) return null;
     return {

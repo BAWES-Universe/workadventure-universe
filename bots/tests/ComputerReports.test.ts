@@ -570,12 +570,12 @@ describe('the late follow-up: an App step the provider confirmed after all', () 
     it('reads Orbit’s report: the Apps of its batch, that the hold was released, how far it covers (`through`), and the conversation it began in', () => {
         const one = lateOf();
         expect(one).toMatchObject({ key: `computer-told:job-1:late:${Date.parse(T1)}`, kind: 'late', apps: ['Gmail'], holdReleased: true, through: T1, origin: { kind: 'dm', ref: '!dm:chat.test' } });
-        // A report that does not say how far it goes is never told: it could only be acknowledged for what Orbit has confirmed by the time of the acknowledgement, App steps the chat never read
-        expect(computerReportOf({ ...lateRaw, through: undefined })).toBeNull();
-        expect(computerReportOf({ ...lateRaw, through: null })).toBeNull();
+        // Orbit's late report numbers its batch and says no `through`: it is still read, with none (Orbit marks only that batch when the number comes back)
+        expect(computerReportOf({ ...lateRaw, through: undefined })?.through).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: null })?.through).toBeNull();
         // Only a time is kept, and it is said back exactly as Orbit gave it
-        expect(computerReportOf({ ...lateRaw, through: 'yesterday' })).toBeNull();
-        expect(computerReportOf({ ...lateRaw, through: 5 })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: 'yesterday' })?.through).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: 5 })?.through).toBeNull();
         expect(computerReportOf({ ...lateRaw, through: '2026-11-21T22:00:00.123456Z' })?.through).toBe('2026-11-21T22:00:00.123456Z');
         // `through` belongs to a late report: any other kind has none
         expect(computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done' })?.through).toBeNull();
@@ -735,6 +735,24 @@ describe('the late follow-up: an App step the provider confirmed after all', () 
             [`computer-told:job-1:late:${Date.parse(T2)}`, 'Update: Notion confirmed the step completed. You weren’t charged for that step.'],
         ]);
         expect(told).toEqual([{ jobId: 'job-1', kind: 'late', seq: 1, through: T1 }, { jobId: 'job-1', kind: 'late', seq: 2, through: T2 }]);
+    });
+
+    it('G68-1: a late report with its number and NO `through` (Orbit marks late reports by batch) is told, and the confirmation carries kind late and the number, and nothing else', async () => {
+        const batch = lateOf({ key: 'computer-told:job-1:late:3', seq: 3, through: undefined });
+        expect(batch.through).toBeNull();
+        const { runner, said, told } = round([batch]);
+        expect(await runner.tick()).toBe(1);
+        expect(said.map((one) => one.text)).toEqual(['Update: Gmail confirmed the step completed. You weren’t charged for that step.']);
+        expect(told).toEqual([{ jobId: 'job-1', kind: 'late', seq: 3 }]);
+        // and what goes to Orbit is the number of the batch, with no `through`
+        const admin = new AdminApiService() as unknown as { brickCall: (...args: unknown[]) => Promise<unknown>; keepComputerReportTold(r: unknown): Promise<boolean> };
+        const calls: unknown[][] = [];
+        admin.brickCall = vi.fn(async (...args: unknown[]) => {
+            calls.push(args);
+            return { data: {} };
+        });
+        expect(await admin.keepComputerReportTold({ jobId: 'job-1', kind: 'late', seq: 3, through: null })).toBe(true);
+        expect(calls[0]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'late', seq: 3, outcome: 'delivered' }]);
     });
 
     it('a retry of one batch is the same message (told once per key) while the next batch is a new one: a batch Orbit did not keep is said again under its key, the next only once', async () => {
