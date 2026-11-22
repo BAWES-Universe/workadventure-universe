@@ -569,6 +569,23 @@ function computerJobTold(status: string): { ok: false; reason: string } {
     return { ok: false, reason: state === 'live' ? 'starting' : state === 'unknown' ? 'unknown' : state };
 }
 
+/**
+ * The end Orbit holds for a job (its finish intent), as the job read gives it: `outcome` is the one thing it must have; the rest is read only when it is well formed, and the end is completed
+ * with what is there. Null when there is none (or it is not one).
+ */
+function finishPendingOf(raw: unknown): { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null {
+    if (!isPlainObject(raw) || (raw.outcome !== 'done' && raw.outcome !== 'failed')) return null;
+    const turns = Array.isArray(raw.turns) ? raw.turns.filter((one): one is number => typeof one === 'number' && Number.isInteger(one) && one >= 0) : [];
+    return {
+        outcome: raw.outcome,
+        ...(raw.cause === 'ours' || raw.cause === 'agent' ? { cause: raw.cause } : {}),
+        ...(typeof raw.why === 'string' && raw.why !== '' ? { why: raw.why } : {}),
+        ...(turns.length > 0 ? { turns } : {}),
+        ...(typeof raw.run === 'string' && raw.run !== '' ? { run: raw.run } : {}),
+        ...(typeof raw.generation === 'number' && Number.isInteger(raw.generation) && raw.generation >= 0 ? { generation: raw.generation } : {}),
+    };
+}
+
 /** A key Orbit takes for a start (`^[A-Za-z0-9_-]{8,64}$`): one that is not that is replaced by a new one, so the start is never refused for its key. */
 const START_KEY_SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -1897,14 +1914,15 @@ export class AdminApiService {
     }
 
     /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number } | null> {
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null } | null> {
         try {
-            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; finishPending?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
             if (job && typeof job.id === 'string' && typeof job.status === 'string') {
                 // The control generation, when Orbit gives one (an Orbit that does not is not asked to fence)
                 const generation = typeof job.generation === 'number' && Number.isInteger(job.generation) && job.generation >= 0 ? job.generation : undefined;
-                return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick', ...(generation === undefined ? {} : { generation }) };
+                const finishPending = finishPendingOf(job.finishPending);
+                return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick', ...(generation === undefined ? {} : { generation }), ...(finishPending ? { finishPending } : {}) };
             }
             throw new Error('Orbit gave no job');
         } catch (error) {

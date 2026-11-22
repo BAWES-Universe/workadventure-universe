@@ -1063,6 +1063,27 @@ describe('a turn that is lost, or room that is gone', () => {
                 expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
             }
         });
+
+        it('getComputerJob reads the finish Orbit holds (`finishPending`) and carries it to the runner; none (null, missing, or not an end) is no end at all', async () => {
+            const service = Object.create(AdminApiService.prototype) as { getComputerJob: AdminApiService['getComputerJob']; brickCall: unknown };
+            const answer = (job: Record<string, unknown>) => {
+                service.brickCall = vi.fn(async () => ({ data: { job: { id: 'j', status: 'running', control: 'brick', ...job } } }));
+            };
+            answer({ generation: 4, finishPending: { outcome: 'failed', cause: 'ours', why: 'Busy.', turns: [3, 'x', -1, 2.5, 4], run: 'run9', generation: 2, at: '2026-11-22T10:00:00Z' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed', cause: 'ours', why: 'Busy.', turns: [3, 4], run: 'run9', generation: 2 } });
+            answer({ finishPending: { outcome: 'done' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', finishPending: { outcome: 'done' } });
+            // the rest of it is read only when it is well formed
+            answer({ finishPending: { outcome: 'failed', cause: 'them', why: '', turns: 'x', run: 7, generation: -1 } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', finishPending: { outcome: 'failed' } });
+            for (const bad of [null, undefined, 'failed', 7, [], {}, { outcome: 'maybe' }, { outcome: null }]) {
+                answer({ finishPending: bad });
+                expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
+            }
+            // and the runner's own Orbit hands it on
+            const admin = { computerRunningJobs: vi.fn(), getComputerJob: vi.fn(async () => ({ id: 'j', status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed' as const, cause: 'ours' as const } })), computerJobAction: vi.fn() };
+            expect(await runnerOrbitFor(admin as never).job('b', 'j')).toEqual({ status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed', cause: 'ours' } });
+        });
     });
 
     it('stops the agent and ends nothing itself when Orbit says the room is gone', async () => {
