@@ -1254,9 +1254,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 await sleep(timing.waitMs, signal);
                 continue;
             }
-            // The job went back in line (paused, or put behind a job done first), or another worker owns it now: this worker leaves it with nothing ended or cancelled (Orbit
-            // already stopped the turn and charged the stretch). It is never waited on: when it runs again a fresh worker claims it and carries on in the same conversation
-            if (leftUs(state, epoch)) return;
+            // A job that went back in line (paused, or put behind a job done first) is left by `waitForBrick` with nothing ended or cancelled: it is never waited on
             if (state.status !== 'running' || state.control !== 'brick') {
                 const back = await waitForBrick(job, signal, { epoch, generation: state.generation, delivered: given });
                 if (back !== 'back' && back !== 'answered') return;
@@ -1463,10 +1461,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 forget();
                 return;
             }
-            // Paused, or put back in line behind a job done first, while the turn went on: Orbit stopped the turn and charged its stretch. Nothing of what the turn said is acted on,
-            // it is no bad turn, and nothing is cancelled or finished here: this worker leaves, and the job's next stretch is claimed afresh
-            if (after.status === 'queued') return;
-            // Another worker claimed the job while the turn went on: it is theirs, and nothing this turn said is acted on (an end Orbit holds is still completed below, by whoever reads it)
+            // Another worker claimed the job while the turn went on, or it was paused (which moves the epoch too): it is not this worker's, and nothing this turn said is acted on, nothing
+            // is cancelled and it is no bad turn (an end Orbit holds is still completed below, by whoever reads it). A job back in line on an Orbit with no epochs is left by `waitForBrick`
             if (epoch !== undefined && after.ownerEpoch !== undefined && after.ownerEpoch !== epoch && !after.finishPending) {
                 superseded.add(run);
                 return;

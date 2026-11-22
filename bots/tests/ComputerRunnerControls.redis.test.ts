@@ -70,7 +70,7 @@ interface Request {
 }
 
 /** Orbit, as pieces 1 and 2 froze it, for one job. */
-function controlsOrbit(options: { renew?: (n: number) => Record<string, unknown>; notesSent?: (n: number) => 'ok' | 'lost' | 'down'; claim?: (n: number) => Record<string, unknown> | null; turnOpen?: (n: number) => 'ok' | 'failed' | 'busy' } = {}) {
+function controlsOrbit(options: { afterListing?: () => void; noEpochs?: boolean; laggingReads?: boolean; renew?: (n: number) => Record<string, unknown>; notesSent?: (n: number) => 'ok' | 'lost' | 'down'; claim?: (n: number) => Record<string, unknown> | null; turnOpen?: (n: number) => 'ok' | 'failed' | 'busy' } = {}) {
     const state = {
         status: 'running' as 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'stopped',
         queuedFor: null as null | 'paused' | 'turn',
@@ -95,7 +95,9 @@ function controlsOrbit(options: { renew?: (n: number) => Record<string, unknown>
     const live = new Map<string, () => void>();
     let turnN = 0;
     const isOver = () => state.status === 'done' || state.status === 'failed' || state.status === 'stopped';
-    const owns = (epoch: number | undefined) => (epoch === undefined ? state.ownerEpoch === 0 : epoch === state.ownerEpoch);
+    const owns = (epoch: number | undefined) => options.noEpochs === true || (epoch === undefined ? state.ownerEpoch === 0 : epoch === state.ownerEpoch);
+    /** The epoch this worker claimed: a lagging replica shows it whatever the job is on now. */
+    let claimed: number | undefined;
     const count = (kind: string) => (state.counts[kind] = (state.counts[kind] ?? 0) + 1);
     const log = (kind: string, answer: string, epoch?: number, body?: Record<string, unknown>) => state.requests.push({ kind, answer, ...(epoch === undefined ? {} : { epoch }), ...(body ? { body } : {}) });
     const superseded = { ok: false, reason: 'stale', run: 'superseded' };
@@ -128,14 +130,19 @@ function controlsOrbit(options: { renew?: (n: number) => Record<string, unknown>
         })();
 
     const orbit: RunnerOrbit = {
-        running: async () => (state.status === 'running' || state.status === 'waiting' ? [{ ...JOB, hasTurn: state.responseId !== null }] : []),
+        // Orbit lists the jobs running under Brick's hands (not waiting, not taken over)
+        running: async () => {
+            const listed = state.status === 'running' && state.control === 'brick' ? [{ ...JOB, hasTurn: state.responseId !== null }] : [];
+            options.afterListing?.();
+            return listed;
+        },
         job: async (): Promise<RunnerJobState | null> => {
             state.reads += 1;
             return {
                 status: state.status,
                 control: state.control,
                 generation: state.generation,
-                ownerEpoch: state.ownerEpoch,
+                ...(options.noEpochs ? {} : { ownerEpoch: options.laggingReads && claimed !== undefined ? claimed : state.ownerEpoch }),
                 finishPending: null,
                 ...(state.pauses > 0 ? { resumed: true } : {}),
                 ...(state.notes.some((note) => note.state === 'pending') ? { notes: state.notes.filter((note) => note.state === 'pending').map(({ seq, text }) => ({ seq, text })) } : {}),
@@ -156,6 +163,7 @@ function controlsOrbit(options: { renew?: (n: number) => Record<string, unknown>
                 if (body.seen !== state.ownerEpoch) return log(kind, 'superseded', epoch, body), { ok: false, reason: 'superseded', ownerEpoch: state.ownerEpoch };
                 state.ownerEpoch += 1;
                 state.leaseVersion += 1;
+                claimed = state.ownerEpoch;
                 log(kind, 'claimed', state.ownerEpoch, body);
                 return { ok: true, epoch: state.ownerEpoch };
             }
@@ -698,9 +706,9 @@ describe.runIf(!!REAL_REDIS)('the runner and the computer job controls (piece 6)
             expect(state.finishes).toHaveLength(1);
         });
 
-        it('a turn cut for a note does not count in the job`s turns: a job allowed two turns still ends well after a note', async () => {
+        it('a turn cut for a note does not count in the job`s turns: a job allowed one turn still ends well after a turn cut for a note', async () => {
             const saved = RUNNER_GUARDS.maxTurns;
-            RUNNER_GUARDS.maxTurns = 2;
+            RUNNER_GUARDS.maxTurns = 1;
             try {
                 const { orbit, state, scripts, person } = controlsOrbit();
                 scripts.push({ kind: 'hang', cut: 'completed' }, { kind: 'done' });
@@ -738,6 +746,113 @@ describe.runIf(!!REAL_REDIS)('the runner and the computer job controls (piece 6)
             await idleWithin(runner);
             expect(state.finishes).toEqual([]);
             expect(state.runnerCancels).toEqual([]);
+        });
+    });
+
+    describe('the worker never keeps a job it no longer holds', () => {
+        it('an Orbit that gives no epochs: a job back in line is still left at once, never polled', async () => {
+            const { orbit, state, scripts, person } = controlsOrbit({ noEpochs: true });
+            scripts.push({ kind: 'hang', cut: 'completed' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.inputs.length === 1);
+            person.pause();
+            await idleWithin(runner);
+            expect(state.finishes).toEqual([]);
+            expect(state.runnerCancels).toEqual([]);
+            const reads = state.reads;
+            await pause(60);
+            expect(state.reads).toBe(reads);
+        });
+
+        it('another worker claims the job while this one waits for the person: this one leaves at once (it does not wait for the person too)', async () => {
+            const { orbit, state, scripts } = controlsOrbit();
+            scripts.push({ kind: 'handover' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.status === 'waiting');
+            await pause(20);
+            expect(runner.active()).toEqual(['job-1']);
+            // Another bot server's worker (a rolling deploy) claimed it
+            state.ownerEpoch += 1;
+            await idleWithin(runner);
+            expect(state.status).toBe('waiting');
+            expect(state.finishes).toEqual([]);
+        });
+
+        it('a run told it was superseded by notes-sent sends nothing more, even while the job reads still show its own epoch (a lagging read)', async () => {
+            const box: { state?: ReturnType<typeof controlsOrbit>['state'] } = {};
+            const made = controlsOrbit({
+                laggingReads: true,
+                notesSent: () => {
+                    if (box.state) box.state.ownerEpoch += 1;
+                    return 'ok';
+                },
+            });
+            box.state = made.state;
+            const { orbit, state, scripts, person } = made;
+            scripts.push({ kind: 'hang', cut: 'completed' }, { kind: 'hang', cut: 'completed' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.inputs.length === 1);
+            person.note('Use 12 March');
+            await until(() => (state.counts['notes-sent'] ?? 0) >= 1);
+            const told = state.requests.length;
+            made.live.get('resp-2')?.();
+            await idleWithin(runner);
+            // After the superseded answer: at most the turn's own last progress report (answered superseded too), and nothing that prepares, opens, hands over or ends
+            expect(kinds(state, told).filter((kind) => !['progress', 'renew'].includes(kind))).toEqual([]);
+            expect(state.finishes).toEqual([]);
+        });
+
+        it('a run told it was superseded when it tells Orbit again about notes whose answer was lost: it stops there, before any prepare or turn', async () => {
+            const box: { state?: ReturnType<typeof controlsOrbit>['state'] } = {};
+            const made = controlsOrbit({
+                laggingReads: true,
+                notesSent: (n) => {
+                    if (n === 1) return 'down';
+                    if (box.state) box.state.ownerEpoch += 1;
+                    return 'ok';
+                },
+            });
+            box.state = made.state;
+            const { orbit, state, scripts, person } = made;
+            scripts.push({ kind: 'hang', cut: 'completed' }, { kind: 'silent' }, { kind: 'done' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.inputs.length === 1);
+            person.note('Use 12 March');
+            await idleWithin(runner);
+            const second = state.requests.findIndex((one, at) => one.kind === 'notes-sent' && state.requests.slice(0, at).some((before) => before.kind === 'notes-sent'));
+            expect(second).toBeGreaterThan(-1);
+            expect(state.requests[second].answer).toBe('superseded');
+            expect(kinds(state, second + 1).filter((kind) => kind !== 'job')).toEqual([]);
+            expect(state.finishes).toEqual([]);
+        });
+
+        it('a worker that finds the job taken over as it starts, then a note and a hand back: the hand-back words, not the answered ones (the person used the computer)', async () => {
+            const box: { person?: ReturnType<typeof controlsOrbit>['person']; once?: boolean } = {};
+            const made = controlsOrbit({
+                afterListing: () => {
+                    if (box.once) return;
+                    box.once = true;
+                    box.person?.takeOver();
+                },
+            });
+            box.person = made.person;
+            const { orbit, state, scripts, person } = made;
+            state.responseId = 'resp-0';
+            scripts.push({ kind: 'done' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await pause(30);
+            person.note('I signed in');
+            await pause(20);
+            person.handBack();
+            await idleWithin(runner);
+            expect(state.inputs).toHaveLength(1);
+            expect(state.inputs[0].startsWith(RESUME_PROMPT)).toBe(true);
+            expect(state.inputs[0]).toContain('> I signed in');
         });
     });
 
