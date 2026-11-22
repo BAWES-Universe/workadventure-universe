@@ -30,7 +30,7 @@ import type { CallKind, FaultReason, RefusalNotes } from './ComputerRefusals';
 /** What the relay needs of Orbit: the three calls of /api/computer/llm. */
 export interface RelayOrbit {
     identify(token: string): Promise<{ ok: true; jobId: string; botId: string } | { ok: false }>;
-    authorize(input: { token: string; callId: string; estimateMicros: number; payer: 'universe' | 'own-key'; route: string }): Promise<{ ok: true } | { ok: false; reason: 'refused' | 'allowance' | 'pool' | 'rule'; full?: boolean }>;
+    authorize(input: { token: string; callId: string; estimateMicros: number; payer: 'universe' | 'own-key'; route: string; turn?: number; run?: string }): Promise<{ ok: true } | { ok: false; reason: 'refused' | 'allowance' | 'pool' | 'rule'; full?: boolean }>;
     settle(input: SettleInput): Promise<{ ok: boolean }>;
 }
 
@@ -765,7 +765,9 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         try {
             let allowed: Awaited<ReturnType<RelayOrbit['authorize']>>;
             try {
-                allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer, route: routeName });
+                // The turn (and the run of the runner it was in) the call starts in goes with it: Orbit orders a call admitted on a turn against a stop for the pool on that turn, so a stop that
+                // comes after an admission is stale and one that came first refuses the call. Sent whenever it is known (`null`: the shared record could not tell)
+                allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer, route: routeName, ...(startedTurn === null ? {} : { turn: startedTurn, ...(startedRun ? { run: startedRun } : {}) }) });
             } catch {
                 // A caller that went away while the room was being asked for is no fault of anyone's: nothing is written for it
                 if (gone || res.destroyed) return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');

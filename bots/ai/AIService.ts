@@ -133,7 +133,7 @@ import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } fro
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import type { StartKeyStore } from '../server/ComputerStartKeys';
-import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
+import { COMPUTER_TOOL, ConfirmationQueue, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
@@ -1383,6 +1383,15 @@ export class AIService {
         const ledger = options?.usage?.ledger ?? new UsageLedger();
         // Whether the reply's usage has been recorded, so a failure after that is not recorded with the same cost again
         let usageRecorded = false;
+        // The confirmations of the computer jobs an EARLIER answer named are dropped when a new answer is begun (a newer message, or this one asked again): only the answer that is delivered
+        // confirms what it said. This answer has a queue of its own, which whoever sends the reply delivers (`DmReplyService`)
+        if (playerId !== undefined) {
+            const chat = this.conversationMemory?.getMemory(botId, playerId);
+            if (chat) {
+                chat.computerConfirmations?.drop();
+                chat.computerConfirmations = new ConfirmationQueue();
+            }
+        }
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
         if (!isRetry && playerId !== undefined) {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
@@ -4146,6 +4155,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
             ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
             ...(this.computerStartKeys ? { startKeyStore: this.computerStartKeys } : {}),
+            // Confirmed to Orbit only once the reply that names the job reaches the person
+            ...(memory?.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time

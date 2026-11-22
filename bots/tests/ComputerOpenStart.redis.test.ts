@@ -6,7 +6,7 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn(), captureMessage: vi.f
 
 import * as Sentry from '@sentry/node';
 import { AdminApiService } from '../server/AdminApiService';
-import { forgetSettledStarts, runComputerTool, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
+import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, runComputerTool, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
 /**
@@ -52,6 +52,10 @@ class FakeOrbit {
     onPost: 'whole' | 'lose-after-commit' | 'limiter-after-commit' | 'limiter-before-commit' | 'refuse-200' | 'refuse-200-paused' = 'whole';
     /** What a read by key says: the truth, nothing (an Orbit that cannot say), or that no job has the key yet. */
     onGet: 'truth' | 'silent' | 'none' = 'truth';
+    /** Whether a read by key confirms the job it finds (Orbit 6be29335 did; GPT's third note: it is READ-ONLY from now on, the game confirms with `start-ack`). */
+    getConfirms = false;
+    /** A read whose answer is lost on the way (the read itself is made at Orbit). */
+    loseNextGets = 0;
     /** What a confirmation does: reaches Orbit, or is lost on the way (nothing happens there). */
     onAck: 'ok' | 'lose' = 'ok';
     status = 'running';
@@ -110,8 +114,12 @@ class FakeOrbit {
         if (this.onGet === 'silent') return { data: { available: true, on: true, busy: true } };
         if (this.onGet === 'none') return { data: { started: null } };
         const found = this.jobs.get(key);
-        // a read by the key confirms the job it finds
-        if (found && found.scope === `${path.split('/')[2] ?? ''}|${params?.userId}`) found.acked = true;
+        // a read by the key confirms the job it finds, as Orbit 6be29335 did (before the answer was sent: a lost answer confirmed it all the same)
+        if (this.getConfirms && found && found.scope === `${path.split('/')[2] ?? ''}|${params?.userId}`) found.acked = true;
+        if (this.loseNextGets > 0) {
+            this.loseNextGets -= 1;
+            throw Object.assign(new Error('timeout of 20000ms exceeded'), { isAxiosError: true, code: 'ECONNABORTED' });
+        }
         return { data: { started: found ? { id: found.id, status: found.status, attempt: key } : null } };
     };
 }
@@ -146,10 +154,20 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
         (admin as unknown as { brickCall: unknown }).brickCall = orbit.call;
         const store = new RedisStartKeys(redis);
         const context = { admin, botId: who.botId, userId: who.userId, startKeys: memory, startKeyStore: store };
+        /** One reply of this server: what it names is confirmed once it is delivered (`deliver: false` is a reply that failed, was replaced or whose send failed: nothing is confirmed). */
+        const reply = async (args: Record<string, unknown>, over: Record<string, unknown> = {}) => {
+            const { deliver, ...rest } = over;
+            const queue = new ConfirmationQueue();
+            const answer = (await runComputerTool(args, { ...context, confirmations: queue, ...rest })) as Record<string, unknown>;
+            if (deliver === false) queue.drop();
+            else await queue.deliver();
+            return answer;
+        };
         return {
             memory,
             context,
-            ask: (title: string, over: Record<string, unknown> = {}) => runComputerTool({ job: title }, { ...context, ...over }) as Promise<Record<string, unknown>>,
+            reply,
+            ask: (title: string, over: Record<string, unknown> = {}) => reply({ job: title }, over),
         };
     };
     const COULD_NOT_CHECK = "I couldn't check whether this job has started. I'll use the same request when you check again.";
@@ -427,7 +445,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
 
     describe('R1 closing design (Opus): the words of a start go with its key, and a job the game never confirmed is found before anything else is made', () => {
         const SAID = { job: 'Fill in my visa form', details: 'Use the passport number from my notes', reads_only: true, app: 'Gmail', app_steps: 12 };
-        const askWith = (server: ReturnType<typeof process_>, args: Record<string, unknown>) => (runComputerTool as unknown as (a: Record<string, unknown>, c: Record<string, unknown>) => Promise<Record<string, unknown>>)(args, server.context);
+        const askWith = (server: ReturnType<typeof process_>, args: Record<string, unknown>) => server.reply(args);
 
         it('the record in Redis holds the key and the words that key said (title, details, writes, the way weighed), and nothing else', async () => {
             const who = ids();
@@ -584,6 +602,232 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 });
             }
         }
+
+        describe('GPT third note, R1: a lost look-up reply and a look-up that no longer confirms', () => {
+            // (On Orbit 6be29335 a read confirmed the job BEFORE it answered, so a lost read reply left a confirmed job the game never saw: two jobs. That was Orbit's to fix: its reads are
+            // read-only now, which is what the double models; this was run red against that Orbit first.)
+            for (const getConfirms of [false]) {
+                it(`Orbit read-only reads: the start reply AND the later look-up reply are lost, Redis is evicted, a fresh process replays: job A, one reservation, truthful words; the deliberate second ask after resolution is B`, async () => {
+                    const who = ids();
+                    const orbit = new FakeOrbit();
+                    orbit.getConfirms = getConfirms;
+                    orbit.onPost = 'lose-after-commit';
+                    orbit.onGet = 'truth';
+                    orbit.loseNextGets = 1;
+                    const first = process_(orbit, who);
+                    expect(await first.ask('Fill in my visa form')).toMatchObject({ started: false, unknown: true });
+                    const original = orbit.posts[0].key;
+                    expect(orbit.lookups).toEqual([original]);
+                    // the look-up itself confirmed nothing: the guard still stands for the job the game never learned of
+                    expect(orbit.jobs.get(original)?.acked).toBe(false);
+                    // the record is gone (24 h life) and the process is a fresh one
+                    await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+                    orbit.onPost = 'whole';
+                    orbit.posts = [];
+                    const fresh = process_(orbit, who);
+                    const answer = await fresh.ask('Fill in my visa form');
+                    expect([...orbit.jobs.values()].map((one) => one.id), 'jobs').toEqual(['job-1']);
+                    expect(orbit.reservations, 'reservations').toBe(1);
+                    expect(answer).toMatchObject({ started: false, earlier: true, found: true });
+                    expect(orbit.jobs.get(original)?.acked).toBe(true);
+                    // resolved: the deliberate second ask in the next message is B
+                    forgetSettledStarts(fresh.memory);
+                    orbit.jobs.get(original)!.status = 'done';
+                    expect(await fresh.ask('Fill in my visa form')).toMatchObject({ started: true });
+                    expect(orbit.reservations).toBe(2);
+                    expect(orbit.jobs.size).toBe(2);
+                });
+            }
+
+            for (const getConfirms of [false, true]) {
+                it(`${getConfirms ? 'on Orbit 6be29335 (a read confirms)' : 'on a read-only Orbit'}: a look-up of an earlier send that FOUND its job is confirmed by the game (after it holds the result), so the deliberate second ask in the next message is B, not another \`earlier\``, async () => {
+                    const who = ids();
+                    const orbit = new FakeOrbit();
+                    orbit.getConfirms = getConfirms;
+                    orbit.onPost = 'lose-after-commit';
+                    orbit.onGet = 'silent';
+                    const server = process_(orbit, who);
+                    await server.ask('Fill in my visa form');
+                    const original = orbit.posts[0].key;
+                    orbit.onGet = 'truth';
+                    orbit.jobs.get(original)!.status = 'done';
+                    forgetSettledStarts(server.memory);
+                    orbit.onPost = 'whole';
+                    orbit.posts = [];
+                    expect(await server.ask('Fill in my visa form')).toMatchObject({ done: true, earlier: true });
+                    expect(orbit.posts).toEqual([]);
+                    expect(orbit.jobs.get(original)?.acked).toBe(true);
+                    forgetSettledStarts(server.memory);
+                    expect(await server.ask('Fill in my visa form')).toMatchObject({ started: true });
+                    expect(orbit.jobs.size).toBe(2);
+                    expect(orbit.reservations).toBe(2);
+                    expect(orbit.guarded).toBe(0);
+                });
+            }
+        });
+
+        describe('GPT third note, R1b (Opus): a confirmation is the game\'s own word, sent only once the reply that names the job has reached the person', () => {
+            it('the tool never confirms while it runs: the answer names the job, 0 confirmations are sent and the record of its key is still in Redis until the reply is delivered; then exactly one confirmation per key and the record goes', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const server = process_(orbit, who);
+                const queue = new ConfirmationQueue();
+                expect(await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: queue })).toMatchObject({ started: true });
+                expect(orbit.acks).toEqual([]);
+                const key = orbit.posts[0].key;
+                expect((await held(who))?.key).toBe(key);
+                expect(orbit.jobs.get(key)?.acked).toBe(false);
+                expect(queue.size).toBe(1);
+                // the reply is handed to the chat
+                await queue.deliver();
+                expect(orbit.acks).toEqual([{ attempt: key, userId: who.userId }]);
+                expect(orbit.jobs.get(key)?.acked).toBe(true);
+                expect(await held(who)).toBeNull();
+                // delivering again sends nothing again
+                await queue.deliver();
+                expect(orbit.acks).toHaveLength(1);
+            });
+
+            it('a reply that FAILS after the tool answered (the turn throws, is replaced, or its send fails): 0 confirmations, the record stays, and the next message, even reworded and from a fresh process, is told of the SAME job: no new job, no new reservation; once THAT reply is delivered the job is confirmed and a deliberate next ask is B', async () => {
+                for (const how of ['dropped', 'process lost']) {
+                    const who = ids();
+                    const orbit = new FakeOrbit();
+                    const first = process_(orbit, who);
+                    if (how === 'dropped') expect(await first.ask('Fill in my visa form', { deliver: false })).toMatchObject({ started: true });
+                    else expect(await runComputerTool({ job: 'Fill in my visa form' }, { ...first.context, confirmations: new ConfirmationQueue() })).toMatchObject({ started: true });
+                    const original = orbit.posts[0].key;
+                    expect(orbit.acks, how).toEqual([]);
+                    expect((await held(who))?.key, how).toBe(original);
+                    // the next message: another word, a fresh process
+                    orbit.posts = [];
+                    const next = process_(orbit, who);
+                    const told = await next.ask('Apply for the visa online', { deliver: false });
+                    expect(told, how).toMatchObject({ started: false, earlier: true });
+                    expect(orbit.jobs.size, how).toBe(1);
+                    expect(orbit.reservations, how).toBe(1);
+                    expect(orbit.posts, how).toEqual([]);
+                    expect(orbit.acks, how).toEqual([]);
+                    expect((await held(who))?.key, how).toBe(original);
+                    // this reply is delivered (the job has finished by now: a job still live keeps its start open, and its record, until it is over)
+                    orbit.jobs.get(original)!.status = 'done';
+                    const delivered = process_(orbit, who);
+                    expect(await delivered.ask('Apply for the visa online')).toMatchObject({ started: false, done: true, earlier: true });
+                    expect(orbit.acks, how).toEqual([{ attempt: original, userId: who.userId }]);
+                    expect(await held(who), how).toBeNull();
+                    // and the person's deliberate second ask in the next message: a job of its own
+                    forgetSettledStarts(delivered.memory);
+                    expect(await delivered.ask('Fill in my visa form')).toMatchObject({ started: true });
+                    expect(orbit.jobs.size, how).toBe(2);
+                    expect(orbit.reservations, how).toBe(2);
+                }
+            });
+
+            it('a job named twice in one reply (a reworded call, a retried call) is confirmed once', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                orbit.onPost = 'lose-after-commit';
+                orbit.onGet = 'silent';
+                const server = process_(orbit, who);
+                await server.ask('Fill in my visa form', { deliver: false });
+                forgetSettledStarts(server.memory);
+                orbit.onGet = 'truth';
+                const queue = new ConfirmationQueue();
+                await runComputerTool({ job: 'Book me a table for Friday' }, { ...server.context, confirmations: queue });
+                await runComputerTool({ job: 'Reserve a table on Friday evening' }, { ...server.context, confirmations: queue });
+                await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: queue });
+                expect(queue.size).toBe(1);
+                await queue.deliver();
+                expect(orbit.acks).toHaveLength(1);
+            });
+
+            it('two deliveries of one reply that overlap (the send is slow) send each confirmation once', async () => {
+                const queue = new ConfirmationQueue();
+                const sent: string[] = [];
+                queue.add('a', async () => {
+                    await new Promise((resolve) => setTimeout(resolve, 30));
+                    sent.push('a');
+                });
+                await Promise.all([queue.deliver(), queue.deliver()]);
+                expect(sent).toEqual(['a']);
+            });
+
+            it('a retried reply of the same turn (its first answer was replaced, a new queue) meets the job already found in this turn: it names it again and confirms it once THAT reply is delivered', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                orbit.onPost = 'lose-after-commit';
+                orbit.onGet = 'silent';
+                const server = process_(orbit, who);
+                await server.ask('Fill in my visa form', { deliver: false });
+                const original = orbit.posts[0].key;
+                orbit.jobs.get(original)!.status = 'done';
+                forgetSettledStarts(server.memory);
+                orbit.onPost = 'whole';
+                orbit.onGet = 'truth';
+                const first = await server.ask('Book me a table for Friday', { deliver: false });
+                expect(first).toMatchObject({ started: false, earlier: true });
+                expect(orbit.acks).toEqual([]);
+                const retried = await server.ask('Reserve a table on Friday evening');
+                expect(retried).toEqual(first);
+                expect(orbit.acks).toHaveLength(1);
+                expect(orbit.jobs.size).toBe(1);
+                expect(orbit.reservations).toBe(1);
+            });
+
+            it('the same title asked again with a new queue after the turn-wide answer is gone still names the job found for it and confirms it once delivered', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                orbit.onPost = 'lose-after-commit';
+                orbit.onGet = 'silent';
+                const server = process_(orbit, who);
+                await server.ask('Fill in my visa form', { deliver: false });
+                orbit.jobs.get(orbit.posts[0].key)!.status = 'done';
+                forgetSettledStarts(server.memory);
+                orbit.onPost = 'whole';
+                orbit.onGet = 'truth';
+                // Orbit itself names the earlier job (the Redis record is gone, a fresh process)
+                await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+                const fresh = process_(orbit, who);
+                const first = await fresh.ask('Book me a table for Friday', { deliver: false });
+                expect(first).toMatchObject({ started: false, earlier: true });
+                fresh.memory.delete(FOUND_EARLIER_SLOT);
+                const posts = orbit.posts.length;
+                const again = await fresh.ask('Book me a table for Friday');
+                expect(again).toEqual(first);
+                expect(orbit.posts).toHaveLength(posts);
+                expect(orbit.acks).toHaveLength(1);
+                expect(orbit.jobs.size).toBe(1);
+            });
+
+            it('a confirmation that throws, or is added after the reply was delivered or dropped, changes nothing for the others', async () => {
+                const queue = new ConfirmationQueue();
+                const sent: string[] = [];
+                queue.add('a', async () => {
+                    throw new Error('boom');
+                });
+                queue.add('b', async () => void sent.push('b'));
+                await queue.deliver();
+                expect(sent).toEqual(['b']);
+                queue.add('c', async () => void sent.push('c'));
+                await queue.deliver();
+                expect(sent).toEqual(['b']);
+                const dropped = new ConfirmationQueue();
+                dropped.add('d', async () => void sent.push('d'));
+                dropped.drop();
+                // an answer that names a job after the reply was dropped adds nothing either
+                dropped.add('e', async () => void sent.push('e'));
+                await dropped.deliver();
+                expect(sent).toEqual(['b']);
+            });
+
+            it('a tool call with no queue at all (no reply to wait for) confirms nothing and leaves the record', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const server = process_(orbit, who);
+                await runComputerTool({ job: 'Fill in my visa form' }, server.context);
+                expect(orbit.acks).toEqual([]);
+                expect((await held(who))?.key).toBe(orbit.posts[0].key);
+            });
+        });
 
         for (const [name, record] of [
             ['holds no words (a record from before)', (key: string) => ({ key, at: Date.now() - 5000 })],

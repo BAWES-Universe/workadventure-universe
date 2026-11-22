@@ -169,6 +169,9 @@ export interface BotPlayerMemory {
      * the key of the first ask and Orbit answers with the job it made, never a second. An ask whose outcome is open keeps its key for ten minutes; a settled one is cleared when the
      * next turn starts. Runtime only. */
     computerStarts?: Map<string, { key: string; at: number; open: boolean }>;
+    /** The confirmations of the computer jobs the reply being written names (see `ConfirmationQueue`): sent once that reply is delivered to the person's chat, dropped when it is not or
+     * a newer message replaces it. Runtime only. */
+    computerConfirmations?: import('../ai/ComputerTools').ConfirmationQueue;
     /** The jobs of an App that someone else asked for in the turn being answered and that may have run (no answer came back), by job and
      * inputs: the same one is not sent again in this turn (#2006). Cleared when the next turn starts. Runtime only. */
     sharedUncertain?: Set<string>;

@@ -813,6 +813,30 @@ describe('how a call ended, for the runner', () => {
         expect((await rowsSent('job-run')).map((row) => [row.turn, row.run])).toEqual([[3, 'run-before']]);
     });
 
+    it('asks Orbit for the room with the turn and the run the call arrived in (Orbit orders an admission on a turn against a stop for the pool on it), the turn it ARRIVED in though the runner moves on', async () => {
+        const job = 'job-authorize-turn';
+        asJob(job);
+        notes.turn(job, 6, 'run-y');
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        orbit.authorize.mockReset().mockImplementationOnce(async () => {
+            await gate;
+            return { ok: true };
+        });
+        upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'The model broke' } });
+        const asked = askAndSettle(agent);
+        await vi.waitFor(() => expect(orbit.authorize).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        // the runner moves on while Orbit is being asked: the call is still turn 6's
+        notes.turn(job, 7, 'run-y');
+        release();
+        await asked;
+        expect(orbit.authorize.mock.calls[0][0]).toMatchObject({ turn: 6, run: 'run-y' });
+        // a call of the next turn carries its own
+        orbit.authorize.mockReset().mockResolvedValue({ ok: true });
+        await askAndSettle(agent, 2);
+        expect(orbit.authorize.mock.calls[0][0]).toMatchObject({ turn: 7, run: 'run-y' });
+    });
+
     it('ties a call to the turn that was current when it ARRIVED, though asking Orbit who the caller is took until the runner was on the next turn', async () => {
         const job = 'job-late-identify';
         notes.turn(job, 4, 'run-x');

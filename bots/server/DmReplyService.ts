@@ -756,7 +756,11 @@ export class DmReplyService extends BaseBehavior {
         // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
         // answers it afresh instead of seeing a reply they never got.
         let kept = false;
+        // The computer jobs this reply names are confirmed to Orbit once it is delivered to the person's chat (the bridge calls `keep` after a send without error), never before. A reply that
+        // failed or was not sent never calls it, and a newer message drops them
+        const confirmations = memory.getMemory(botId, playerId)?.computerConfirmations;
         const keep = () => {
+            void confirmations?.deliver();
             if (kept || !replyText) return;
             kept = true;
             memory.addMessage(botId, playerId, replyText, 'bot', DM_SPACE_NAME);

@@ -528,6 +528,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let poolTimer: ReturnType<typeof setTimeout> | undefined;
         let poolWatch: ReturnType<typeof setTimeout> | undefined;
         let gaveUp = false;
+        // Orbit answered the intent of THIS turn stale (the turn moved on: a funded call was admitted on it first, the job is over or gone, another generation holds it): this turn is never
+        // given up again, so the tentative close cannot keep flapping the relay for a turn Orbit has said is no pool-only turn. A new turn has its own
+        let stalled = false;
         // The close the give-up went on with, so its fence can be taken back once Orbit has accepted the finish
         let gaveUpOn: CloseAttempt | undefined;
         // The give-up that is writing to the shared store right now (the close of the turn, or the taking of it back): the end of the turn waits for it, bounded
@@ -583,6 +586,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             const kept = await sendIntent(job, generation, ids);
             if (kept !== 'kept') {
                 await takeBack();
+                if (kept === 'stale') stalled = true;
                 return;
             }
             // Orbit holds the end: the fence is COMMITTED now (it holds for as long as the cancel and the finish take). A commit that is refused or never confirmed does not stop the
@@ -606,7 +610,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         };
         const watchPool = () => {
             if (turnOver || turnController.signal.aborted) return;
-            if (poolBusy()) {
+            if (!stalled && poolBusy()) {
                 // One give-up at a time: while one is still writing to the shared store (its close, or taking it back) no other is armed, and the one that is
                 // pending is never replaced, so the end of the turn waits for THE give-up that holds a fence. When it has settled, the next look arms again if the
                 // turn is still going and still pool-only
@@ -834,7 +838,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      */
     async function sendIntent(job: RunnableJob, generation: number | undefined, ids: { turn: number; run: string }): Promise<'kept' | 'stale' | 'unsent'> {
         try {
-            const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'finish-intent', outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, turns: [ids.turn], run: ids.run }, generation));
+            const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'finish-intent', outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, basis: 'pool', turns: [ids.turn], run: ids.run }, generation));
             if (answer.ok === true) return 'kept';
             if (answer.ok === false && answer.reason === 'cutoff') return 'kept';
             if (answer.ok === false && answer.reason === 'stale') return 'stale';

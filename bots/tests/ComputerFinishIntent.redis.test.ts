@@ -39,7 +39,7 @@ const http = (status: number, data: unknown) => Object.assign(new Error(`Request
 type LedgerEntry = { outcome: string; cause?: unknown; why?: unknown; turns?: unknown; run?: unknown; by: 'finish' | 'cutoff' };
 interface Modes {
     /** What the intent answers: kept (default), a thrown error, or a refusal. */
-    intent?: (n: number) => 'ok' | 'down' | 'old' | 'unknown-job' | 'stale' | 'cutoff' | 'other' | 'hang' | 'lost-ack';
+    intent?: (n: number) => 'ok' | 'down' | 'old' | 'unknown-job' | 'stale' | 'cutoff' | 'other' | 'hang' | 'lost-ack' | 'late' | 'hold';
     /** What a finish does: taken (default), lost on its way (never got there), or its answer lost after it was done. */
     finish?: (n: number) => 'ok' | 'down' | 'answer-lost';
     /** How long Orbit takes over the intent before it answers (it is kept the moment it arrives). */
@@ -69,8 +69,42 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
         order: [] as string[],
         ledger: [] as LedgerEntry[],
         onIntentKept: undefined as (() => void) | undefined,
+        /** The funded calls Orbit admitted, by turn (GPT third note: a pool-only stop and an admission on the turn are ordered at Orbit: the one that comes first wins). */
+        admitted: [] as Array<{ turn: number; run?: string }>,
+        refusedAdmissions: 0,
+        /** The wallet of the job at Orbit: what an admitted call held (5,000 micros each) and what a stale or refused stop gave back (nothing: the game never refunds, Orbit does when it ends a job). */
+        wallet: { held: 0, givenBack: 0 },
+        /** Intents whose caller gave up (the timeout) and that reach Orbit later (`landLate`). */
+        lateIntents: [] as Array<Record<string, unknown>>,
+        /** Intents Orbit is holding before it decides (`releaseHeld`). */
+        heldIntents: [] as Array<() => void>,
         turnScript: [] as Array<(signal?: AbortSignal) => AsyncGenerator<RunnerEvent>>,
     };
+    /** A funded call of a turn comes to Orbit: refused while a stop is kept (`finish_pending`), else admitted. */
+    const admit = (turn: number, run = 'run1') => {
+        if (state.pending !== null || state.over) {
+            state.refusedAdmissions += 1;
+            return false;
+        }
+        state.admitted.push({ turn, run });
+        state.wallet.held += 5000;
+        return true;
+    };
+    /** Orbit's rule (Opus): a pool-based stop is stale when a funded call was admitted for the same run (or no run on either side) at an equal or later turn than the stop's earliest turn. */
+    const admissionWon = (body: Record<string, unknown>) => {
+        const turns = (body.turns as number[] | undefined) ?? [];
+        if (body.basis !== 'pool' || turns.length === 0) return false;
+        return state.admitted.some((row) => (!row.run || !body.run || row.run === body.run) && row.turn >= Math.min(...turns));
+    };
+    /** The original intent requests whose caller timed out now reach Orbit, each ordered against the admissions on its turn: admission first leaves the stop stale, the stop first is kept. */
+    const landLate = () => {
+        for (const body of state.lateIntents.splice(0)) {
+            if (state.over || state.pending || admissionWon(body)) continue;
+            state.pending = { outcome: body.outcome as 'done' | 'failed', cause: body.cause as 'ours' | 'agent', why: body.why as string, turns: body.turns as number[], run: body.run as string, generation: body.generation as number | undefined, at: Date.now() };
+            state.onIntentKept?.();
+        }
+    };
+    const releaseHeld = () => state.heldIntents.splice(0).forEach((release) => release());
     const refuses = (call: 'prepare' | 'turn' | 'renew') => state.pending !== null && (modes.refuses ?? ['prepare', 'turn', 'renew']).includes(call);
     const open = (signal?: AbortSignal): TurnOpened => {
         const make = state.turnScript.shift();
@@ -109,6 +143,13 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
                     if (!state.pending) state.pending = { outcome: body.outcome as 'done' | 'failed', cause: body.cause as 'ours' | 'agent', why: body.why as string, turns: body.turns as number[], run: body.run as string, generation: body.generation as number | undefined, at: Date.now() };
                     throw new Error('timeout of 480000ms exceeded');
                 }
+                // the caller's timeout (8 s): it gives up, and the request reaches Orbit later
+                if (mode === 'late') {
+                    state.lateIntents.push(body);
+                    throw new Error('timeout of 8000ms exceeded');
+                }
+                // Orbit takes its time over the decision (the caller is still waiting)
+                if (mode === 'hold') await new Promise<void>((resolve) => state.heldIntents.push(resolve));
                 if (mode === 'down') throw http(503, { error: 'unavailable' });
                 if (mode === 'old') throw http(400, { error: 'Invalid input data' });
                 if (mode === 'unknown-job') throw http(404, { error: 'not found' });
@@ -116,6 +157,8 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
                 if (mode === 'other') return { ok: false, reason: 'something_else', job: { id: job.jobId } };
                 if (state.over || mode === 'stale') return { ok: false, reason: 'stale', job: { id: job.jobId } };
                 if (body.generation !== undefined && body.generation !== state.generation) return { ok: false, reason: 'stale', job: { id: job.jobId } };
+                // a funded call was admitted on the turn this stop is about, before the stop: the turn is no pool-only turn, the stop is stale and nothing is recorded
+                if (admissionWon(body)) return { ok: false, reason: 'stale', job: { id: job.jobId } };
                 if (mode === 'cutoff') {
                     // Orbit's own pool cutoff already decided: the job ends as ours, once
                     state.over = true;
@@ -165,7 +208,7 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
             state.order.push('cancel');
         },
     };
-    return { orbit, state };
+    return { orbit, state: Object.assign(state, { admit, landLate, releaseHeld }) };
 }
 
 describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made it (the finish intent), on a real Redis', () => {
@@ -239,7 +282,7 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         // the fence commit is written only after Orbit kept the intent
         expect(fake.state.order).toEqual(['intent', 'commit', 'cancel', 'finish']);
         expect(fake.state.intents).toHaveLength(1);
-        expect(fake.state.intents[0]).toMatchObject({ action: 'finish-intent', outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, turns: [1], run: 'run1', generation: 1 });
+        expect(fake.state.intents[0]).toMatchObject({ action: 'finish-intent', outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, basis: 'pool', turns: [1], run: 'run1', generation: 1 });
         endedOnce(fake);
         expect(fake.state.turnsOpened).toBe(1);
         // and the committed fence is taken back once Orbit took the finish
@@ -423,6 +466,114 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         expect(fake.state.ledger.filter((entry) => entry.cause === 'ours' && entry.why === POOL_BUSY_WHY)).toEqual([]);
         // the fence of the close that was taken back: the turn's calls are taken up again
         expect(await admission(1)).toBe(true);
+    });
+
+    describe('GPT third note, R2 follow-up: a pool-only stop and a funded call admitted on the same turn are ordered at Orbit, and the game does what the answer says', () => {
+        const slow = { ...timing, poolGiveUpMs: 400 };
+        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+        /** A turn that is refused for room, then goes on until `release()` and ends by itself as a turn that did its work (or fails with refused calls when the stop was kept). */
+        const turnThatGoesOn = (fake: ReturnType<typeof intentOrbit>, notes: RefusalNotes, job: RunnableJob) => {
+            const gate = { open: false };
+            fake.state.turnScript.push(async function* () {
+                yield { type: 'created', id: 'r', sessionId: 's' };
+                setTimeout(() => notes.record(job.botId, job.jobId, poolRefusal), 0);
+                const end = Date.now() + 8000;
+                while (!gate.open && Date.now() < end) await sleep(10);
+                if (fake.state.pending) yield { type: 'failed', code: 'calls_refused', message: 'keys revoked' } as RunnerEvent;
+                else yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null };
+            });
+            return gate;
+        };
+        const fenceGone = async (fenceOf: (turn: number, run: string) => Promise<unknown>) => {
+            const end = Date.now() + 5000;
+            while ((await fenceOf(1, 'run1')) !== null && Date.now() < end) await sleep(5);
+            expect(await fenceOf(1, 'run1')).toBeNull();
+        };
+
+        it('ORDER A, caller timeout then admission then the late request: the game takes the close back at the timeout (the turn goes on), the relay and Orbit admit a funded call, the late stop is stale and changes nothing: 1 admission, no stop recorded, 0 cancels, the job ends as the turn ended (done), not failed', async () => {
+            const { fake, job, notesOf, runnerOn, work, admission, fenceOf } = rig({ intent: () => 'late' });
+            const notes = notesOf('A');
+            const gate = turnThatGoesOn(fake, notes, job);
+            const running = work(runnerOn(notes, 'run1', { timing: slow }));
+            await until(() => fake.state.lateIntents.length >= 1);
+            await fenceGone(fenceOf);
+            expect(fake.state.pending).toBeNull();
+            // the pool has room again: the relay takes up a funded call of the turn and Orbit admits it
+            expect(await admission(1)).toBe(true);
+            expect(fake.state.admit(1)).toBe(true);
+            // now the original request reaches Orbit
+            fake.state.landLate();
+            expect(fake.state.pending).toBeNull();
+            gate.open = true;
+            await running;
+            expect(fake.state.admitted).toEqual([{ turn: 1, run: 'run1' }]);
+            expect(fake.state.refusedAdmissions).toBe(0);
+            expect(fake.state.cancels).toBe(0);
+            expect(fake.state.wallet).toEqual({ held: 5000, givenBack: 0 });
+            expect(fake.state.intents).toHaveLength(1);
+            expect(fake.state.ledger.map((entry) => entry.outcome)).toEqual(['done']);
+            expect(fake.state.ledger[0]).not.toMatchObject({ cause: 'ours', why: POOL_BUSY_WHY });
+            expect(fake.state.turnsOpened).toBe(1);
+        });
+
+        it('ORDER B, caller timeout then the late request FIRST then an admission: the stop is kept at Orbit, the admission is refused (0 admissions), and the job ends ONCE as the stop says (failed for room), completed from the intent when the turn\'s calls are refused', async () => {
+            const { fake, job, notesOf, runnerOn, work, fenceOf } = rig({ intent: (n) => (n === 1 ? 'late' : 'ok') });
+            const notes = notesOf('A');
+            const gate = turnThatGoesOn(fake, notes, job);
+            const running = work(runnerOn(notes, 'run1', { timing: slow }));
+            await until(() => fake.state.lateIntents.length >= 1);
+            await fenceGone(fenceOf);
+            fake.state.landLate();
+            expect(fake.state.pending).toMatchObject({ outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, turns: [1], run: 'run1' });
+            // a funded call of the turn now comes to Orbit: refused
+            expect(fake.state.admit(1)).toBe(false);
+            gate.open = true;
+            await running;
+            expect(fake.state.admitted).toEqual([]);
+            expect(fake.state.refusedAdmissions).toBe(1);
+            expect(fake.state.wallet).toEqual({ held: 0, givenBack: 0 });
+            endedOnce(fake);
+            expect(fake.state.turnsOpened).toBe(1);
+        });
+
+        it('the tentative fence EXPIRES while Orbit holds the intent, a funded call is admitted, and Orbit then answers STALE: the turn stays (nothing committed, aborted or cancelled), the job ends as the turn ended, and the give-up is not tried again for that turn', async () => {
+            const { fake, job, notesOf, runnerOn, work, admission, fenceOf } = rig({ intent: () => 'hold' });
+            const notes = notesOf('A');
+            const gate = turnThatGoesOn(fake, notes, job);
+            const running = work(runnerOn(notes, 'run1', { timing: slow }));
+            await until(() => fake.state.heldIntents.length >= 1);
+            expect(await fenceOf(1, 'run1')).toMatchObject({ committed: false });
+            // 30 seconds pass: the tentative fence is gone from the store, the relay takes up a funded call and Orbit admits it
+            await client.hDel(`${CALLED_PREFIX}${job.jobId}`, 'fence:1|run1');
+            expect(await admission(1)).toBe(true);
+            expect(fake.state.admit(1)).toBe(true);
+            // Orbit decides now: the admission came first
+            fake.state.releaseHeld();
+            await sleep(300);
+            expect(fake.state.pending).toBeNull();
+            expect(fake.state.cancels).toBe(0);
+            expect(fake.state.order).not.toContain('commit');
+            gate.open = true;
+            await running;
+            expect(fake.state.intents).toHaveLength(1);
+            expect(fake.state.cancels).toBe(0);
+            expect(fake.state.admitted).toEqual([{ turn: 1, run: 'run1' }]);
+            expect(fake.state.wallet).toEqual({ held: 5000, givenBack: 0 });
+            expect(fake.state.ledger.map((entry) => entry.outcome)).toEqual(['done']);
+        });
+
+        it('a STALE answer latches the give-up off for THAT turn: the turn stays refused for room for a long while and exactly one intent is sent (the tentative close does not flap the relay), nothing is cancelled', async () => {
+            const { fake, job, notesOf, runnerOn, work } = rig({ intent: () => 'stale' });
+            const notes = notesOf('A');
+            const gate = turnThatGoesOn(fake, notes, job);
+            const running = work(runnerOn(notes, 'run1'));
+            await sleep(700);
+            gate.open = true;
+            await running;
+            expect(fake.state.intents).toHaveLength(1);
+            expect(fake.state.cancels).toBe(0);
+            expect(fake.state.ledger.map((entry) => entry.outcome)).toEqual(['done']);
+        });
     });
 
     it('a 404 for the intent is stale too (the job is gone): nothing is given up', async () => {

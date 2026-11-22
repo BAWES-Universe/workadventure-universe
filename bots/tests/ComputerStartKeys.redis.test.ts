@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
 import { createClient } from 'redis';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { runComputerTool, OPEN_START_KEEP_MS } from '../ai/ComputerTools';
+import { OPEN_START_KEEP_MS } from '../ai/ComputerTools';
+import { runDelivered } from './helpers/deliveredComputerTool';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
 /**
@@ -151,7 +152,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
                 }),
             };
             const store = new RedisStartKeys(() => client as never);
-            return { sent, run: () => runComputerTool({ job: `Race ${s} ${run}` }, { admin: admin as never, botId: 'brick-race', userId: 'uuid-race', startKeys: new Map(), startKeyStore: store }) };
+            return { sent, run: () => runDelivered({ job: `Race ${s} ${run}` }, { admin: admin as never, botId: 'brick-race', userId: 'uuid-race', startKeys: new Map(), startKeyStore: store }) };
         };
         const servers = Array.from({ length: 6 }, ask);
         await Promise.all(servers.map((one) => one.run()));
@@ -174,7 +175,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
                 return { ok: false, reason: 'starting' };
             }),
         };
-        const ask = () => runComputerTool({ job }, { admin: admin as never, botId: 'brick-stored', userId: 'uuid-stored', startKeys: new Map(), startKeyStore: store });
+        const ask = () => runDelivered({ job }, { admin: admin as never, botId: 'brick-stored', userId: 'uuid-stored', startKeys: new Map(), startKeyStore: store });
         await ask();
         await Promise.all([ask(), ask(), ask()]);
         expect(new Set(sent).size).toBe(1);
