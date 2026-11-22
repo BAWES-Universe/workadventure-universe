@@ -1,7 +1,7 @@
 /**
- * "Try again" carries on (piece 8 of the computer controls). After a computer job that failed as ours or that we ended (Orbit's words: `error`, `pool`, `unanswered`, `allowance`, `rule`), the person's
+ * "Try again" carries on (piece 8 of the computer controls). After a computer job that failed (ours, or the agent's own: Orbit's `agent`) or that we ended (`error`, `pool`, `unanswered`, `allowance`, `rule`), the person's
  * "try again" is a NEW job that carries on in the old job's conversation on the computer, so the agent knows what it already did instead of starting from zero. After the person's own Stop or
- * Cancel it is a fresh job, as before.
+ * Cancel, a finished job, or a computer turned off or deleted, it is a fresh job, as before.
  *
  * Orbit decides which job that is, on every ask, from its own record (`retry` on the computer look, and again at the start). The game asks for it ONLY when the person's words ask to try again or
  * carry on (`asksToTryAgain`), or when this is the person's first message after Brick told them how that job ended (its report asks "Want me to try again?", and a plain "yes" answers it). Then
@@ -124,6 +124,7 @@ const HOW_WORDS: Record<string, string> = {
     unanswered: 'stopped waiting for them at a step that needed them',
     allowance: "stopped when this month's computer time ran out",
     rule: 'stopped because of a spending limit they set',
+    agent: 'stopped at a step it could not get past',
 };
 
 /** The line for the model in this turn: which job "try again" would carry on, and how to ask for it. No price, no number, nothing for the person to read. */

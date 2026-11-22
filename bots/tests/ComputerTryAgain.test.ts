@@ -12,7 +12,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 import axios from 'axios';
 import { AdminApiService, COMPUTER_CONTINUES_HEADER } from '../server/AdminApiService';
 import { AIService } from '../ai/AIService';
-import { ConfirmationQueue, computerToolDefinitions, runComputerTool, type ComputerToolContext } from '../ai/ComputerTools';
+import { ConfirmationQueue, computerToolDefinitions, runComputerTool, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
 import { asksToTryAgain, offersTryAgain, retryJobOf, tryAgainNote, type RetryJob } from '../ai/ComputerTryAgain';
 import { jobLine, quotedTitle } from '../ai/JobStatusLine';
 import { CONTROL_WORDS } from '../ai/ComputerControlWords';
@@ -123,6 +123,24 @@ describe('use_computer with try_again', () => {
         const fresh = asking({ ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null });
         await runDelivered({ job: 'Visa form', details: 'in Gmail' }, context(fresh, { apps: ['Gmail'] }));
         expect(fresh.startComputerJob).not.toHaveBeenCalled();
+    });
+
+    it('a "yes" delivered again (the same inbound event) sends the same continuation under the same event key: one job', async () => {
+        const inbound = { roomId: '!room:example.test', eventId: '$yes-1' };
+        const keys: string[] = [];
+        for (let delivery = 0; delivery < 2; delivery++) {
+            const admin = asking({ ok: true, job: { id: 'new-1', status: 'running', queuedFor: null }, restoredFrom: null, continued: true });
+            await runDelivered({ job: 'Visa form', try_again: true }, context(admin, { retry: { id: OLD, title: 'Visa form' }, inbound, confirmations: new ConfirmationQueue() }));
+            const sent = admin.startComputerJob.mock.calls[0][2] as { startKey: string; continuesJobId?: string };
+            expect(sent.continuesJobId).toBe(OLD);
+            keys.push(sent.startKey);
+        }
+        expect(keys[0]).toBe(startKeyFor(BRICK, inbound.roomId, inbound.eventId, 0));
+        expect(keys[1]).toBe(keys[0]);
+    });
+
+    it('the line for the model says how a failure the agent itself gave ended', () => {
+        expect(tryAgainNote(retry({ how: 'agent' }))).toContain('could not get past');
     });
 
     it('the same ask again in the turn sends the same continuation under the same key: one job', async () => {
