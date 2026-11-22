@@ -187,6 +187,15 @@ describe("calls on one job of a Brick's computer", () => {
             expect(await brickComputerJobAction(BRICK, "j1", "resume")).toEqual({ ok: false, why: "changed" });
         });
 
+        it("says why a Resume could not carry on yet: the month's time or the person's own limit, and the job stays paused", async () => {
+            game.getBrickComputer.mockResolvedValue(computer({ machine: "resting", queued: [pausedVisa] }));
+            game.brickComputerJobAction.mockRejectedValue(refused(409, "allowance"));
+            expect(await brickComputerJobAction(BRICK, "j1", "resume")).toEqual({ ok: false, why: "out-of-time" });
+            game.brickComputerJobAction.mockRejectedValue(refused(409, "rule"));
+            expect(await brickComputerJobAction(BRICK, "j1", "resume")).toEqual({ ok: false, why: "over-limit" });
+            expect(brickComputerOf(BRICK)?.queued[0]?.queuedFor).toBe("paused");
+        });
+
         it("says it failed when Orbit could not be reached", async () => {
             game.brickComputerJobAction.mockRejectedValue(new Error("Orbit did not answer in time"));
             expect(await brickComputerJobAction(BRICK, "j1", "pause")).toEqual({ ok: false, why: "failed" });

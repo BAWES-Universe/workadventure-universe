@@ -107,9 +107,11 @@ export async function dismissComputerNotice(brickId: string, jobId: string): Pro
  * - ending: the job is already ending (it finished, or a stop is on its way); the ending stands.
  * - gone: the job is no longer this Brick's to change (it ended, or it was never there).
  * - changed: the job moved on since the page was drawn (already resumed, already started); the page is read again.
+ * - out-of-time: Resume while this month's computer time is still used up; the job stays paused (the panel offers Ask for more).
+ * - over-limit: Resume while a spending limit the person set is still reached; the job stays paused.
  * - failed: Orbit could not be reached or said something else.
  */
-export type JobRefusal = "taken-over" | "ending" | "gone" | "changed" | "failed";
+export type JobRefusal = "taken-over" | "ending" | "gone" | "changed" | "out-of-time" | "over-limit" | "failed";
 export type JobCallResult = { ok: true } | { ok: false; why: JobRefusal };
 
 function refusalOf(error: unknown): JobRefusal {
@@ -120,6 +122,8 @@ function refusalOf(error: unknown): JobRefusal {
     if (refused.reason === "taken_over") return "taken-over";
     if (refused.reason === "ending") return "ending";
     if (refused.reason === "over") return "gone";
+    if (refused.reason === "allowance") return "out-of-time";
+    if (refused.reason === "rule") return "over-limit";
     return "changed";
 }
 
