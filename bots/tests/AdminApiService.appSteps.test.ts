@@ -37,14 +37,14 @@ describe('what Orbit answers to a job that did not start', () => {
     it('reads a refusal that comes back with the answer (Orbit says no in the body of a 200), and keeps the app it names', async () => {
         const refused = service(async () => ({ data: { ok: false, reason: 'cheaper_route', app: 'Notion' } }));
         expect(await refused.orbit.startComputerJob('b', 'u', { title: 'Add a page', plan: { app: 'Notion', steps: 3 } })).toEqual({ ok: false, reason: 'cheaper_route', app: 'Notion' });
-        expect(refused.call).toHaveBeenCalledWith('post', 'api/bots/b/computer-jobs', { userId: 'u', title: 'Add a page', plan: { app: 'Notion', steps: 3 } }, undefined, COMPUTER_START_TIMEOUT_MS, { 'X-Computer-Start-Attempt': expect.stringMatching(UUID) });
+        expect(refused.call).toHaveBeenCalledWith('post', 'api/bots/b/computer-jobs', { userId: 'u', title: 'Add a page', plan: { app: 'Notion', steps: 3 } }, undefined, COMPUTER_START_TIMEOUT_MS, { 'X-Computer-Start-Attempt': expect.stringMatching(UUID), 'X-Computer-Start-Acks': '1' });
         expect(await service(async () => ({ data: { ok: false, reason: 'off' } })).orbit.startComputerJob('b', 'u', { title: 'x' })).toEqual({ ok: false, reason: 'off' });
     });
 
     it('sends whether the person is a guest with the id when it is known, and leaves it out when it is not', async () => {
         const known = service(async () => ({ data: { ok: true, job: { id: 'j', status: 'queued', queuedFor: null } } }));
         await known.orbit.startComputerJob('b', 'u', { title: 'x', isGuest: false });
-        expect(known.call).toHaveBeenCalledWith('post', 'api/bots/b/computer-jobs', { userId: 'u', isGuest: false, title: 'x' }, undefined, COMPUTER_START_TIMEOUT_MS, { 'X-Computer-Start-Attempt': expect.stringMatching(UUID) });
+        expect(known.call).toHaveBeenCalledWith('post', 'api/bots/b/computer-jobs', { userId: 'u', isGuest: false, title: 'x' }, undefined, COMPUTER_START_TIMEOUT_MS, { 'X-Computer-Start-Attempt': expect.stringMatching(UUID), 'X-Computer-Start-Acks': '1' });
         const guest = service(async () => ({ data: { ok: true, job: { id: 'j', status: 'queued', queuedFor: null } } }));
         await guest.orbit.startComputerJob('b', 'u', { title: 'x', isGuest: true });
         expect((guest.call.mock.calls[0] as unknown[])[2]).toMatchObject({ isGuest: true });

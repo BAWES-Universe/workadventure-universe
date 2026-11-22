@@ -345,9 +345,9 @@ describe('the key of an ask (GPT round 3, finding 3): the same ask is the same s
         expect(kept.size).toBe(1);
         expect(store.claim).toHaveBeenCalledTimes(1);
         // another server's key won: the first sends THAT key, the entry follows it, and the second (asked after the first ended) sends it again
-        release({ key: 'held-by-another-01', at: Date.now() - 2000 });
+        release({ key: 'held-by-another-01', at: Date.now() - 2000, payload: { title: 'Visa form' } });
         await new Promise((resolve) => setImmediate(resolve));
-        release({ key: 'held-by-another-01', at: Date.now() - 2000 });
+        release({ key: 'held-by-another-01', at: Date.now() - 2000, payload: { title: 'Visa form' } });
         await both;
         expect(keysOf(admin)).toEqual(['held-by-another-01', 'held-by-another-01']);
         expect([...kept.values()].map((entry) => entry.key)).toEqual(['held-by-another-01']);
@@ -422,9 +422,9 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
             claim: vi.fn(async (scope: string, entry: StoredStartKey, keepMs: number, lifeMs: number) => {
                 log.push('claim');
                 const old = held.get(scope);
-                if (old && old.at >= Date.now() - lifeMs) return { key: old.key, at: old.at };
+                if (old && old.at >= Date.now() - lifeMs) return { key: old.key, at: old.at, ...(old.payload ? { payload: old.payload } : {}) };
                 held.set(scope, { ...entry, keepMs });
-                return { key: entry.key, at: entry.at };
+                return { key: entry.key, at: entry.at, ...(entry.payload ? { payload: entry.payload } : {}) };
             }),
             delete: vi.fn(async (scope: string, key: string) => {
                 log.push('delete');
@@ -449,7 +449,9 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
         expect(entry.keepMs).toBe(OPEN_START_KEEP_MS);
         expect(scope).toContain(BRICK);
         expect(scope).toContain('uuid-alice');
-        expect(Object.keys(entry).sort()).toEqual(['at', 'keepMs', 'key']);
+        // the key, when it was first sent, and what that start said (the words that go again under it): nothing else
+        expect(Object.keys(entry).sort()).toEqual(['at', 'keepMs', 'key', 'payload']);
+        expect(entry.payload).toEqual({ title: 'Visa form' });
         expect((admin.startComputerJob.mock.calls as unknown[][])[0][2]).toMatchObject({ startKey: entry.key });
     });
 
@@ -604,14 +606,14 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
     it('sends the key the store holds, not its own, when another server claimed it first: the first key of an ask wins, and the memory follows it', async () => {
         const { store, held } = sharedStore();
         const scope = `${BRICK}|uuid-alice`;
-        const first = { key: 'first-server-key', at: Date.now() - 1000 };
+        const first = { key: 'first-server-key', at: Date.now() - 1000, payload: { title: 'Visa form' } };
         held.set(scope, { ...first, keepMs: OPEN_START_KEEP_MS });
         const admin = asking({ ok: false, reason: 'unknown' });
         const memory = new Map<string, StartKeyEntry>();
-        memory.set(OPEN_START_SLOT, { key: 'my-own-old-key-1', at: Date.now() - 60_000, open: true });
+        memory.set(OPEN_START_SLOT, { key: 'my-own-old-key-1', at: Date.now() - 60_000, open: true, payload: { title: 'Visa form' } });
         await runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
         expect(keysOf(admin)).toEqual(['first-server-key']);
-        expect([...memory.values()]).toEqual([{ key: 'first-server-key', at: first.at, open: true, sent: true }]);
+        expect([...memory.values()]).toEqual([{ key: 'first-server-key', at: first.at, open: true, sent: true, payload: { title: 'Visa form' } }]);
         // settled: the key the store gave is the one taken back
         await runComputerTool({ job: 'Visa form' }, { admin: asking({ ok: true, job: job(), restoredFrom: null }) as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
         expect(held.size).toBe(0);
@@ -651,7 +653,7 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
             delete: vi.fn().mockRejectedValue(new Error('down')),
         };
         // this process already knows the key of the ask (an attempt it made itself): the store's silence changes nothing
-        const memory = new Map<string, StartKeyEntry>([[OPEN_START_SLOT, { key: 'my-own-key-0001', at: Date.now() - 1000, open: true }]]);
+        const memory = new Map<string, StartKeyEntry>([[OPEN_START_SLOT, { key: 'my-own-key-0001', at: Date.now() - 1000, open: true, payload: { title: 'Visa form' } }]]);
         const admin = asking({ ok: false, reason: 'unknown' });
         const ask = () => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: failing });
         expect(await ask()).toBeTruthy();
@@ -687,7 +689,7 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
     it('goes on with the key the store holds when it answers in time, with no key known here (the held attempt\'s key, never a new one)', async () => {
         const { store, held } = sharedStore();
         const scope = `${BRICK}|uuid-alice`;
-        held.set(scope, { key: 'held-by-restart-1', at: Date.now() - 5000, keepMs: OPEN_START_KEEP_MS });
+        held.set(scope, { key: 'held-by-restart-1', at: Date.now() - 5000, payload: { title: 'Visa form' }, keepMs: OPEN_START_KEEP_MS });
         const admin = asking({ ok: false, reason: 'unknown' });
         await asAfterRestart(admin, store);
         expect(keysOf(admin)).toEqual(['held-by-restart-1']);
@@ -724,7 +726,7 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
             const k1 = keysOf(first as never)[0];
             // another server settles K1 and holds K2 for the next ask while the first is still waiting for its answer
             held.clear();
-            held.set(scopeOf, { key: 'second-attempt-02', at: Date.now(), keepMs: OPEN_START_KEEP_MS });
+            held.set(scopeOf, { key: 'second-attempt-02', at: Date.now(), payload: { title: 'Visa form' }, keepMs: OPEN_START_KEEP_MS });
             const two = ask(retry, 'Another job');
             await tick();
             // the retry has NOT gone out: it waits for the first
@@ -778,7 +780,7 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
         vi.setSystemTime(new Date('2026-11-22T09:59:00Z'));
         const { store, held } = sharedStore();
         const scope = `${BRICK}|uuid-alice`;
-        held.set(scope, { key: 'stored-key-00001', at: new Date('2026-11-21T10:00:00Z').getTime(), keepMs: 1000 });
+        held.set(scope, { key: 'stored-key-00001', at: new Date('2026-11-21T10:00:00Z').getTime(), payload: { title: 'Visa form' }, keepMs: 1000 });
         const admin = asking({ ok: false, reason: 'unknown' });
         await asAfterRestart(admin, store);
         expect(keysOf(admin)[0]).toBe('stored-key-00001');
@@ -1022,7 +1024,8 @@ describe('who has the computer in a chat (#2000)', () => {
     });
 
     it('keeps the key of an ask in the chat\'s memory: the same ask again sends it, a retried reply keeps all, and a new message from the person clears the settled and keeps the open', async () => {
-        const startComputerJob = vi.fn().mockImplementation(async (_botId: string, _user: string, ask: { title: string }) => (ask.title === 'Taxi booking' ? { ok: false, reason: 'unknown' } : { ok: true, job: job(), restoredFrom: null }));
+        // the first two asks are not known to have started; the one after them works (the start with the key of the first, sent with the first one's words)
+        const startComputerJob = vi.fn().mockImplementation(async (_botId: string, _user: string) => (startComputerJob.mock.calls.length <= 2 ? { ok: false, reason: 'unknown' } : { ok: true, job: job(), restoredFrom: null }));
         const memory: Record<string, unknown> = { userUuid: 'uuid-alice' };
         const ai = Object.create(AIService.prototype) as AIService;
         Object.assign(ai, {
@@ -1056,6 +1059,8 @@ describe('who has the computer in a chat (#2000)', () => {
         await ask('A cab for tomorrow');
         expect(startComputerJob.mock.calls).toHaveLength(3);
         expect((startComputerJob.mock.calls[2][2] as { startKey: string }).startKey).toBe(keysOf('Taxi booking')[0]);
+        // the words that go under the key are the words of the ask that FIRST sent it, never the words of the reworded ask (the key is that start's identity at Orbit)
+        expect((startComputerJob.mock.calls[2][2] as { title: string }).title).toBe('Taxi booking');
         // that ask worked (the job was made under the key): settled, so the next message clears it and a deliberate second job has a key of its own
         const clean = chat.generateBotResponseStream(BRICK, 1, 'yet another message', '', 'none', 'matrix-dm', '');
         await clean.next();

@@ -10,7 +10,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/node';
-import type { StartKeyStore } from '../server/ComputerStartKeys';
+import type { StartKeyStore, StoredStartPayload } from '../server/ComputerStartKeys';
 import type { AdminApiService } from '../server/AdminApiService';
 
 export const COMPUTER_TOOL = 'use_computer';
@@ -60,7 +60,7 @@ export function computerToolsNote(): string {
 }
 
 export interface ComputerToolContext {
-    admin: Pick<AdminApiService, 'startComputerJob'> & Partial<Pick<AdminApiService, 'lookUpComputerStart'>>;
+    admin: Pick<AdminApiService, 'startComputerJob'> & Partial<Pick<AdminApiService, 'lookUpComputerStart' | 'ackComputerStart'>>;
     /** The apps this person has connected to this Brick in this reply (their names), so a job an app can do is not started on the computer. */
     apps?: string[];
     botId: string;
@@ -102,6 +102,13 @@ export interface StartKeyEntry {
     reported?: true;
     /** Made by this call and not yet confirmed by the shared store: this process knew no key of an open start (a restart, or the first ask here). Gone once the store answered or the start was let go on. */
     unchecked?: true;
+    /**
+     * What this start said, exactly as it was sent (the words of the ask that first sent this key). A start that is sent AGAIN under its key (its look-up found no job yet) sends THIS, never
+     * the words of whatever the person asks now: the key is that start's identity at Orbit. An entry without it (a key a store held with no words, or damaged ones) is only looked up, never sent.
+     */
+    payload?: StoredStartPayload;
+    /** Set when Orbit answered `earlier` for this ask: the state of the job it named (`starting`, `done`, `ended`, `unknown`). The ask made nothing; the same ask in this turn is answered the same, with nothing sent. */
+    found?: string;
 }
 
 /**
@@ -264,23 +271,31 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         return runComputerTool(args, context);
     }
     // Open until the answer says otherwise: a start in flight that a new message of the person cleared would be sent again under another key (a second job)
-    const entry: StartKeyEntry = earlier ?? { key: randomUUID(), at: now, open: true, unchecked: true };
+    const current: StoredStartPayload = { title: job, ...(brief ? { brief } : {}), ...(args.reads_only === true ? { writes: false } : {}), ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) };
+    const entry: StartKeyEntry = earlier ?? { key: randomUUID(), at: now, open: true, unchecked: true, payload: current };
     // The entry is put where the next call finds it BEFORE anything is awaited
     if (entry.open) context.startKeys?.set(OPEN_START_SLOT, entry);
     else context.startKeys?.set(asked, entry);
     const go = async (): Promise<Record<string, unknown>> => {
+        // An ask that Orbit answered with an earlier job of the person's is answered the same when it comes again in this turn: nothing is sent (a second job would be paid for behind the first)
+        if (!entry.open && entry.found) return answerOf({ ok: false, reason: entry.found } as StartAnswer, context, true);
+        // Open when this call began: a key that went out before (here, at another server, or in an earlier turn) and whose outcome was not known. The words it said are the ones that go again.
+        const wasOpen = entry.open;
         // The FIRST key of the open start wins, across bot servers and restarts: one step in the shared store keeps ours BEFORE the start is sent unless it already holds a key
         // of an open start of this person and Brick, and answers the one it holds (no title in it, no expiry short of the safety life). A restart that forgot the process's
         // memory, a second server, and an ask racing a stored one all go on with THAT key, and look it up first.
         if (context.startKeyStore && entry.open) {
             const store = context.startKeyStore;
-            const held = await store.claim(scope, { key: entry.key, at: entry.at }, OPEN_START_KEEP_MS - (now - entry.at), OPEN_START_KEEP_MS).catch(() => undefined);
+            const held = await store.claim(scope, { key: entry.key, at: entry.at, ...(entry.payload ? { payload: entry.payload } : {}) }, OPEN_START_KEEP_MS - (now - entry.at), OPEN_START_KEEP_MS).catch(() => undefined);
             if (held && held.key !== entry.key) {
                 // Another attempt holds the key: this is that start, which may well have gone out, and its outcome is open until the answer says otherwise
                 entry.key = held.key;
                 entry.at = held.at;
                 entry.open = true;
                 entry.sent = true;
+                // The words that key said are the store's (none when it holds none: that key is only looked up)
+                if (held.payload) entry.payload = held.payload;
+                else delete entry.payload;
             }
             // When this process knows no start (a restart, or the first ask here) and the store, which may hold the key of one a restart forgot, did not answer, a new key could make a
             // second job beside it: nothing is sent, and the ask is told as one that could not be checked. A key this process already knows goes on as before
@@ -322,9 +337,13 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         }
         let sent: StartAnswer | undefined;
         if (!looked) {
+            // A key whose words nobody holds (a record that had none) cannot be sent: whatever the person asks now is not what that key stands for. It stays open and is looked up on every ask.
+            const said = entry.payload;
+            if (!said) return { started: false, unknown: true, note: COULD_NOT_CHECK_NOTE };
             entry.sent = true;
             try {
-                sent = (await context.admin.startComputerJob(context.botId, context.userId, { title: job, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined, ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) })) as unknown as StartAnswer;
+                // The words of the ask that FIRST sent this key, never the words of this call (when they differ the answer is told as that earlier ask's)
+                sent = (await context.admin.startComputerJob(context.botId, context.userId, { title: said.title, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(said.brief ? { brief: said.brief } : {}), writes: said.writes, ...(said.plan ? { plan: said.plan } : {}), ...(said.origin ? { origin: said.origin } : {}) })) as unknown as StartAnswer;
             } catch (error) {
                 // Thrown only when the start is known to have made nothing (Orbit's own no, or nothing was sent): this ask is over, and the key goes with it unless a start with it
                 // may have gone out before (that one is still open)
@@ -332,6 +351,21 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                 console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
                 return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
             }
+        }
+        // Orbit has a job of an earlier start of this person on this Brick that this game never confirmed it saw (a reply lost, then the record of its key gone): nothing was made for this ask.
+        // THAT job is what the person is told of, its key is the one kept from now on (no words: it is only looked up), and Orbit is told it was seen, so the next ask is free to start.
+        if (sent?.earlier) {
+            const found = sent.earlier;
+            await dropKey();
+            entry.key = found.attempt;
+            entry.at = now;
+            entry.sent = true;
+            entry.open = false;
+            entry.found = sent.reason;
+            delete entry.payload;
+            context.startKeys?.set(asked, entry);
+            await context.admin.ackComputerStart?.(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), attempt: found.attempt }).catch(() => false);
+            return answerOf({ ok: false, reason: sent.reason } as StartAnswer, context, true);
         }
         const started = (looked ?? sent) as StartAnswer;
         const refused = !started.ok && !UNCERTAIN_REASONS.includes(started.reason);
@@ -348,8 +382,12 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             }
             await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
         }
-        // The answer to a look-up of a start sent EARLIER is said as that earlier job's, never as this ask's: the game cannot tell a reworded ask from a different one
-        return answerOf(started, context, looked !== undefined);
+        // Orbit names the job: it is told that this game saw it (a look-up by the key did that itself), so it stops standing in the way of this person's next start. Best effort.
+        if (looked === undefined && (started.ok || ['starting', 'done', 'ended'].includes(started.reason))) {
+            await context.admin.ackComputerStart?.(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), attempt: startKey }).catch(() => false);
+        }
+        // The answer to a look-up of a start sent EARLIER is said as that earlier job's, never as this ask's, and so is the answer of a key that went out before with other words than these
+        return answerOf(started, context, looked !== undefined || (wasOpen && !samePayload(entry.payload, current)));
     };
     entry.inflight = go().finally(() => {
         delete entry.inflight;
@@ -359,7 +397,15 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
 
 
 /** An answer to a start, as one shape (`reason` and `app` when it is a no, `job` and `restoredFrom` when it is a yes). */
-type StartAnswer = { ok: boolean; reason: string; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null };
+type StartAnswer = { ok: boolean; reason: string; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; earlier?: { id: string; status: string; attempt: string } };
+
+/** Whether two starts said the same (title, details, writes, the way Brick weighed, the chat). */
+function samePayload(a: StoredStartPayload | undefined, b: StoredStartPayload): boolean {
+    return !!a && JSON.stringify([a.title, a.brief ?? null, a.writes ?? null, a.plan?.app ?? null, a.plan?.steps ?? null, a.plan?.appCannot ?? null, a.origin?.kind ?? null, a.origin?.ref ?? null]) === JSON.stringify([b.title, b.brief ?? null, b.writes ?? null, b.plan?.app ?? null, b.plan?.steps ?? null, b.plan?.appCannot ?? null, b.origin?.kind ?? null, b.origin?.ref ?? null]);
+}
+
+/** Said with the answer of a job the person asked for earlier: what is asked now may be something else, and the game cannot tell. */
+const EARLIER_ASK_NOTE = 'This is the job they asked for earlier. Say in the sentence that it is the job they asked for earlier. If they are asking for something different now, say it was not started and that they can ask for it again once this job is going.';
 
 /** What the model is told of the answer to a start (or to the look-up of one). */
 function answerOf(started: StartAnswer, context: ComputerToolContext, earlier = false): Record<string, unknown> {
@@ -401,26 +447,29 @@ function answerOf(started: StartAnswer, context: ComputerToolContext, earlier = 
         }
     }
     const { job: made, restoredFrom } = started;
+    // A job asked for earlier that this answer made (its start had not gone out, or its look-up found none yet): told as that job, whatever is asked now
+    const laterNote = earlier ? ` ${EARLIER_ASK_NOTE}` : '';
     if (made.status === 'queued') {
         if (made.queuedFor === 'allowance') {
-            return { started: false, queued: true, note: "It is waiting: their computer time for this month is used up. Say so in one sentence, that the work is kept and goes on by itself when more is available, and that they can tap Ask for more in Usage. Never give a number or a price." };
+            return { started: false, queued: true, ...(earlier ? { earlier: true } : {}), note: `It is waiting: their computer time for this month is used up. Say so in one sentence, that the work is kept and goes on by itself when more is available, and that they can tap Ask for more in Usage. Never give a number or a price.${laterNote}` };
         }
         if (made.queuedFor === 'turn') {
-            return { started: false, queued: true, note: 'It is next in line: your computer does one job at a time. Say so in one line, e.g. "Will do, right after the current job. My computer does one job at a time, so this is next in line."' };
+            return { started: false, queued: true, ...(earlier ? { earlier: true } : {}), note: `It is next in line: your computer does one job at a time. Say so in one line, e.g. "Will do, right after the current job. My computer does one job at a time, so this is next in line."${laterNote}` };
         }
-        return { started: false, queued: true, note: 'It waits in line: every computer is busy just now and nothing needs asking for. Say so in one line, and that it starts by itself.' };
+        return { started: false, queued: true, ...(earlier ? { earlier: true } : {}), note: `It waits in line: every computer is busy just now and nothing needs asking for. Say so in one line, and that it starts by itself.${laterNote}` };
     }
     context.onStarted?.(made.id);
     // A job that is already waiting for the person (it needs them before it can go on) is not "running": the person is told it needs them
     if (made.status === 'waiting') {
-        return { started: true, waiting: true, note: 'The job started and is already waiting for them: it needs something from them before it can go on. Say in one short sentence that the job needs them, and that the bar above this chat shows what. Do not say it is running or will carry on by itself.' };
+        return { started: true, waiting: true, ...(earlier ? { earlier: true } : {}), note: `The job started and is already waiting for them: it needs something from them before it can go on. Say in one short sentence that the job needs them, and that the bar above this chat shows what. Do not say it is running or will carry on by itself.${laterNote}` };
     }
     const when = restoredFrom ? day(restoredFrom) : '';
     return {
         started: true,
+        ...(earlier ? { earlier: true } : {}),
         note:
-            when
+            (when
                 ? `The job is running. Your computer came back from its copy of ${when}. Say in one sentence that it is working on it and that it came back from that day's copy; anything made after that day is gone, so offer to make it again if it matters. They can Watch or Stop from the bar above.`
-                : 'The job is running. Say in one short sentence what you started. They can Watch or Stop from the bar above this chat. Do not say how long it will take.',
+                : 'The job is running. Say in one short sentence what you started. They can Watch or Stop from the bar above this chat. Do not say how long it will take.') + laterNote,
     };
 }

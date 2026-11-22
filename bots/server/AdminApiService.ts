@@ -540,10 +540,18 @@ const COMPUTER_FINISH_TIMEOUT_MS = 6 * 60_000;
  * ready (READY_WITHIN_MS), so the start call waits longer than that, and the answer is never cut while the machine is still being made.
  */
 export const COMPUTER_START_TIMEOUT_MS = 6 * 60_000;
+/** How long the confirmation of a start waits for Orbit: it is best effort, and never holds an answer to the person for long. */
+const ACK_TIMEOUT_MS = 5000;
 /** When Orbit cannot look up who the question is about it answers 503 `retry: true`: the question is asked again after each of these waits (ms), then it is unknown. */
 const COMPUTER_STARTED_RETRY_MS = [1000, 2000];
 /** The header a start carries its own key in, and the query parameter the read asks for it by (Orbit's contract: ^[A-Za-z0-9_-]{8,64}$, a uuid fits). */
 export const COMPUTER_START_ATTEMPT_HEADER = 'X-Computer-Start-Attempt';
+/**
+ * Sent with the key on every start: it says this game confirms (acks) what it learns of a start. Orbit makes a job of such a start UNCONFIRMED until the game says it has seen the
+ * job (`ackComputerStart`, or a look-up by the key that returns it), and while the person has an unconfirmed job on the Brick a start with another key makes nothing and
+ * answers `earlier` with that job. A start without it is confirmed at creation (an older game is unchanged).
+ */
+export const COMPUTER_START_ACKS_HEADER = 'X-Computer-Start-Acks';
 /** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
 const COMPUTER_JOB_LIVE = ['running', 'waiting', 'queued'];
 /** The states of a job that was made and is over without having finished: it failed or was stopped. */
@@ -584,6 +592,13 @@ function finishPendingOf(raw: unknown): { outcome: 'done' | 'failed'; cause?: 'o
         ...(typeof raw.run === 'string' && raw.run !== '' ? { run: raw.run } : {}),
         ...(typeof raw.generation === 'number' && Number.isInteger(raw.generation) && raw.generation >= 0 ? { generation: raw.generation } : {}),
     };
+}
+
+/** The job of an earlier start of the person on this Brick that was never confirmed (Orbit's `earlier` answer): its id and state, and the key of the start that made it. */
+export interface EarlierStart {
+    id: string;
+    status: string;
+    attempt: string;
 }
 
 /** A key Orbit takes for a start (`^[A-Za-z0-9_-]{8,64}$`): one that is not that is replaced by a new one, so the start is never refused for its key. */
@@ -1822,6 +1837,27 @@ export class AdminApiService {
     }
 
     /**
+     * Says to Orbit that this game has seen the job of the start with this key (the answer named it, a look-up found it, or Orbit said `earlier` of it): it stops being unconfirmed, so
+     * it no longer stands in the way of the person's next start. Best effort and never throws: an ack that is lost only means the next start meets `earlier` once more. An Orbit
+     * that does not know it (400) or cannot look the person up (503) changes nothing. True when Orbit said it took the ack.
+     */
+    async ackComputerStart(viaBotId: string, userId: string, ack: { isGuest?: boolean; attempt: string }): Promise<boolean> {
+        try {
+            const response = await this.brickCall<{ ok?: unknown }>(
+                'post',
+                `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
+                { action: 'start-ack', userId, ...(typeof ack.isGuest === 'boolean' ? { isGuest: ack.isGuest } : {}), attempt: ack.attempt },
+                undefined,
+                ACK_TIMEOUT_MS
+            );
+            return response.data?.ok === true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not confirm a computer start to Orbit:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /**
      * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. Every start carries a key of its own (`startKey`, one random id
      * per start), which Orbit keeps with the job it makes. A start whose answer did not come back whole (it took longer than we wait, a gateway cut it, the connection
      * was reset or broken, or a server or proxy answered 5xx: see `mayHaveStarted`) is not a failure of the computer when Orbit says that the job of THIS key was made.
@@ -1835,7 +1871,7 @@ export class AdminApiService {
         viaBotId: string,
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string }; startKey?: string }
-    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string }> {
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string; earlier?: EarlierStart }> {
         // The key of this start. A caller that asks for the same thing again (a reply written again, a tool call retried) sends the key of the first ask, so Orbit answers with
         // the job that ask made and never makes a second; a deliberate second job is a new ask and has a key of its own
         const startKey = typeof ask.startKey === 'string' && START_KEY_SHAPE.test(ask.startKey) ? ask.startKey : randomUUID();
@@ -1860,6 +1896,9 @@ export class AdminApiService {
         // An answer that says it worked (`ok: true`) but not what was made, or that says neither one thing nor the other: the job may well have been made, so it is
         // asked for by its key like a lost answer, and when that cannot confirm it nothing is said of it (never a second job, never "failed")
         if (answer === 'unclear') return lookUp();
+        // Nothing was made for this start: the person has an earlier job that this game never confirmed it saw (Orbit names it and its key), told by its state like any job that was made
+        const earlierJob = answer.ok === false && answer.reason === 'earlier' ? answer.earlier : undefined;
+        if (earlierJob) return { ...told(earlierJob.status), earlier: earlierJob };
         // A job that Orbit answers with is told by its state, whichever way the answer came (a start that repeated a key is answered with the job that key made,
         // which may be over): one that is still going on (queued, waiting, running) is the whole success; one that finished, or failed or was stopped, or is in a
         // state this server does not know is told the way the look-up tells it, never as a job that "is running"
@@ -1872,8 +1911,8 @@ export class AdminApiService {
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string } },
         startKey: string
-    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string } | 'unclear'> {
-        const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string; app?: string; earlier?: EarlierStart } | 'unclear'> {
+        const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown; attempt?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
             {
@@ -1888,7 +1927,7 @@ export class AdminApiService {
             undefined,
             COMPUTER_START_TIMEOUT_MS,
             // This start's own key, in a header (the body stays as it was): Orbit keeps it with the job, and a start that repeats it is answered with that job and never makes a second
-            { [COMPUTER_START_ATTEMPT_HEADER]: startKey }
+            { [COMPUTER_START_ATTEMPT_HEADER]: startKey, [COMPUTER_START_ACKS_HEADER]: '1' }
         );
         const data = response.data;
         const job = data?.job;
@@ -1899,6 +1938,11 @@ export class AdminApiService {
                 job: { id: job.id, status: job.status, queuedFor: typeof job.queuedFor === 'string' ? job.queuedFor : null },
                 restoredFrom: typeof data.restoredFrom === 'string' ? data.restoredFrom : null,
             };
+        }
+        // `earlier`: the person has a job of an earlier start on this Brick that this game never confirmed it saw, and nothing was made for THIS start. It names that job and its key; one
+        // that does not (no key of the shape Orbit takes, no state) is read as an answer that said nothing, and the key of this start is looked up as for any answer that did not say
+        if (isOrbitRefusal(data) && data.reason === 'earlier') {
+            return job && typeof job.id === 'string' && job.id !== '' && typeof job.status === 'string' && typeof job.attempt === 'string' && START_KEY_SHAPE.test(job.attempt) ? { ok: false, reason: 'earlier', earlier: { id: job.id, status: job.status, attempt: job.attempt } } : 'unclear';
         }
         // Only Orbit's own refusal, in the shape it gives it (`ok: false` and a reason that is a word), is final here; an answer that is neither a whole success nor that is `'unclear'`
         if (isOrbitRefusal(data)) {

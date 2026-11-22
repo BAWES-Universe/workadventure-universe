@@ -140,6 +140,8 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
 
     it('two servers handling the same ask at the same moment (empty memory on both) send the SAME X-Computer-Start-Attempt: one job, never two', async () => {
         const s = 'brick-race';
+        // a record a run that was cut short left in a shared Redis must not decide this one
+        await client.del(startKeyNameOf('brick-race|uuid-race'));
         const ask = () => {
             const sent: string[] = [];
             const admin = {
