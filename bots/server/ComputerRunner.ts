@@ -40,6 +40,8 @@ export interface RunnableJob {
     brief: string | null;
     writes: boolean;
     hasTurn: boolean;
+    /** "Try again" (piece 8): the ended job this one carries on from, in the same agent conversation. Its first words say so (`continuePrompt`). Absent for every other job. */
+    continuesJobId?: string;
 }
 
 /** Whose fault a failed job is, as Orbit's finish call takes it: `ours` is given back to the person, `agent` is the person's. */
@@ -195,6 +197,20 @@ export function jobPrompt(job: { jobId: string; title: string; brief: string | n
         '- When the job is finished, end your reply with [[done]].',
         '- If you cannot go on, say why in one plain sentence and end your reply with [[failed]].',
         '- Keep your replies short. Do not repeat what you did. Never write a password, key or number the person gave you in your reply.',
+    ].join('\n');
+}
+
+/**
+ * The first turn of a job that carries on an ended one ("try again", piece 8): it is in the SAME conversation, so the agent knows what it did; it is told this is a new try, to look at the
+ * screen first, not to redo what is done, and that this try's files go in ITS folder (a file the earlier try kept for the person is moved there). Then the job's own words and rules, as for
+ * any job. If the computer no longer had the conversation, the same words still hold: the screen and the files are where they were.
+ */
+export function continuePrompt(job: { jobId: string; title: string; brief: string | null; writes: boolean; continuesJobId: string }): string {
+    return [
+        'This is a new try of a job you worked on before in this conversation. The earlier try stopped before it was finished. Look at the computer as it is now first (the page may have changed), then carry on from where it stopped. Do not redo what is already done.',
+        ...(job.writes ? [`If the earlier try saved a file for the person in the folder ${outputFolderOf(job.continuesJobId)}, move it into ${outputFolderOf(job.jobId)}: only that folder is given to the person now.`] : []),
+        '',
+        jobPrompt(job),
     ].join('\n');
 }
 
@@ -1109,7 +1125,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         }
         // The job's own first words stay the ones to send until the agent has taken a turn: a turn that could not be started, or a take-over
         // before it, must not leave the agent with only "carry on" and no brief
-        let pending: string | null = job.hasTurn ? null : jobPrompt(job);
+        // A job that carries on an ended one ("try again") starts with the words that say so, in the same conversation
+        let pending: string | null = job.hasTurn ? null : job.continuesJobId ? continuePrompt({ ...job, continuesJobId: job.continuesJobId }) : jobPrompt(job);
         let input: string | null = pending;
         const follow = (prompt: string) => pending ?? prompt;
         const renewing: Renewing = { nextAt: 0 };

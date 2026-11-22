@@ -134,6 +134,7 @@ import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, 
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import type { StartKeyStore } from '../server/ComputerStartKeys';
 import { CANCEL_JOB_TOOL, COMPUTER_JOBS_TOOL, JOB_FIRST_TOOL, PAUSE_JOB_TOOL, RESUME_JOB_TOOL, STOP_COMPUTER_TOOL, TELL_JOB_TOOL, computerControlToolDefinitions, newControlState, runComputerControlTool, startControlTurn } from './ComputerControlTools';
+import { asksToTryAgain, offersTryAgain, tryAgainNote, type RetryJob } from './ComputerTryAgain';
 import { COMPUTER_TOOL, ConfirmationQueue, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
@@ -1665,6 +1666,8 @@ export class AIService {
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
+                    // "Try again" carries on the job that failed as ours or that we ended, only when the person asks for it (piece 8)
+                    computerOn && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? await this.tryAgainNoteFor(botId, playerId, adminApiService) : '',
                     instantListing ? instantToolsNote() : '',
                     // The owner, in their own Brick's direct messages: it can set reminders when they ask (#2002)
                     taskSettings ? taskToolsNote(taskSettings, Date.now()) : '',
@@ -3984,7 +3987,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
     /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000) or reminders (#2002). */
     private ownBricks = new Set<string>();
-    private computerOnCache = new Map<string, { on: boolean; at: number }>();
+    private computerOnCache = new Map<string, { on: boolean; at: number; retry?: RetryJob | null }>();
     /** Where the key of a computer job's start waits while its outcome is open, so a restart of this server finds it (see `ComputerStartKeys`). Set by the server when it has a shared store. */
     private computerStartKeys: StartKeyStore | undefined;
     setComputerStartKeys(store: StartKeyStore | undefined): void {
@@ -4002,9 +4005,41 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const key = `${botId}|${userId}`;
         const known = this.computerOnCache.get(key);
         if (known && Date.now() - known.at < 30_000) return known.on;
-        const on = await admin.computerIsOn(botId, userId).catch(() => false);
-        this.computerOnCache.set(key, { on, at: Date.now() });
-        return on;
+        // The same one read also names the job "try again" would carry on (piece 8); an admin without that read says only whether it is on
+        const state = admin.computerState ? await admin.computerState(botId, userId).catch(() => ({ on: false, retry: null })) : { on: await admin.computerIsOn(botId, userId).catch(() => false), retry: undefined };
+        this.computerOnCache.set(key, { on: state.on, at: Date.now(), ...(state.retry !== undefined ? { retry: state.retry } : {}) });
+        return state.on;
+    }
+
+    /**
+     * "Try again" (piece 8), in the owner's direct messages while the computer is on: the line that names the job "try again" would carry on, for this turn only, when Orbit names one and
+     * the person's words ask to try again or this is their first message since Brick told them how it ended (`offersTryAgain`). The job is kept for this turn's `use_computer`. Words
+     * that ask for it with nothing named in the short-lived read are read again once, fresh (the job may have ended a moment ago). Never throws; nothing is said when it cannot tell.
+     */
+    private async tryAgainNoteFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<string> {
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory) return '';
+        delete memory.computerRetry;
+        try {
+            const admin = adminApiService ?? this.adminApiService;
+            const userId = memory.userUuid;
+            if (!admin?.computerState || !userId) return '';
+            const people = memory.conversationHistory.filter((line) => line.sender === 'person');
+            const said = people.at(-1)?.message;
+            const previousAt = people.at(-2)?.timestamp;
+            const key = `${botId}|${userId}`;
+            let retry = this.computerOnCache.get(key)?.retry ?? null;
+            if (!retry && asksToTryAgain(said)) {
+                const fresh = await admin.computerState(botId, userId);
+                this.computerOnCache.set(key, { on: fresh.on, at: Date.now(), retry: fresh.retry });
+                retry = fresh.on ? fresh.retry : null;
+            }
+            if (!retry || !offersTryAgain(retry, said, previousAt)) return '';
+            memory.computerRetry = { id: retry.id, title: retry.title };
+            return tryAgainNote(retry);
+        } catch {
+            return '';
+        }
     }
 
     private instantOffers = new InstantOffers();
@@ -4158,6 +4193,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             ...(memory?.dmRoomId && memory.dmEventId ? { inbound: { roomId: memory.dmRoomId, eventId: memory.dmEventId } } : {}),
             apps: where.apps,
             reviewed: where.reviewed,
+            // The job "try again" carries on in this turn, when the person asked for it (piece 8)
+            ...(memory?.computerRetry ? { retry: memory.computerRetry } : {}),
             // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
             ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
             ...(this.computerStartKeys ? { startKeyStore: this.computerStartKeys } : {}),
