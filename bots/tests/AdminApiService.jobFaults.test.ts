@@ -209,6 +209,46 @@ describe('through the notes: an Orbit that counts refused rows without naming th
         expect(told.filter((one) => one.startsWith('dead_letter'))).toHaveLength(1);
     });
 
+    it('a mixed answer: Orbit refuses bad1 (and names it) AND bad2 (and does not list it, only counts it): the named row is set aside and never sent again, the unnamed candidates are sent again, bad2 is isolated and set aside, every readable row is taken, and the operators are told once for the unnamed kind', async () => {
+        const taken = new Set<string>();
+        const told: string[] = [];
+        const requests: string[][] = [];
+        const BAD = ['bad1', 'bad2'];
+        // The fixture is Orbit's way of answering: bad1 is named, bad2 is refused and NOT listed (the count says two), and the readable rows are kept. A batch with bad2 alone is a count of one, named by nothing
+        respond = (body) => {
+            const ids = (body.faults ?? []).map((fault) => fault.callId);
+            requests.push(ids);
+            for (const id of ids.filter((one) => !BAD.includes(one))) taken.add(id);
+            const refused = ids.filter((one) => BAD.includes(one));
+            if (refused.length === 0) return { status: 200, body: { ok: true } };
+            const named = refused.filter((one) => one === 'bad1');
+            return { status: 200, body: named.length > 0 ? { ok: true, rejected: named.map((callId) => ({ callId, why: 'x' })), rejectedCount: refused.length } : { ok: true, rejected: refused.length } };
+        };
+        const notes = createRefusalNotes(() => 1000, {
+            retryMs: [0],
+            laterMs: [],
+            sink: (botId, jobId, rows) => service.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
+            report: (what, info) => told.push(`${what} ${info.jobId} ${info.callId}`),
+        });
+        for (const id of ['a', 'bad1', 'b', 'bad2', 'c', 'd']) notes.record('bot', 'job', rowOf(id));
+        expect(await notes.flush('job')).toBe(true);
+        // every readable row was taken, none dropped
+        expect([...taken].sort()).toEqual(['a', 'b', 'c', 'd']);
+        // bad1 was named: it went to Orbit once, in the first batch, and never again
+        expect(requests.flat().filter((id) => id === 'bad1')).toHaveLength(1);
+        const withBad1 = requests.findIndex((ids) => ids.includes('bad1'));
+        expect(withBad1).toBeGreaterThanOrEqual(0);
+        // sent together with the unnamed one, so Orbit counts two and names one
+        expect(requests[withBad1]).toContain('bad2');
+        for (const later of requests.slice(withBad1 + 1)) expect(later).not.toContain('bad1');
+        // bad2 was not named: it was sent again (as an unnamed candidate) until it was alone, and then isolated as the one Orbit will not take
+        expect(requests.flat().filter((id) => id === 'bad2').length).toBeGreaterThan(1);
+        expect(requests.some((ids) => ids.length === 1 && ids[0] === 'bad2')).toBe(true);
+        // told exactly once for each row set aside, and once for the unnamed kind
+        expect(told.filter((one) => one.startsWith('dead_letter')).sort()).toEqual(['dead_letter job bad1', 'dead_letter job bad2']);
+        expect(told.filter((one) => one.startsWith('unnamed_rejection'))).toEqual(['unnamed_rejection job ']);
+    });
+
     it('a count of two with only one row named (Opus): the named row is set aside, the rest goes through the suspect path and ends taken or set aside, never dropped, and the operators are told exactly once for the job', async () => {
         const taken = new Set<string>();
         const told: string[] = [];
