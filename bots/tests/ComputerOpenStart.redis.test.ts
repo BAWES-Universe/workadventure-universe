@@ -6,7 +6,7 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn(), captureMessage: vi.f
 
 import * as Sentry from '@sentry/node';
 import { AdminApiService } from '../server/AdminApiService';
-import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, runComputerTool, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
+import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, jobLine, runComputerTool, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
 /**
@@ -846,6 +846,36 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                     expect(orbit.jobs.size, how).toBe(2);
                     expect(orbit.reservations, how).toBe(2);
                 }
+            });
+
+            it('GPT fourth note, R1b-2: every job named in a reply queues the fixed sentence that tells the person of it (what is sent when the reply has no words of its own), by what Orbit said of it', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const server = process_(orbit, who);
+                const queue = new ConfirmationQueue();
+                await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: queue });
+                expect(queue.notes()).toEqual([{ state: 'started', earlier: false, title: 'Fill in my visa form' }]);
+                expect(queue.notes().map(jobLine)).toEqual(['I\'m working on "Fill in my visa form" on my computer.']);
+                // an earlier job Orbit names, done
+                const lostOrbit = new FakeOrbit();
+                lostOrbit.onPost = 'lose-after-commit';
+                lostOrbit.onGet = 'silent';
+                const other = ids();
+                const before = process_(lostOrbit, other);
+                await before.ask('Fill in my visa form', { deliver: false });
+                lostOrbit.jobs.get(lostOrbit.posts[0].key)!.status = 'done';
+                forgetSettledStarts(before.memory);
+                lostOrbit.onGet = 'truth';
+                lostOrbit.onPost = 'whole';
+                const done = new ConfirmationQueue();
+                await runComputerTool({ job: 'Book me a table for Friday' }, { ...before.context, confirmations: done });
+                expect(done.notes()).toEqual([{ state: 'done', earlier: true, title: 'Fill in my visa form' }]);
+                expect(done.notes().map(jobLine)).toEqual([jobLine({ state: 'done', earlier: true, title: 'Fill in my visa form' })]);
+                await done.deliver();
+                expect(done.notes()).toEqual([]);
+                const none = new ConfirmationQueue();
+                none.add('k', async () => undefined);
+                expect(none.notes()).toEqual([]);
             });
 
             it('a job named twice in one reply (a reworded call, a retried call) is confirmed once', async () => {

@@ -300,6 +300,179 @@ describe('MatrixDmBridge', () => {
         expect(client.sendText).not.toHaveBeenCalled();
     });
 
+    describe('GPT fourth note, R1b-2: a start is confirmed only once Matrix accepted an event that names the job', () => {
+        const card = { id: 'art-1', version: 1, title: 'Clock', kind: 'page', maker: 'Guide' };
+        /** A reply the way DmReplyService makes it: `keep` drains the computer confirmations the answer queued. */
+        const replyWith = async (over: Record<string, unknown>) => {
+            const { ConfirmationQueue } = await import('../ai/ComputerTools');
+            const queue = new ConfirmationQueue();
+            const acks: string[] = [];
+            queue.add('job-key-0001', async () => void acks.push('job-key-0001'), { state: 'started', title: 'Visa form' });
+            return { acks, reply: { text: '', media: [], artifacts: [card], keep: () => void queue.deliver(), ...over } };
+        };
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+        it('GPT\'s repro: the reply is only an artifact card with no text and Matrix rejects the card: 0 confirmations', async () => {
+            await bridge.onEvent(invite());
+            const { acks, reply } = await replyWith({});
+            deps.reply.mockResolvedValueOnce(reply);
+            client.sendMessage.mockRejectedValueOnce(new Error('Matrix said no'));
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(acks).toEqual([]);
+        });
+
+        /** The production reply service over a model answer that queues a job confirmation (as the tool does) and says nothing, with a card made in the same turn. */
+        const realReply = async (words: string) => {
+            const { DmReplyService } = await import('../server/DmReplyService');
+            const { ConversationMemory } = await import('../memory/ConversationMemory');
+            const { ConfirmationQueue } = await import('../ai/ComputerTools');
+            const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+            const memory = new ConversationMemory();
+            const acks: string[] = [];
+            const answering = vi.fn(async function* () {
+                const chat = memory.getMemory(BOT, service.playerIdFor(ALICE))!;
+                chat.computerConfirmations?.drop();
+                chat.computerConfirmations = new ConfirmationQueue();
+                chat.computerConfirmations.add('job-key-0001', async () => void acks.push('job-key-0001'), { state: 'started', title: 'Visa form' });
+                chat.pendingArtifacts = [card as never];
+                yield { content: words, done: true };
+            });
+            Object.assign(service, {
+                playerIds: new Map(),
+                nextPlayerId: -1,
+                loadedBots: new Set([BOT]),
+                botManager: { getBot: () => null },
+                getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+                aiService: { generateBotResponseStream: answering },
+                conversationMemory: memory,
+                conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+            });
+            const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+            deps.reply.mockImplementationOnce(async () => (service as any).replyNow(BOT, person, 'a clock please', [], {}));
+            return acks;
+        };
+
+        it('production reply service and bridge: the model made only a card; the reply carries the fixed job sentence, and when Matrix rejects it nothing is confirmed (the next ask is told of the SAME job)', async () => {
+            await bridge.onEvent(invite());
+            const acks = await realReply('');
+            client.sendText.mockRejectedValueOnce(new Error('Matrix said no'));
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'I\'m working on "Visa form" on my computer.');
+            expect(acks).toEqual([]);
+        });
+
+        it('production reply service and bridge: the same reply, accepted: the person got the job sentence, then the card, and the start is confirmed once; if the card then fails the confirmation still stands', async () => {
+            await bridge.onEvent(invite());
+            const acks = await realReply('');
+            client.sendMessage.mockRejectedValueOnce(new Error('card failed'));
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'I\'m working on "Visa form" on my computer.');
+            expect(acks).toEqual(['job-key-0001']);
+        });
+
+        it('(d) a reply that is only media behaves the same: it carries the job sentence as its text, and the confirmation waits for that text', async () => {
+            const { DmReplyService } = await import('../server/DmReplyService');
+            const { ConversationMemory } = await import('../memory/ConversationMemory');
+            const { ConfirmationQueue } = await import('../ai/ComputerTools');
+            const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+            const memory = new ConversationMemory();
+            const acks: string[] = [];
+            const answering = vi.fn(async function* () {
+                const chat = memory.getMemory(BOT, service.playerIdFor(ALICE))!;
+                chat.computerConfirmations?.drop();
+                chat.computerConfirmations = new ConfirmationQueue();
+                chat.computerConfirmations.add('job-key-0001', async () => void acks.push('job-key-0001'), { state: 'recovered', title: 'Visa form', earlier: true });
+                chat.pendingMedia = [{ url: 'https://files.test/a.png', mediaType: 'image', mimeType: 'image/png', createdAt: Date.now(), retryCount: 0 }];
+                yield { content: '', done: true };
+            });
+            Object.assign(service, {
+                playerIds: new Map(),
+                nextPlayerId: -1,
+                loadedBots: new Set([BOT]),
+                botManager: { getBot: () => null },
+                getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+                aiService: { generateBotResponseStream: answering },
+                conversationMemory: memory,
+                conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+            });
+            const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+            const made = await (service as any).replyNow(BOT, person, 'a picture please', [], {});
+            expect(made.text).toBe('I\'m still working on "Visa form" on my computer.');
+            expect(made.media).toHaveLength(1);
+            expect(acks).toEqual([]);
+            made.keep();
+            await settle();
+            expect(acks).toEqual(['job-key-0001']);
+        });
+
+        it('keep() with no text at all confirms nothing (a reply that told the person of nothing)', async () => {
+            const { ConfirmationQueue } = await import('../ai/ComputerTools');
+            const { DmReplyService } = await import('../server/DmReplyService');
+            const { ConversationMemory } = await import('../memory/ConversationMemory');
+            const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+            const memory = new ConversationMemory();
+            const acks: string[] = [];
+            const answering = vi.fn(async function* () {
+                const chat = memory.getMemory(BOT, service.playerIdFor(ALICE))!;
+                chat.computerConfirmations?.drop();
+                // a queued start whose note says nothing the reply could carry (no note): the reply stays empty
+                chat.computerConfirmations = new ConfirmationQueue();
+                chat.computerConfirmations.add('job-key-0001', async () => void acks.push('job-key-0001'));
+                yield { content: '', done: true };
+            });
+            Object.assign(service, {
+                playerIds: new Map(),
+                nextPlayerId: -1,
+                loadedBots: new Set([BOT]),
+                botManager: { getBot: () => null },
+                getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+                aiService: { generateBotResponseStream: answering },
+                conversationMemory: memory,
+                conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+            });
+            const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+            const empty = await (service as any).replyNow(BOT, person, 'hi', [], {});
+            expect(empty.text ?? '').toBe('');
+            empty.keep?.();
+            await settle();
+            expect(acks).toEqual([]);
+        });
+
+        it('a reply with words of its own sends those, not the fixed sentence', async () => {
+            await bridge.onEvent(invite());
+            const acks = await realReply('Your computer is on it.');
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Your computer is on it.');
+            expect(client.sendText).not.toHaveBeenCalledWith(BOT_USER, ROOM, 'I\'m working on "Visa form" on my computer.');
+            expect(acks).toEqual(['job-key-0001']);
+        });
+
+        it('a reply with text: the text is accepted, then the card fails: the start is confirmed (a later attachment failure does not block it)', async () => {
+            await bridge.onEvent(invite());
+            const { acks, reply } = await replyWith({ text: 'Your job started.' });
+            deps.reply.mockResolvedValueOnce(reply);
+            client.sendMessage.mockRejectedValueOnce(new Error('Matrix said no'));
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Your job started.');
+            expect(acks).toEqual(['job-key-0001']);
+        });
+
+        it('a reply with text whose send fails: 0 confirmations', async () => {
+            await bridge.onEvent(invite());
+            const { acks, reply } = await replyWith({ text: 'Your job started.' });
+            deps.reply.mockResolvedValueOnce(reply);
+            client.sendText.mockRejectedValueOnce(new Error('Matrix said no'));
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(acks).toEqual([]);
+        });
+    });
+
     it('tells the reply which artifact a replied-to card holds, so a bot that did not make it may open it (game #1781)', async () => {
         await bridge.onEvent(invite());
         const art = '0b7c1d2e-1111-4222-8333-944455556666';

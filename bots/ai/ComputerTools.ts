@@ -66,12 +66,15 @@ export function computerToolsNote(): string {
  * Whatever is only in this queue's memory is lost with the process: Orbit's guard then answers `earlier` once, which is true.
  */
 export class ConfirmationQueue {
-    private items = new Map<string, () => Promise<void>>();
+    private items = new Map<string, { send: () => Promise<void>; note?: JobNote }>();
     private closed = false;
 
-    /** A job was named to the person in this reply: its confirmation waits for the reply to be delivered. One per key. */
-    add(key: string, send: () => Promise<void>): void {
-        if (!this.closed) this.items.set(key, send);
+    /**
+     * A job was named to the person in this reply: its confirmation waits for the reply to be delivered. One per key. `note` says which job and what became of it (see `jobLine`): the reply carries
+     * a fixed sentence built from it when the answer has no words of its own, so what is confirmed is always something the person was told.
+     */
+    add(key: string, send: () => Promise<void>, note?: JobNote): void {
+        if (!this.closed) this.items.set(key, { send, ...(note ? { note } : {}) });
     }
 
     /** How many confirmations wait. */
@@ -79,11 +82,16 @@ export class ConfirmationQueue {
         return this.items.size;
     }
 
+    /** The jobs waiting to be confirmed, as the reply names them (none once it was delivered or dropped: both empty it). */
+    notes(): JobNote[] {
+        return [...this.items.values()].flatMap((item) => (item.note ? [item.note] : []));
+    }
+
     /** The reply reached the person: each confirmation is sent once, best effort and in order, and none is sent again. Never throws. */
     async deliver(): Promise<void> {
         if (this.closed) return;
         this.closed = true;
-        for (const send of this.items.values()) {
+        for (const { send } of this.items.values()) {
             try {
                 await send();
             } catch {
@@ -97,6 +105,31 @@ export class ConfirmationQueue {
     drop(): void {
         this.closed = true;
         this.items.clear();
+    }
+}
+
+/** Which job a reply names to the person and what became of it: started now, found again and still going (`recovered`), finished, or ended. `earlier` when it is the job of an earlier ask. */
+export interface JobNote {
+    state: 'started' | 'recovered' | 'done' | 'ended';
+    title?: string;
+    earlier?: boolean;
+}
+
+/**
+ * The fixed sentence that tells the person of a job, for a reply that has no words of its own (the model made only a card or a file): it is the reply's text, so the confirmation of the job is
+ * only ever made once Matrix accepted an event that names it.
+ */
+export function jobLine(note: JobNote): string {
+    const name = note.title ? `"${note.title.replace(/"/g, "'")}"` : '';
+    switch (note.state) {
+        case 'done':
+            return note.earlier ? 'The job you asked for earlier has finished. Its result and receipt are with this chat and in [Usage](#usage).' : 'Your job has finished. Its result and receipt are with this chat and in [Usage](#usage).';
+        case 'ended':
+            return note.earlier ? 'The job you asked for earlier has already ended. The bar above this chat shows how.' : 'Your job has already ended. The bar above this chat shows how.';
+        case 'recovered':
+            return name ? `I'm still working on ${name} on my computer.` : "I'm still working on the job you asked for earlier on my computer.";
+        default:
+            return name ? `I'm working on ${name} on my computer.` : "I'm working on your job on my computer.";
     }
 }
 
@@ -157,6 +190,8 @@ export interface StartKeyEntry {
     found?: string;
     /** With `found`: the job was MADE by the resend of this start (not found live by a look-up), so once it is confirmed its record goes. */
     made?: true;
+    /** With `found`: the title of the ask that job was made for, when it is known (the words of a retained start). */
+    title?: string;
 }
 
 /**
@@ -319,15 +354,20 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const now = Date.now();
     // A job named to the person in this reply is confirmed to Orbit once the reply is delivered, and the record of its key goes after the confirmation, never before
     // (a job that is still live keeps its start OPEN, as since v63, so its record stays: it goes when the job is found over)
-    const confirmLater = (key: string, stillOpen = false): void =>
-        context.confirmations?.add(key, async () => {
-            await context.admin.ackComputerStart?.(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), attempt: key }).catch(() => false);
-            if (!stillOpen) await context.startKeyStore?.delete(scope, key).catch(() => undefined);
-        });
+    const confirmLater = (key: string, stillOpen: boolean, note: JobNote): void =>
+        context.confirmations?.add(
+            key,
+            async () => {
+                await context.admin.ackComputerStart?.(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), attempt: key }).catch(() => false);
+                if (!stillOpen) await context.startKeyStore?.delete(scope, key).catch(() => undefined);
+            },
+            note
+        );
+    const stateOf = (reason: string): 'recovered' | 'done' | 'ended' => (reason === 'done' ? 'done' : reason === 'ended' ? 'ended' : 'recovered');
     // A job already found for an earlier ask in this turn is every call's answer, whatever it says: nothing is sent
     const foundEarlier = context.startKeys?.get(FOUND_EARLIER_SLOT);
     if (foundEarlier?.found && now - foundEarlier.at < OPEN_START_KEEP_MS) {
-        confirmLater(foundEarlier.key, foundEarlier.found === 'starting' && !foundEarlier.made);
+        confirmLater(foundEarlier.key, foundEarlier.found === 'starting' && !foundEarlier.made, { state: foundEarlier.made ? 'started' : stateOf(foundEarlier.found), earlier: !foundEarlier.made, ...(foundEarlier.title ? { title: foundEarlier.title } : {}) });
         return answerOf({ ok: false, reason: foundEarlier.found } as StartAnswer, context, true);
     }
     const open = context.startKeys?.get(OPEN_START_SLOT);
@@ -347,7 +387,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const go = async (): Promise<Record<string, unknown>> => {
         // An ask that Orbit answered with an earlier job of the person's is answered the same when it comes again in this turn: nothing is sent (a second job would be paid for behind the first)
         if (!entry.open && entry.found) {
-            confirmLater(entry.key, entry.found === 'starting');
+            confirmLater(entry.key, entry.found === 'starting', { state: stateOf(entry.found), earlier: true });
             return answerOf({ ok: false, reason: entry.found } as StartAnswer, context, true);
         }
         // Open when this call began: a key that went out before (here, at another server, or in an earlier turn) and whose outcome was not known. The words it said are the ones that go again.
@@ -443,21 +483,21 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             delete entry.payload;
             context.startKeys?.set(asked, entry);
             context.startKeys?.set(FOUND_EARLIER_SLOT, { key: found.attempt, at: now, open: false, found: sent.reason });
-            confirmLater(found.attempt, sent.reason === 'starting');
+            confirmLater(found.attempt, sent.reason === 'starting', { state: stateOf(sent.reason), earlier: true });
             // The record of the key that made nothing goes (that key only, and only if the store still holds it)
             await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
             return answerOf({ ok: false, reason: sent.reason } as StartAnswer, context, true);
         }
         // A look-up of an earlier send found its job: that is the answer of every call in this turn
         if (looked && ['starting', 'done', 'ended'].includes((looked as unknown as StartAnswer).reason)) {
-            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: (looked as unknown as StartAnswer).reason });
+            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: (looked as unknown as StartAnswer).reason, ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
         }
         const started = (looked ?? sent) as StartAnswer;
         // The words that went out are an EARLIER ask's (the resend of a start the game could not settle, while the person asks something else now), and they made a job: that job is what every call
         // of this turn is told, as it is when a look-up finds an earlier job, and nothing else is sent (a second job would be paid for behind it)
         const resentEarlier = looked === undefined && wasOpen && !samePayload(entry.payload, current);
         if (resentEarlier && (started.ok || ['starting', 'done', 'ended'].includes(started.reason))) {
-            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: started.ok ? 'starting' : started.reason, ...(started.ok ? { made: true as const } : {}) });
+            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: started.ok ? 'starting' : started.reason, ...(started.ok ? { made: true as const } : {}), ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
         }
         const refused = !started.ok && !UNCERTAIN_REASONS.includes(started.reason);
         // A no from Orbit to THIS send (nothing was made by it) ends the key only when no start with it went out before: a start that may have gone out earlier is not answered by it
@@ -475,7 +515,10 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         }
         // Orbit names the job (in the answer to the start, to the look-up inside it, or to this game's own look-up of an earlier send). It is NOT confirmed now: the person has not been told
         // yet. The confirmation waits for this reply to be delivered (`ConfirmationQueue`), and the record of the key goes after it. A look-up never confirms by itself either.
-        if (started.ok || ['starting', 'done', 'ended'].includes(started.reason)) confirmLater(startKey, !started.ok && started.reason === 'starting');
+        if (started.ok || ['starting', 'done', 'ended'].includes(started.reason)) {
+            const askedEarlier = looked !== undefined || resentEarlier;
+            confirmLater(startKey, !started.ok && started.reason === 'starting', { state: started.ok ? 'started' : stateOf(started.reason), earlier: !started.ok && askedEarlier, ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
+        }
         // The answer to a look-up of a start sent EARLIER is said as that earlier job's, never as this ask's, and so is the answer of a key that went out before with other words than these
         return answerOf(started, context, looked !== undefined || resentEarlier);
     };

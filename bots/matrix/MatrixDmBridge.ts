@@ -2086,7 +2086,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             } else if (reply.text) {
                 await out.sendText(botUserId, event.room_id, reply.text);
             }
-            reply.keep?.();
+            // Kept (and the computer jobs it names confirmed to Orbit) only once Matrix took the words of the reply: a card or a file that comes after, and fails, changes nothing of that. A reply with
+            // no words (a card or a file alone) names no job: the reply service gives one that names a job its own sentence
+            if (reply.text) reply.keep?.();
             // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
             // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;

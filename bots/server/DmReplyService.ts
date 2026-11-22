@@ -23,6 +23,7 @@ import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
+import { jobLine } from '../ai/ComputerTools';
 import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
@@ -760,7 +761,8 @@ export class DmReplyService extends BaseBehavior {
         // failed or was not sent never calls it, and a newer message drops them
         const confirmations = memory.getMemory(botId, playerId)?.computerConfirmations;
         const keep = () => {
-            void confirmations?.deliver();
+            // Only when words went out: a reply with no text has told the person of nothing
+            if (replyText.trim()) void confirmations?.deliver();
             if (kept || !replyText) return;
             kept = true;
             memory.addMessage(botId, playerId, replyText, 'bot', DM_SPACE_NAME);
@@ -781,6 +783,12 @@ export class DmReplyService extends BaseBehavior {
         // its chat one tap away instead of a "couldn't answer" note
         const madeOne = bricks.find((note) => note.kind === 'made');
         if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
+        // A reply that names a computer job but has no words of its own (the model made only a card or a file) says so in one fixed sentence: the job is confirmed to Orbit only once the person
+        // received an event that tells them of it, so there is always one
+        if (!replyText.trim()) {
+            const told = confirmations?.notes() ?? [];
+            if (told.length > 0) replyText = told.map(jobLine).join('\n');
+        }
         // A suggestion goes out only with words, and Orbit is asked about it only as its card is sent (claimOffer)
         if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer' && note.kind !== 'app');
         const claimOffer = this.offerClaim(bricks, botId, person.uuid);
