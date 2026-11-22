@@ -3377,6 +3377,20 @@ describe('calls of a job that arrive at another bot server', () => {
                             warn.mockRestore();
                         });
 
+                        it('by behaviour alone (no bookkeeping read): the committed fence the runner could not retract keeps refusing the exact turn until the store answers, and then ANOTHER server\'s relay takes the turn up again by itself', async () => {
+                            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+                            const rig = await closeWith('behaviour');
+                            rig.store.state.commitLostAfter = 3;
+                            expect(await rig.a.commitTurn!('behaviour', rig.attempt)).toBe(false);
+                            rig.store.state.failRetract = 4;
+                            await rig.a.reopenTurn('behaviour', rig.attempt);
+                            rig.advance(FENCE_LIFE_MS * 4);
+                            expect(await rig.b.accepted('behaviour', { turn: 1, run: 'run-1' })).toBe(false);
+                            // nobody calls reopenTurn again: the notes themselves take the fence back once the store answers
+                            await vi.waitFor(async () => expect(await rig.b.accepted('behaviour', { turn: 1, run: 'run-1' })).toBe(true), { timeout: 2000, interval: 10 });
+                            warn.mockRestore();
+                        });
+
                         it('is asked once for a close however many times it is taken back, and does not touch a fence of another moment, turn or run', async () => {
                             const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
                             const rig = await closeWith('once');
