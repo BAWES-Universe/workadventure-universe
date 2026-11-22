@@ -613,6 +613,97 @@ function isOrbitRefusal(data: unknown): data is { ok: false; reason: string; app
     return isPlainObject(data) && data.ok === false && typeof data.reason === 'string' && data.reason !== '';
 }
 
+/** What Brick can ask of its own computer jobs through Orbit's door (computers full plan: piece 2 builds the door, piece 5 calls it). */
+export type ComputerControlAction = 'list' | 'pause' | 'resume' | 'first' | 'cancel' | 'note' | 'stop' | 'activity';
+
+export interface ComputerControlAsk {
+    action: ComputerControlAction;
+    jobId?: string;
+    /** A message for the job (`note`). */
+    text?: string;
+    /** With `first`: pause the job that has the computer and start this one now (the paused one carries on by itself after). */
+    pauseRunning?: boolean;
+    isGuest?: boolean;
+}
+
+/** One job as the door's view gives it: only what Brick needs to name it and say where it is (never a price, a count of time or a machine). */
+export interface ComputerControlJob {
+    id: string;
+    title: string;
+    /** `queued`, `running`, `waiting` (or an ended state, which a live view never holds). */
+    status: string;
+    /** Why a queued job is not running: `turn`, `allowance`, `busy`, `pool`, `paused`. */
+    queuedFor: string | null;
+    pausedAt: string | null;
+    /** `person` (they paused it) or `allowance` (the month ran out while it ran). */
+    pausedWhy: string | null;
+    stepLabel: string | null;
+    stepDone: number | null;
+    stepTotal: number | null;
+    /** What a waiting job needs from the person: `details`, `signin`, `upload`, `pay`, `submit`, `answer`. */
+    waitingFor: string | null;
+    /** `person` while they hold the screen. */
+    control: 'brick' | 'person';
+}
+
+export interface ComputerControlView {
+    /** The job that has the computer (running, or waiting for the person), or null. */
+    job: ComputerControlJob | null;
+    /** The jobs in line behind it, in the order they are taken, paused ones included. */
+    queued: ComputerControlJob[];
+    on: boolean | null;
+}
+
+export type ComputerControlAnswer =
+    | {
+          ok: true;
+          view: ComputerControlView | null;
+          /** `activity`: the job's steps so far, oldest first. */
+          steps?: { seq: number; label: string; at: string | null }[];
+          /** `note`: how the words reach the job: `now`, `answer` (it answered the job's question), `after_hand_back`, `when_it_starts`. */
+          delivery?: string;
+          /** `pause`: false when the job's sign-ins could not be put away (the person signs in again when it carries on). */
+          signInsKept?: boolean;
+      }
+    | { ok: false; reason: string };
+
+const textOrNull = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
+const countOrNull = (value: unknown): number | null => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null);
+
+/** A job of the door's view, or null when it has no id or no status (it cannot be named or acted on). */
+export function controlJobOf(value: unknown): ComputerControlJob | null {
+    if (!isPlainObject(value) || typeof value.id !== 'string' || value.id === '' || typeof value.status !== 'string') return null;
+    return {
+        id: value.id,
+        title: typeof value.title === 'string' ? value.title.replace(/\s+/g, ' ').trim().slice(0, 120) : '',
+        status: value.status,
+        queuedFor: textOrNull(value.queuedFor),
+        pausedAt: textOrNull(value.pausedAt),
+        pausedWhy: textOrNull(value.pausedWhy),
+        stepLabel: textOrNull(value.stepLabel),
+        stepDone: countOrNull(value.stepDone),
+        stepTotal: countOrNull(value.stepTotal),
+        waitingFor: textOrNull(value.waitingFor),
+        control: value.control === 'person' ? 'person' : 'brick',
+    };
+}
+
+/** The door's answer: its view (`view`, or `computer` as the owner routes call it; null when it gave none), Orbit's own refusal, or `unknown` for an answer that says neither. */
+export function controlAnswerOf(data: unknown): ComputerControlAnswer {
+    if (isOrbitRefusal(data)) return { ok: false, reason: data.reason };
+    if (!isPlainObject(data) || data.ok !== true) return { ok: false, reason: 'unknown' };
+    const raw = isPlainObject(data.view) ? data.view : isPlainObject(data.computer) ? data.computer : null;
+    const steps = Array.isArray(data.steps)
+        ? data.steps.flatMap((step: unknown) => (isPlainObject(step) && typeof step.label === 'string' && countOrNull(step.seq) !== null ? [{ seq: step.seq as number, label: step.label.slice(0, 200), at: textOrNull(step.at) }] : []))
+        : undefined;
+    const delivery = isPlainObject(data.note) && typeof data.note.delivery === 'string' ? data.note.delivery : undefined;
+    const extra = { ...(steps ? { steps } : {}), ...(delivery ? { delivery } : {}), ...(typeof data.signInsKept === 'boolean' ? { signInsKept: data.signInsKept } : {}) };
+    // Orbit said it was done but gave no view: done, and what the line says is read from the job as it was named
+    if (!raw) return { ok: true, view: null, ...extra };
+    const queued = Array.isArray(raw.queued) ? raw.queued.map(controlJobOf).filter((job): job is ComputerControlJob => job !== null) : [];
+    return { ok: true, view: { job: controlJobOf(raw.job), queued, on: typeof raw.on === 'boolean' ? raw.on : null }, ...extra };
+}
+
 /**
  * An answer that Orbit itself wrote to a start it refused before making anything: its refusal (`{ ok: false, reason }`), its own 400 for a request it cannot read
  * (`{ error: 'Invalid input data' }`) or 401 for a service token it does not know (`{ error: 'Unauthorized' }`). A JSON answer of any other kind (a rate limiter's 429 in front
@@ -1956,6 +2047,57 @@ export class AdminApiService {
             return { ok: false, reason: data.reason, ...(typeof data.app === 'string' ? { app: data.app } : {}) };
         }
         return 'unclear';
+    }
+
+    /**
+     * Brick's door to its owner's computer jobs (computers full plan, piece 2's route, piece 5 calls it): list them, or pause, carry on, move first (optionally pausing the
+     * running one), cancel one, stop everything, or pass a message on. Orbit checks that `userId` owns the Brick and that the job is on it, exactly as for a start.
+     * Never throws. `{ ok: true, view }` (the computer view, read fresh after the change); `{ ok: false, reason }` for Orbit's own refusal (`not_found`, `over`, `taken_over`,
+     * `ending`, `not_paused`, `not_queued`, ...), with any status it comes with; `unknown` when the answer did not come back whole (a timeout, a 5xx, a dropped connection:
+     * the change may have been made behind it, so it is never told as done or as failed, and nothing is sent again); `unreachable` when nothing went out or Orbit has no such door
+     * yet (a bare 404 or 405).
+     */
+    async controlComputerJobs(viaBotId: string, userId: string, ask: ComputerControlAsk): Promise<ComputerControlAnswer> {
+        // Orbit's own "could not look the person up" (503 with `retry: true`) did nothing: asked again after one second, then after two, and then it could not be done
+        for (let attempt = 0; ; attempt++) {
+            const answer = await this.controlOnce(viaBotId, userId, ask);
+            if (answer !== 'retry') return answer;
+            if (attempt >= COMPUTER_STARTED_RETRY_MS.length) return { ok: false, reason: 'unreachable' };
+            await new Promise((resolve) => setTimeout(resolve, COMPUTER_STARTED_RETRY_MS[attempt]));
+        }
+    }
+
+    private async controlOnce(viaBotId: string, userId: string, ask: ComputerControlAsk): Promise<ComputerControlAnswer | 'retry'> {
+        try {
+            const response = await this.brickCall<unknown>(
+                'post',
+                `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/control`,
+                {
+                    personId: userId,
+                    ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
+                    action: ask.action,
+                    ...(ask.jobId ? { jobId: ask.jobId } : {}),
+                    ...(typeof ask.text === 'string' ? { text: ask.text } : {}),
+                    ...(ask.pauseRunning ? { pauseRunning: true } : {}),
+                }
+            );
+            return controlAnswerOf(response.data);
+        } catch (error) {
+            const response = (error as { response?: { status?: unknown; data?: unknown } } | null)?.response;
+            const status = typeof response?.status === 'number' ? response.status : 0;
+            if (status === 503 && isPlainObject(response?.data) && response.data.retry === true) return 'retry';
+            // Orbit's own no comes with its status (404 not_found, 409 for the others): read the same as a 200 that says no
+            if (response && isOrbitRefusal(response.data)) return { ok: false, reason: response.data.reason };
+            if (!response && !mayHaveStarted(error)) return { ok: false, reason: 'unreachable' };
+            // An Orbit with no door yet (a bare 404 or 405, not its own refusal): nothing was done
+            if (status === 404 || status === 405) return { ok: false, reason: 'unreachable' };
+            if (isSlowAnswer(error) || mayHaveStarted(error)) {
+                console.warn('[AdminApiService] A computer job control got no whole answer:', error instanceof Error ? error.message : error);
+                return { ok: false, reason: 'unknown' };
+            }
+            console.warn('[AdminApiService] Could not control a computer job:', error instanceof Error ? error.message : error);
+            return { ok: false, reason: 'unreachable' };
+        }
     }
 
     /** Whether the steps an app has taken in one answer already cost what the job would on the computer, so the Brick should look again at the way. Throws when Orbit cannot be reached. */

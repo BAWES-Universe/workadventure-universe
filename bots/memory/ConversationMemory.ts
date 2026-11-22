@@ -174,6 +174,9 @@ export interface BotPlayerMemory {
     /** The confirmations of the computer jobs the reply being written names (see `ConfirmationQueue`): sent once that reply is delivered to the person's chat, dropped when it is not or
      * a newer message replaces it. Runtime only. */
     computerConfirmations?: import('../ai/ComputerTools').ConfirmationQueue;
+    /** Brick's controls of its computer jobs in this chat (see `ComputerControlTools`): the question it asked before cancelling or stopping, which only the person's next message can
+     * answer, and this turn's controls, so a reply asked again never pauses, cancels or passes a message on twice. Runtime only. */
+    computerControls?: import('../ai/ComputerControlTools').ControlState;
     /** The jobs of an App that someone else asked for in the turn being answered and that may have run (no answer came back), by job and
      * inputs: the same one is not sent again in this turn (#2006). Cleared when the next turn starts. Runtime only. */
     sharedUncertain?: Set<string>;

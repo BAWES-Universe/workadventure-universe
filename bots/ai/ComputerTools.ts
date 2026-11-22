@@ -13,11 +13,13 @@ import * as Sentry from '@sentry/node';
 import type { StartKeyStore, StoredStartPayload } from '../server/ComputerStartKeys';
 import { jobLine, type JobNote } from './JobStatusLine';
 import type { AdminApiService } from '../server/AdminApiService';
+import { computerControlNote, isComputerControlTool } from './ComputerControlTools';
 
 export const COMPUTER_TOOL = 'use_computer';
 
+/** A tool of the Brick's own computer: starting a job, or one of its controls (`ComputerControlTools`). They are offered, gated and kept from anyone but the owner together. */
 export function isComputerTool(name: string): boolean {
-    return name === COMPUTER_TOOL;
+    return name === COMPUTER_TOOL || isComputerControlTool(name);
 }
 
 const TITLE_MAX = 120;
@@ -57,6 +59,7 @@ export function computerToolsNote(): string {
         'Your computer: you have your own computer. Choose in this order: answer yourself, then an app you have, and only then the computer (use_computer), for a job nothing else can do.',
         'It does one writing job at a time: a second job waits its turn, and you say so in one line. Never say how much of their month is left, and never name a price, a size or a machine.',
         'Paying and sending the person\'s own details are theirs: you stop and ask them, you never do them alone.',
+        computerControlNote(),
     ].join('\n');
 }
 
@@ -107,7 +110,39 @@ export class ConfirmationQueue {
             const line = jobLine(item.note);
             if (!lines.includes(line)) lines.push(line);
         }
+        // Then Brick's fixed lines about the controls of this reply (pause, carry on, cancel...: `ComputerControlTools`), in the order they were said
+        for (const said of this.said) {
+            said.told = true;
+            if (!lines.includes(said.line)) lines.push(said.line);
+        }
         return lines;
+    }
+
+    private said: Array<{ line: string; onTold?: () => void; told?: true }> = [];
+
+    /**
+     * A fixed line of Brick's about a control of its computer jobs (see `ComputerControlWords`): it goes under the reply in the same event as the job lines (`tell`), and `onTold` runs
+     * once Matrix took that event (a question that was never delivered was never asked). Nothing is confirmed to Orbit by it. The same line twice in one reply is said once.
+     */
+    say(line: string, onTold?: () => void): void {
+        if (this.closed || !line) return;
+        const same = this.said.find((said) => said.line === line);
+        if (same) {
+            if (onTold) {
+                const before = same.onTold;
+                same.onTold = () => {
+                    before?.();
+                    onTold();
+                };
+            }
+            return;
+        }
+        this.said.push({ line, ...(onTold ? { onTold } : {}) });
+    }
+
+    /** Whether this reply carries a fixed control line. */
+    get saying(): boolean {
+        return this.said.length > 0;
     }
 
     /**
@@ -117,6 +152,15 @@ export class ConfirmationQueue {
     async deliver(eventId?: string): Promise<void> {
         if (this.closed || typeof eventId !== 'string' || eventId === '') return;
         this.closed = true;
+        // A control line's question counts as asked only once the event that carries it was taken
+        for (const said of this.said.splice(0)) {
+            if (!said.told) continue;
+            try {
+                said.onTold?.();
+            } catch {
+                /* never in the way of a reply */
+            }
+        }
         for (const { send, told } of this.items.values()) {
             if (!told) continue;
             try {
@@ -128,10 +172,11 @@ export class ConfirmationQueue {
         this.items.clear();
     }
 
-    /** The reply was not delivered, or a newer message replaced it: nothing is sent. */
+    /** The reply was not delivered, or a newer message replaced it: nothing is sent, and no question it carried was asked. */
     drop(): void {
         this.closed = true;
         this.items.clear();
+        this.said = [];
     }
 }
 
@@ -605,7 +650,10 @@ function answerOf(started: StartAnswer, context: ComputerToolContext, earlier = 
     const when = started.ok && started.restoredFrom ? day(started.restoredFrom) : '';
     switch (kind) {
         case 'queued':
-            return { ...answer, note: `${before ? 'The job they asked for earlier' : 'The job'} was queued and has not started. ${LINE_TELLS_THEM}${different}` };
+            // A job they asked for again that is paused: never a second one; the line asks whether to carry on with it (decisions 23 Nov, 3h)
+            if (started.ok && started.job.queuedFor === 'paused') return { ...answer, note: `That job is paused, and nothing new was started. ${LINE_TELLS_THEM} If they say yes, call resume_computer_job.` };
+            // A new ask never interrupts the job that is working (decisions 23 Nov, 3c): it waits next in line unless they say it cannot wait
+            return { ...answer, note: `${before ? 'The job they asked for earlier' : 'The job'} was queued and has not started. ${LINE_TELLS_THEM}${started.ok && started.job.queuedFor === 'turn' ? ' If it sounds urgent, you may add that they can say "do it first" if it can\'t wait.' : ''}${different}` };
         case 'waiting':
             return { ...answer, note: `The job started and is already waiting for them: it needs something from them before it can go on. A fixed line under your reply says it started: do not say that again. Say in one short sentence that it needs something from them first, and that the bar above this chat shows what. Do not say it is running or will carry on by itself.${different}` };
         case 'found':
@@ -671,6 +719,9 @@ function answerWords(started: StartAnswer, context: ComputerToolContext, earlier
     // A job asked for earlier that this answer made (its start had not gone out, or its look-up found none yet): told as that job, whatever is asked now
     const laterNote = earlier ? ` ${EARLIER_ASK_NOTE}` : '';
     if (made.status === 'queued') {
+        if (made.queuedFor === 'paused') {
+            return { started: false, queued: true, paused: true, ...(earlier ? { earlier: true } : {}), note: `That job is paused, and nothing new was started. Say in one short sentence that it is paused and ask whether to resume it; if they say yes, call resume_computer_job.${laterNote}` };
+        }
         if (made.queuedFor === 'allowance') {
             return { started: false, queued: true, ...(earlier ? { earlier: true } : {}), note: `It is waiting: their computer time for this month is used up. Say so in one sentence, that the work is kept and goes on by itself when more is available, and that they can tap Ask for more in Usage. Never give a number or a price.${laterNote}` };
         }

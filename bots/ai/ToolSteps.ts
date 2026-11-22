@@ -7,6 +7,7 @@ import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
 import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
+import { COMPUTER_JOBS_TOOL } from './ComputerControlTools';
 import { CHANGE_TASK_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL } from './BrickTasks';
 import { instantSlugOf, isInstantTool } from './InstantTools';
 
@@ -120,6 +121,8 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
     [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
     // A job on the Brick's own computer (game #2000)
     [COMPUTER_TOOL]: (args) => ({ doing: 'Starting its computer, this takes a minute', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
+    // Reading its computer's jobs ("how is it going?"). Its controls (pause, cancel...) are no step: the fixed line under the reply says what each did, and a question is not a step taken
+    [COMPUTER_JOBS_TOOL]: () => ({ doing: 'Checking its computer', done: 'Checked its computer', group: 'computer_jobs', kind: 'read' }),
     // A reminder the person asked for (game #2002): "Set a reminder", with what it says under it. Reading what is kept is never a step.
     [SET_REMINDER_TOOL]: (args) => ({ doing: 'Setting a reminder', done: 'Set a reminder', detail: shown(args.text), group: 'set_reminder', kind: 'write' }),
     // A briefing, a watch or a goal the person asked for: what it is, with their words under it
