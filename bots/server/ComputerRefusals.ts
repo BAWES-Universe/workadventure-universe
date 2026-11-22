@@ -380,6 +380,8 @@ export interface RefusalOptions {
     retryMs?: number[];
     /** How long to wait, after those tries all failed, before each later try in the background (rows are kept an hour in all). */
     laterMs?: number[];
+    /** How long to wait before each later try to take back a fence that may be committed (see `reopenTurn`); the last wait is repeated until the store confirms. */
+    fenceCleanupMs?: number[];
     /** The most time a flush waits in all, across every try. */
     flushBudgetMs?: number;
     /** Where rows are kept until Orbit takes them, so they survive a restart. Without one they are kept in memory only. */
@@ -453,13 +455,16 @@ export const FAULT_ROWS_PER_CALL = 50;
 const DEFAULT_RETRY_MS = [500, 2000, 8000];
 /** Later tries in the background once the quick ones failed: Orbit may be back after the job has ended. Bounded; the rows are kept an hour. */
 const DEFAULT_LATER_MS = [30_000, 120_000, 600_000];
+/** How long a fence that may be committed waits between the tries to take it back in the background: the last wait goes on until the store has confirmed it. */
+const DEFAULT_FENCE_CLEANUP_MS = [2000, 5000, 15_000, 30_000];
 /** A job is not held up longer than this to get its rows to Orbit before it ends. */
 const DEFAULT_FLUSH_BUDGET_MS = 5000;
 
-export function createRefusalNotes(now: () => number = Date.now, options: RefusalOptions = {}): RefusalNotes & { /** For tests: how many jobs the runner's publication bookkeeping holds. */ trackedPublications(): { attempted: number; publishing: number } } {
+export function createRefusalNotes(now: () => number = Date.now, options: RefusalOptions = {}): RefusalNotes & { /** For tests: how many jobs the runner's publication bookkeeping holds. */ trackedPublications(): { attempted: number; publishing: number }; /** For tests: how many fences that may be committed are still to be taken back in the background. */ fenceCleanupsPending(): number } {
     const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
     const laterMs = options.laterMs ?? DEFAULT_LATER_MS;
     const flushBudgetMs = options.flushBudgetMs ?? DEFAULT_FLUSH_BUDGET_MS;
+    const fenceCleanupMs = options.fenceCleanupMs ?? DEFAULT_FENCE_CLEANUP_MS;
     const store = options.store;
     const storeLaterMs = options.storeLaterMs ?? DEFAULT_STORE_LATER_MS;
     const last = new Map<string, { at: number; order: number }>();
@@ -939,6 +944,36 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         }
         return false;
     };
+    /**
+     * The fences of closes whose commit was never confirmed and that could not be taken back either, by job, turn, run and moment: the store may hold such a fence COMMITTED, and a
+     * committed fence refuses the calls of its turn for as long as the job's evidence lives (the hash is renewed by every heartbeat). Each is taken back in the background, this exact
+     * moment only, until the store has confirmed (it answers that it deleted it, or that nothing of that moment is there). A confirmed give-up never has one.
+     */
+    const fenceCleanups = new Map<string, { jobId: string; turn: CallTurn; at: number; tries: number }>();
+    const cleanupFence = (jobId: string, turn: CallTurn, at: number): void => {
+        const key = `${jobId}|${turn.turn}|${turn.run ?? ''}|${at}`;
+        if (fenceCleanups.has(key)) return;
+        const entry = { jobId, turn, at, tries: 0 };
+        fenceCleanups.set(key, entry);
+        const attempt = async (): Promise<void> => {
+            let confirmed = false;
+            try {
+                confirmed = await retractOnStore(jobId, turn, at, true);
+            } catch {
+                confirmed = false;
+            }
+            if (confirmed) {
+                fenceCleanups.delete(key);
+                return;
+            }
+            const wait = fenceCleanupMs[Math.min(entry.tries, fenceCleanupMs.length - 1)] ?? 30_000;
+            entry.tries += 1;
+            const timer = setTimeout(() => void attempt(), wait);
+            timer.unref?.();
+        };
+        const first = setTimeout(() => void attempt(), fenceCleanupMs[0] ?? 0);
+        first.unref?.();
+    };
     /** While the runner works the job its promise is renewed (the full list again), so a call well inside a turn is covered; it lapses when the runner stops. */
     const keepPromise = (jobId: string) => {
         if (beats.has(jobId)) return;
@@ -954,6 +989,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
 
     return {
         trackedPublications: () => ({ attempted: attempted.size, publishing: publishing.size }),
+        fenceCleanupsPending: () => fenceCleanups.size,
         turn(jobId, turn, run) {
             forget();
             const history = turns.get(jobId) ?? [];
@@ -1401,7 +1437,14 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             // and the fence of THIS attempt leaves the store (the close may have committed, or may commit later: the field holds exactly this moment either way)
             try {
                 if (options.shared?.retractFence && !(await retractOnStore(jobId, attempt.turn, attempt.at, attempt.unconfirmed === true))) {
-                    console.warn('[ComputerRefusals] A close that was taken back may still be fenced in the shared store: the fence could not be retracted (it expires on its own).');
+                    // A fence that was never committed clears itself; one whose commit the store never said may be COMMITTED, and then it does not: it is taken back in the background,
+                    // for this exact turn, run and moment, until the store confirms
+                    if (attempt.unconfirmed === true && attempt.turn) {
+                        console.warn('[ComputerRefusals] A close that was taken back may still be fenced (committed) in the shared store: it is taken back in the background until the store confirms.');
+                        cleanupFence(jobId, attempt.turn, attempt.at);
+                    } else {
+                        console.warn('[ComputerRefusals] A close that was taken back may still be fenced in the shared store: the fence could not be retracted (it expires on its own).');
+                    }
                 }
             } catch {
                 /* the fence expires on its own */

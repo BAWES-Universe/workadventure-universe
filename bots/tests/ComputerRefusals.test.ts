@@ -1355,16 +1355,37 @@ describe('the evidence kept before the money decision is final, and delivered af
                 expect(told).toEqual(['dead_letter bad']);
             });
 
-            it('the same, when the accepted row and the named refusal come in ONE pass (nothing was taken before): the mixed batch takes the good row and sets the named one aside, and a refused row that comes alone after it becomes a dead letter too, never "pending"', async () => {
-                const o = naming(new Set(['bad1', 'bad2']));
-                o.open();
+            it('the same, when the accepted row and the named refusal go to Orbit in ONE batch (nothing was taken before): the first send waits until both are queued and fails, the next carries [ok, bad1] and Orbit takes one and names the other, and a refused row that comes alone after it becomes a dead letter too, never "pending"', async () => {
+                const calls: string[][] = [];
+                const taken: string[] = [];
+                let open!: () => void;
+                const gate = new Promise<void>((resolve) => (open = resolve));
+                let first = true;
+                const bad = new Set(['bad1', 'bad2']);
+                const sink = async (_botId: string, _jobId: string, rows: CallRow[]): Promise<SinkAnswer> => {
+                    // the first send is held until both rows are queued, and then Orbit cannot be reached: nothing was taken
+                    await gate;
+                    const ids = rows.map((row) => row.callId);
+                    calls.push(ids);
+                    if (first) {
+                        first = false;
+                        return false;
+                    }
+                    const named = ids.filter((id) => bad.has(id));
+                    taken.push(...ids.filter((id) => !bad.has(id)));
+                    return named.length > 0 ? { rejected: named } : true;
+                };
                 const told: string[] = [];
-                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: o.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
                 // no row has been taken before this pass: Orbit has not been seen to take anything lately
                 notes.record('bot', 'job', call('ok'));
                 notes.record('bot', 'job', call('bad1'));
+                open();
                 expect(await notes.flush('job')).toBe(true);
-                expect(o.taken).toEqual(['ok']);
+                // the mixed batch reached Orbit in ONE call: the accepted row and the refused one answered in the same response
+                expect(calls[0]).toEqual(['ok']);
+                expect(calls).toContainEqual(['ok', 'bad1']);
+                expect(taken).toEqual(['ok']);
                 expect(told).toEqual(['dead_letter bad1']);
                 // a refused row alone in the next pass: Orbit named it, so it is a dead letter, not a row waiting for an Orbit that is "away"
                 notes.record('bot', 'job', call('bad2'));
@@ -1372,9 +1393,9 @@ describe('the evidence kept before the money decision is final, and delivered af
                 expect(told).toEqual(['dead_letter bad1', 'dead_letter bad2']);
                 expect(told.some((one) => one.startsWith('all_refused'))).toBe(false);
                 // and nothing is left waiting: no row is sent again
-                const before = o.calls.length;
+                const before = calls.length;
                 expect(await notes.flush('job')).toBe(true);
-                expect(o.calls.length).toBe(before);
+                expect(calls.length).toBe(before);
             });
         });
 
@@ -2560,12 +2581,12 @@ describe('calls of a job that arrive at another bot server', () => {
 
     describe('the turn of a call that reaches a server other than the one that runs the job’s runner (two notes over one shared store)', () => {
         const fault = (callId: string) => ({ callId, kind: 'fault' as const, reason: 'provider_key_ours' as const, source: 'universe-ai' as const, route: 'r', providerStatus: 401 as number | null });
-        const rigTurns = () => {
+        const rigTurns = (extra: Partial<Parameters<typeof createRefusalNotes>[1]> = {}) => {
             let at = 100_000;
             const store = sharedStore();
             const sentByB: CallRow[] = [];
             // A runs the job's runner; B is where the machine's calls land
-            const a = createRefusalNotes(() => at, { shared: store.forServer('A'), runsHere: () => true });
+            const a = createRefusalNotes(() => at, { shared: store.forServer('A'), runsHere: () => true, ...extra });
             const b = createRefusalNotes(() => at, {
                 shared: store.forServer('B'),
                 runsHere: () => false,
@@ -3320,6 +3341,89 @@ describe('calls of a job that arrive at another bot server', () => {
                         expect(late.store.state.commitAsked).toBe(2);
                         expect(late.attempt.committed).toBe(true);
                         expect(late.attempt.unconfirmed).toBeUndefined();
+                    });
+
+                    describe('a fence whose commit was never confirmed and that cannot be taken back is cleaned up in the background (CodeRabbit on cb0aebad)', () => {
+                        const closeWith = async (job: string) => {
+                            const rig = rigTurns({ fenceCleanupMs: [5] });
+                            await begin(rig.a, job, 1, 'run-1');
+                            const since = rig.a.mark();
+                            rig.advance(10);
+                            const attempt: CloseAttempt = {};
+                            expect(await rig.a.closeTurn(job, since, attempt)).toBe(true);
+                            return { ...rig, since, attempt };
+                        };
+
+                        it('keeps the foreground bounded (three tries) and then takes the committed fence back for this exact job, turn, run and moment as soon as the store answers, and not before', async () => {
+                            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+                            const rig = await closeWith('clean');
+                            // the commit RAN each time and every answer was lost: the store holds the fence committed, and the runner does not know
+                            rig.store.state.commitLostAfter = 3;
+                            expect(await rig.a.commitTurn!('clean', rig.attempt)).toBe(false);
+                            expect(rig.attempt.unconfirmed).toBe(true);
+                            // the three retractions fail and then the store keeps failing for two more tries in the background
+                            rig.store.state.failRetract = 5;
+                            const before = rig.store.state.retractWaiting;
+                            await rig.a.reopenTurn('clean', rig.attempt);
+                            expect(rig.store.state.retractWaiting - before).toBe(3);
+                            expect(rig.a.fenceCleanupsPending()).toBe(1);
+                            // the committed fence still refuses the turn's calls, long after a fence's own life
+                            rig.advance(FENCE_LIFE_MS * 4);
+                            expect(await rig.b.accepted('clean', { turn: 1, run: 'run-1' })).toBe(false);
+                            // the store answers again: the fence is taken back (the exact moment), and nothing is pending
+                            await vi.waitFor(() => expect(rig.a.fenceCleanupsPending()).toBe(0));
+                            expect(rig.store.state.retractWaiting - before).toBeGreaterThanOrEqual(6);
+                            expect(await rig.b.accepted('clean', { turn: 1, run: 'run-1' })).toBe(true);
+                            warn.mockRestore();
+                        });
+
+                        it('is asked once for a close however many times it is taken back, and does not touch a fence of another moment, turn or run', async () => {
+                            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+                            const rig = await closeWith('once');
+                            rig.store.state.commitLostAfter = 3;
+                            expect(await rig.a.commitTurn!('once', rig.attempt)).toBe(false);
+                            rig.store.state.failRetract = 6;
+                            const before = rig.store.state.retractWaiting;
+                            await rig.a.reopenTurn('once', rig.attempt);
+                            await rig.a.reopenTurn('once', rig.attempt);
+                            // (three foreground tries each: all six fail)
+                            expect(rig.store.state.retractWaiting - before).toBe(6);
+                            expect(rig.a.fenceCleanupsPending()).toBe(1);
+                            // a fence of the same turn that another close wrote at a later moment is not this one's
+                            const other: CloseAttempt = { turn: rig.attempt.turn, at: (rig.attempt.at ?? 0) + 1 };
+                            await rig.a.reopenTurn('once', other);
+                            expect(rig.a.fenceCleanupsPending()).toBe(1);
+                            rig.store.state.failRetract = 0;
+                            await vi.waitFor(() => expect(rig.a.fenceCleanupsPending()).toBe(0));
+                            // one background chain, not one per call: after it has confirmed, nothing more is asked
+                            await new Promise((resolve) => setTimeout(resolve, 60));
+                            // (six failed foreground tries, the one plain retraction of the other moment, and the one background retraction that confirmed)
+                            expect(rig.store.state.retractWaiting - before).toBe(8);
+                            warn.mockRestore();
+                        });
+
+                        it('is never scheduled for a confirmed give-up, nor for a close that was not committed (it clears itself), nor when the retraction is confirmed in the foreground', async () => {
+                            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+                            const confirmed = await closeWith('confirmed');
+                            expect(await confirmed.a.commitTurn!('confirmed', confirmed.attempt)).toBe(true);
+                            await confirmed.a.reopenTurn('confirmed', confirmed.attempt);
+                            expect(confirmed.a.fenceCleanupsPending()).toBe(0);
+                            await confirmed.a.releaseTurn!('confirmed', confirmed.attempt);
+                            expect(confirmed.a.fenceCleanupsPending()).toBe(0);
+                            // a close that was only tentative (the runner took it back and the retraction did not answer): it clears itself after FENCE_LIFE_MS
+                            const tentative = await closeWith('tentative');
+                            tentative.store.state.failRetract = 3;
+                            await tentative.a.reopenTurn('tentative', tentative.attempt);
+                            expect(tentative.a.fenceCleanupsPending()).toBe(0);
+                            // an unconfirmed commit whose retraction works at once needs no background work
+                            const quick = await closeWith('quick');
+                            quick.store.state.commitLostAfter = 3;
+                            expect(await quick.a.commitTurn!('quick', quick.attempt)).toBe(false);
+                            await quick.a.reopenTurn('quick', quick.attempt);
+                            expect(quick.a.fenceCleanupsPending()).toBe(0);
+                            expect(await quick.b.accepted('quick', { turn: 1, run: 'run-1' })).toBe(true);
+                            warn.mockRestore();
+                        });
                     });
 
                     it('does not retract a COMMITTED fence on a plain reopen (only an unconfirmed commit takes it back): a fence the store said is committed stays', async () => {
