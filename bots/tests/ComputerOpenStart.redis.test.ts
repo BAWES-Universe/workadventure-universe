@@ -1,6 +1,10 @@
 import { randomUUID } from 'crypto';
 import { createClient } from 'redis';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@sentry/node', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
+
+import * as Sentry from '@sentry/node';
 import { AdminApiService } from '../server/AdminApiService';
 import { forgetSettledStarts, runComputerTool, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
@@ -216,6 +220,28 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
         const life = await client.pTTL(startKeyNameOf(`${who.botId}|${who.userId}`));
         expect(life).toBeGreaterThan(OPEN_START_KEEP_MS - 60_000);
         expect(life).toBeLessThanOrEqual(OPEN_START_KEEP_MS);
+    });
+
+    it('reports a start nobody could resolve for an hour to Sentry once (no title, no words of anyone\'s), and still looks it up on every ask', async () => {
+        vi.mocked(Sentry.captureMessage).mockClear();
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-11-22T10:00:00Z'));
+        const who = ids();
+        const orbit = new FakeOrbit();
+        orbit.onPost = 'lose-after-commit';
+        orbit.onGet = 'silent';
+        const server = process_(orbit, who);
+        await server.ask('Fill in my visa form');
+        vi.setSystemTime(new Date('2026-11-22T10:59:00Z'));
+        await server.ask('Fill in my visa form');
+        expect(Sentry.captureMessage).not.toHaveBeenCalled();
+        vi.setSystemTime(new Date('2026-11-22T11:01:00Z'));
+        await server.ask('Fill in my visa form');
+        await server.ask('Fill in my visa form');
+        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(vi.mocked(Sentry.captureMessage).mock.calls)).not.toMatch(/visa/i);
+        expect(orbit.lookups).toHaveLength(4);
+        vi.useRealTimers();
     });
 
     it('an intermediary 429 with Orbit\'s JSON shape on the start: at least one keyed look-up, the key kept (in memory and in Redis), the "couldn\'t check" words, and no failure answer', async () => {
