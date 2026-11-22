@@ -3361,8 +3361,9 @@ describe('calls of a job that arrive at another bot server', () => {
                             rig.store.state.commitLostAfter = 3;
                             expect(await rig.a.commitTurn!('clean', rig.attempt)).toBe(false);
                             expect(rig.attempt.unconfirmed).toBe(true);
-                            // the three retractions fail and then the store keeps failing for two more tries in the background
-                            rig.store.state.failRetract = 5;
+                            // the three foreground retractions fail, the whole first background try fails too (it asks three times itself), and the second background try
+                            // fails once more before the store answers: the cleanup must come back AFTER a failed background try, not only try once
+                            rig.store.state.failRetract = 7;
                             const before = rig.store.state.retractWaiting;
                             await rig.a.reopenTurn('clean', rig.attempt);
                             expect(rig.store.state.retractWaiting - before).toBe(3);
@@ -3372,8 +3373,39 @@ describe('calls of a job that arrive at another bot server', () => {
                             expect(await rig.b.accepted('clean', { turn: 1, run: 'run-1' })).toBe(false);
                             // the store answers again: the fence is taken back (the exact moment), and nothing is pending
                             await vi.waitFor(() => expect(rig.a.fenceCleanupsPending()).toBe(0));
-                            expect(rig.store.state.retractWaiting - before).toBeGreaterThanOrEqual(6);
+                            // 3 foreground + 3 in the first background try (all failed) + the second background try (one failed, one confirmed): more than one background try happened
+                            expect(rig.store.state.retractWaiting - before).toBeGreaterThanOrEqual(8);
+                            expect(rig.store.state.failRetract).toBe(0);
                             expect(await rig.b.accepted('clean', { turn: 1, run: 'run-1' })).toBe(true);
+                            warn.mockRestore();
+                        });
+
+                        it('cleans up EVERY committed fence of the same turn and run that was closed at different moments, not only the first', async () => {
+                            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+                            const rig = await closeWith('twice');
+                            // first close: the commit ran, its answers were lost, and the store does not answer the retractions
+                            rig.store.state.commitLostAfter = 3;
+                            rig.store.state.failRetract = 1000;
+                            expect(await rig.a.commitTurn!('twice', rig.attempt)).toBe(false);
+                            await rig.a.reopenTurn('twice', rig.attempt);
+                            expect(rig.a.fenceCleanupsPending()).toBe(1);
+                            // the same turn and run are closed again, at a later moment, with the same outcome
+                            rig.advance(10);
+                            const again: CloseAttempt = {};
+                            expect(await rig.a.closeTurn('twice', rig.since, again)).toBe(true);
+                            expect(again.at).not.toBe(rig.attempt.at);
+                            rig.store.state.commitLostAfter = 3;
+                            expect(await rig.a.commitTurn!('twice', again)).toBe(false);
+                            expect(again.unconfirmed).toBe(true);
+                            await rig.a.reopenTurn('twice', again);
+                            // each moment has its own cleanup
+                            expect(rig.a.fenceCleanupsPending()).toBe(2);
+                            rig.advance(FENCE_LIFE_MS * 4);
+                            expect(await rig.b.accepted('twice', { turn: 1, run: 'run-1' })).toBe(false);
+                            // the store answers: both committed fences are taken back, and the turn takes calls again
+                            rig.store.state.failRetract = 0;
+                            await vi.waitFor(() => expect(rig.a.fenceCleanupsPending()).toBe(0));
+                            expect(await rig.b.accepted('twice', { turn: 1, run: 'run-1' })).toBe(true);
                             warn.mockRestore();
                         });
 
