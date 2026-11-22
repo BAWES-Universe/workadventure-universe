@@ -25,6 +25,7 @@ const base: ComputerReport = {
     refundPendingMicros: 0,
     apps: [],
     appsTotal: 0,
+    searchApps: [],
     holdReleased: false,
     through: null,
 };
@@ -498,6 +499,7 @@ const lateRaw = {
     refundPendingMicros: 0,
     apps: ['Gmail'],
     appsTotal: 1,
+    searchApps: [],
     holdReleased: true,
     through: T1,
 };
@@ -529,6 +531,20 @@ describe('the late follow-up: an App step the provider confirmed after all', () 
         for (const apps of [['Exa'], ['Gmail'], ['Exa', 'Tavily', 'Gmail'], Array.from({ length: 9 }, (_unused, index) => `App${index}`)]) {
             expect(reportText(lateOf({ apps })), apps.join()).not.toMatch(/went out|did go out|\bsent\b|delivered|after all/i);
         }
+    });
+
+    it('reads the search Apps Orbit names (`searchApps`) together with the two it knows itself: an App Orbit says is a search is said as its search that completed, whatever it is called', () => {
+        expect(reportText(lateOf({ apps: ['Brave'], searchApps: ['Brave'] }))).toBe('Update: your Brave search completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Brave search'], searchApps: ['brave'] }))).toBe('Update: your Brave search completed, and Gmail confirmed the step completed. You weren’t charged for those steps.');
+        // a name Orbit lists that was not one of the Apps of the report changes nothing; so does an App it does not list
+        expect(reportText(lateOf({ apps: ['Gmail'], searchApps: ['Brave'] }))).toBe('Update: Gmail confirmed the step completed. You weren’t charged for that step.');
+        // the two we know are still said as searches when Orbit sends none (an Orbit from before)
+        expect(reportText(lateOf({ apps: ['Exa'] }))).toBe('Update: your Exa search completed. You weren’t charged for that step.');
+        // plain text like the names; read for a late report only
+        expect(lateOf({ apps: ['Brave'], searchApps: ['<b>Brave</b>', 7, null] }).searchApps).toEqual(['b Brave /b']);
+        expect(lateOf({ searchApps: 'Brave' }).searchApps).toEqual([]);
+        expect(computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done', seq: null, searchApps: ['Brave'] })?.searchApps).toEqual([]);
+        for (const searchApps of [['Brave'], []]) expect(reportText(lateOf({ apps: ['Brave'], searchApps })), String(searchApps)).not.toMatch(/went out|did go out|\bsent\b|delivered|after all/i);
     });
 
     it('names no more than five Apps, and says how many more, so it stays one short message', () => {

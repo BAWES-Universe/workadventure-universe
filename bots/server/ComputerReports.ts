@@ -70,6 +70,8 @@ export interface ComputerReport {
     apps: string[];
     /** Only for `late`: how many distinct Apps Orbit named in all (the whole of them, before `apps` keeps the few that are said), so "and N more" counts every one. 0 for every other kind. */
     appsTotal: number;
+    /** Only for `late`: which of those Apps Orbit says are search Apps (their step is a search), by the same display names; read together with the names we know ourselves. Empty for every other kind, or from an Orbit that sends none. */
+    searchApps: string[];
     /** Only for `late`: the time of the latest confirmation this batch covers, exactly as Orbit gave it (a time), said back in the acknowledgement so an App confirmed between the offer and the mark is not marked. Null for every other kind, or from an Orbit that sends none. */
     through: string | null;
     /** Only for `late`: Orbit let the Apps go unconfirmed, released their hold and was never paid for them: the one fact "you weren't charged" rests on. False for every other kind. */
@@ -147,6 +149,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     const kind = report.kind as ReportKind;
     const seq = typeof report.seq === 'number' && Number.isFinite(report.seq) ? report.seq : null;
     const { names: apps, total: appsTotal } = kind === 'late' ? appsOf(report.apps) : { names: [], total: 0 };
+    const searchApps = kind === 'late' ? appsOf(report.searchApps).names : [];
     // "You weren't charged" is only said when Orbit says the hold was released, and an App is only named when there is a name to say: otherwise there is nothing true to tell
     // Orbit numbers every late report, and refuses (400) the acknowledgement of one that has no number: a late report without a number is never told, so it is never acknowledged without one (a refusal that would come back for ever)
     if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true || seq === null)) return null;
@@ -174,6 +177,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         refundPendingMicros: typeof report.refundPendingMicros === 'number' && Number.isFinite(report.refundPendingMicros) && report.refundPendingMicros > 0 ? Math.round(report.refundPendingMicros) : 0,
         apps,
         appsTotal,
+        searchApps,
         holdReleased: kind === 'late' && report.holdReleased === true,
         through: kind === 'late' && typeof report.through === 'string' && Number.isFinite(Date.parse(report.through)) ? report.through : null,
     };
@@ -207,7 +211,8 @@ const sentence = (text: string): string => {
 const capital = (text: string): string => (text ? text[0].toUpperCase() + text.slice(1) : text);
 /** The Apps whose step is a search (it sends nothing): their late confirmation is said as the search that completed. */
 const SEARCH_APPS = new Set(['exa', 'tavily']);
-const isSearchApp = (name: string): boolean => SEARCH_APPS.has(name.toLowerCase().replace(/\s+search$/, '').trim());
+const searchName = (name: string): string => name.toLowerCase().replace(/\s+search$/, '').trim();
+const isSearchApp = (name: string, told: readonly string[] = []): boolean => SEARCH_APPS.has(searchName(name)) || told.some((one) => searchName(one) === searchName(name));
 /** The "N more" entry that stands for the Apps left out of the names. */
 const MORE_APPS = /^\d+ more$/;
 
@@ -305,8 +310,8 @@ export function reportText(report: ComputerReport): string {
             const named = total > APPS_NAMED ? [...report.apps.slice(0, APPS_NAMED - 1), `${total - (APPS_NAMED - 1)} more`] : report.apps;
             // What Orbit's record proves is that the provider confirmed a step of the App completed: "sent" or "delivered" is never said (Orbit names the App and nothing of what the step did;
             // a search App's step is a search, which sends nothing). A search App is said as its search that completed
-            const searches = named.filter(isSearchApp).map((one) => one.replace(/\s+search$/i, ''));
-            const others = named.filter((one) => !isSearchApp(one));
+            const searches = named.filter((one) => isSearchApp(one, report.searchApps)).map((one) => one.replace(/\s+search$/i, ''));
+            const others = named.filter((one) => !isSearchApp(one, report.searchApps));
             const several = others.length > 1 || others.some((one) => MORE_APPS.test(one));
             const said = [
                 ...(searches.length > 0 ? [`your ${list(searches)} ${searches.length === 1 ? 'search' : 'searches'} completed`] : []),
