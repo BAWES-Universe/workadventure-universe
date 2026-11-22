@@ -11,6 +11,7 @@ import {
     createComputerRunner,
     endingOf,
     whyOf,
+    continuePrompt,
     jobPrompt,
     outputFolderOf,
     probeRelay,
@@ -556,6 +557,16 @@ describe('a stop or a failed start that must not cost the job its words', () => 
         const { orbit, seen } = fakeOrbit([{ ok: false, reason: 'failed' }, done('[[done]]')]);
         await runJob(orbit);
         expect(seen.turns).toEqual([jobPrompt(JOB), jobPrompt(JOB)]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
+    it('a job that carries on an ended one ("try again") starts with the words of a new try, and sends those again when its first turn could not be taken', async () => {
+        const carried: RunnableJob = { ...JOB, jobId: 'job-2', continuesJobId: 'job-1' };
+        const { orbit, seen } = fakeOrbit([{ ok: false, reason: 'failed' }, done('[[done]]')]);
+        await runJob(orbit, carried);
+        const first = continuePrompt({ ...carried, continuesJobId: 'job-1' });
+        expect(seen.turns).toEqual([first, first]);
+        expect(first).not.toBe(jobPrompt(carried));
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
