@@ -2267,7 +2267,14 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
     /** The shared record of two bot servers, in memory: what each noted (a call arriving, a call taken up) and what the other reads of it. */
     const sharedRecord = () => {
         const called = new Map<string, number>();
-        const accepted = new Map<string, number>();
+        /** Every call taken up, with the job and the turn (and run) it was taken up for: a call with no turn counts for every turn, as in the store. */
+        const accepted: Array<{ server: string; jobId: string; at: number; key: string }> = [];
+        /** The latest moment another server than `id` took up a call of the job that counts for the turn (and run) `turn` (any when it is not known), or null. */
+        const othersLatest = (id: string, jobId: string, turn?: unknown): number | null => {
+            const key = keyOf(turn);
+            const moments = accepted.filter((one) => one.server !== id && one.jobId === jobId && (key === '' || one.key === '' || one.key === key)).map((one) => one.at);
+            return moments.length > 0 ? Math.max(...moments) : null;
+        };
         /** The moments of the fences written and not taken back, and the turn (and run) each was written for. */
         const fences: number[] = [];
         const fenceKeys = new Map<number, string>();
@@ -2305,17 +2312,17 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             },
             // a turn that was given up (fenced) takes no acceptance while its fence counts (30 seconds, or for good once it is committed), and the fence is written only when no
             // other server took one up: one step, as in the store
-            noteAccepted: async (_jobId: string, at: number, turn?: unknown) => {
+            noteAccepted: async (jobId: string, at: number, turn?: unknown) => {
                 if (refuses(at, turn)) return false;
-                accepted.set(id, Math.max(at, accepted.get(id) ?? 0));
+                accepted.push({ server: id, jobId, at, key: keyOf(turn) });
                 return true;
             },
-            closeTurn: async (_jobId: string, turn: unknown, from: number, at?: number) => {
+            closeTurn: async (jobId: string, turn: unknown, from: number, at?: number) => {
                 latency.began?.();
                 log.push('close');
                 if (latency.ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.ms));
-                const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
-                if (others.length > 0 && Math.max(...others) >= from - 2000) return false;
+                const others = othersLatest(id, jobId, turn);
+                if (others !== null && others >= from - 2000) return false;
                 fences.push(at ?? 0);
                 fenceKeys.set(at ?? 0, keyOf(turn));
                 counts.commits += 1;
@@ -2334,15 +2341,15 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 counts.retracts += 1;
             },
             // as the store does it, in one step: only the fence that holds exactly that moment becomes committed, and not over a call another server took up since the close counted from
-            commitFence: async (_jobId: string, _turn: unknown, at: number, from: number) => {
+            commitFence: async (jobId: string, turn: unknown, at: number, from: number) => {
                 latency.commitBegan?.();
                 log.push('commit');
                 if (latency.commitMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.commitMs));
                 counts.commitFences += 1;
                 if (commitSays.gone || !fences.includes(at)) return false;
                 if (!committed.includes(at)) {
-                    const others = [...accepted].filter(([server]) => server !== id).map(([, moment]) => moment);
-                    if (others.length > 0 && Math.max(...others) >= from - 2000) return false;
+                    const others = othersLatest(id, jobId, turn);
+                    if (others !== null && others >= from - 2000) return false;
                     committed.push(at);
                 }
                 return true;
@@ -2357,10 +2364,7 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 const at2 = fences.indexOf(at);
                 if (at2 >= 0) fences.splice(at2, 1);
             },
-            lastAcceptedByOthers: async () => {
-                const others = [...accepted].filter(([server]) => server !== id).map(([, at]) => at);
-                return others.length > 0 ? Math.max(...others) : null;
-            },
+            lastAcceptedByOthers: async (jobId: string, turn?: unknown) => othersLatest(id, jobId, turn),
         });
         return { forServer, accepted, latency, fences, counts, committed, log, commitSays };
     };
@@ -2534,6 +2538,39 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             expect(await alone.forServer('A').commitFence!(JOB.jobId, turn, 90_000, 0)).toBe(true);
         });
 
+        it('the fixture reads an acceptance by its job, turn and run, as the store does: an unrelated acceptance (another turn, run or job) permits the commit, a matching one or one with no turn blocks it, and the closing server\'s own does not', async () => {
+            const turn = { turn: 6, run: 'run1' };
+            const later = 50_000 + FENCE_LIFE_MS + 1;
+            const fenced = async () => {
+                const record = sharedRecord();
+                expect(await record.forServer('A').closeTurn!(JOB.jobId, turn, 0, 50_000)).toBe(true);
+                return record;
+            };
+            // another turn, another run, another job: the fence of turn 6 expired and server B took a call up for something else
+            for (const [name, jobId, other] of [['turn', JOB.jobId, { turn: 7, run: 'run1' }], ['run', JOB.jobId, { turn: 6, run: 'run2' }], ['job', 'job-2', turn]] as const) {
+                const record = await fenced();
+                expect(await record.forServer('B').noteAccepted!(jobId, later, other), name).toBe(true);
+                expect(await record.forServer('A').commitFence!(JOB.jobId, turn, 50_000, 0), name).toBe(true);
+            }
+            // the same turn and run, and a call whose turn is not known (it may be of any turn): the commit is refused
+            for (const [name, other] of [['matching', turn], ['unknown turn', undefined]] as const) {
+                const record = await fenced();
+                expect(await record.forServer('B').noteAccepted!(JOB.jobId, later, other), name).toBe(true);
+                expect(await record.forServer('A').commitFence!(JOB.jobId, turn, 50_000, 0), name).toBe(false);
+            }
+            // the closing server's own acceptance (it is in its own notes) does not block its commit
+            const own = await fenced();
+            expect(await own.forServer('A').noteAccepted!(JOB.jobId, later, turn)).toBe(true);
+            expect(await own.forServer('A').commitFence!(JOB.jobId, turn, 50_000, 0)).toBe(true);
+            // and the close itself reads them the same way: another turn's call does not stop a close, a matching one does
+            const closing = sharedRecord();
+            expect(await closing.forServer('B').noteAccepted!(JOB.jobId, 60_000, { turn: 7, run: 'run1' })).toBe(true);
+            expect(await closing.forServer('A').closeTurn!(JOB.jobId, turn, 0, 70_000)).toBe(true);
+            const stopped = sharedRecord();
+            expect(await stopped.forServer('B').noteAccepted!(JOB.jobId, 60_000, turn)).toBe(true);
+            expect(await stopped.forServer('A').closeTurn!(JOB.jobId, turn, 0, 70_000)).toBe(false);
+        });
+
         it('leaves the committed fence where it is when the finish was refused as stale: only an accepted finish takes it back (the next turn has a number of its own)', async () => {
             await withFakeClock(async () => {
                 const { record, notes, orbit, action } = rigGiveUp();
@@ -2601,6 +2638,95 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 // no turn was begun while the give-up was pending
                 expect(turns.turns).toBe(1);
                 expect(seen.cancels).toBe(1);
+            });
+        });
+
+        it('keeps the give-up owed across a stop and a start of the runner: the replacement worker for the same job sends the pending finish BEFORE any new turn, and the fence goes only after Orbit accepts it', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen, action } = rigGiveUp();
+                let attempts = 0;
+                const holder: { stop?: () => void } = {};
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish') {
+                        attempts += 1;
+                        record.log.push('finish');
+                        // the first try stops the runner while Orbit cannot be reached, and the replacement's first try fails too
+                        if (attempts === 1) holder.stop?.();
+                        if (attempts <= 2) throw new Error('Orbit could not be reached');
+                    }
+                    if (body.action === 'prepare') record.log.push('prepare');
+                    return action(botId, jobId, body);
+                };
+                const turns = retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const instance = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+                holder.stop = () => instance.stop();
+                orbit.running = async () => [JOB];
+                const first = instance.tick().then(() => instance.idle());
+                await vi.advanceTimersByTimeAsync(130_000);
+                await first;
+                // the first worker is gone with its finish untaken: the give-up is still owed, the fence still stands, and no second turn was opened
+                expect(attempts).toBe(1);
+                expect(record.committed).toHaveLength(1);
+                expect(record.counts.releases).toBe(0);
+                expect(turns.turns).toBe(1);
+                // the runner is started again: its worker for the same running job finishes the give-up first (a second try that fails, a third that is taken)
+                instance.start(1_000_000_000);
+                await vi.advanceTimersByTimeAsync(10_000);
+                await instance.idle();
+                instance.stop();
+                expect(attempts).toBe(3);
+                expect(turns.turns).toBe(1);
+                expect(seen.cancels).toBe(1);
+                expect(record.counts.releases).toBe(1);
+                expect(record.committed).toEqual([]);
+                // the same finish each time (the turn and run it was given up on), and the fence went after the accepted one, with no other turn between
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+                expect(finishedWithRun(seen).map((one) => one.run)).toEqual(['run1']);
+                expect(record.log.slice(-4)).toEqual(['finish', 'finish', 'finish', 'release']);
+                // settled is settled: a later worker for the job does not send the give-up again
+                instance.start(1_000_000_000);
+                await vi.advanceTimersByTimeAsync(10_000);
+                instance.stop();
+                await instance.idle();
+                expect(attempts).toBe(3);
+                expect(record.counts.releases).toBe(1);
+            });
+        });
+
+        it('a give-up Orbit says is stale is no longer owed: the replacement worker reads the job again and goes on, and the fence stays where it is', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, action } = rigGiveUp();
+                let attempts = 0;
+                const holder: { stop?: () => void } = {};
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish') {
+                        attempts += 1;
+                        if (attempts === 1) {
+                            holder.stop?.();
+                            throw new Error('Orbit could not be reached');
+                        }
+                        if (attempts === 2) throw stale();
+                    }
+                    return action(botId, jobId, body);
+                };
+                const turns = retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const instance = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+                holder.stop = () => instance.stop();
+                orbit.running = async () => [JOB];
+                const first = instance.tick().then(() => instance.idle());
+                await vi.advanceTimersByTimeAsync(130_000);
+                await first;
+                instance.start(1_000_000_000);
+                await vi.advanceTimersByTimeAsync(10_000);
+                // the job goes on (a new turn may begin now: the debt is over); it is stopped here
+                instance.stop();
+                await instance.idle();
+                // two finishes (the stale one ended the debt), and the fence of that turn stays
+                expect(attempts).toBe(2);
+                expect(record.counts.releases).toBe(0);
+                expect(record.committed).toHaveLength(1);
+                // and the replacement worker went on with the job: it read it again and opened a turn of its own
+                expect(turns.turns).toBe(2);
             });
         });
 
