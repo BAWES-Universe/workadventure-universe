@@ -37,6 +37,11 @@ export const JOB_STATUS_WORDS = {
             titled: (title) => `${title} is next in line and hasn't started yet. It starts by itself when the current job ends.`,
             plain: "Your job is next in line and hasn't started yet. It starts by itself when the current job ends.",
         } as Line,
+        /** A job that was paused (by the person, or because the month ran out mid-job): asking for it again never starts a second one (decisions 23 Nov, 3h, word for word). */
+        paused: {
+            titled: (title) => `${title} is paused. Want me to resume it?`,
+            plain: 'That one is paused. Want me to resume it?',
+        } as Line,
         other: {
             titled: (title) => `${title} is waiting for a free computer and hasn't started yet. It starts by itself.`,
             plain: "Your job is waiting for a free computer and hasn't started yet. It starts by itself.",
@@ -89,7 +94,7 @@ export function jobLine(note: JobNote): string {
         case 'ended':
             return pick(note.earlier ? JOB_STATUS_WORDS.ended.earlier : JOB_STATUS_WORDS.ended.now);
         case 'queued':
-            return pick(note.queuedFor === 'allowance' ? JOB_STATUS_WORDS.queued.allowance : note.queuedFor === 'turn' ? JOB_STATUS_WORDS.queued.turn : JOB_STATUS_WORDS.queued.other);
+            return pick(note.queuedFor === 'paused' ? JOB_STATUS_WORDS.queued.paused : note.queuedFor === 'allowance' ? JOB_STATUS_WORDS.queued.allowance : note.queuedFor === 'turn' ? JOB_STATUS_WORDS.queued.turn : JOB_STATUS_WORDS.queued.other);
         case 'recovered':
             return pick(note.earlier ? JOB_STATUS_WORDS.recovered.earlier : JOB_STATUS_WORDS.recovered.now);
         default:

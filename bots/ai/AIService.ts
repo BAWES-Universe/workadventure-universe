@@ -133,6 +133,7 @@ import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } fro
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import type { StartKeyStore } from '../server/ComputerStartKeys';
+import { CANCEL_JOB_TOOL, COMPUTER_JOBS_TOOL, JOB_FIRST_TOOL, PAUSE_JOB_TOOL, RESUME_JOB_TOOL, STOP_COMPUTER_TOOL, TELL_JOB_TOOL, computerControlToolDefinitions, newControlState, runComputerControlTool, startControlTurn } from './ComputerControlTools';
 import { COMPUTER_TOOL, ConfirmationQueue, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
@@ -1398,6 +1399,8 @@ export class AIService {
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
             forgetSettledStarts(memory?.computerStarts);
+            // A question Brick asked before cancelling or stopping a job is answered by this message only; this turn's controls start clean
+            startControlTurn(memory?.computerControls);
             memory?.sharedUncertain?.clear();
             memory?.sharedInFlight?.clear();
             memory?.sentAgain?.clear();
@@ -3741,7 +3744,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
-        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
+        // With it, Brick's controls of those jobs: see them, pause, carry on, do first, cancel one, stop, pass words on (computers full plan, piece 5)
+        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions(), ...computerControlToolDefinitions());
         // Tools: Instant Apps, exactly the list Orbit gave for this Brick. Owner only, in their Brick's direct messages.
         if (channel === 'dm' && !botClient) {
             if (instant) tools.push(...instantToolDefinitions(instant));
@@ -4163,6 +4167,26 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         });
         // A job started or queued changes what the bar says: read it fresh next time
         this.computerOnCache.delete(`${botId}|${userId}`);
+        return result;
+    }
+
+    /** Runs one of Brick's controls of its computer jobs for the person in this direct message. Orbit checks the owner and the job, as for a start. */
+    private async runComputerControlCall(name: string, args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        const userId = memory?.userUuid;
+        if (!admin || !where.botId || !userId || !memory || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
+        const result = await runComputerControlTool(name, args, {
+            admin,
+            botId: where.botId,
+            userId,
+            ...(typeof memory.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
+            state: (memory.computerControls ??= newControlState()),
+            // The fixed line of each control goes under the reply, and a question counts as asked once that reply reached them
+            ...(memory.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
+        });
+        // What the bar says has changed: read it fresh next time
+        this.computerOnCache.delete(`${where.botId}|${userId}`);
         return result;
     }
 
@@ -5196,6 +5220,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId, reviewed: reviewedApps, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
                         );
+                        break;
+
+                    case COMPUTER_JOBS_TOOL:
+                    case PAUSE_JOB_TOOL:
+                    case RESUME_JOB_TOOL:
+                    case JOB_FIRST_TOOL:
+                    case CANCEL_JOB_TOOL:
+                    case STOP_COMPUTER_TOOL:
+                    case TELL_JOB_TOOL:
+                        result = await this.runComputerControlCall(toolCall.name, typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {}, { adminApiService, botId, playerId });
                         break;
 
                     case ASK_PERSON_TOOL:
