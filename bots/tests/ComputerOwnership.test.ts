@@ -42,6 +42,8 @@ interface Options {
     prepare?: string;
     /** The job reads lag (a replica that has not seen another worker's claim): they show the epoch this worker claimed, whatever the job is on now. */
     staleReads?: boolean;
+    /** A handover is refused (`reason: refused`, a no from Orbit that is neither stale nor not_current). */
+    refuseHandover?: boolean;
     /** The first turn is answered `busy` (the agent is still on a turn of its own): the runner reads that one with a stream instead. */
     busy?: boolean;
 }
@@ -180,6 +182,10 @@ function ownedOrbit(job: RunnableJob, options: Options = {}) {
                 return { ok: true };
             }
             if (kind === 'handover') {
+                if (options.refuseHandover) {
+                    log(kind, 'refused', epoch, body);
+                    return { ok: false, reason: 'refused' };
+                }
                 // Lands only on the provider turn it names (a delayed handover of an old worker never holds the replacement's job)
                 if (typeof body.responseId === 'string' && body.responseId !== state.responseId) {
                     log(kind, 'not_current', epoch, body);
@@ -597,6 +603,66 @@ describe('GPT fifth note, E1/E2: the worker claims the job first, and names its 
             expect(fake.of('finish'), `read ${at}`).toEqual([]);
         }
         expect(stopped).toBeGreaterThan(2);
+    });
+
+    /** G71-1 (Opus): every way a job can END names the epoch the worker holds. One that did not was answered superseded, the run left with nothing ended, and the next tick claimed again with fresh counters. */
+    describe('every ending path names the owner epoch, and ends the job in ONE tick', () => {
+        const failing = () =>
+            async function* (): AsyncGenerator<RunnerEvent> {
+                yield { type: 'created', id: 'resp-1', sessionId: 's' };
+                yield { type: 'failed', code: 'model_error', message: 'no' };
+            };
+        const saying = (words: string) =>
+            async function* (): AsyncGenerator<RunnerEvent> {
+                yield { type: 'created', id: 'resp-1', sessionId: 's' };
+                yield { type: 'text', text: words };
+                yield { type: 'completed', outputText: words, usage: null };
+            };
+        const paths: Array<{ name: string; make: () => ReturnType<typeof ownedOrbit>; relay?: null; guard?: number; outcome: 'done' | 'failed' }> = [
+            { name: 'done', make: () => ownedOrbit(JOB, { epoch: 2 }), outcome: 'done' },
+            { name: 'the agent says it failed', make: () => ownedOrbit(JOB, { epoch: 2, turns: [saying('I cannot go on. [[failed]]')] }), outcome: 'failed' },
+            { name: 'more turns than allowed (maxTurns)', make: () => ownedOrbit(JOB, { epoch: 2, turns: [saying('Still on it.'), saying('Still on it.'), saying('Still on it.')] }), guard: 1, outcome: 'failed' },
+            { name: 'the machine could not be prepared', make: () => ownedOrbit(JOB, { epoch: 2, prepare: 'failed' }), outcome: 'failed' },
+            { name: 'the machine cannot reach the relay (unreachable)', make: () => ownedOrbit(JOB, { epoch: 2, prepare: 'relay_unreachable' }), outcome: 'failed' },
+            { name: 'no relay is set up for the runner at all', make: () => ownedOrbit(JOB, { epoch: 2 }), relay: null, outcome: 'failed' },
+            { name: 'a handover Orbit refuses', make: () => ownedOrbit(JOB, { epoch: 2, refuseHandover: true, turns: [saying('Need you. [[handover signin]]')] }), outcome: 'failed' },
+            { name: 'the bad-turn streak (three turns in a row end badly)', make: () => ownedOrbit(JOB, { epoch: 2, turns: [failing(), failing(), failing(), failing(), failing()] }), outcome: 'failed' },
+        ];
+        for (const path of paths) {
+            it(`${path.name}: one tick ends the job on the owner epoch (nothing answered superseded), and two more ticks claim nothing new`, async () => {
+                const allowed = RUNNER_GUARDS.maxTurns;
+                if (path.guard !== undefined) RUNNER_GUARDS.maxTurns = path.guard;
+                try {
+                    const fake = path.make();
+                    let runs = 0;
+                    const instance = createComputerRunner({ orbit: fake.orbit, relayUrl: path.relay === undefined ? RELAY : path.relay, sleep: yielding, log: quiet(), timing: TIMING, runId: () => `run${++runs}` });
+                    for (let tick = 0; tick < 3; tick++) {
+                        fake.orbit.running = async () => [JOB];
+                        await instance.tick();
+                        await instance.idle();
+                    }
+                    expect(fake.state.ended, path.name).toMatchObject({ outcome: path.outcome, by: 'finish' });
+                    // every request that changes anything names the epoch the one claim gave
+                    expect(fake.of('claim'), path.name).toHaveLength(1);
+                    expect(fake.state.ownerEpoch, path.name).toBe(3);
+                    for (const row of fake.requests().filter((one) => one.kind !== 'job' && one.kind !== 'claim')) expect(row.epoch, `${path.name}: ${row.kind}`).toBe(3);
+                    expect(fake.state.superseded, path.name).toEqual([]);
+                    expect(fake.of('finish'), path.name).toHaveLength(1);
+                } finally {
+                    RUNNER_GUARDS.maxTurns = allowed;
+                }
+            });
+        }
+
+        it('a finish kept by Orbit (an intent) is completed by the next worker on the owner epoch it reads, and ends the job once', async () => {
+            const fake = ownedOrbit(JOB, { epoch: 2 });
+            fake.state.pending = { outcome: 'failed', cause: 'ours', why: 'The machine was busy.', turns: [1], run: 'old', generation: 1, by: 2 };
+            await runJob(fake);
+            expect(fake.state.ended).toMatchObject({ outcome: 'failed' });
+            expect(fake.of('finish')).toHaveLength(1);
+            expect(fake.of('finish')[0].epoch).toBe(2);
+            expect(fake.state.superseded).toEqual([]);
+        });
     });
 });
 

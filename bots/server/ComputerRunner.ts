@@ -1495,7 +1495,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 // The cause is a hint: Orbit reads the call rows of each turn named here. A confirmed fault anywhere in the streak is ours; else the person's
                 // side (a silent turn, their allowance or a rule) makes it the agent's; else it is unresolved, for Orbit's bounded goodwill
                 const cause: FinishCause = confirmed ? 'ours' : notOurs ? 'agent' : 'ours';
-                if ((await finish(job, 'failed', { signal, cause, generation, turns: badTurns, run })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause, generation, turns: badTurns, run, ...held() })) === 'stale') {
                     await readAgain();
                     continue;
                 }
