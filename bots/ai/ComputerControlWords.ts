@@ -6,8 +6,7 @@
  *
  * WORDING STATUS
  *  - MOCK: section 10 of the steering mock ("Steering a computer job while it works", artifact QpheiJANyQuSQKZNCwbAxp), APPROVED by Khalid on 23 Nov ("Steering mock looks good"), word for word.
- *  - FINAL: every other line, word for word from Fable's final strings of 23 Nov (computers-full-plan-23-nov/brick-control-words-final-23-nov.md), shown to Khalid for his yes
- *    (expect at most one-line edits, here only).
+ *  - FINAL: every other line, word for word from Fable's final strings of 23 Nov (computers-full-plan-23-nov/brick-control-words-final-23-nov.md), APPROVED by Khalid on 23 Nov.
  * House rules: plain words, "Apps", never a price or how much of the month is left, no legal wording, the job's title in curly quotes (`quotedTitle`).
  */
 import { quotedTitle } from './JobStatusLine';
