@@ -333,6 +333,17 @@ function staleForOrbit(error: unknown): boolean {
     return response?.status === 409 && response.data?.reason === 'stale';
 }
 
+/**
+ * Whether an answer says the run it came from is no longer the job's current run (Orbit's run fence), as against a turn of an old control generation. Both are `stale`; this one
+ * says `run: 'superseded'`, in a 200 or in the body of a 409.
+ */
+function runStaleOf(body: unknown): boolean {
+    if (typeof body !== 'object' || body === null) return false;
+    const answer = body as { ok?: unknown; reason?: unknown; run?: unknown; response?: { data?: unknown } };
+    if (answer.response) return runStaleOf(answer.response.data);
+    return answer.reason === 'stale' && answer.run === 'superseded';
+}
+
 /** An action for Orbit, with the control generation the turn started on when Orbit gave one (so an action from an older turn changes nothing). */
 function fenced(body: Record<string, unknown>, generation: number | undefined): Record<string, unknown> {
     return generation === undefined ? body : { ...body, generation };
@@ -388,6 +399,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     let generation = 0;
     // Whether a 400 for the finish intent has been reported to Sentry by this runner (once)
     let reportedBadIntent = false;
+    /**
+     * Orbit orders the runs of a job (the run fence): what a run sends (a finish, a finish intent, a renew) is answered stale, saying so, once another run of the same job has prepared
+     * its machine since. A run so answered is over: it ends its loop and cancels nothing, since the machine and the job are the replacement's now. Kept by run (a run names itself once).
+     */
+    const superseded = new Set<string>();
+    /** Notes a stale answer as the end of THIS run when Orbit says another run holds the job (not an old control generation: that one is read again as usual). */
+    const noteRunStale = (run: string | undefined, body: unknown): void => {
+        if (run && runStaleOf(body)) superseded.add(run);
+    };
 
     // What a failure says can hold what a request held (an address, a header): nothing secret reaches a log
     const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? redactSecrets(error.message) : '');
@@ -421,13 +441,18 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // The turns this runner judged failed (the ones the streak was made of), which Orbit reads against the call rows of each
             // `run` says which run of this runner they were numbered in: turns start again from 1 after a restart, so Orbit reads a named turn
             // only against the rows of that run
-            ...(outcome === 'failed' && turns && turns.length > 0 ? { turns: [...turns], ...(run ? { run } : {}) } : {}),
+            ...(outcome === 'failed' && turns && turns.length > 0 ? { turns: [...turns] } : {}),
+            // Every finish names the run it comes from, a done one too: Orbit answers a run that another run has replaced stale, so a delayed end of an old run never ends the work of the replacement
+            ...(run ? { run } : {}),
         };
         await orbit
             .action(job.botId, job.jobId, fenced(body, generation))
             .then((answer) => {
                 // Orbit says "stale" in a 200 too (an older generation than the job's own): nothing was ended
-                if (answer.ok === false && answer.reason === 'stale') stale = true;
+                if (answer.ok === false && answer.reason === 'stale') {
+                    stale = true;
+                    noteRunStale(run, answer);
+                }
                 // Only Orbit's own word that it ended the job (the job as it stands, or `ok: true`) says so: an empty 200, or a body that says nothing of the job, came from something on the way (or
                 // an Orbit that did not do it), and the end is not taken as made: whatever waited for it (a committed fence, a pending give-up) waits on
                 else if (!(answer.ok === true || (typeof answer.job === 'object' && answer.job !== null))) {
@@ -436,8 +461,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 }
             })
             .catch((error) => {
-            if (staleForOrbit(error)) stale = true;
-            else {
+            if (staleForOrbit(error)) {
+                stale = true;
+                noteRunStale(run, error);
+            } else {
                 unsent = true;
                 say('Could not end a job:', error);
             }
@@ -593,6 +620,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (kept !== 'kept') {
                 await takeBack();
                 if (kept === 'stale') stalled = true;
+                // Another run holds the job now: this turn is not the job's any more, it stops (nothing is cancelled: the machine is the replacement's)
+                if (kept === 'stale' && superseded.has(ids.run)) turnController.abort();
                 return;
             }
             // Orbit holds the end: the fence is COMMITTED now (it holds for as long as the cancel and the finish take). A commit that is refused or never confirmed does not stop the
@@ -647,9 +676,16 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const renew = async () => {
             if (turnController.signal.aborted) return;
             try {
-                const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'renew' }, generation));
+                const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'renew', run: ids.run }, generation));
                 // An answer that comes after its turn ended is not this turn's to use: a newer turn may hold a newer deadline by now
                 if (turnController.signal.aborted) return;
+                if (answer.ok === false && runStaleOf(answer)) {
+                    // Another run holds the job: this turn stops and this run is over, and nothing is cancelled (the machine is the replacement's)
+                    superseded.add(ids.run);
+                    lost = true;
+                    turnController.abort();
+                    return;
+                }
                 if (answer.ok === false) {
                     // Its room is gone and Orbit has stopped it: the agent stops too
                     lost = true;
@@ -662,6 +698,12 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 renewTimer = setTimeout(() => void renew(), next * 1000);
             } catch (error) {
                 if (turnController.signal.aborted) return;
+                if (staleForOrbit(error) && runStaleOf(error)) {
+                    superseded.add(ids.run);
+                    lost = true;
+                    turnController.abort();
+                    return;
+                }
                 // Orbit answered and refused (the job is over or gone): the agent stops, as when it says the room is gone
                 if (refusedByOrbit(error)) {
                     lost = true;
@@ -847,11 +889,18 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'finish-intent', outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, basis: 'pool', turns: [ids.turn], run: ids.run }, generation));
             if (answer.ok === true) return 'kept';
             if (answer.ok === false && answer.reason === 'cutoff') return 'kept';
-            if (answer.ok === false && answer.reason === 'stale') return 'stale';
+            if (answer.ok === false && answer.reason === 'stale') {
+                noteRunStale(ids.run, answer);
+                return 'stale';
+            }
             return 'unsent';
         } catch (error) {
             const status = statusOf(error);
             if (status === 404) return 'stale';
+            if (staleForOrbit(error)) {
+                noteRunStale(ids.run, error);
+                return 'stale';
+            }
             if (status === 400) {
                 // Said in the log every time, and to Sentry once (no words of anyone's): the stop protection is not silently dropped
                 say('Orbit answered the finish intent with 400: no give-up is made, the job goes on.');
@@ -972,6 +1021,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let seenFromStart = false;
         for (;;) {
             if (signal.aborted) return;
+            // Another run of this job holds it now (Orbit said so): this run does nothing more, and cancels nothing. (This process never has two workers on one job: a worker is
+            // taken up again only after the one before it has ended, so a replaced run in this process is told by Orbit's answer, never by a second worker)
+            if (superseded.has(run)) return;
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
             if (state === null || (state && over(state.status))) return;
             if (state === undefined) {
@@ -1021,7 +1073,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             };
             if (++turns > RUNNER_GUARDS.maxTurns) {
                 say('A job took more turns than allowed and was ended.');
-                if ((await finish(job, 'failed', { signal, cause: 'agent', generation })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'agent', generation, run })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -1036,7 +1088,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             if (ready === 'failed') {
-                if ((await finish(job, 'failed', { signal, cause: 'ours', generation })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'ours', generation, run })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -1079,6 +1131,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (freshWindow && accepted.joined) seenFromStart = false;
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
+            // Orbit said another run holds the job while the turn went on (its intent or a renew was answered so): nothing of this turn is judged or ended, and nothing is cancelled
+            if (superseded.has(run)) return;
             if (result.kind === 'poolBusy') {
                 // Every call of the turn was refused for want of room: a confirmed fault of ours (nothing the job or the person did can cause it), noted on
                 // this turn of this run, and the job is ended in plain words without waiting out the retries of the machine
@@ -1169,7 +1223,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
             const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
             if (ending.kind === 'done' || ending.kind === 'failed') {
-                const ended = ending.kind === 'done' ? await finish(job, 'done', { generation, signal }) : await finish(job, 'failed', { signal, cause: 'agent', generation, why: whyOf(result.words) });
+                const ended = ending.kind === 'done' ? await finish(job, 'done', { generation, signal, run }) : await finish(job, 'failed', { signal, cause: 'agent', generation, run, why: whyOf(result.words) });
                 if (ended === 'stale') {
                     await readAgain();
                     continue;
@@ -1225,7 +1279,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     continue;
                 }
                 if (!handed) {
-                    if ((await finish(job, 'failed', { signal, cause: refusedHandover ? 'agent' : 'ours', generation })) === 'stale') {
+                    if ((await finish(job, 'failed', { signal, cause: refusedHandover ? 'agent' : 'ours', generation, run })) === 'stale') {
                         await readAgain();
                         continue;
                     }
