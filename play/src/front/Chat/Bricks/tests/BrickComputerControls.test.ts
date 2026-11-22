@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
     barJob,
+    allJobs,
     barState,
     endQuestion,
     inLine,
     isPaused,
     jobControls,
+    jobRowState,
     jobsStopEnds,
     parseBrickComputer,
     parseComputerJob,
@@ -149,43 +151,22 @@ describe("the taps a job row offers", () => {
         expect(jobControls(view({ queued: [paused("p1")] }), "p1")).toEqual(["resume", "cancel"]);
     });
 
-    it("offers Do this next now on the next job while another runs, and no move first it does not need", () => {
-        expect(jobControls(view({ queued: [waiting("w1")] }), "w1")).toEqual(["first-now", "pause", "cancel"]);
+    it("offers only Cancel on the job already next in line: it starts as soon as the computer is free", () => {
+        expect(jobControls(view({ queued: [waiting("w1")] }), "w1")).toEqual(["cancel"]);
+        expect(jobControls(view({ machine: "resting", job: null, queued: [waiting("w1")] }), "w1")).toEqual(["cancel"]);
     });
 
-    it("offers one Do this next on a job further back in line: it pauses what runs and starts this one", () => {
-        expect(jobControls(view({ queued: [waiting("w1"), waiting("w2")] }), "w2")).toEqual([
-            "first-now",
-            "pause",
-            "cancel",
-        ]);
-    });
-
-    it("counts only jobs that start by themselves when it decides what is next: a paused job ahead does not count", () => {
-        expect(jobControls(view({ queued: [paused("p1"), waiting("w1")] }), "w1")).toEqual([
-            "first-now",
-            "pause",
-            "cancel",
-        ]);
-    });
-
-    it("makes Do this next only move the job to the front while the person holds the screen: nothing is paused then", () => {
-        const now = view({
+    it("offers Do this next on a job further back in line: it moves first, and nothing running is paused", () => {
+        expect(jobControls(view({ queued: [waiting("w1"), waiting("w2")] }), "w2")).toEqual(["first", "cancel"]);
+        const held = view({
             job: job({ status: "waiting", control: "person" }),
             queued: [waiting("w1"), waiting("w2")],
         });
-        expect(jobControls(now, "w2")).toEqual(["first", "pause", "cancel"]);
-        expect(jobControls(now, "w1")).toEqual(["pause", "cancel"]);
+        expect(jobControls(held, "w2")).toEqual(["first", "cancel"]);
     });
 
-    it("offers no move first on the next job when nothing runs: it starts by itself", () => {
-        expect(jobControls(view({ machine: "resting", job: null, queued: [waiting("w1")] }), "w1")).toEqual([
-            "pause",
-            "cancel",
-        ]);
-        expect(
-            jobControls(view({ machine: "resting", job: null, queued: [waiting("w1"), waiting("w2")] }), "w2")
-        ).toEqual(["first", "pause", "cancel"]);
+    it("counts only jobs that start by themselves when it decides what is next: a paused job ahead does not count", () => {
+        expect(jobControls(view({ queued: [paused("p1"), waiting("w1")] }), "w1")).toEqual(["cancel"]);
     });
 
     it("offers nothing for a job it does not show, or on a computer that is off", () => {
@@ -199,49 +180,80 @@ describe("the taps a job row offers", () => {
     });
 });
 
-describe("Stop and Cancel always ask first", () => {
+describe("when Stop and Cancel ask first (the approved steering mock)", () => {
     it("ends the running job and every job in line with Stop, paused ones too", () => {
         const now = view({ queued: [waiting("w1"), paused("p1")] });
         expect(jobsStopEnds(now).map((each) => each.id)).toEqual(["j1", "w1", "p1"]);
-        expect(endQuestion(now, { stop: true })).toMatchObject({ kind: "all" });
-        const asked = endQuestion(now, { stop: true });
-        expect(asked?.kind === "all" && asked.jobs).toHaveLength(3);
     });
 
-    it("asks about the one job when Stop would end only one, and offers Pause instead", () => {
-        expect(endQuestion(view(), { stop: true })).toEqual({ kind: "one", job: view().job, pauseInstead: true });
+    it("asks before Stop ends several jobs, naming each", () => {
+        const asked = endQuestion(view({ queued: [waiting("w1"), paused("p1")] }), { stop: true });
+        expect(asked?.kind).toBe("all");
+        expect(asked?.kind === "all" && asked.jobs.map((each) => each.id)).toEqual(["j1", "w1", "p1"]);
     });
 
-    it("offers no Pause instead while the person holds the screen", () => {
+    it("ends a single job at once on Stop: no question", () => {
+        expect(endQuestion(view(), { stop: true })).toBeNull();
+        expect(endQuestion(view({ machine: "resting", job: null, queued: [paused("p1")] }), { stop: true })).toBeNull();
+    });
+
+    it("names a job that has run back before Cancel ends it: running, held by the person, or paused after it ran", () => {
+        expect(endQuestion(view(), { cancel: "j1" })).toMatchObject({ kind: "one", job: { id: "j1" } });
         const held = view({ job: job({ status: "waiting", control: "person" }) });
-        expect(endQuestion(held, { stop: true })).toMatchObject({ kind: "one", pauseInstead: false });
-        expect(endQuestion(held, { cancel: "j1" })).toMatchObject({ kind: "one", pauseInstead: false });
+        expect(endQuestion(held, { cancel: "j1" })).toMatchObject({ kind: "one" });
+        const ran = view({ machine: "resting", job: null, queued: [paused("p1", { pausedBefore: true })] });
+        expect(endQuestion(ran, { cancel: "p1" })).toMatchObject({ kind: "one", job: { id: "p1" } });
+        const back = view({ queued: [waiting("w1", { pausedBefore: true })] });
+        expect(endQuestion(back, { cancel: "w1" })).toMatchObject({ kind: "one" });
     });
 
-    it("offers no Pause instead for a job that is already paused", () => {
-        const now = view({ machine: "resting", job: null, queued: [paused("p1")] });
-        expect(endQuestion(now, { stop: true })).toMatchObject({ kind: "one", pauseInstead: false });
-        expect(endQuestion(now, { cancel: "p1" })).toMatchObject({ kind: "one", pauseInstead: false });
-    });
-
-    it("asks Cancel about that one job only, whatever else is there, and offers Pause instead", () => {
+    it("cancels a job that never started at once: nothing is lost", () => {
         const now = view({ queued: [waiting("w1"), paused("p1")] });
-        expect(endQuestion(now, { cancel: "w1" })).toMatchObject({
-            kind: "one",
-            job: { id: "w1" },
-            pauseInstead: true,
-        });
-        expect(endQuestion(now, { cancel: "j1" })).toMatchObject({
-            kind: "one",
-            job: { id: "j1" },
-            pauseInstead: true,
-        });
+        expect(endQuestion(now, { cancel: "w1" })).toBeNull();
+        expect(endQuestion(now, { cancel: "p1" })).toBeNull();
     });
 
     it("asks nothing when there is nothing to end", () => {
         expect(endQuestion(view({ machine: "resting", job: null }), { stop: true })).toBeNull();
         expect(endQuestion(view(), { cancel: "gone" })).toBeNull();
         expect(endQuestion(undefined, { stop: true })).toBeNull();
+    });
+});
+
+describe("what a job's row says it is doing", () => {
+    it("tells working, waiting for the person, paused, comes back next, next, in line, out of time and busy apart", () => {
+        const now = view({
+            queued: [
+                waiting("back", { pausedBefore: true }),
+                waiting("w2"),
+                waiting("used", { queuedFor: "allowance" }),
+                waiting("full", { queuedFor: "pool" }),
+                paused("p1"),
+            ],
+        });
+        expect(jobRowState(now, now.job as ComputerJob)).toBe("working");
+        expect(jobRowState(view({ machine: "waking" }), job())).toBe("waking");
+        expect(jobRowState(now, job({ status: "waiting" }))).toBe("waiting-you");
+        const state = (id: string) => jobRowState(now, now.queued.find((each) => each.id === id) as ComputerJob);
+        expect(state("back")).toBe("comes-back");
+        expect(state("w2")).toBe("in-line");
+        expect(state("used")).toBe("used-up");
+        expect(state("full")).toBe("busy");
+        expect(state("p1")).toBe("paused");
+        const plain = view({ queued: [waiting("w1")] });
+        expect(jobRowState(plain, plain.queued[0])).toBe("next");
+    });
+
+    it("lists every job the way the person reads them: the one working, the line, then the paused ones", () => {
+        const now = view({ queued: [paused("p1"), waiting("w1"), waiting("w2")] });
+        expect(allJobs(now).map((each) => each.id)).toEqual(["j1", "w1", "w2", "p1"]);
+        expect(allJobs(undefined)).toEqual([]);
+    });
+
+    it("reads a job that ran before from pausedBefore or from a count of its pauses", () => {
+        expect(waiting("w1", { pausedBefore: true }).pausedBefore).toBe(true);
+        expect(waiting("w1", { pauses: 2 }).pausedBefore).toBe(true);
+        expect(waiting("w1").pausedBefore).toBe(false);
     });
 });
 
@@ -256,8 +268,8 @@ describe("a job's Activity", () => {
                 ],
             })
         ).toEqual([
-            { seq: 1, label: "Opened the visa site", at: "2026-11-23T08:01:00.000Z" },
-            { seq: 2, label: "Filled in the dates", at: "2026-11-23T08:02:00.000Z" },
+            { seq: 1, label: "Opened the visa site", at: "2026-11-23T08:01:00.000Z", kind: "step", detail: null },
+            { seq: 2, label: "Filled in the dates", at: "2026-11-23T08:02:00.000Z", kind: "step", detail: null },
         ]);
     });
 
@@ -266,7 +278,27 @@ describe("a job's Activity", () => {
             parseJobActivity({
                 steps: [{ seq: 1, label: "  " }, { label: "No number" }, null, { seq: 3, label: "Saved the form" }],
             })
-        ).toEqual([{ seq: 3, label: "Saved the form", at: null }]);
+        ).toEqual([{ seq: 3, label: "Saved the form", at: null, kind: "step", detail: null }]);
+    });
+
+    it("reads what kind of line it is and its detail, and takes a kind it does not know as a step", () => {
+        expect(
+            parseJobActivity({
+                steps: [
+                    { seq: 1, label: "Opened the visa site", detail: "evisa.gov.kw" },
+                    { seq: 2, label: "Your message: business visa", kind: "note" },
+                    { seq: 3, label: "Paused by you", kind: "pause" },
+                    { seq: 4, label: "Carried on", kind: "resume" },
+                    { seq: 5, label: "Something", kind: "explosion", detail: "  " },
+                ],
+            })?.map((step) => [step.kind, step.detail])
+        ).toEqual([
+            ["step", "evisa.gov.kw"],
+            ["note", null],
+            ["pause", null],
+            ["resume", null],
+            ["step", null],
+        ]);
     });
 
     it("is nothing it can read when Orbit did not send steps", () => {

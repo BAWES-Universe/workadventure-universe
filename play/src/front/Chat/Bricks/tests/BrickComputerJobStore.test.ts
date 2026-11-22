@@ -252,7 +252,9 @@ describe("a job's Activity", () => {
 
     it("reads the steps and keeps what it had when a read fails", async () => {
         game.getBrickComputerJobActivity.mockResolvedValueOnce({ steps: [{ seq: 1, label: "Opened the visa site" }] });
-        expect(await loadJobActivity(BRICK, "a1")).toEqual([{ seq: 1, label: "Opened the visa site", at: null }]);
+        expect(await loadJobActivity(BRICK, "a1")).toEqual([
+            { seq: 1, label: "Opened the visa site", at: null, kind: "step", detail: null },
+        ]);
         game.getBrickComputerJobActivity.mockRejectedValueOnce(new Error("offline"));
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         expect(await loadJobActivity(BRICK, "a1")).toBeUndefined();

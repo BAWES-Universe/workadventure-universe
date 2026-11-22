@@ -10,6 +10,7 @@
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
     import { canWatch, holdsComputer, sentenceStart } from "./BrickComputer";
+    import { askToEnd } from "./OpenComputerJobs";
     import type { BrickRef } from "./BrickScreenStore";
     import BrickScreenView from "./BrickScreenView.svelte";
     import { IconCircleCheck, IconHandFinger, IconId, IconLoader2 } from "@wa-icons";
@@ -50,6 +51,14 @@
 
     function act(action: "stop" | "take-over" | "hand-back" | "fill-details") {
         if (busy) return;
+        // Stop ends every job on the computer (asking first when that is several): the screen closes once something has ended
+        if (action === "stop") {
+            const brickAtTap = brick.id;
+            askToEnd(brick, { stop: true }, () => {
+                if (!gone && brick.id === brickAtTap) onClose();
+            });
+            return;
+        }
         busy = true;
         // The tap approves what is on screen: what Brick named is sent back, so Orbit refuses it if Brick named something else since
         const shown =
@@ -68,8 +77,7 @@
                 else if (action === "fill-details") {
                     tapped = true;
                     tappedRound = roundAtTap;
-                } else if (action === "stop") onClose();
-                else if (action === "hand-back") tapped = false;
+                } else if (action === "hand-back") tapped = false;
             })
             .catch((error) => console.error(error))
             .finally(() => {

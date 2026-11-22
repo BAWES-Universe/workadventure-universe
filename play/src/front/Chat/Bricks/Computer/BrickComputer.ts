@@ -29,6 +29,8 @@ export interface ComputerJob {
     /** When a paused job was paused (ISO), and why. Null for every job that is not paused. */
     pausedAt: string | null;
     pausedWhy: PausedWhy | null;
+    /** The job ran and was paused before, and now waits in line to carry on by itself ("Do this first" put it back). */
+    pausedBefore: boolean;
 }
 
 /** How the last job ended, when the person should hear it: nobody answered its handover, or this month's computer time ran out. */
@@ -89,6 +91,7 @@ export function parseComputerJob(value: unknown): ComputerJob | undefined {
         control: row.control === "person" ? "person" : "brick",
         ready: what && where ? { what, where } : null,
         ...pausedOf(row),
+        pausedBefore: row.pausedBefore === true || (typeof row.pauses === "number" && row.pauses > 0),
     };
 }
 
@@ -216,16 +219,15 @@ export function barJob(view: BrickComputerView | undefined): ComputerJob | null 
 }
 
 /**
- * The calls a person can make on one job of a Brick's computer (game piece 7 of the computers plan). Orbit decides; these only say
- * which taps make sense for what the page shows now, so a tap Orbit would refuse is not offered.
- * - pause: the job holding the computer while Brick has it (not while the person has taken the screen over: they hand it back
- *   first), or a job waiting in line, which then stays out of the line until Resume.
+ * The calls a person can make on one job of a Brick's computer (game piece 7 of the computers plan, as the approved steering mock
+ * draws them). Orbit decides; these only say which taps make sense for what the page shows now, so a tap Orbit would refuse is not
+ * offered.
+ * - pause: the job holding the computer while Brick has it. Never while the person holds the screen: they hand it back first.
  * - resume: a paused job.
- * - Do this next, one tap that does all of it: "first-now" pauses the job holding the computer, starts this one at once, and the
- *   paused one goes on by itself afterwards. While nothing can be paused (the computer is free, or the person holds its screen) it is
- *   "first": the job moves to the front of the line. Not offered on the job that is already next with the computer free: it starts
- *   by itself.
- * - cancel: any one job, running, waiting, in line or paused. The others carry on. It always asks first (see `endQuestion`).
+ * - first ("Do this next"): a job waiting in line that is not already next. It moves to the front; nothing running is paused.
+ *   Pausing what runs to start another at once ("first-now") is said to Brick in words ("do this first, then the visa").
+ * - cancel: any one job, running, waiting, in line or paused. The others carry on. A job that has run is named back first (see
+ *   `endQuestion`).
  */
 export type JobControl = "pause" | "resume" | "first" | "first-now" | "cancel";
 
@@ -238,45 +240,86 @@ export function jobControls(view: BrickComputerView | undefined, jobId: string):
     const job = view.queued.find((queued) => queued.id === jobId);
     if (!job) return [];
     if (isPaused(job)) return ["resume", "cancel"];
-    const controls: JobControl[] = [];
-    if (holder?.control === "brick") controls.push("first-now");
     // The job already next in line gains nothing from moving first: it starts as soon as the computer is free
-    else if (inLine(view)[0]?.id !== jobId) controls.push("first");
-    controls.push("pause", "cancel");
-    return controls;
+    return inLine(view)[0]?.id === jobId ? ["cancel"] : ["first", "cancel"];
 }
+
+/**
+ * What a job's row says it is doing, for the words beside its title:
+ * - working / waking / waiting-you: it has the computer (waiting-you: it waits for the person's details, sign-in, and so on).
+ * - paused: paused by the person, by this month's time running out, or at their own spending limit (see `pausedWhy`).
+ * - comes-back: it ran, was paused to let another job go first, and carries on next, by itself.
+ * - next / in-line / used-up / busy: it waits in line: next, further back, for more computer time, or for a free computer.
+ */
+export type JobRowState =
+    | "working"
+    | "waking"
+    | "waiting-you"
+    | "paused"
+    | "comes-back"
+    | "next"
+    | "in-line"
+    | "used-up"
+    | "busy";
+
+export function jobRowState(view: BrickComputerView, job: ComputerJob): JobRowState {
+    if (job.status === "running" || job.status === "waiting") {
+        if (job.status === "waiting") return "waiting-you";
+        return view.machine === "waking" || view.machine === "restoring" ? "waking" : "working";
+    }
+    if (job.queuedFor === "paused") return "paused";
+    if (job.queuedFor === "allowance") return "used-up";
+    if (job.queuedFor === "busy" || job.queuedFor === "pool") return "busy";
+    const next = inLine(view)[0]?.id === job.id;
+    if (next && job.pausedBefore) return "comes-back";
+    return next ? "next" : "in-line";
+}
+
+/** Every job of the computer in the order the person reads them: the one holding it, then the line as Orbit starts it, then paused jobs. */
+export const allJobs = (view: BrickComputerView | undefined): ComputerJob[] =>
+    view ? [...(holdsComputer(view.job) ? [view.job] : []), ...inLine(view), ...pausedJobs(view)] : [];
 
 /** Every job Stop ends: the one holding the computer and every job in line, paused ones too. */
 export const jobsStopEnds = (view: BrickComputerView | undefined): ComputerJob[] =>
     view ? [...(holdsComputer(view.job) ? [view.job] : []), ...view.queued] : [];
 
 /**
- * The question Stop and Cancel always ask before anything ends, since Pause is the safe choice and the question teaches the difference.
- * - "one": a single job would end. It offers Pause instead when that job can be paused (`pauseInstead`), never while the person holds
- *   its screen.
- * - "all": Stop would end several jobs: "Keep going" or "Stop all", with how many.
- * Null when there is nothing to end.
+ * Whether Stop or Cancel asks first on the panel, and what it asks (the approved steering mock, which wins over the earlier "always
+ * ask" decision on the panel):
+ * - Stop with several jobs: "all", each job named, Keep them or Stop all. Stop with one job ends it at once: null.
+ * - Cancel of a job that has run (it holds the computer, or ran before it was paused): "one", the job named back before it ends.
+ *   Cancel of a job that never started ends at once: nothing is lost and nothing was charged: null.
+ * Null also when there is nothing to end.
  */
-export type EndQuestion =
-    | { kind: "one"; job: ComputerJob; pauseInstead: boolean }
-    | { kind: "all"; jobs: ComputerJob[] };
+export type EndQuestion = { kind: "one"; job: ComputerJob } | { kind: "all"; jobs: ComputerJob[] };
+
+/** A job that has used computer time: it holds the computer now, or it ran before it was paused or put back in line. */
+export const hasStarted = (job: ComputerJob): boolean =>
+    job.status === "running" || job.status === "waiting" || job.pausedBefore;
 
 export function endQuestion(
     view: BrickComputerView | undefined,
     what: { stop: true } | { cancel: string }
 ): EndQuestion | null {
-    const ending = "stop" in what ? jobsStopEnds(view) : jobsStopEnds(view).filter((job) => job.id === what.cancel);
-    if (ending.length === 0) return null;
-    if (ending.length > 1) return { kind: "all", jobs: ending };
-    const [job] = ending;
-    return { kind: "one", job, pauseInstead: jobControls(view, job.id).includes("pause") };
+    if ("stop" in what) {
+        const ending = jobsStopEnds(view);
+        return ending.length > 1 ? { kind: "all", jobs: ending } : null;
+    }
+    const job = jobsStopEnds(view).find((each) => each.id === what.cancel);
+    return job && hasStarted(job) ? { kind: "one", job } : null;
 }
 
-/** One step of a job's Activity: what it did, in order. */
+/** What a line of Activity is: a step the computer did, the person's own message to the job, or where it paused or carried on. */
+export type StepKind = "step" | "note" | "pause" | "resume";
+const STEP_KINDS: readonly string[] = ["step", "note", "pause", "resume"];
+
 export interface ComputerStep {
     seq: number;
     label: string;
     at: string | null;
+    kind: StepKind;
+    /** A short line under the step ("evisa.gov.kw", "step 5 of 7"), when Orbit has one. */
+    detail: string | null;
 }
 
 /** Orbit's answer for a job's Activity (`{ steps }`), read safely: oldest first, each step once. Undefined when it is not one. */
@@ -290,7 +333,13 @@ export function parseJobActivity(value: unknown): ComputerStep[] | undefined {
         const seq = typeof row.seq === "number" && Number.isFinite(row.seq) ? Math.trunc(row.seq) : undefined;
         const label = text(row.label);
         if (seq === undefined || !label) continue;
-        bySeq.set(seq, { seq, label, at: typeof row.at === "string" && row.at ? row.at : null });
+        bySeq.set(seq, {
+            seq,
+            label,
+            at: typeof row.at === "string" && row.at ? row.at : null,
+            kind: typeof row.kind === "string" && STEP_KINDS.includes(row.kind) ? (row.kind as StepKind) : "step",
+            detail: text(row.detail, 150),
+        });
     }
     return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }

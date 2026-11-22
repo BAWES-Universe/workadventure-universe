@@ -237,15 +237,22 @@ const stillGoing = (brickId: string, jobId: string): boolean => {
 
 /**
  * Keeps one job's Activity up to date while it is shown: read at once, then again every few seconds while the job is still going,
- * and once more when it ends so its last step shows. Reading is all it does. Returns the function that lets go.
+ * and once more when it ends so its last step shows. Reading is all it does. `onRead` hears each read (undefined when it failed).
+ * Returns the function that lets go.
  */
-export function followJobActivity(brickId: string, jobId: string): () => void {
+export function followJobActivity(
+    brickId: string,
+    jobId: string,
+    onRead?: (steps: ComputerStep[] | undefined) => void
+): () => void {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
         const going = stillGoing(brickId, jobId);
-        await loadJobActivity(brickId, jobId);
-        if (stopped || !going) return;
+        const read = await loadJobActivity(brickId, jobId);
+        if (stopped) return;
+        onRead?.(read);
+        if (!going) return;
         timer = setTimeout(() => void tick(), POLL_MS);
     };
     void tick();

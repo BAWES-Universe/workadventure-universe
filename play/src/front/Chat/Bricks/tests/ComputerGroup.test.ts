@@ -15,6 +15,29 @@ const game = vi.hoisted(() => ({
 vi.mock("svelte", async () => await import("svelte/internal"));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
 vi.mock("../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
+// A sheet opened with svelte-modals is drawn into the page here, closed by its own close
+vi.mock("svelte-modals", () => ({
+    closeModal: vi.fn(),
+    openModal: (
+        component: new (options: { target: HTMLElement; props: Record<string, unknown> }) => { $destroy: () => void },
+        props: Record<string, unknown> = {}
+    ) => {
+        const host = document.createElement("div");
+        host.dataset.modal = "true";
+        document.body.appendChild(host);
+        const made = new component({
+            target: host,
+            props: {
+                ...props,
+                isOpen: true,
+                close: () => {
+                    made.$destroy();
+                    host.remove();
+                },
+            },
+        });
+    },
+}));
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
@@ -87,7 +110,9 @@ describe("a Brick's computer on screen (#2000)", () => {
         piece?.$destroy();
         piece = undefined;
         target.remove();
+        document.querySelectorAll("[data-modal]").forEach((modal) => modal.remove());
     });
+    const inSheet = (id: string) => document.querySelector<HTMLElement>(`[data-modal] [data-testid="${id}"]`);
 
     const text = () => target.textContent?.replace(/\s+/g, " ").trim() ?? "";
     const byId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -128,6 +153,8 @@ describe("a Brick's computer on screen (#2000)", () => {
         game.brickComputerAction.mockResolvedValue(computer());
         byId("brickComputerStop")?.click();
         await settle();
+        // One job: Stop ends it at once, as the approved mock draws it
+        expect(inSheet("computerEndAsk")).toBeNull();
         expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop");
     });
 
@@ -514,6 +541,29 @@ describe("a Brick's computer on screen (#2000)", () => {
         game.brickComputerAction.mockResolvedValue({ job: job({ status: "stopped" }) });
         byId("brickScreenStop")?.click();
         await settle();
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks first on the Watch screen when Stop would end several jobs, and closes only once they ended", async () => {
+        game.getBrickComputer.mockResolvedValue(
+            computer({
+                machine: "working",
+                job: job(),
+                queued: [{ id: "j2", title: "Hotel", status: "queued", queuedFor: "turn" }],
+            })
+        );
+        await loadBrickComputer(BRICK);
+        const onClose = vi.fn();
+        piece = new BrickScreen({ target, props: { brick, onClose } });
+        await settle();
+        byId("brickScreenStop")?.click();
+        await settle();
+        expect(onClose).not.toHaveBeenCalled();
+        expect(inSheet("computerEndAsk")?.textContent).toContain("Stop all 2 jobs?");
+        game.brickComputerAction.mockResolvedValue(computer());
+        inSheet("computerEndAskEnd")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop");
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
