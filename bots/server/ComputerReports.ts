@@ -68,6 +68,8 @@ export interface ComputerReport {
     refundPendingMicros: number;
     /** Only for `late`: the Apps (display names, in the order they were confirmed) that went out after all. Empty for every other kind. */
     apps: string[];
+    /** Only for `late`: how many distinct Apps Orbit named in all (the whole of them, before `apps` keeps the few that are said), so "and N more" counts every one. 0 for every other kind. */
+    appsTotal: number;
     /** Only for `late`: the time of the latest confirmation this batch covers, exactly as Orbit gave it (a time), said back in the acknowledgement so an App confirmed between the offer and the mark is not marked. Null for every other kind, or from an Orbit that sends none. */
     through: string | null;
     /** Only for `late`: Orbit let the Apps go unconfirmed, released their hold and was never paid for them: the one fact "you weren't charged" rests on. False for every other kind. */
@@ -81,25 +83,34 @@ const APP_NAME_MAX = 40;
 const APPS_NAMED = 5;
 const APPS_KEPT = 12;
 
-/** The Apps of a late report as plain names: no markup or control characters, whole characters, no repeats, in the order Orbit gave them. */
-function appsOf(raw: unknown): string[] {
-    if (!Array.isArray(raw)) return [];
+/** What a chat reads as a link in a name: a scheme's `://`, and the dot between two letters or digits of a domain (`example.com`, `www.example.com`, an address). Written `: //` and `·`. */
+const LINK_SCHEME = /:\/\//g;
+const DOMAIN_DOT = /(?<=[\p{L}\p{N}])[.\u3002\uff0e\uff61](?=[\p{L}\p{N}])/gu;
+
+/**
+ * The Apps of a late report as plain names: no markup or control characters, and nothing a chat could turn into a link (the name of an App is not ours: an address or a
+ * domain in it is written `example·com`, `https: //example·com`, which reads as what it is and is no link), whole characters, no repeats, in the order Orbit gave them.
+ * `names` are the ones to say (at most APPS_KEPT); `total` is how many distinct names there were in all, counted before that limit.
+ */
+function appsOf(raw: unknown): { names: string[]; total: number } {
+    if (!Array.isArray(raw)) return { names: [], total: 0 };
     const seen = new Set<string>();
-    const out: string[] = [];
+    const names: string[] = [];
     for (const one of raw) {
         if (typeof one !== 'string') continue;
         // A name is a name: nothing a chat could read as a link, a tag or a line of its own
         // eslint-disable-next-line no-control-regex
-        const plain = Array.from(one.replace(/[\u0000-\u001f\u007f<>[\]`]+/g, ' ').replace(/\s+/g, ' ').trim())
+        const flat = one.replace(/[\u0000-\u001f\u007f<>[\]`]+/g, ' ').replace(/\s+/g, ' ').trim().replace(LINK_SCHEME, ': //').replace(DOMAIN_DOT, '\u00b7');
+        // Cut to the length said, whole characters
+        const plain = Array.from(flat)
             .slice(0, APP_NAME_MAX)
             .join('')
             .trim();
         if (!plain || seen.has(plain.toLowerCase())) continue;
         seen.add(plain.toLowerCase());
-        out.push(plain);
-        if (out.length >= APPS_KEPT) break;
+        if (names.length < APPS_KEPT) names.push(plain);
     }
-    return out;
+    return { names, total: seen.size };
 }
 const WAITINGS: readonly Waiting[] = ['details', 'signin', 'upload', 'pay', 'submit', 'answer'];
 
@@ -134,10 +145,11 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     }
     const origin = report.origin as { kind?: unknown; ref?: unknown } | null | undefined;
     const kind = report.kind as ReportKind;
-    const seq = typeof report.seq === 'number' ? report.seq : null;
-    const apps = kind === 'late' ? appsOf(report.apps) : [];
+    const seq = typeof report.seq === 'number' && Number.isFinite(report.seq) ? report.seq : null;
+    const { names: apps, total: appsTotal } = kind === 'late' ? appsOf(report.apps) : { names: [], total: 0 };
     // "You weren't charged" is only said when Orbit says the hold was released, and an App is only named when there is a name to say: otherwise there is nothing true to tell
-    if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true)) return null;
+    // Orbit numbers every late report, and refuses (400) the acknowledgement of one that has no number: a late report without a number is never told, so it is never acknowledged without one (a refusal that would come back for ever)
+    if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true || seq === null)) return null;
     // A wait is told by its number: without one it could not be marked as told for that wait only
     if (kind === 'needs' && (seq === null || waiting(report.waitingFor) === null)) return null;
     return {
@@ -161,6 +173,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         givenBack: report.givenBack === true,
         refundPendingMicros: typeof report.refundPendingMicros === 'number' && Number.isFinite(report.refundPendingMicros) && report.refundPendingMicros > 0 ? Math.round(report.refundPendingMicros) : 0,
         apps,
+        appsTotal,
         holdReleased: kind === 'late' && report.holdReleased === true,
         through: kind === 'late' && typeof report.through === 'string' && Number.isFinite(Date.parse(report.through)) ? report.through : null,
     };
@@ -281,8 +294,10 @@ export function reportText(report: ComputerReport): string {
         }
         case 'late': {
             // Only what Orbit's record proves: the provider's log confirmed it later, nothing was ever charged for it. Said once, as one message, whatever the number of Apps
-            const named = report.apps.length > APPS_NAMED ? [...report.apps.slice(0, APPS_NAMED - 1), `${report.apps.length - (APPS_NAMED - 1)} more`] : report.apps;
-            return `Update: ${list(named)} did go out after all. We couldn’t confirm it earlier. You weren’t charged for ${report.apps.length === 1 ? 'it' : 'them'}.`;
+            // The count of ALL the distinct Apps Orbit named (the names kept are only the first few): "and N more" is how many were left out, whatever the limit of names kept
+            const total = Math.max(report.appsTotal, report.apps.length);
+            const named = total > APPS_NAMED ? [...report.apps.slice(0, APPS_NAMED - 1), `${total - (APPS_NAMED - 1)} more`] : report.apps;
+            return `Update: ${list(named)} did go out after all. We couldn’t confirm it earlier. You weren’t charged for ${total === 1 ? 'it' : 'them'}.`;
         }
     }
 }
