@@ -275,13 +275,12 @@ export const fenceFieldOf = (turn: CallTurn): string => `${FENCE_FIELD}${turn.tu
 export const COMMITTED_MARK = 'c';
 
 /**
- * The runner's server gives a turn up (a turn that was refused for want of room the whole time): as ONE step, with no acceptance written for the turn (and run) by
- * another server since ARGV[4] (ms) it writes the fence of the turn and answers 1; otherwise it writes nothing and answers 0. ARGV: this server's own id (its
- * own acceptances are in its own notes), the turn ('' when not known: an acceptance with no turn counts for every turn), the run, the earliest moment that
- * counts, the fence field, its moment, and the hash's life in seconds. Whatever is written after the fence is read by `NOTE_ACCEPTED_UNLESS_CLOSED`, which
- * refuses it, so a call can no longer be taken up for the turn that is being given up, and a call that was taken up is never given up on.
+ * What CLOSE_TURN and COMMIT_FENCE both look at, written once so a close and the commit of its fence never read it two ways: as ONE step they stop (answer 0) when another
+ * server than the one named has taken up a call of the turn since the earliest moment that counts. A field `accepted:<server>[|<turn>|<run>]` counts for the turn when it has
+ * no turn (it counts for every turn) or the turn and run are the ones named (an unknown turn, '', counts every field). The arguments are the places in ARGV of: this
+ * server's own id, the turn, the run, and the earliest moment that counts (ms).
  */
-export const CLOSE_TURN = `
+const NO_ACCEPTANCE_SINCE = (own: number, turn: number, run: number, from: number): string => `
 local all = redis.call('HGETALL', KEYS[1])
 for i = 1, #all, 2 do
   local field = all[i]
@@ -292,14 +291,24 @@ for i = 1, #all, 2 do
     local counts = true
     if bar then
       instance = string.sub(rest, 1, bar - 1)
-      if ARGV[2] ~= '' and string.sub(rest, bar + 1) ~= ARGV[2] .. '|' .. ARGV[3] then counts = false end
+      if ARGV[${turn}] ~= '' and string.sub(rest, bar + 1) ~= ARGV[${turn}] .. '|' .. ARGV[${run}] then counts = false end
     end
-    if instance ~= ARGV[1] and counts then
+    if instance ~= ARGV[${own}] and counts then
       local at = tonumber(all[i + 1])
-      if at ~= nil and at >= tonumber(ARGV[4]) then return 0 end
+      if at ~= nil and at >= tonumber(ARGV[${from}]) then return 0 end
     end
   end
 end
+`;
+
+/**
+ * The runner's server gives a turn up (a turn that was refused for want of room the whole time): as ONE step, with no acceptance written for the turn (and run) by
+ * another server since ARGV[4] (ms) it writes the fence of the turn and answers 1; otherwise it writes nothing and answers 0. ARGV: this server's own id (its
+ * own acceptances are in its own notes), the turn ('' when not known: an acceptance with no turn counts for every turn), the run, the earliest moment that
+ * counts, the fence field, its moment, and the hash's life in seconds. Whatever is written after the fence is read by `NOTE_ACCEPTED_UNLESS_CLOSED`, which
+ * refuses it, so a call can no longer be taken up for the turn that is being given up, and a call that was taken up is never given up on.
+ */
+export const CLOSE_TURN = `${NO_ACCEPTANCE_SINCE(1, 2, 3, 4)}
 local standing = redis.call('HGET', KEYS[1], ARGV[5])
 if standing and string.sub(standing, -1) == 'c' then
   redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]))
@@ -313,10 +322,13 @@ return 1
 /**
  * Takes a fence back: deletes the field ARGV[1] only while it still holds exactly the moment ARGV[2] (the fence this very close wrote), so a fence of a later close of the
  * same turn is never touched. Answers 1 when it deleted it and 0 when there was nothing of that moment to delete (the same answer to say twice). The runner's server
- * uses it when a close it made did not become a give-up (its answer was lost after the script ran, or a call was taken up meanwhile): the turn goes on.
+ * uses it when a close it made did not become a give-up (its answer was lost after the script ran, or a call was taken up meanwhile): the turn goes on. With ARGV[3] = '1' it
+ * also deletes the moment committed (`<moment>c`): for a give-up whose commit the store never said it ran, which is not gone on with, so the fence that may be committed
+ * must not stay over a turn that is alive. Without it a committed fence is never retracted.
  */
 export const RETRACT_FENCE = `
-if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+local held = redis.call('HGET', KEYS[1], ARGV[1])
+if held == ARGV[2] or (ARGV[3] == '1' and held == ARGV[2] .. 'c') then
   redis.call('HDEL', KEYS[1], ARGV[1])
   return 1
 end
@@ -326,12 +338,19 @@ return 0
 /**
  * COMMITS the fence this close wrote, as ONE step, when the runner goes on with the give-up: the field ARGV[1] holds exactly the moment ARGV[2] (or already holds it committed:
  * the same answer to say twice), and becomes that moment followed by `COMMITTED_MARK`, and the hash lives ARGV[3] seconds from now (the full keep, so the fence is there for
- * as long as the rest of the job's evidence). Answers 1 when the fence is committed, 0 when the field holds something else (it was taken back, it expired, a later close of
- * the turn wrote another moment): nothing is written, and the turn is not given up on this fence.
+ * as long as the rest of the job's evidence). A fence that is not committed yet is committed only when no other server has taken up a call of the turn (and run) since the
+ * earliest moment the close counted (ARGV[7], with ARGV[4] this server's id, ARGV[5] the turn, ARGV[6] the run: the same look as CLOSE_TURN): a fence that cleared itself after
+ * FENCE_LIFE_MS lets a call in, and a give-up never goes on over a call that was taken up. Answers 1 when the fence is committed, 0 when the field holds something else (it was
+ * taken back, it expired, a later close of the turn wrote another moment) or a call was taken up: nothing is written, and the turn is not given up on this fence.
  */
 export const COMMIT_FENCE = `
 local current = redis.call('HGET', KEYS[1], ARGV[1])
-if current == ARGV[2] or current == ARGV[2] .. 'c' then
+if current == ARGV[2] .. 'c' then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+  return 1
+end
+if current == ARGV[2] then
+${NO_ACCEPTANCE_SINCE(4, 5, 6, 7)}
   redis.call('HSET', KEYS[1], ARGV[1], ARGV[2] .. 'c')
   redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
   return 1
@@ -493,17 +512,22 @@ export class RedisSharedCalls implements SharedCalls {
         return Number(answer) === 1;
     }
 
-    async retractFence(jobId: string, turn: CallTurn | undefined, at: number): Promise<void> {
+    async retractFence(jobId: string, turn: CallTurn | undefined, at: number, committedToo = false): Promise<void> {
         await this.within(
             this.client().eval(RETRACT_FENCE, {
                 keys: [CALLED_PREFIX + jobId],
-                arguments: [turn ? fenceFieldOf(turn) : FENCE_FIELD + '|', String(at)],
+                arguments: [turn ? fenceFieldOf(turn) : FENCE_FIELD + '|', String(at), committedToo ? '1' : '0'],
             })
         );
     }
 
-    async commitFence(jobId: string, turn: CallTurn, at: number): Promise<boolean> {
-        const answer = await this.within(this.client().eval(COMMIT_FENCE, { keys: [CALLED_PREFIX + jobId], arguments: [fenceFieldOf(turn), String(at), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000))] }));
+    async commitFence(jobId: string, turn: CallTurn, at: number, from: number): Promise<boolean> {
+        const answer = await this.within(
+            this.client().eval(COMMIT_FENCE, {
+                keys: [CALLED_PREFIX + jobId],
+                arguments: [fenceFieldOf(turn), String(at), String(Math.round(REFUSAL_NOTE_KEEP_MS / 1000)), this.instanceId, String(turn.turn), turn.run ?? '', String(from - SHARED_CALL_SKEW_MS)],
+            })
+        );
         return Number(answer) === 1;
     }
 

@@ -1354,6 +1354,28 @@ describe('the evidence kept before the money decision is final, and delivered af
                 expect(await notes.flush('job')).toBe(true);
                 expect(told).toEqual(['dead_letter bad']);
             });
+
+            it('the same, when the accepted row and the named refusal come in ONE pass (nothing was taken before): the mixed batch takes the good row and sets the named one aside, and a refused row that comes alone after it becomes a dead letter too, never "pending"', async () => {
+                const o = naming(new Set(['bad1', 'bad2']));
+                o.open();
+                const told: string[] = [];
+                const notes = createRefusalNotes(() => 1000, { retryMs: [0], laterMs: [], sink: o.sink, report: (what, info) => told.push(`${what} ${info.callId}`) });
+                // no row has been taken before this pass: Orbit has not been seen to take anything lately
+                notes.record('bot', 'job', call('ok'));
+                notes.record('bot', 'job', call('bad1'));
+                expect(await notes.flush('job')).toBe(true);
+                expect(o.taken).toEqual(['ok']);
+                expect(told).toEqual(['dead_letter bad1']);
+                // a refused row alone in the next pass: Orbit named it, so it is a dead letter, not a row waiting for an Orbit that is "away"
+                notes.record('bot', 'job', call('bad2'));
+                expect(await notes.flush('job')).toBe(true);
+                expect(told).toEqual(['dead_letter bad1', 'dead_letter bad2']);
+                expect(told.some((one) => one.startsWith('all_refused'))).toBe(false);
+                // and nothing is left waiting: no row is sent again
+                const before = o.calls.length;
+                expect(await notes.flush('job')).toBe(true);
+                expect(o.calls.length).toBe(before);
+            });
         });
 
         describe('an Orbit that says it refused rows without saying which (Sentry on #2114): no row is taken as delivered unseen, the refused ones are found, nothing is dropped in silence', () => {
@@ -1884,7 +1906,7 @@ describe('whether any call of a job reached the relay', () => {
 /** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
 const sharedStore = () => {
     const seen = new Map<string, Map<string, number>>();
-    const state = { moments: [] as Array<[string, number]>, down: false, failCalled: 0, failTurns: 0, failAccepted: 0, failClose: 0, lostAfterClose: 0, failRetract: 0, retracted: 0, failCommit: 0, commitAsked: 0, commitLostAfter: 0, released: 0, failRelease: 0, holdClose: undefined as Promise<void> | undefined, betweenTries: undefined as (() => Promise<unknown>) | undefined, holdRetract: undefined as Promise<void> | undefined, retractWaiting: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
+    const state = { moments: [] as Array<[string, number]>, down: false, failCalled: 0, failTurns: 0, failAccepted: 0, failClose: 0, lostAfterClose: 0, failRetract: 0, retracted: 0, failCommit: 0, commitAsked: 0, commitFrom: [] as number[], commitLostAfter: 0, released: 0, failRelease: 0, holdClose: undefined as Promise<void> | undefined, betweenTries: undefined as (() => Promise<unknown>) | undefined, holdRetract: undefined as Promise<void> | undefined, retractWaiting: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
     /** The turns each server's runner said, per job: the field `turn:<server>` of the shared record. */
     const turns = new Map<string, Map<string, SharedTurnList>>();
     /** The acceptances each server noted, per job: its moment and the turn (and run) the call began in (`undefined`: not known). */
@@ -1966,7 +1988,7 @@ const sharedStore = () => {
             }
             return true;
         },
-        retractFence: async (jobId, turn, at) => {
+        retractFence: async (jobId, turn, at, committedToo = false) => {
             state.retractWaiting += 1;
             if (state.holdRetract) await state.holdRetract;
             if (state.down || state.failRetract > 0) {
@@ -1974,12 +1996,13 @@ const sharedStore = () => {
                 throw new Error('shared store down');
             }
             state.retracted += 1;
-            // as the store does it, in one step: only the fence of that very moment goes
+            // as the store does it, in one step: only the fence of that very moment goes (a committed one only when asked, for a commit that was never confirmed)
             const key = turn ? `${turn.turn}|${turn.run ?? ''}` : '';
-            fences.set(jobId, (fences.get(jobId) ?? []).filter((one) => !(one.key === key && one.at === at && !one.committed)));
+            fences.set(jobId, (fences.get(jobId) ?? []).filter((one) => !(one.key === key && one.at === at && (!one.committed || committedToo))));
         },
-        commitFence: async (jobId, turn, at) => {
+        commitFence: async (jobId, turn, at, from) => {
             state.commitAsked += 1;
+            state.commitFrom.push(from);
             if (state.down || state.failCommit > 0) {
                 if (state.failCommit > 0) state.failCommit -= 1;
                 throw new Error('shared store down');
@@ -1988,6 +2011,14 @@ const sharedStore = () => {
             const key = `${turn.turn}|${turn.run ?? ''}`;
             const standing = (fences.get(jobId) ?? []).find((one) => one.key === key && one.at === at);
             if (!standing) return false;
+            // a fence that is not committed yet is committed only while no OTHER server has taken up a call of the turn since the moment the close counted from
+            if (!standing.committed) {
+                for (const one of accepted) {
+                    if (one.server === id || one.jobId !== jobId || one.at < from - SHARED_CALL_SKEW_MS) continue;
+                    if (one.turn && (one.turn.turn !== turn.turn || (one.turn.run ?? '') !== (turn.run ?? ''))) continue;
+                    return false;
+                }
+            }
             standing.committed = true;
             // the script RAN and the fence is committed, but its answer never comes back
             if (state.commitLostAfter > 0) {
@@ -3258,19 +3289,66 @@ describe('calls of a job that arrive at another bot server', () => {
                         expect(await store.a.commitTurn!('gone3', store.attempt)).toBe(false);
                     });
 
-                    it('goes on with the give-up when the store cannot say (every try fails): the fence is in the store, committed or not, and the turn is never left alive under a committed fence', async () => {
+                    it('does NOT go on with the give-up when the store never says whether the fence is committed (every try fails): the commit is unconfirmed, the turn is not given up, and reopening takes the fence back whichever way it stands', async () => {
                         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
                         const down = await closeFor('lost');
                         down.store.state.failCommit = 3;
-                        expect(await down.a.commitTurn!('lost', down.attempt)).toBe(true);
+                        expect(await down.a.commitTurn!('lost', down.attempt)).toBe(false);
                         expect(down.store.state.commitAsked).toBe(3);
-                        expect(down.attempt.committed).toBe(true);
+                        expect(down.attempt.committed).toBeUndefined();
+                        expect(down.attempt.unconfirmed).toBe(true);
+                        // the store is back: the runner takes the close back and the turn goes on; the fence leaves the store, and the turn takes calls again at once
+                        await down.a.reopenTurn('lost', down.attempt);
+                        expect(await down.b.accepted('lost', { turn: 1, run: 'run-1' })).toBe(true);
+                        // the same when the script RAN each time and only its answers were lost: the fence IS committed in the store, and it is taken back all the same (the turn is alive)
+                        const ran = await closeFor('lost-ran');
+                        ran.store.state.commitLostAfter = 3;
+                        expect(await ran.a.commitTurn!('lost-ran', ran.attempt)).toBe(false);
+                        expect(ran.attempt.unconfirmed).toBe(true);
+                        expect(ran.attempt.committed).toBeUndefined();
+                        ran.advance(FENCE_LIFE_MS * 4);
+                        // (a committed fence refuses at any time while it stands)
+                        expect(await ran.b.accepted('lost-ran', { turn: 1, run: 'run-1' })).toBe(false);
+                        await ran.a.reopenTurn('lost-ran', ran.attempt);
+                        expect(await ran.b.accepted('lost-ran', { turn: 1, run: 'run-1' })).toBe(true);
+                        expect(ran.a.accepted('lost-ran', { turn: 1, run: 'run-1' })).not.toBe(false);
                         warn.mockRestore();
-                        // an answer lost after the script ran: the second try finds the fence committed (the same answer to say twice)
+                        // an answer lost after the script ran, once: the second try finds the fence committed (the same answer to say twice), and the give-up goes on
                         const late = await closeFor('lost-after');
                         late.store.state.commitLostAfter = 1;
                         expect(await late.a.commitTurn!('lost-after', late.attempt)).toBe(true);
                         expect(late.store.state.commitAsked).toBe(2);
+                        expect(late.attempt.committed).toBe(true);
+                        expect(late.attempt.unconfirmed).toBeUndefined();
+                    });
+
+                    it('does not retract a COMMITTED fence on a plain reopen (only an unconfirmed commit takes it back): a fence the store said is committed stays', async () => {
+                        const done = await closeFor('plain');
+                        expect(await done.a.commitTurn!('plain', done.attempt)).toBe(true);
+                        await done.a.reopenTurn('plain', done.attempt);
+                        done.advance(FENCE_LIFE_MS * 2);
+                        expect(await done.b.accepted('plain', { turn: 1, run: 'run-1' })).toBe(false);
+                    });
+
+                    it('asks the store to commit from the moment the close counted from, and refuses to commit over a call another server took up after the fence had cleared itself: the turn is not given up, and the close is taken back', async () => {
+                        const rig = await closeFor('late-call', 10);
+                        // the store is asked from the turn's start (the same moment the close counted from)
+                        const slow = await closeFor('late-call-2', 10);
+                        slow.advance(FENCE_LIFE_MS + 5);
+                        // the fence has cleared itself: the relay of another server takes a call of the turn up
+                        expect(await slow.b.accepted('late-call-2', { turn: 1, run: 'run-1' })).toBe(true);
+                        expect(await slow.a.commitTurn!('late-call-2', slow.attempt)).toBe(false);
+                        expect(slow.attempt.committed).toBeUndefined();
+                        expect(slow.attempt.unconfirmed).toBeUndefined();
+                        expect(slow.store.state.commitFrom).toEqual([slow.attempt.from]);
+                        expect(typeof slow.attempt.from).toBe('number');
+                        // reopening takes the (uncommitted) fence away, and the turn goes on
+                        await slow.a.reopenTurn('late-call-2', slow.attempt);
+                        expect(await slow.b.accepted('late-call-2', { turn: 1, run: 'run-1' })).toBe(true);
+                        // without such a call the commit goes through, even this long after the close
+                        rig.advance(FENCE_LIFE_MS + 5);
+                        expect(await rig.a.commitTurn!('late-call', rig.attempt)).toBe(true);
+                        expect(rig.attempt.committed).toBe(true);
                     });
 
                     it('does not commit a close of a turn whose number is not known (its fence keeps FENCE_LIFE_MS), and without a shared store the close stands here alone', async () => {

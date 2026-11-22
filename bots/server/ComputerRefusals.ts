@@ -167,14 +167,16 @@ export interface SharedCalls {
      * made for (the store did not say whether it ran, or a call was taken up meanwhile): the turn goes on, and a fence that stays would have every other server
      * refuse the calls of a turn that is alive. Rejects when the store cannot be written.
      */
-    retractFence?(jobId: string, turn: CallTurn | undefined, at: number): Promise<void>;
+    retractFence?(jobId: string, turn: CallTurn | undefined, at: number, committedToo?: boolean): Promise<void>;
     /**
      * COMMITS the fence this server's close wrote at the moment `at` for the turn (and run), as ONE step, when the runner goes on with the give-up: from then on the fence
-     * refuses every call of that turn and run for as long as the job's evidence lives (not only `FENCE_LIFE_MS`), and it is never retracted. True when it is committed (or
-     * was, with that moment), false when the field holds something else (taken back, expired, another close's moment): the turn is not given up on it. Rejects when the store
-     * cannot be written.
+     * refuses every call of that turn and run for as long as the job's evidence lives (not only `FENCE_LIFE_MS`), and it is never retracted (but by `retractFence` with
+     * `committedToo`, for a commit that was not confirmed). `from` is the same earliest moment the close counted (`closeTurn`'s): when another server took up a call of the
+     * turn (and run) since then (a fence that had cleared itself lets one in) the commit is refused, as the close would have been. True when it is committed (or was, with that
+     * moment), false when the field holds something else (taken back, expired, another close's moment) or a call was taken up: the turn is not given up on it. Rejects when the
+     * store cannot be written.
      */
-    commitFence?(jobId: string, turn: CallTurn, at: number): Promise<boolean>;
+    commitFence?(jobId: string, turn: CallTurn, at: number, from: number): Promise<boolean>;
     /** Takes the committed fence of that moment back, once Orbit has accepted the finish of the job: deletes the field only while it holds exactly that moment committed. Safe to say twice. */
     releaseFence?(jobId: string, turn: CallTurn, at: number): Promise<void>;
     /**
@@ -210,6 +212,10 @@ export interface CloseAttempt {
     turn?: CallTurn;
     /** The moment the close wrote (or would have written) in its fence: the fence of this attempt is the field that holds exactly this. */
     at?: number;
+    /** The earliest moment (ms) the close counted calls from (the turn's start): the commit of its fence counts from the same moment. */
+    from?: number;
+    /** Set by `commitTurn` when the store never said whether the fence was committed (every try was lost): the give-up is not gone on with, and the fence that may be committed is taken back whichever way it stands. */
+    unconfirmed?: true;
     /** Set by `commitTurn` when the give-up goes on with this close: it is then never taken back by `reopenTurn`, only by `releaseTurn` once Orbit has accepted the finish. */
     committed?: true;
 }
@@ -327,10 +333,11 @@ export interface RefusalNotes {
     reopenTurn(jobId: string, attempt: CloseAttempt): Promise<void>;
     /**
      * The runner GOES ON with the give-up the close of `attempt` made: the fence of THAT close becomes committed (see `SharedCalls.commitFence`), so it holds for as long as the
-     * give-up takes (its cancel, its finish), however long that is, and is never taken back by `reopenTurn`. True when the turn may be given up: it is committed, or the store
-     * could not say (the fence is in the store, committed or not, and the turn is given up all the same: never a live turn under a committed fence); false when the close no
-     * longer stands (it was taken back, it expired, another close's moment is in the store): the turn is not given up on it, and the caller takes the close back and goes on.
-     * A close of a turn whose number was not known keeps the life of a fence. Never throws.
+     * give-up takes (its cancel, its finish), however long that is, and is never taken back by `reopenTurn` once it stands. True only when the turn may be given up with that
+     * fence in place: the store said it is committed (or there is no shared store, and the close stands here alone). False when the close no longer stands (it was taken back, it
+     * expired, another close's moment is in the store), when another server took up a call of the turn meanwhile, and when the store never said (every try lost: `attempt.unconfirmed`
+     * is set, so `reopenTurn` takes the fence back whether or not it was committed): the turn is not given up, and the caller takes the close back and goes on. A runner never goes
+     * on with a give-up (its cancel, its finish) without a committed fence. A close of a turn whose number was not known keeps the life of a fence. Never throws.
      */
     commitTurn?(jobId: string, attempt: CloseAttempt): Promise<boolean>;
     /** Orbit has accepted the finish of the job the give-up of `attempt` ended: the committed fence of that close is taken back (three tries, each bounded). Never throws. */
@@ -924,11 +931,11 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
         return { state: 'lost', maybeWritten };
     };
     /** Takes this server's fence of that moment back out of the store (three tries, each bounded): true when the store said it ran, false when it could not be confirmed. */
-    const retractOnStore = async (jobId: string, turn: CallTurn | undefined, at: number): Promise<boolean> => {
+    const retractOnStore = async (jobId: string, turn: CallTurn | undefined, at: number, committedToo = false): Promise<boolean> => {
         const shared = options.shared;
         if (!shared?.retractFence) return false;
         for (let tries = 0; tries < 3; tries++) {
-            if ((await boundedAnswer(() => shared.retractFence!(jobId, turn, at))) !== 'lost') return true;
+            if ((await boundedAnswer(() => shared.retractFence!(jobId, turn, at, committedToo))) !== 'lost') return true;
         }
         return false;
     };
@@ -1354,6 +1361,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             if (attempt) {
                 attempt.turn = turn;
                 attempt.at = fenceAt;
+                if (typeof since === 'number' ? true : since.at !== undefined) attempt.from = typeof since === 'number' ? since : since.at;
             }
             let committed = false;
             try {
@@ -1392,7 +1400,7 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
             if (shut !== undefined && shut.fenceAt === attempt.at && shut.key === keyOf(attempt.turn)) closed.delete(jobId);
             // and the fence of THIS attempt leaves the store (the close may have committed, or may commit later: the field holds exactly this moment either way)
             try {
-                if (options.shared?.retractFence && !(await retractOnStore(jobId, attempt.turn, attempt.at))) {
+                if (options.shared?.retractFence && !(await retractOnStore(jobId, attempt.turn, attempt.at, attempt.unconfirmed === true))) {
                     console.warn('[ComputerRefusals] A close that was taken back may still be fenced in the shared store: the fence could not be retracted (it expires on its own).');
                 }
             } catch {
@@ -1410,16 +1418,19 @@ export function createRefusalNotes(now: () => number = Date.now, options: Refusa
                 attempt.committed = true;
                 return true;
             }
+            const from = attempt.from ?? attempt.at;
             for (let tries = 0; tries < 3; tries++) {
-                const answer = await boundedAnswer(() => shared.commitFence!(jobId, attempt.turn!, attempt.at!));
+                const answer = await boundedAnswer(() => shared.commitFence!(jobId, attempt.turn!, attempt.at!, from));
                 if (answer === 'lost') continue;
                 if (answer) attempt.committed = true;
                 return answer;
             }
-            // Not said: the fence is in the store, committed or not, so the turn is given up (never a live turn under a committed fence)
-            console.warn('[ComputerRefusals] A give-up could not be committed in the shared store (the fence keeps its short life if it was not).');
-            attempt.committed = true;
-            return true;
+            // The store never said whether the fence is committed (it is there, committed or not, and an uncommitted one clears itself after FENCE_LIFE_MS, well before a cancel and
+            // a finish that take long are over): the turn is NOT given up on it. Nothing goes on without a fence that is known to hold: the caller takes the fence back, committed
+            // or not (`unconfirmed`), and the turn goes on; the next look at the pool starts again from a new close
+            attempt.unconfirmed = true;
+            console.warn('[ComputerRefusals] A give-up could not be committed in the shared store, so the turn is not given up (its fence is taken back).');
+            return false;
         },
         async releaseTurn(jobId, attempt) {
             if (attempt.at === undefined) return;

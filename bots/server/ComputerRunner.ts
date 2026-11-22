@@ -539,7 +539,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 try {
                     committed = deps.refusals.commitTurn ? await deps.refusals.commitTurn(job.jobId, attempt) : true;
                 } catch {
-                    committed = true;
+                    // Not said: no give-up without a fence known to hold. The fence of this close is taken back, committed or not, and the turn goes on
+                    attempt.unconfirmed = true;
+                    committed = false;
                 }
                 if (!committed) {
                     try {
@@ -925,9 +927,29 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 turnStartedAt = null;
                 say('A job ended: every model call of its turn was refused for want of room in the shared pool.');
                 notePoolBusy(job, turnNo, run);
-                const finished = await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, why: POOL_BUSY_WHY });
-                // Orbit has ACCEPTED the finish: the give-up is over, and its committed fence is taken back. A finish that was refused as stale, not sent or not answered leaves it
-                // where it is (the next turn has a number of its own, and a job that is still going is not given calls of the turn it gave up)
+                let finished = await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, why: POOL_BUSY_WHY });
+                // A finish Orbit did not take (it could not be reached, or it did not answer) keeps the give-up PENDING: it is sent again, after a wait, until Orbit has accepted it or
+                // says the turn is a stale one, or the job is no longer going (a finish whose answer was lost got there, or the job ended otherwise). No new turn begins meanwhile (this
+                // is the same pass of the loop), and the committed fence stays in the store over the turn that was given up until then
+                while (finished === 'unsent') {
+                    await sleep(timing.waitMs, signal);
+                    if (signal.aborted) return;
+                    const standing = await orbit.job(job.botId, job.jobId).then(
+                        (read) => read,
+                        () => undefined
+                    );
+                    if (signal.aborted) return;
+                    // Orbit does not have the job going any more (a finish whose answer was lost, or any other end): there is nothing left to end, and the fence's work is done
+                    if (standing === null || (standing !== undefined && over(standing.status))) {
+                        finished = 'ended';
+                        break;
+                    }
+                    finished = await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, why: POOL_BUSY_WHY });
+                }
+                // The worker was stopped while the finish was pending (the job was taken over, the person took the machine, the server is stopping): it is not ended for whoever has it now
+                if (finished === 'stopped') return;
+                // Orbit has ACCEPTED the finish: the give-up is over, and its committed fence is taken back. A finish that was refused as stale leaves it where it is
+                // (the next turn has a number of its own, and a job that is still going is not given calls of the turn it gave up)
                 if (finished === 'ended' && result.attempt) await deps.refusals?.releaseTurn?.(job.jobId, result.attempt).catch(() => undefined);
                 if (finished === 'stale') {
                     input = follow(RESUME_PROMPT);

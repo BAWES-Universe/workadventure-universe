@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { createClient } from 'redis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CALLED_PREFIX, FENCE_LIFE_MS, RedisSharedCalls } from '../server/ComputerEvidenceStore';
+import { SHARED_CALL_SKEW_MS } from '../server/ComputerRefusals';
 
 /**
  * The two Lua scripts of the fence of a turn against a real Redis: the unit tests run their JavaScript twins in memory, so a change to the Lua would not show
@@ -141,7 +142,7 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
             const committed = job('committed');
             expect(await a.closeTurn(tentative, T, 0, 5000)).toBe(true);
             expect(await a.closeTurn(committed, T, 0, 5000)).toBe(true);
-            expect(await a.commitFence(committed, T, 5000)).toBe(true);
+            expect(await a.commitFence(committed, T, 5000, 0)).toBe(true);
             // delayed finalization: well beyond the life of a fence
             expect(await b.noteAccepted(tentative, 5000 + FENCE_LIFE_MS + 1, T)).toBe(true);
             for (const after of [1, FENCE_LIFE_MS, FENCE_LIFE_MS + 1, 2 * FENCE_LIFE_MS, LATE]) expect(await b.noteAccepted(committed, 5000 + after, T), String(after)).toBe(false);
@@ -153,7 +154,7 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
             const { a, b } = servers();
             const j = job('committed-others');
             expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
-            expect(await a.commitFence(j, T, 5000)).toBe(true);
+            expect(await a.commitFence(j, T, 5000, 0)).toBe(true);
             // the next turn of the same run, and the same turn of another run: eligible
             expect(await b.noteAccepted(j, 5100, { turn: 7, run: 'r' })).toBe(true);
             expect(await b.noteAccepted(j, 5100, { turn: 6, run: 'other' })).toBe(true);
@@ -167,23 +168,81 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
         it('commits the fence of exactly the close that wrote it, and says no to a field that holds another moment or none (taken back, expired, a later close)', async () => {
             const { a } = servers();
             const j = job('commit-moment');
-            expect(await a.commitFence(j, T, 5000)).toBe(false);
+            expect(await a.commitFence(j, T, 5000, 0)).toBe(false);
             expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
             // a later close of the turn wrote its own moment over it: the first close's commit is no commit of that fence
             expect(await a.closeTurn(j, T, 0, 5001)).toBe(true);
-            expect(await a.commitFence(j, T, 5000)).toBe(false);
+            expect(await a.commitFence(j, T, 5000, 0)).toBe(false);
             expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5001');
-            expect(await a.commitFence(j, T, 5001)).toBe(true);
+            expect(await a.commitFence(j, T, 5001, 0)).toBe(true);
             expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5001c');
             // the same answer to say twice
-            expect(await a.commitFence(j, T, 5001)).toBe(true);
+            expect(await a.commitFence(j, T, 5001, 0)).toBe(true);
             expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5001c');
             // a fence that was taken back is no fence to commit
             const taken = job('commit-taken');
             expect(await a.closeTurn(taken, T, 0, 7000)).toBe(true);
             await a.retractFence(taken, T, 7000);
-            expect(await a.commitFence(taken, T, 7000)).toBe(false);
+            expect(await a.commitFence(taken, T, 7000, 0)).toBe(false);
             expect(await client.hExists(CALLED_PREFIX + taken, 'fence:6|r')).toBe(false);
+        });
+
+        it('refuses to commit over a call another server took up for the same turn and run since the moment the close counted from (a fence that cleared itself let it in), and leaves the fence as it was', async () => {
+            const { a, b } = servers();
+            const j = job('commit-after-call');
+            expect(await a.closeTurn(j, T, 1000, 5000)).toBe(true);
+            // the fence has cleared itself: the relay of another server takes a call of the turn up
+            const callAt = 5000 + FENCE_LIFE_MS + 1;
+            expect(await b.noteAccepted(j, callAt, T)).toBe(true);
+            expect(await a.commitFence(j, T, 5000, 1000)).toBe(false);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000');
+            // the very threshold of the close counts too (at or after: the same as the close), one moment later does not
+            expect(await a.commitFence(j, T, 5000, callAt + SHARED_CALL_SKEW_MS)).toBe(false);
+            expect(await a.commitFence(j, T, 5000, callAt + SHARED_CALL_SKEW_MS + 1)).toBe(true);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000c');
+        });
+
+        it('does not count a call of another turn or run, or of its own server, against the commit, and counts a call whose turn was not known (it may be of any turn); a fence that is already committed stays committed', async () => {
+            const { a, b } = servers();
+            const j = job('commit-which-calls');
+            expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
+            const later = 5000 + FENCE_LIFE_MS + 1;
+            expect(await b.noteAccepted(j, later, { turn: 7, run: 'r' })).toBe(true);
+            expect(await b.noteAccepted(j, later, { turn: 6, run: 'other' })).toBe(true);
+            // a call this server itself took up is in its own notes (the close and the commit look at the others)
+            expect(await a.noteAccepted(j, later, T)).toBe(true);
+            expect(await a.commitFence(j, T, 5000, 0)).toBe(true);
+            // the committed fence is one answer, however many calls are written under it by hand
+            const k = job('commit-unknown-turn');
+            expect(await a.closeTurn(k, T, 0, 5000)).toBe(true);
+            expect(await b.noteAccepted(k, later)).toBe(true);
+            expect(await a.commitFence(k, T, 5000, 0)).toBe(false);
+            const l = job('commit-twice');
+            expect(await a.closeTurn(l, T, 0, 5000)).toBe(true);
+            expect(await a.commitFence(l, T, 5000, 0)).toBe(true);
+            await client.hSet(CALLED_PREFIX + l, 'accepted:B|6|r', String(later));
+            expect(await a.commitFence(l, T, 5000, 0)).toBe(true);
+            expect(await client.hGet(CALLED_PREFIX + l, 'fence:6|r')).toBe('5000c');
+        });
+
+        it('takes back a fence whose commit was never confirmed whichever way it stands (retract with committedToo): the moment, or the moment committed; a plain retract still leaves a committed one', async () => {
+            const { a, b } = servers();
+            const j = job('retract-unconfirmed');
+            expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
+            expect(await a.commitFence(j, T, 5000, 0)).toBe(true);
+            await a.retractFence(j, T, 5000);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000c');
+            // another moment's committed fence is not this one's
+            await a.retractFence(j, T, 4999, true);
+            expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000c');
+            await a.retractFence(j, T, 5000, true);
+            expect(await client.hExists(CALLED_PREFIX + j, 'fence:6|r')).toBe(false);
+            expect(await b.noteAccepted(j, 5000 + LATE, T)).toBe(true);
+            // the uncommitted moment goes the same way
+            const k = job('retract-unconfirmed-plain');
+            expect(await a.closeTurn(k, T, 0, 6000)).toBe(true);
+            await a.retractFence(k, T, 6000, true);
+            expect(await client.hExists(CALLED_PREFIX + k, 'fence:6|r')).toBe(false);
         });
 
         it('renews the hash for its full keep when it commits', async () => {
@@ -192,7 +251,7 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
             expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
             await client.expire(CALLED_PREFIX + j, 5);
             expect(await client.ttl(CALLED_PREFIX + j)).toBeLessThanOrEqual(5);
-            expect(await a.commitFence(j, T, 5000)).toBe(true);
+            expect(await a.commitFence(j, T, 5000, 0)).toBe(true);
             expect(await client.ttl(CALLED_PREFIX + j)).toBeGreaterThan(3000);
         });
 
@@ -200,7 +259,7 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
             const { a, b } = servers();
             const j = job('commit-no-retract');
             expect(await a.closeTurn(j, T, 0, 5000)).toBe(true);
-            expect(await a.commitFence(j, T, 5000)).toBe(true);
+            expect(await a.commitFence(j, T, 5000, 0)).toBe(true);
             await a.retractFence(j, T, 5000);
             expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000c');
             expect(await b.noteAccepted(j, 5000 + LATE, T)).toBe(false);
@@ -218,7 +277,7 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
             // not committed yet: nothing to release
             await a.releaseFence(j, T, 5000);
             expect(await client.hGet(CALLED_PREFIX + j, 'fence:6|r')).toBe('5000');
-            expect(await a.commitFence(j, T, 5000)).toBe(true);
+            expect(await a.commitFence(j, T, 5000, 0)).toBe(true);
             // another moment, another turn, another run: nothing goes
             await a.releaseFence(j, T, 4999);
             await a.releaseFence(j, { turn: 7, run: 'r' }, 5000);
@@ -244,7 +303,7 @@ describe.skipIf(!REAL_REDIS)('the fence of a turn, on a real Redis (the scripts 
             expect(await a.closeTurn(first, T, 3000, 5000)).toBe(false);
             const second = job('order-close-first');
             expect(await a.closeTurn(second, T, 3000, 5000)).toBe(true);
-            expect(await a.commitFence(second, T, 5000)).toBe(true);
+            expect(await a.commitFence(second, T, 5000, 0)).toBe(true);
             expect(await b.noteAccepted(second, 5001, T)).toBe(false);
         });
     });
