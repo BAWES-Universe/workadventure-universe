@@ -210,8 +210,8 @@ describe('cancel one job: Brick always asks first, and only the person\'s next m
         expect(first).toMatchObject({ done: false, asked: true });
         await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
         expect(orbit.acted()).toEqual([]);
-        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancelStarted, 'Visa form')]);
-        expect(lineOf(CONTROL_WORDS.askCancelStarted, 'Visa form')).toMatch(/pause it instead/);
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Visa form')]);
+        expect(lineOf(CONTROL_WORDS.askCancel, 'Visa form')).toMatch(/pause it instead/);
     });
 
     it('cancels once they answered in their next message, and says the mock\'s line', async () => {
@@ -237,7 +237,7 @@ describe('cancel one job: Brick always asks first, and only the person\'s next m
         c.nextMessage();
         await c.run(CANCEL_JOB_TOOL);
         expect(orbit.acted()).toEqual([]);
-        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancelStarted, 'Visa form')]);
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Visa form')]);
     });
 
     it('a reply asked again (a retry of the same turn) only repeats the question; and the question is answerable only in the very next message', async () => {
@@ -254,23 +254,33 @@ describe('cancel one job: Brick always asks first, and only the person\'s next m
         expect(orbit.acted()).toEqual([]);
     });
 
-    it('a job that never started: asked with its own words, and cancelled with "it used nothing"', async () => {
+    it('a job that never started used nothing: it is cancelled at once, with no question, and "it hadn\'t started"', async () => {
         const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { cancel: viewOf(working()) });
         const c = chat(orbit.admin);
         await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
-        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancelQueued, 'Taxi booking')]);
-        c.nextMessage();
-        await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
         expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking')]);
     });
 
+    it('a paused job has started: it is asked about first, every time, like a working one', async () => {
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]), { cancel: viewOf(working()) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([]);
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Hotel booking')]);
+        c.nextMessage();
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-hotel' }]);
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Hotel booking')]);
+    });
+
     it('a yes for one job never cancels another', async () => {
-        const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]));
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]));
         const c = chat(orbit.admin);
         await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
         await c.deliver();
         c.nextMessage();
-        await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
         expect(orbit.acted()).toEqual([]);
     });
 
@@ -352,6 +362,18 @@ describe('passing the person\'s words on to a job', () => {
         }
     });
 
+    it('"when it starts" from the door is said by the job\'s own state: in line it starts, paused it carries on', async () => {
+        for (const [job, line] of [
+            [inLine('job-taxi', 'Taxi booking'), lineOf(CONTROL_WORDS.toldWhenItStarts, 'Taxi booking')],
+            [paused('job-taxi', 'Taxi booking'), lineOf(CONTROL_WORDS.toldWhenItCarriesOn, 'Taxi booking')],
+        ] as const) {
+            const orbit = door(viewOf(working(), [job]), { note: { ...viewOf(working(), [job]), note: { seq: 1, delivery: 'when_it_starts' } } });
+            const c = chat(orbit.admin);
+            await c.run(TELL_JOB_TOOL, { job: 'taxi', message: 'Window seat' });
+            expect(await c.deliver()).toEqual([line]);
+        }
+    });
+
     it('never passes the same words on twice in one turn, even when the reply is asked again; a new message may', async () => {
         const orbit = door(viewOf(working()), { note: note('now') });
         const c = chat(orbit.admin);
@@ -385,7 +407,7 @@ describe('passing the person\'s words on to a job', () => {
 });
 
 describe('which job the person means', () => {
-    const jobs = [working(), inLine('job-taxi', 'Taxi booking'), inLine('job-visa2', 'Visa form for Sara')].map((job) => controlAnswerOf(viewOf(job)).ok && (controlAnswerOf(viewOf(job)) as { view: { job: never } }).view.job);
+    const jobs = [working(), inLine('job-taxi', 'Taxi booking'), inLine('job-visa2', 'Visa form for Sara')].map((job) => controlAnswerOf(viewOf(job)).ok && (controlAnswerOf(viewOf(job)) as unknown as { view: { job: never } }).view.job);
     it('finds it by its id, its title, words of its title, or words in common; two that fit are asked about, never guessed', () => {
         expect(findJob('taxi', jobs)).toMatchObject({ job: { id: 'job-taxi' } });
         expect(findJob('job-visa2', jobs)).toMatchObject({ job: { id: 'job-visa2' } });
@@ -448,7 +470,7 @@ describe('what reaches the person', () => {
         queue.add('key-00000001', async () => undefined, { state: 'started', title: 'Taxi booking' });
         await runComputerControlTool(CANCEL_JOB_TOOL, {}, { admin: orbit.admin, botId: BRICK, userId: 'u', state, confirmations: queue });
         const lines = queue.tell();
-        expect(withJobLines('Sure.', lines)).toBe(`Sure.\n\n${jobLine({ state: 'started', title: 'Taxi booking' })}\n${lineOf(CONTROL_WORDS.askCancelStarted, 'Visa form')}`);
+        expect(withJobLines('Sure.', lines)).toBe(`Sure.\n\n${jobLine({ state: 'started', title: 'Taxi booking' })}\n${lineOf(CONTROL_WORDS.askCancel, 'Visa form')}`);
         expect([...state.asks.values()][0].told).toBe(false);
         await queue.deliver(undefined);
         expect([...state.asks.values()][0].told).toBe(false);

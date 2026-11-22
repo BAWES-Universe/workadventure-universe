@@ -6,8 +6,8 @@
  *
  * WORDING STATUS
  *  - MOCK: section 10 of the steering mock ("Steering a computer job while it works", artifact QpheiJANyQuSQKZNCwbAxp), APPROVED by Khalid on 23 Nov ("Steering mock looks good"), word for word.
- *  - DECIDED: not drawn in the mock; word for word from Fable's decisions file of 23 Nov (computers-full-plan-23-nov/decisions-pause-stop-23-nov.md).
- *  - DRAFT: in neither; written in their style. To be confirmed.
+ *  - FINAL: every other line, word for word from Fable's final strings of 23 Nov (computers-full-plan-23-nov/brick-control-words-final-23-nov.md), shown to Khalid for his yes
+ *    (expect at most one-line edits, here only).
  * House rules: plain words, "Apps", never a price or how much of the month is left, no legal wording, the job's title in curly quotes (`quotedTitle`).
  */
 import { quotedTitle } from './JobStatusLine';
@@ -29,15 +29,20 @@ export const CONTROL_WORDS = {
         titled: (title) => `I've passed your answer to ${title}, and it's carrying on.`,
         plain: "I've passed your answer to your job, and it's carrying on.",
     } as ControlLine,
-    /** DRAFT: the person holds the job's screen; it gets the words when they hand it back (decisions 3e). */
+    /** FINAL: the person holds the job's screen; it gets the words when they hand it back. */
     toldAfterHandBack: {
-        titled: (title) => `I'll pass that on to ${title} when you hand it back.`,
-        plain: "I'll pass that on to your job when you hand it back.",
+        titled: (title) => `I'll pass that on to ${title} as soon as you hand the screen back.`,
+        plain: "I'll pass that on to your job as soon as you hand the screen back.",
     } as ControlLine,
-    /** DRAFT: a job in line or paused; it gets the words when it starts or carries on (decisions 3e). */
+    /** FINAL: a job still waiting in line; it gets the words when it starts. */
     toldWhenItStarts: {
-        titled: (title) => `I'll pass that on to ${title} when it starts.`,
-        plain: "I'll pass that on to your job when it starts.",
+        titled: (title) => `I've added that to ${title}. It uses it when it starts.`,
+        plain: "I've added that to your job. It uses it when it starts.",
+    } as ControlLine,
+    /** FINAL: a paused job; it gets the words when it carries on. */
+    toldWhenItCarriesOn: {
+        titled: (title) => `I've added that to ${title}. It uses it when it carries on.`,
+        plain: "I've added that to your job. It uses it when it carries on.",
     } as ControlLine,
     /** MOCK "Paused". */
     paused: {
@@ -59,20 +64,20 @@ export const CONTROL_WORDS = {
         titled: (title) => `${title} carries on next, when the current job ends.`,
         plain: 'Your job carries on next, when the current job ends.',
     } as ControlLine,
-    /** DRAFT: resumed, back in line waiting for a free computer (the approved status line's "other" words). */
+    /** FINAL: resumed, and every computer is busy. */
     resumedWaiting: {
         titled: (title) => `${title} is back in line, waiting for a free computer. It carries on by itself.`,
         plain: 'Your job is back in line, waiting for a free computer. It carries on by itself.',
     } as ControlLine,
-    /** DECIDED 1 ("Resume pressed while still out: it stays paused and says why, with Ask for more"), in the words of its pause line. */
+    /** FINAL: resumed while the month is still used up: it stays paused. */
     stillPausedAllowance: {
-        titled: (title) => `${title} is still paused: this month's computer time is used up. Nothing is lost. Tap Ask for more in [Usage](#usage) and I'll carry on by itself.`,
-        plain: "Your job is still paused: this month's computer time is used up. Nothing is lost. Tap Ask for more in [Usage](#usage) and I'll carry on by itself.",
+        titled: (title) => `${title} is still paused: this month's computer time is used up. Tap Ask for more in [Usage](#usage), and it carries on by itself once more is added.`,
+        plain: "Your job is still paused: this month's computer time is used up. Tap Ask for more in [Usage](#usage), and it carries on by itself once more is added.",
     } as ControlLine,
-    /** DECIDED 1, the same for a spending limit the person set. */
+    /** FINAL: resumed while the person's own spending limit still holds it. */
     stillPausedRule: {
-        titled: (title) => `${title} is still paused: it reached the spending limit you set. Nothing is lost. Raise the limit or say resume.`,
-        plain: 'Your job is still paused: it reached the spending limit you set. Nothing is lost. Raise the limit or say resume.',
+        titled: (title) => `${title} is still paused: it reached the spending limit you set. Change the limit and it carries on by itself.`,
+        plain: 'Your job is still paused: it reached the spending limit you set. Change the limit and it carries on by itself.',
     } as ControlLine,
     /** MOCK "Do this first", first line: the new job has the computer (the approved "Started" line). */
     firstStarted: {
@@ -84,10 +89,10 @@ export const CONTROL_WORDS = {
         titled: (title) => `${title} is paused and carries on by itself right after it.`,
         plain: 'The job that was working is paused and carries on by itself right after it.',
     } as ControlLine,
-    /** DRAFT: "Do this first" when the computer could not take the new job this second: it is first in line (the second line above still follows). */
+    /** FINAL: "Do this first" when the computer needs a moment: it is first in line (the second line above still follows). */
     firstNext: {
-        titled: (title) => `${title} is next and starts by itself.`,
-        plain: 'Your job is next and starts by itself.',
+        titled: (title) => `${title} is first in line and starts by itself.`,
+        plain: 'Your job is first in line and starts by itself.',
     } as ControlLine,
     /** MOCK "Do this next". */
     movedNext: {
@@ -106,57 +111,46 @@ export const CONTROL_WORDS = {
     } as ControlLine,
     /** MOCK "Stopped everything (said in chat)". With one job, the cancelled line says it, naming the job. */
     stoppedAll: (count: number): string => `I've stopped all ${count} jobs on my computer. Their files are kept.`,
-    /**
-     * DECIDED 2 "Cancel, before acting", then the offer of Pause in the words of the decided one-job Stop question ("Stop and Cancel always ask first ... and offer Pause").
-     * Asked every time; only the person's next message can answer it.
-     */
-    askCancelStarted: {
-        titled: (title) => `Cancel ${title}? It ends here, and you're charged only for the time it used. To come back to it later, pause it instead.`,
-        plain: "Cancel this job? It ends here, and you're charged only for the time it used. To come back to it later, pause it instead.",
+    /** FINAL: the question before cancelling a job that has started or is paused (by words; asked every time; only the person's next message can answer it). A job that never started is cancelled at once. */
+    askCancel: {
+        titled: (title) => `Cancel ${title}? Its files are kept, and the time it used is on its receipt. To come back to it later, I can pause it instead.`,
+        plain: 'Cancel your job? Its files are kept, and the time it used is on its receipt. To come back to it later, I can pause it instead.',
     } as ControlLine,
-    /** DRAFT: the same question for a job that never started (it used nothing). */
-    askCancelQueued: {
-        titled: (title) => `Cancel ${title}? It hasn't started, so it has used nothing. To keep it for later, pause it instead.`,
-        plain: "Cancel this job? It hasn't started, so it has used nothing. To keep it for later, pause it instead.",
-    } as ControlLine,
-    /**
-     * The question before Stop, which ends every job on the computer, paused ones too. One job: DECIDED 2 word for word. Several: DECIDED 2's panel question in Brick's own voice ("my computer"),
-     * naming the jobs, with the offer of Pause (DRAFT). `titles` are already quoted.
-     */
+    /** FINAL: the question before Stop, which ends every job on the computer, paused ones too (by words; asked every time). `titles` are already quoted. */
     askStop: (titles: string[]): string =>
         titles.length === 1
-            ? `Stop ${titles[0]}? It ends here and its files are kept. To come back to it later, pause it instead.`
-            : `Stop everything on my computer? That ends ${titles.length} jobs: ${listed(titles)}. To come back to one later, I can pause it instead.`,
+            ? `Stop ${titles[0]}? Its files are kept, and the time it used is on its receipt. To come back to it later, I can pause it instead.`
+            : `Stop all ${titles.length} jobs on my computer: ${listed(titles)}? Their files are kept. To end or pause just one, tell me which.`,
 } as const;
 
-/** What Brick says when a control could not be done (DRAFT unless marked). Nothing changed in any of these. */
+/** What Brick says when a control could not be done (FINAL unless marked). Nothing changed in any of these. */
 export const CONTROL_REFUSALS = {
-    /** DECIDED 3a, `taken_over`: the person holds the screen. */
+    /** `taken_over`: the person holds the screen. */
     takenOver: 'You have the screen right now. Hand it back first, or say stop.',
     /** `ending`: a finish is already kept, or Orbit decided to end it. */
     ending: {
-        titled: (title) => `${title} is already ending, so there's nothing to change. Its result comes to this chat.`,
-        plain: "That job is already ending, so there's nothing to change. Its result comes to this chat.",
+        titled: (title) => `${title} is already ending, so nothing changed. I'll tell you here how it went.`,
+        plain: "That job is already ending, so nothing changed. I'll tell you here how it went.",
     } as ControlLine,
     /** `over`: it has already ended. */
     over: {
-        titled: (title) => `${title} has already ended, so there's nothing to change.`,
-        plain: "That job has already ended, so there's nothing to change.",
+        titled: (title) => `${title} has already ended, so nothing changed.`,
+        plain: 'That job has already ended, so nothing changed.',
     } as ControlLine,
-    /** Pause of a job that is already paused (DECIDED 3h's question). */
+    /** Pause of a job that is already paused. */
     alreadyPaused: {
         titled: (title) => `${title} is already paused. Want me to resume it?`,
-        plain: 'That one is already paused. Want me to resume it?',
+        plain: 'That job is already paused. Want me to resume it?',
     } as ControlLine,
     /** `not_paused`: carry on, for a job that is working or in line already. */
     notPaused: {
-        titled: (title) => `${title} isn't paused, so it's already on its way.`,
-        plain: "That job isn't paused, so it's already on its way.",
+        titled: (title) => `${title} isn't paused, so there's nothing to resume.`,
+        plain: "That job isn't paused, so there's nothing to resume.",
     } as ControlLine,
     /** `not_queued`: do this next, for the job that already has the computer. */
     alreadyRunning: {
-        titled: (title) => `${title} is the job on my computer right now.`,
-        plain: 'That job is the one on my computer right now.',
+        titled: (title) => `${title} is already the job I'm working on.`,
+        plain: "That job is already the job I'm working on.",
     } as ControlLine,
     /** No job of that name: the jobs it does have are named (already quoted). */
     noSuchJob: (titles: string[]): string => (titles.length ? `I can't find that job. On my computer now: ${listed(titles)}.` : 'There are no jobs on my computer right now.'),

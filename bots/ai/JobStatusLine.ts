@@ -37,10 +37,10 @@ export const JOB_STATUS_WORDS = {
             titled: (title) => `${title} is next in line and hasn't started yet. It starts by itself when the current job ends.`,
             plain: "Your job is next in line and hasn't started yet. It starts by itself when the current job ends.",
         } as Line,
-        /** A job that was paused (by the person, or because the month ran out mid-job): asking for it again never starts a second one (decisions 23 Nov, 3h, word for word). */
+        /** A job that was paused (by the person, or because the month ran out mid-job): asking for it again never starts a second one (Brick's final control words, 23 Nov, word for word). */
         paused: {
             titled: (title) => `${title} is paused. Want me to resume it?`,
-            plain: 'That one is paused. Want me to resume it?',
+            plain: 'Your job is paused. Want me to resume it?',
         } as Line,
         other: {
             titled: (title) => `${title} is waiting for a free computer and hasn't started yet. It starts by itself.`,

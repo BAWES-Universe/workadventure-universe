@@ -7,7 +7,7 @@
  *
  * The rules this file keeps (decisions of 23 Nov, `computers-full-plan-23-nov/decisions-pause-stop-23-nov.md`):
  *  - Pause and resume act at once (they can be undone) and name the job.
- *  - Cancel and Stop ALWAYS ask first, and offer Pause. The question goes under the reply as a fixed line; only the person's NEXT message can answer it, and only once that question was
+ *  - Cancel of a job that has started or is paused, and Stop, ALWAYS ask first, and offer Pause (a job that never started used nothing and is cancelled at once). The question goes under the reply as a fixed line; only the person's NEXT message can answer it, and only once that question was
  *    delivered to them. Calling the tool again in the same reply, or in a reply asked again, only repeats the question. Nothing ends until then.
  *  - What the person reads about a control is a fixed line (`ComputerControlWords`) built from what Orbit really answered, appended in the same event as the job status lines.
  *  - A job named by words is found among the jobs Orbit lists; two that fit are never guessed between: Brick asks which, naming them.
@@ -55,7 +55,7 @@ export function computerControlToolDefinitions(): { type: 'function'; function: 
             { job: JOB_ARG, pause_running: { type: 'boolean', description: 'True when they want it done now, before the job that is working (that one pauses and carries on by itself after).' } },
             ['job']
         ),
-        tool(CANCEL_JOB_TOOL, 'Cancel one job: it ends and cannot be resumed; its files are kept, and the others carry on. It always asks them first, with a line under your reply: call it when they ask to cancel or end one job, and again when they say yes in their next message. Never cancel to "pause"; never in the same reply as the question.', { job: JOB_ARG }),
+        tool(CANCEL_JOB_TOOL, 'Cancel one job: it ends and cannot be resumed; its files are kept, and the others carry on. A job that has started always asks them first, with a line under your reply: call it when they ask to cancel or end one job, and again when they say yes in their next message (a job that never started is cancelled at once). Never cancel to "pause"; never in the same reply as the question.', { job: JOB_ARG }),
         tool(STOP_COMPUTER_TOOL, 'Stop everything on your computer: every job ends, paused ones too, and their files are kept. It always asks them first, with a line under your reply: call it when they ask to stop everything, and again when they say yes in their next message. For one job use cancel_computer_job.'),
         tool(
             TELL_JOB_TOOL,
@@ -292,7 +292,8 @@ async function control(name: string, args: Record<string, unknown>, context: Com
         case CANCEL_JOB_TOOL: {
             const key = `cancel|${job.id}`;
             const ask = context.state.asks.get(key);
-            if (!ask || !ask.told || !ask.answerable) return askFirst(context, key, { kind: 'cancel', jobIds: [job.id] }, [lineOf(hasStarted(job) ? CONTROL_WORDS.askCancelStarted : CONTROL_WORDS.askCancelQueued, job.title)]);
+            // A job that has started (or is paused) is always named back first; one that never started used nothing and goes at once (the approved mock, pictures 13 and 14)
+            if (hasStarted(job) && (!ask || !ask.told || !ask.answerable)) return askFirst(context, key, { kind: 'cancel', jobIds: [job.id] }, [lineOf(CONTROL_WORDS.askCancel, job.title)]);
             context.state.asks.delete(key);
             return once(context, key, async () => {
                 const answer = await door({ action: 'cancel', jobId: job.id });
@@ -336,8 +337,9 @@ function toldLine(job: ComputerControlJob, delivery: string | undefined): string
             return lineOf(CONTROL_WORDS.toldAnswer, job.title);
         case 'after_hand_back':
             return lineOf(CONTROL_WORDS.toldAfterHandBack, job.title);
+        // The door says `when_it_starts` for a job in line and for a paused one alike: which it is, is the job's own state
         case 'when_it_starts':
-            return lineOf(CONTROL_WORDS.toldWhenItStarts, job.title);
+            return lineOf(isPaused(job) ? CONTROL_WORDS.toldWhenItCarriesOn : CONTROL_WORDS.toldWhenItStarts, job.title);
         default:
             return lineOf(CONTROL_WORDS.toldRunning, job.title);
     }
