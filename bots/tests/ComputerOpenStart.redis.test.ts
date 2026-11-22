@@ -537,6 +537,54 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             warn.mockRestore();
         });
 
+        for (const [how, fresh] of [
+            ['Orbit answers `earlier` (the Redis entry was gone, a fresh process)', true],
+            ['a look-up of the earlier send finds it', false],
+        ] as const) {
+            for (const found of ['done', 'failed', 'running'] as const) {
+                it(`G66-1: ${how}, the job is ${found}: EVERY use_computer call in the same turn (a reworded one included) gets that answer and sends nothing; the next message starts a job of its own`, async () => {
+                    const who = ids();
+                    const orbit = new FakeOrbit();
+                    orbit.onPost = 'lose-after-commit';
+                    orbit.onGet = 'silent';
+                    const before = process_(orbit, who);
+                    await before.ask('Fill in my visa form');
+                    const original = orbit.posts[0].key;
+                    orbit.jobs.get(original)!.status = found;
+                    forgetSettledStarts(before.memory);
+                    orbit.onPost = 'whole';
+                    orbit.onGet = 'truth';
+                    if (fresh) await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+                    const server = fresh ? process_(orbit, who) : before;
+                    orbit.posts = [];
+                    const first = await server.ask('Book me a table for Friday');
+                    expect(first).toMatchObject({ started: false, earlier: true });
+                    const sentSoFar = orbit.posts.length;
+                    // the model words the call again, and again with other words, in the same turn
+                    const again = await server.ask('Reserve a table on Friday evening');
+                    const third = await server.ask('Fill in my visa form');
+                    expect(orbit.posts).toHaveLength(sentSoFar);
+                    expect(orbit.jobs.size).toBe(1);
+                    expect(orbit.reservations).toBe(1);
+                    expect(again).toEqual(first);
+                    expect(third).toEqual(first);
+                    // the person's next message: a job of its own, with its own key (a job found LIVE by a look-up keeps its start open, as since v63: the next message is still that start, and nothing is sent)
+                    forgetSettledStarts(server.memory);
+                    orbit.status = 'running';
+                    if (!fresh && found === 'running') {
+                        expect(await server.ask('Book me a table for Friday')).toMatchObject({ started: false, earlier: true, found: true });
+                        expect(orbit.jobs.size).toBe(1);
+                        return;
+                    }
+                    const next = await server.ask('Book me a table for Friday');
+                    expect(next).toMatchObject({ started: true });
+                    expect(orbit.jobs.size).toBe(2);
+                    expect(orbit.reservations).toBe(2);
+                    expect(orbit.posts[orbit.posts.length - 1].key).not.toBe(original);
+                });
+            }
+        }
+
         for (const [name, record] of [
             ['holds no words (a record from before)', (key: string) => ({ key, at: Date.now() - 5000 })],
             ['holds damaged words', (key: string) => ({ key, at: Date.now() - 5000, payload: { title: 5, brief: { a: 1 } } })],

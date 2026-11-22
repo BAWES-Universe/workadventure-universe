@@ -120,6 +120,12 @@ export const OPEN_START_KEEP_MS = 24 * 60 * 60_000;
 export const OPEN_START_REPORT_MS = 60 * 60_000;
 /** Where the one open start of a person and Brick is kept in the chat's map (the settled ones of this turn are kept by title). */
 export const OPEN_START_SLOT = '\u0000open';
+/**
+ * Where a job found for an EARLIER ask (a look-up of an earlier send that found it live, done or ended, or Orbit's `earlier`) is kept for the rest of the turn, whatever the title of the next
+ * use_computer call: every call in the turn is answered with it and nothing is sent (a reworded call would otherwise send a new key, and Orbit, which now has the earlier job confirmed, would make a second job).
+ * The person's next message clears it (it is not an open start).
+ */
+export const FOUND_EARLIER_SLOT = '\u0000found';
 const COULD_NOT_CHECK_NOTE = 'It is not known whether this job started. Say in one short sentence, in the person\'s language and in these words: "I couldn\'t check whether this job has started. I\'ll use the same request when you check again." They can also look at the bar above this chat. Do not say it failed or that it started.';
 
 /** What was asked, as one string: the same title in the same chat is the same ask (the details a model words differently when it asks again do not make a second job). */
@@ -262,6 +268,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const asked = askedOf(job, context.origin);
     const scope = `${context.botId}|${context.userId}`;
     const now = Date.now();
+    // A job already found for an earlier ask in this turn is every call's answer, whatever it says: nothing is sent
+    const foundEarlier = context.startKeys?.get(FOUND_EARLIER_SLOT);
+    if (foundEarlier?.found && now - foundEarlier.at < OPEN_START_KEEP_MS) return answerOf({ ok: false, reason: foundEarlier.found } as StartAnswer, context, true);
     const open = context.startKeys?.get(OPEN_START_SLOT);
     const settled = context.startKeys?.get(asked);
     const earlier = open && now - open.at < OPEN_START_KEEP_MS ? open : settled && !settled.open ? settled : undefined;
@@ -364,8 +373,13 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             entry.found = sent.reason;
             delete entry.payload;
             context.startKeys?.set(asked, entry);
+            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: found.attempt, at: now, open: false, found: sent.reason });
             await context.admin.ackComputerStart?.(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), attempt: found.attempt }).catch(() => false);
             return answerOf({ ok: false, reason: sent.reason } as StartAnswer, context, true);
+        }
+        // A look-up of an earlier send found its job: that is the answer of every call in this turn
+        if (looked && ['starting', 'done', 'ended'].includes((looked as unknown as StartAnswer).reason)) {
+            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: (looked as unknown as StartAnswer).reason });
         }
         const started = (looked ?? sent) as StartAnswer;
         const refused = !started.ok && !UNCERTAIN_REASONS.includes(started.reason);
