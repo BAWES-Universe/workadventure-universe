@@ -853,7 +853,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         } catch (error) {
             const status = statusOf(error);
             if (status === 404) return 'stale';
-            if (status === 400) return 'kept';
+            if (status === 400) {
+                // An Orbit from before does not know the intent. In production it would also mean our own body is wrong, so it is said (no words of anyone's)
+                say('Orbit answered the finish intent with 400 (an Orbit that does not know it, or a body of ours it does not accept): the give-up goes on as before.');
+                return 'kept';
+            }
             say('Could not keep the finish intent of a job:', error);
             return 'unsent';
         }

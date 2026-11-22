@@ -35,11 +35,13 @@ const http = (status: number, data: unknown) => Object.assign(new Error(`Request
 type LedgerEntry = { outcome: string; cause?: unknown; why?: unknown; turns?: unknown; run?: unknown; by: 'finish' | 'cutoff' };
 interface Modes {
     /** What the intent answers: kept (default), a thrown error, or a refusal. */
-    intent?: (n: number) => 'ok' | 'down' | 'old' | 'unknown-job' | 'stale' | 'cutoff';
+    intent?: (n: number) => 'ok' | 'down' | 'old' | 'unknown-job' | 'stale' | 'cutoff' | 'other';
     /** What a finish does: taken (default), lost on its way (never got there), or its answer lost after it was done. */
     finish?: (n: number) => 'ok' | 'down' | 'answer-lost';
     /** How long Orbit takes over the intent before it answers (it is kept the moment it arrives). */
     intentDelayMs?: number;
+    /** Done at the start of the nth finish, before Orbit answers it (the world moves while a finish is on its way). */
+    onFinish?: (n: number) => void;
     /** The job reads that do not show the intent (a read from before it was kept). */
     hideReads?: number;
     /** Which calls Orbit refuses with `finish_pending` while an intent is kept (all of them by contract). */
@@ -66,11 +68,11 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
         turnScript: [] as Array<(signal?: AbortSignal) => AsyncGenerator<RunnerEvent>>,
     };
     const refuses = (call: 'prepare' | 'turn' | 'renew') => state.pending !== null && (modes.refuses ?? ['prepare', 'turn', 'renew']).includes(call);
-    const open = (): TurnOpened => {
+    const open = (signal?: AbortSignal): TurnOpened => {
         const make = state.turnScript.shift();
         state.turnsOpened += 1;
         const events = make
-            ? make()
+            ? make(signal)
             : (async function* (): AsyncGenerator<RunnerEvent> {
                   yield { type: 'created', id: 'r', sessionId: 's' };
                   yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null };
@@ -100,6 +102,8 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
                 if (mode === 'down') throw http(503, { error: 'unavailable' });
                 if (mode === 'old') throw http(400, { error: 'Invalid input data' });
                 if (mode === 'unknown-job') throw http(404, { error: 'not found' });
+                // an answer that is a refusal of a kind the game does not know: nothing was kept
+                if (mode === 'other') return { ok: false, reason: 'something_else', job: { id: job.jobId } };
                 if (state.over || mode === 'stale') return { ok: false, reason: 'stale', job: { id: job.jobId } };
                 if (body.generation !== undefined && body.generation !== state.generation) return { ok: false, reason: 'stale', job: { id: job.jobId } };
                 if (mode === 'cutoff') {
@@ -116,6 +120,7 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
             if (body.action === 'finish') {
                 state.finishes.push(body);
                 state.order.push('finish');
+                modes.onFinish?.(state.finishes.length);
                 const mode = (modes.finish ?? (() => 'ok'))(state.finishes.length);
                 if (mode === 'down') throw new Error('Orbit could not be reached');
                 if (state.over) return { ok: true, already: true };
@@ -137,8 +142,7 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
         turn: async (_jobId, _input, signal) => {
             state.turnAttempts += 1;
             if (refuses('turn')) return { ok: false, reason: 'finish_pending' } as unknown as TurnOpened;
-            void signal;
-            return open();
+            return open(signal);
         },
         stream: async () => {
             state.streams += 1;
@@ -361,7 +365,10 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig({ intent: () => 'old' });
         const notes = notesOf('A');
         poolBusyTurn(notes);
+        quiet.warn.mockClear();
         await work(runnerOn(notes, 'run1'));
+        // said once in the log (in production this would mean our own body is wrong), with nothing of anyone's in it
+        expect(quiet.warn.mock.calls.filter((call) => String(call[0]).includes('finish intent with 400'))).toHaveLength(1);
         expect(fake.state.pending).toBeNull();
         endedOnce(fake);
         expect(fake.state.turnsOpened).toBe(1);
@@ -504,6 +511,73 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         expect(fake.state.cancels).toBe(0);
         expect(fake.state.ledger).toEqual([{ outcome: 'done', cause: undefined, why: undefined, turns: undefined, run: undefined, by: 'finish' }]);
         expect(await admission(1)).toBe(true);
+    });
+
+    it('an answer that is a refusal of a kind the game does not know (200 {ok:false, reason: something else}) is NOT a kept intent: it stays owed, no finish is sent and no turn opens until a later answer keeps it', async () => {
+        const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig({ intent: (n) => (n <= 2 ? 'other' : 'ok') });
+        const notes = notesOf('A');
+        poolBusyTurn(notes);
+        await work(runnerOn(notes, 'run1'));
+        expect(fake.state.intents).toHaveLength(3);
+        expect(fake.state.order.filter((one) => one !== 'cancel')).toEqual(['intent', 'intent', 'intent', 'finish']);
+        expect(fake.state.turnAttempts).toBe(1);
+        expect(fake.state.turnsOpened).toBe(1);
+        endedOnce(fake);
+    });
+
+    it('an owed intent that is later answered STALE drops the give-up for good: a stop and a start of the runner (a replacement worker) sends no intent and no finish for it', async () => {
+        const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig({ intent: (n) => (n === 1 ? 'down' : 'stale') });
+        const notes = notesOf('A');
+        poolBusyTurn(notes);
+        // after the stale answer the job goes on with a turn of its own, that lasts until the worker is stopped
+        fake.state.turnScript.push(async function* (signal) {
+            yield { type: 'created', id: 'r2', sessionId: 's' };
+            await new Promise<void>((resolve) => {
+                signal?.addEventListener('abort', () => resolve(), { once: true });
+                setTimeout(resolve, 4000);
+            });
+        });
+        const runner = runnerOn(notes, 'run1');
+        const first = work(runner);
+        await until(() => fake.state.intents.length >= 2 && fake.state.turnsOpened >= 2);
+        runner.stop();
+        await first;
+        const intentsBefore = fake.state.intents.length;
+        expect(intentsBefore).toBe(2);
+        // the replacement worker for the same job: no debt is left to send
+        runner.start(1_000_000_000);
+        await until(() => fake.state.over);
+        runner.stop();
+        await runner.idle();
+        expect(fake.state.intents).toHaveLength(intentsBefore);
+        expect(fake.state.finishes.some((one) => one.why === POOL_BUSY_WHY)).toBe(false);
+        expect(fake.state.ledger).toEqual([{ outcome: 'done', cause: undefined, why: undefined, turns: undefined, run: undefined, by: 'finish' }]);
+    });
+
+    it('the generation moves while the intent\'s finish is on its way: the finish is answered stale, the runner reads the job again and completes ONCE on the new generation, with no sweep needed', async () => {
+        let alive = true;
+        const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig({
+            finish: () => (alive ? 'down' : 'ok'),
+            // the first finish of the second runner is on its way when the person takes the machine and gives it back
+            onFinish: () => {
+                if (!alive && fake.state.generation === 1) fake.state.generation = 2;
+            },
+        });
+        const notesA = notesOf('A');
+        const first = runnerOn(notesA, 'run1');
+        poolBusyTurn(notesA);
+        fake.state.onIntentKept = () => first.stop();
+        await work(first);
+        expect(fake.state.pending).not.toBeNull();
+        alive = false;
+        await work(runnerOn(notesOf('B'), 'run2'));
+        endedOnce(fake);
+        // the second runner's finishes: the one on the old generation (answered stale) and the one on the new, taken
+        const second = fake.state.finishes.filter((one) => one.generation === 1 || one.generation === 2).slice(-2);
+        expect(second.map((one) => one.generation)).toEqual([1, 2]);
+        expect(fake.state.ledger).toHaveLength(1);
+        expect(fake.state.turnsOpened).toBe(1);
+        expect(fake.state.prepares).toBe(1);
     });
 
     describe('Orbit refuses with finish_pending (a read that came before the intent was kept): the runner reads the job again and completes the end, with no turn', () => {
