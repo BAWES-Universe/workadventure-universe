@@ -295,9 +295,24 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
             expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
         });
 
-        it('throws at once after a 4xx that carries Orbit\'s own business refusal in its body (`ok: false` and a reason): that is an answer, and the start made no job', async () => {
-            const { orbit, call } = lostBy(answered(403, { ok: false, reason: 'off' }), () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
-            await expect(orbit.startComputerJob('b', 'u', ASK)).rejects.toThrow(/status code/);
+        // GPT round 4, R1: Orbit sends its business refusals as a SUCCESSFUL HTTP answer (200). The same body on an error status (a rate limiter's 429, a gateway's 403 in front of
+        // Orbit) is not Orbit's no: the key is looked up, and the start is never told as one that made nothing
+        it.each([
+            ['429 {ok:false, reason:"rate_limited"}', answered(429, { ok: false, reason: 'rate_limited' })],
+            ['403 {ok:false, reason:"off"}', answered(403, { ok: false, reason: 'off' })],
+            ['503 {ok:false, reason:"paused"}', answered(503, { ok: false, reason: 'paused' })],
+        ])('looks up the SAME key after a %s (the shape of Orbit\'s refusal on an error status): it does not throw, and keeps the uncertainty', async (_name, failure) => {
+            const { orbit, call } = lostBy(failure, () => ({ data: { started: null } }));
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
+            expect((call.mock.calls[1][3] as { attempt: string }).attempt).toBe(sentKey(call));
+        });
+
+        it('keeps Orbit\'s refusal final when it comes as a 200 with a reason: the start made no job, and nothing is looked up', async () => {
+            const { orbit } = service(async () => ({ data: {} }));
+            const call = vi.fn(async (method: string) => (method === 'post' ? { data: { ok: false, reason: 'off' } } : { data: { started: { id: 'job-1', status: 'queued' } } }));
+            (orbit as unknown as { brickCall: unknown }).brickCall = call;
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'off' });
             expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
         });
 

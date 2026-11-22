@@ -563,6 +563,12 @@ export function readComputerJobState(status: string): 'live' | 'done' | 'ended' 
     return 'unknown';
 }
 
+/** What is true of a job that was made, by its state: live is `starting` (it exists; nothing is said of the machine), finished is `done`, failed or stopped is `ended`; a state this server does not know says nothing. */
+function computerJobTold(status: string): { ok: false; reason: string } {
+    const state = readComputerJobState(status);
+    return { ok: false, reason: state === 'live' ? 'starting' : state === 'unknown' ? 'unknown' : state };
+}
+
 /** A key Orbit takes for a start (`^[A-Za-z0-9_-]{8,64}$`): one that is not that is replaced by a new one, so the start is never refused for its key. */
 const START_KEY_SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -579,7 +585,9 @@ function isOrbitRefusal(data: unknown): data is { ok: false; reason: string; app
  * of Orbit, a gateway's 403 with a JSON body) is not Orbit's: what Orbit decided is not known.
  */
 function isOrbitsOwnAnswer(status: number, data: unknown): boolean {
-    if (isOrbitRefusal(data)) return true;
+    // Orbit's business refusals are sent as a SUCCESSFUL HTTP answer (200): the same body on an error status (a rate limiter's 429 in front of Orbit) is not Orbit's no, and says
+    // nothing of whether the start was taken
+    if (status >= 200 && status < 300 && isOrbitRefusal(data)) return true;
     if (!isPlainObject(data)) return false;
     return (status === 400 && data.error === 'Invalid input data') || (status === 401 && data.error === 'Unauthorized');
 }
@@ -1785,6 +1793,18 @@ export class AdminApiService {
     }
 
     /**
+     * Where the start of THIS key stands, asked of Orbit by the key alone (the same read a slow start is followed by): what is true of the job it made (`starting`: it is live, `done`,
+     * `ended`), `unknown` when Orbit cannot say (the read failed, an Orbit without it, a start with that key still going on), and `none` when Orbit answers that no job has that key
+     * YET (a POST it still processes can commit after this read, so the same key may still be sent: Orbit makes one job of one key). Never throws.
+     */
+    async lookUpComputerStart(viaBotId: string, userId: string, find: { isGuest?: boolean; startKey: string }): Promise<{ ok: false; reason: string } | 'none'> {
+        const made = await this.computerJobStarted(viaBotId, userId, find);
+        if (made === 'none') return 'none';
+        if (made === 'unknown') return { ok: false, reason: 'unknown' };
+        return computerJobTold(made.status);
+    }
+
+    /**
      * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. Every start carries a key of its own (`startKey`, one random id
      * per start), which Orbit keeps with the job it makes. A start whose answer did not come back whole (it took longer than we wait, a gateway cut it, the connection
      * was reset or broken, or a server or proxy answered 5xx: see `mayHaveStarted`) is not a failure of the computer when Orbit says that the job of THIS key was made.
@@ -1805,18 +1825,14 @@ export class AdminApiService {
         // Asks Orbit which job THIS start made (by its key), and says what is true of it: the same for a start whose answer was lost and for one whose answer came but
         // did not say what happened
         const lookUp = async (): Promise<{ ok: false; reason: string }> => {
-            const made = await this.computerJobStarted(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
+            const made = await this.lookUpComputerStart(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
             // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
-            if (made === 'unknown' || made === 'none') return { ok: false, reason: 'unknown' };
-            return told(made.status);
+            return made === 'none' ? { ok: false, reason: 'unknown' } : made;
         };
         // What is true of a job that was made, by its state (the same reading for every way an answer about it comes): live is `starting` (it exists; nothing is
         // said of the machine), one that finished is `done`, one that failed or was stopped is `ended`: it WAS made and is over, which is no connection failure of
         // the start (nothing was unreachable); a state this server does not know says nothing
-        const told = (status: string): { ok: false; reason: string } => {
-            const state = readComputerJobState(status);
-            return { ok: false, reason: state === 'live' ? 'starting' : state === 'unknown' ? 'unknown' : state };
-        };
+        const told = (status: string): { ok: false; reason: string } => computerJobTold(status);
         let answer: Awaited<ReturnType<AdminApiService['sendComputerJob']>>;
         try {
             answer = await this.sendComputerJob(viaBotId, userId, ask, startKey);

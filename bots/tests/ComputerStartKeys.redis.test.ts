@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { createClient } from 'redis';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { runComputerTool, START_KEY_KEEP_MS } from '../ai/ComputerTools';
+import { runComputerTool, OPEN_START_KEEP_MS } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
 /**
@@ -37,7 +37,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         await client.quit();
     });
 
-    const LIFE = START_KEY_KEEP_MS;
+    const LIFE = OPEN_START_KEEP_MS;
 
     it('keeps the key and the moment it was first sent, with the life asked for, and answers the entry it holds', async () => {
         const store = new RedisStartKeys(() => client as never);
@@ -45,12 +45,12 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         const at = Date.now();
         expect(await store.claim(s, { key: 'a-start-key-0001', at }, LIFE, LIFE)).toEqual({ key: 'a-start-key-0001', at });
         const life = await client.pTTL(startKeyNameOf(s));
-        expect(life).toBeGreaterThan(590_000);
-        expect(life).toBeLessThanOrEqual(600_000);
+        expect(life).toBeGreaterThan(LIFE - 10_000);
+        expect(life).toBeLessThanOrEqual(LIFE);
         expect(JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null')).toEqual({ key: 'a-start-key-0001', at });
     });
 
-    it('answers the FIRST key to every later ask while it is good, keeps its life as it was (never a new ten minutes), and leaves the entry as it is', async () => {
+    it('answers the FIRST key to every later ask while it is good, keeps its life as it was (never a new safety life), and leaves the entry as it is', async () => {
         const store = new RedisStartKeys(() => client as never);
         const s = scope('first');
         const at = Date.now();
@@ -156,8 +156,8 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         const keys = servers.flatMap((one) => one.sent);
         expect(keys).toHaveLength(6);
         expect(new Set(keys).size).toBe(1);
-        // tidy: the scope this test made (its name is a hash of the Brick, person, chat and title)
-        const name = startKeyNameOf(`brick-race|uuid-race|${JSON.stringify([null, null, `race ${s} ${run}`])}`);
+        // tidy: the scope this test made (its name is a hash of the Brick and person)
+        const name = startKeyNameOf('brick-race|uuid-race');
         expect(JSON.parse((await client.get(name)) ?? 'null')).toMatchObject({ key: keys[0] });
         await client.del(name);
     });
@@ -176,7 +176,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         await ask();
         await Promise.all([ask(), ask(), ask()]);
         expect(new Set(sent).size).toBe(1);
-        await client.del(startKeyNameOf(`brick-stored|uuid-stored|${JSON.stringify([null, null, job.toLowerCase()])}`));
+        await client.del(startKeyNameOf('brick-stored|uuid-stored'));
     });
 
     it('deletes only the key it is told: the key of an ask that started again since stays, and a missing key is nothing', async () => {
