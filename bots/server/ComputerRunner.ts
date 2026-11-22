@@ -45,11 +45,18 @@ export interface RunnableJob {
 /** Whose fault a failed job is, as Orbit's finish call takes it: `ours` is given back to the person, `agent` is the person's. */
 export type FinishCause = 'ours' | 'agent';
 
-export type TurnOpened = { ok: true; events: AsyncIterable<RunnerEvent> } | { ok: false; reason: string; responseId?: string };
+export type TurnOpened = { ok: true; events: AsyncIterable<RunnerEvent> } | { ok: false; reason: string; responseId?: string; superseded?: true };
 
-/** What the bot server tells Orbit with a prepare, besides the relay's address: the run of this runner the job's turns are numbered in. */
+/** What the bot server tells Orbit with a prepare, besides the relay's address: the run of this runner the job's turns are numbered in, and the ownership epoch it holds the job under. */
 export interface PrepareFacts {
     run?: string;
+    epoch?: number;
+}
+
+/** What a cancel names: the owner's epoch, and the provider turn (response id) the runner saw. Orbit cancels exactly that turn, and only for the current owner. */
+export interface CancelFacts {
+    epoch?: number;
+    responseId?: string;
 }
 
 /**
@@ -71,13 +78,13 @@ export interface RunnerOrbit {
      * The job as Orbit has it, or null when it is gone. `generation` is the job's control generation: it moves when the person takes the machine
      * or gives it back, and when the job pauses or resumes. Absent from an Orbit that does not give it (nothing is then sent or checked).
      */
-    job(botId: string, jobId: string): Promise<{ status: string; control: string; generation?: number; finishPending?: FinishPending | null } | null>;
+    job(botId: string, jobId: string): Promise<{ status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: FinishPending | null } | null>;
     action(botId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
     /** `extra` goes along with the address (see `PrepareFacts`). */
     prepare(jobId: string, relay: string, extra?: PrepareFacts): Promise<{ ok: true } | { ok: false; reason: string }>;
-    turn(jobId: string, input: string, signal: AbortSignal): Promise<TurnOpened>;
-    stream(jobId: string, signal: AbortSignal): Promise<TurnOpened>;
-    cancel(jobId: string): Promise<void>;
+    turn(jobId: string, input: string, signal: AbortSignal, epoch?: number): Promise<TurnOpened>;
+    stream(jobId: string, signal: AbortSignal, epoch?: number): Promise<TurnOpened>;
+    cancel(jobId: string, facts?: CancelFacts): Promise<void>;
 }
 
 export interface RunnerTiming {
@@ -344,9 +351,17 @@ function runStaleOf(body: unknown): boolean {
     return answer.reason === 'stale' && answer.run === 'superseded';
 }
 
-/** An action for Orbit, with the control generation the turn started on when Orbit gave one (so an action from an older turn changes nothing). */
-function fenced(body: Record<string, unknown>, generation: number | undefined): Record<string, unknown> {
-    return generation === undefined ? body : { ...body, generation };
+/** An action for Orbit, with the control generation the turn started on when Orbit gave one (so an action from an older turn changes nothing), and the ownership epoch the runner holds the job under. */
+function fenced(body: Record<string, unknown>, generation: number | undefined, epoch?: number): Record<string, unknown> {
+    const withEpoch = epoch === undefined ? body : { ...body, epoch };
+    return generation === undefined ? withEpoch : { ...withEpoch, generation };
+}
+
+/** The numbers a turn's requests to Orbit are made under: the turn, the run it is numbered in, and the ownership epoch the runner holds the job under (absent with an Orbit that has none). */
+interface TurnIds {
+    turn: number;
+    run: string;
+    epoch?: number;
 }
 
 /**
@@ -358,7 +373,7 @@ const orbitSaidNo = (error: unknown): boolean => refusedByOrbit(error) && status
 
 type TurnResult =
     /** The turn ended and what the agent said is here (it may be empty). */
-    | { kind: 'ended'; words: string; failed: boolean; fenced: boolean }
+    | { kind: 'ended'; words: string; failed: boolean; fenced: boolean; responseId?: string }
     /**
      * Orbit or the job changed under it: look at the job again. `cancelled`: this turn was stopped here (its room was gone, or a report
      * was refused as stale), so it is not there to reconnect to, and the page may have changed since: the next turn is told to look first.
@@ -394,7 +409,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * The pool-busy give-ups Orbit has not accepted yet, by job: what the finish says (its turn and run, the control generation it began on) and the close whose committed fence is
      * taken back once Orbit accepts it. They belong to the runner, not to a worker: a worker that is stopped leaves its give-up for the next worker of the job.
      */
-    const giveUps = new Map<string, { turnNo: number; run: string; generation: number | undefined; attempt?: CloseAttempt }>();
+    const giveUps = new Map<string, { turnNo: number; run: string; generation: number | undefined; epoch?: number; attempt?: CloseAttempt }>();
     // Counts each start and stop, so a poll that was asked before a stop can tell it was
     let generation = 0;
     // Whether a 400 for the finish intent has been reported to Sentry by this runner (once)
@@ -422,9 +437,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function finish(
         job: RunnableJob,
         outcome: 'done' | 'failed',
-        options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[]; run?: string; signal?: AbortSignal } = {}
+        options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[]; run?: string; epoch?: number; signal?: AbortSignal } = {}
     ): Promise<'ended' | 'stale' | 'stopped' | 'unsent'> {
-        const { cause, generation, why, turns, run, signal } = options;
+        const { cause, generation, why, turns, run, epoch, signal } = options;
         let stale = false;
         let unsent = false;
         // Orbit judges a failure from the call rows it holds, so what the relay recorded for this job reaches it BEFORE the finish does (a moment of
@@ -446,7 +461,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             ...(run ? { run } : {}),
         };
         await orbit
-            .action(job.botId, job.jobId, fenced(body, generation))
+            .action(job.botId, job.jobId, fenced(body, generation, epoch))
             .then((answer) => {
                 // Orbit says "stale" in a 200 too (an older generation than the job's own): nothing was ended
                 if (answer.ok === false && answer.reason === 'stale') {
@@ -501,7 +516,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * the relay, or Orbit (which asks the machine itself to call the relay with its own key) says the relay could not be reached. It is tried again
      * as a failure is, since a relay may be coming back up, and only then said. Orbit is told the run with each prepare.
      */
-    async function prepared(job: RunnableJob, relay: string, run: string, signal: AbortSignal): Promise<'ready' | 'look' | 'failed' | 'unreachable' | 'stopped'> {
+    async function prepared(job: RunnableJob, relay: string, run: string, epoch: number | undefined, signal: AbortSignal): Promise<'ready' | 'look' | 'failed' | 'unreachable' | 'stopped' | 'superseded'> {
         for (let attempt = 0; ; attempt++) {
             if (signal.aborted) return 'stopped';
             let unreachable = false;
@@ -513,13 +528,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 // The job ends here (its own fault row says so): Orbit is not asked to prepare a machine for it
                 unreachable = true;
             } else {
-                answer = await orbit.prepare(job.jobId, relay, { run }).catch(() => ({ ok: false as const, reason: 'failed' }));
+                answer = await orbit.prepare(job.jobId, relay, { run, ...(epoch === undefined ? {} : { epoch }) }).catch(() => ({ ok: false as const, reason: 'failed' }));
                 if ('reason' in answer && answer.reason === 'relay_unreachable') unreachable = true;
             }
             // A stop that came while Orbit was being asked is no failure of the job: nothing is ended on it
             if (signal.aborted) return 'stopped';
             if (!unreachable) {
                 if (!('reason' in answer)) return 'ready';
+                // Another worker owns the job (its claim is newer than ours): this run is over, and nothing is ended or cancelled for it
+                if (answer.reason === 'superseded') return 'superseded';
                 // The job is not Brick's to work on now (taken over, over, no machine awake): look at it again, do not retry
                 if (answer.reason !== 'failed') return 'look';
             }
@@ -541,14 +558,14 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     }
 
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
-    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined, since: Since | null, seenFromStart: () => boolean, ids: { turn: number; run: string }): Promise<TurnResult> {
+    async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined, since: Since | null, seenFromStart: () => boolean, ids: TurnIds): Promise<TurnResult> {
         // A give-up whose finish intent Orbit took while the turn was ending by its own terminal event: the intent cannot be taken back, so the turn is read as the give-up it became
         const late: { result?: TurnResult } = {};
         const result = await turnOf(job, input, signal, renewing, accepted, generation, since, seenFromStart, ids, late);
         return late.result && result.kind !== 'stopped' ? late.result : result;
     }
 
-    async function turnOf(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined, since: Since | null, seenFromStart: () => boolean, ids: { turn: number; run: string }, late: { result?: TurnResult }): Promise<TurnResult> {
+    async function turnOf(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing, accepted: Accepted, generation: number | undefined, since: Since | null, seenFromStart: () => boolean, ids: TurnIds, late: { result?: TurnResult }): Promise<TurnResult> {
         // A stop that came while the machine was being made ready has already fired: its listener would never be told
         if (signal.aborted) return { kind: 'stopped' };
         const turnController = new AbortController();
@@ -556,6 +573,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         signal.addEventListener('abort', onStop, { once: true });
         let renewTimer: ReturnType<typeof setTimeout> | undefined;
         let lost = false;
+        // The provider turn (response id) this runner saw the agent on: what a cancel and a handover name, so Orbit acts on exactly this turn and never on whichever turn the job is on when
+        // the request arrives (a delayed request of an old worker never reaches the replacement's turn)
+        let responseId: string | undefined;
+        const cancelTurn = (): Promise<void> => orbit.cancel(job.jobId, { ...(ids.epoch === undefined ? {} : { epoch: ids.epoch }), ...(responseId ? { responseId } : {}) }).catch(() => undefined);
         // Every call of this turn refused for want of room in the shared pool, for as long as the runner waits: Hermes would go on trying for minutes with the
         // machine awake and costing, so the turn is stopped here and the machine given up
         let poolTimer: ReturnType<typeof setTimeout> | undefined;
@@ -641,7 +662,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // is the job's, not this turn's). The end is completed from what Orbit holds
             if (turnOver) return;
             turnController.abort();
-            void orbit.cancel(job.jobId).catch(() => undefined);
+            void cancelTurn();
         };
         const watchPool = () => {
             if (turnOver || turnController.signal.aborted) return;
@@ -676,7 +697,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const renew = async () => {
             if (turnController.signal.aborted) return;
             try {
-                const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'renew', run: ids.run }, generation));
+                const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'renew', run: ids.run }, generation, ids.epoch));
                 // An answer that comes after its turn ended is not this turn's to use: a newer turn may hold a newer deadline by now
                 if (turnController.signal.aborted) return;
                 if (answer.ok === false && runStaleOf(answer)) {
@@ -686,11 +707,18 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     turnController.abort();
                     return;
                 }
+                if (answer.ok === false && answer.reason === 'ending') {
+                    // Orbit holds this job's end already (a kept finish intent, or a pool cutoff it decided): its finalizer owns the ending and the cancel, so the renewal adds nothing and
+                    // writes nothing. This turn stops and nothing is cancelled here; the job is read again, and the end it holds is completed
+                    lost = true;
+                    turnController.abort();
+                    return;
+                }
                 if (answer.ok === false) {
                     // Its room is gone and Orbit has stopped it: the agent stops too
                     lost = true;
                     turnController.abort();
-                    await orbit.cancel(job.jobId).catch(() => undefined);
+                    await cancelTurn();
                     return;
                 }
                 const next = typeof answer.renewInSeconds === 'number' && answer.renewInSeconds >= 5 ? answer.renewInSeconds : 120;
@@ -708,7 +736,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (refusedByOrbit(error)) {
                     lost = true;
                     turnController.abort();
-                    await orbit.cancel(job.jobId).catch(() => undefined);
+                    await cancelTurn();
                     return;
                 }
                 // Orbit could not be reached: try again soon, the room is held for a while yet
@@ -733,13 +761,30 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (stepDone === reported && !label) return;
                 lastReport = at;
                 reported = stepDone;
-                await orbit.action(job.botId, job.jobId, fenced({ action: 'progress', stepDone, label }, generation)).catch(async (error) => {
-                    // This turn is an old one (the job changed hands or paused): it stops being acted on, and the job is read again
-                    if (!staleForOrbit(error) || turnController.signal.aborted) return;
-                    lost = true;
-                    turnController.abort();
-                    await orbit.cancel(job.jobId).catch(() => undefined);
-                });
+                await orbit
+                    .action(job.botId, job.jobId, fenced({ action: 'progress', stepDone, label }, generation, ids.epoch))
+                    .then((answer) => {
+                        // Another worker owns the job: this turn stops, and nothing is cancelled (the machine and the turn are the replacement's)
+                        if (answer.ok === false && runStaleOf(answer) && !turnController.signal.aborted) {
+                            superseded.add(ids.run);
+                            lost = true;
+                            turnController.abort();
+                        }
+                    })
+                    .catch(async (error) => {
+                        if (turnController.signal.aborted) return;
+                        if (staleForOrbit(error) && runStaleOf(error)) {
+                            superseded.add(ids.run);
+                            lost = true;
+                            turnController.abort();
+                            return;
+                        }
+                        // This turn is an old one (the job changed hands or paused): it stops being acted on, and the job is read again
+                        if (!staleForOrbit(error)) return;
+                        lost = true;
+                        turnController.abort();
+                        await cancelTurn();
+                    });
             };
 
             // A turn that was stopped here (the pool had no room, the job's room was gone, a stop) before its stream opened, or while it waited to
@@ -755,18 +800,24 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             const stoppedHere = (): TurnResult => (signal.aborted ? { kind: 'stopped' } : gaveUp ? poolBusyResult() : { kind: 'look', cancelled: true });
             // A turn taken up with no input is one that was already going: this process has not seen its beginning
             if (input === null) accepted.joined = true;
-            const first = await opening(() => (input === null ? orbit.stream(job.jobId, turnController.signal) : orbit.turn(job.jobId, input, turnController.signal)));
+            const first = await opening(() => (input === null ? orbit.stream(job.jobId, turnController.signal, ids.epoch) : orbit.turn(job.jobId, input, turnController.signal, ids.epoch)));
             if (first === STOPPED_HERE) return stoppedHere();
             let opened: TurnOpened = first;
             // The agent is still on a turn of its own (we lost it, or Orbit restarted): read that one instead of starting another
             if ('reason' in opened && opened.reason === 'busy') {
                 // The agent was on a turn that this process did not start
                 accepted.joined = true;
-                const again = await opening(() => orbit.stream(job.jobId, turnController.signal));
+                if (opened.responseId) responseId = opened.responseId;
+                const again = await opening(() => orbit.stream(job.jobId, turnController.signal, ids.epoch));
                 if (again === STOPPED_HERE) return stoppedHere();
                 opened = again;
             }
             if ('reason' in opened) {
+                // Another worker owns the job: this run is over (it ends its loop, and nothing is cancelled)
+                if (opened.superseded) {
+                    superseded.add(ids.run);
+                    return { kind: 'look' };
+                }
                 // A turn that is gone is no silence of the agent's: it counts as a failed turn, like one lost on a reconnect
                 if (opened.reason === 'no_turn') return { kind: 'ended', words: '', failed: true, fenced: false };
                 return opened.reason === 'failed' ? { kind: 'ended', words: '', failed: true, fenced: false } : { kind: 'look' };
@@ -778,7 +829,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 let terminal: { failed: boolean; fenced: boolean; code: string } | null = null;
                 try {
                     for await (const event of opened.events) {
-                        if (event.type === 'text') words = (words + event.text).slice(-RUNNER_GUARDS.maxWords);
+                        if (event.type === 'created') {
+                            if (event.id) responseId = event.id;
+                        } else if (event.type === 'text') words = (words + event.text).slice(-RUNNER_GUARDS.maxWords);
                         else if (event.type === 'tool') {
                             if (event.state === 'started' && event.label) label = safeStepLabel(event.label);
                             if (event.state === 'completed') {
@@ -808,14 +861,18 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 if (signal.aborted) return { kind: 'stopped' };
                 if (gaveUp) return poolBusyResult();
                 if (lost) return { kind: 'look', cancelled: true };
-                if (terminal && terminal.code !== 'stream_broke' && terminal.code !== 'stream_ended') return { kind: 'ended', words, failed: terminal.failed, fenced: terminal.fenced };
+                if (terminal && terminal.code !== 'stream_broke' && terminal.code !== 'stream_ended') return { kind: 'ended', words, failed: terminal.failed, fenced: terminal.fenced, ...(responseId ? { responseId } : {}) };
                 // The connection ended before the turn did: reconnect to it, a few times, then let the next look decide
                 if (reconnects >= timing.reconnectMs.length) return { kind: 'ended', words, failed: true, fenced: false };
                 await sleep(timing.reconnectMs[reconnects], turnController.signal);
                 reconnects += 1;
-                const again = await opening(() => orbit.stream(job.jobId, turnController.signal));
+                const again = await opening(() => orbit.stream(job.jobId, turnController.signal, ids.epoch));
                 if (again === STOPPED_HERE) return stoppedHere();
                 // A turn that is gone without its end having been seen is not a turn that ended well: what was said before is not taken as its ending
+                if ('reason' in again && again.superseded) {
+                    superseded.add(ids.run);
+                    return { kind: 'look' };
+                }
                 if ('reason' in again) return again.reason === 'no_turn' ? { kind: 'ended', words, failed: true, fenced: false } : { kind: 'look' };
                 opened = again;
             }
@@ -884,9 +941,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * runner holds: nothing is ended and a newer generation never has an old give-up resurrected. 'unsent': anything else, and that includes a 400 (an Orbit that does not know the intent: in
      * a supported rollout Orbit ships first, so a 400 means a body of ours it does not accept, and it is reported once): nothing is given up on, the turn goes on, the give-up is tried again later.
      */
-    async function sendIntent(job: RunnableJob, generation: number | undefined, ids: { turn: number; run: string }): Promise<'kept' | 'stale' | 'unsent'> {
+    async function sendIntent(job: RunnableJob, generation: number | undefined, ids: TurnIds): Promise<'kept' | 'stale' | 'unsent'> {
         try {
-            const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'finish-intent', outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, basis: 'pool', turns: [ids.turn], run: ids.run }, generation));
+            const answer = await orbit.action(job.botId, job.jobId, fenced({ action: 'finish-intent', outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, basis: 'pool', turns: [ids.turn], run: ids.run }, generation, ids.epoch));
             if (answer.ok === true) return 'kept';
             if (answer.ok === false && answer.reason === 'cutoff') return 'kept';
             if (answer.ok === false && answer.reason === 'stale') {
@@ -941,7 +998,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     }
 
     /** Completes the end Orbit holds for a job (its finish intent) with exactly the values it holds: no turn, no prepare, no call is made for the job. */
-    function completePending(job: RunnableJob, pending: FinishPending, signal: AbortSignal, current: number | undefined): Promise<'ended' | 'stale' | 'stopped'> {
+    function completePending(job: RunnableJob, pending: FinishPending, signal: AbortSignal, current: number | undefined, owner?: number): Promise<'ended' | 'stale' | 'stopped'> {
         return sendFinishUntilTaken(
             job,
             () =>
@@ -951,6 +1008,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     ...(pending.why ? { why: pending.why } : {}),
                     ...(pending.turns && pending.turns.length > 0 ? { turns: pending.turns } : {}),
                     ...(pending.run ? { run: pending.run } : {}),
+                    // The kept intent is the committed word and is accepted from any worker: the epoch sent is the owner's as the job shows it now (never one this worker has not claimed)
+                    ...(owner !== undefined && owner > 0 ? { epoch: owner } : {}),
                     // The generation the job is on NOW (Orbit ends the job as the intent said whatever the generation of the finish: the intent holds over a newer one, and a finish
                     // that named the older one would only be answered "stale" for ever)
                     ...((current ?? pending.generation) === undefined ? {} : { generation: (current ?? pending.generation) as number }),
@@ -970,7 +1029,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function settleGiveUp(job: RunnableJob, signal: AbortSignal): Promise<'ended' | 'stale' | 'stopped'> {
         const owed = giveUps.get(job.jobId);
         if (!owed) return 'ended';
-        const finished = await sendFinishUntilTaken(job, () => finish(job, 'failed', { signal, cause: 'ours', generation: owed.generation, turns: [owed.turnNo], run: owed.run, why: POOL_BUSY_WHY }), signal);
+        const finished = await sendFinishUntilTaken(job, () => finish(job, 'failed', { signal, cause: 'ours', generation: owed.generation, turns: [owed.turnNo], run: owed.run, ...(owed.epoch === undefined ? {} : { epoch: owed.epoch }), why: POOL_BUSY_WHY }), signal);
         if (finished === 'stopped') return 'stopped';
         // Orbit has ACCEPTED the finish: the give-up is over, and its committed fence is taken back. A finish that was refused as stale leaves it where it is
         // (the next turn has a number of its own, and a job that is still going is not given calls of the turn it gave up)
@@ -979,10 +1038,67 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         return finished === 'stale' ? 'stale' : 'ended';
     }
 
+    /**
+     * Takes ownership of the job: the first thing a worker does before it sends Orbit anything that changes the job. `seen` is the owner epoch the worker read. Orbit gives the job to this run
+     * (and ends every model key of it) only when no other worker claimed since: 'owned' with the epoch every later request carries; 'pending' when Orbit holds the job's end already (a kept
+     * finish intent or a pool cutoff: no ownership is taken, the end is completed or awaited); 'over' when the job is gone; 'superseded' when another worker kept claiming ahead of this one
+     * (a delayed claim always lands there); 'unsent' when Orbit could not be asked or answered something else (asked again after a wait).
+     */
+    async function claimJob(job: RunnableJob, run: string, seen: number, signal: AbortSignal): Promise<{ kind: 'owned'; epoch: number } | { kind: 'pending' | 'over' | 'superseded' | 'unsent' | 'stopped' }> {
+        let at = seen;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            if (signal.aborted) return { kind: 'stopped' };
+            let answer: Record<string, unknown>;
+            try {
+                answer = await orbit.action(job.botId, job.jobId, { action: 'claim', run, seen: at });
+            } catch (error) {
+                const body = typeof error === 'object' && error !== null && 'response' in error ? (error as { response?: { data?: unknown } }).response?.data : undefined;
+                if (statusOf(error) === 404) return { kind: 'over' };
+                // A 409 carries the same answer a 200 does
+                if (staleForOrbit(error) && typeof body === 'object' && body !== null) answer = body as Record<string, unknown>;
+                else {
+                    say('Could not claim a job:', error);
+                    return { kind: 'unsent' };
+                }
+            }
+            if (answer.ok === true && typeof answer.epoch === 'number' && Number.isInteger(answer.epoch) && answer.epoch > 0) return { kind: 'owned', epoch: answer.epoch };
+            if (answer.reason === 'finish_pending' || answer.reason === 'cutoff') return { kind: 'pending' };
+            if (answer.reason === 'over') return { kind: 'over' };
+            if (answer.reason !== 'stale' && answer.reason !== 'superseded') return { kind: 'unsent' };
+            // Someone claimed since this worker read the job: the job is read again and claimed on what it shows (a few times only: another worker that keeps winning owns it)
+            const next = await orbit.job(job.botId, job.jobId).catch(() => undefined);
+            if (signal.aborted) return { kind: 'stopped' };
+            if (next === null || (next && over(next.status))) return { kind: 'over' };
+            if (!next) return { kind: 'unsent' };
+            if (next.finishPending) return { kind: 'pending' };
+            if (next.ownerEpoch === undefined) return { kind: 'unsent' };
+            at = next.ownerEpoch;
+        }
+        return { kind: 'superseded' };
+    }
+
     async function work(job: RunnableJob, signal: AbortSignal): Promise<void> {
+        // This run of the job's work: turns are numbered from 1 in each run, and a run begins again when the bot server restarts and takes the job up
+        // (or when the job is taken up again in this process), so the rows of the calls and the finish name the run along with the turns
+        const run = (deps.runId ?? newRunId)();
+        // The ownership epoch this worker holds the job under (Orbit gives it at a claim): every request that changes the job carries it. Undefined for an Orbit that has no epochs
+        let epoch: number | undefined;
+        const held = (): { epoch?: number } => (epoch === undefined ? {} : { epoch });
         if (!deps.relayUrl) {
             log.error('[ComputerRunner] A job cannot run: no address is set for the model relay (COMPUTER_RELAY_URL or BOT_SERVER_URL).');
-            await finish(job, 'failed', { signal, cause: 'ours' });
+            // The end of a job is a request like any other: it names its run, and (for an Orbit with owners) the job is claimed first, so a worker that never owned the job cannot end it
+            const known = await orbit.job(job.botId, job.jobId).catch(() => undefined);
+            if (known === null || (known && over(known.status))) return;
+            if (known?.finishPending) {
+                await completePending(job, known.finishPending, signal, known.generation, known.ownerEpoch);
+                return;
+            }
+            if (known?.ownerEpoch !== undefined) {
+                const claimed = await claimJob(job, run, known.ownerEpoch, signal);
+                if (claimed.kind !== 'owned') return;
+                epoch = claimed.epoch;
+            }
+            await finish(job, 'failed', { signal, cause: 'ours', run, ...(epoch === undefined ? {} : { epoch }) });
             return;
         }
         // A give-up this runner owes Orbit for this job (a worker of it was stopped while Orbit had not taken the finish): it is finished BEFORE anything else, so no new turn opens until
@@ -1000,9 +1116,6 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const accepted: Accepted = { turn: false };
         let turns = 0;
         let bad = 0;
-        // This run of the job's work: turns are numbered from 1 in each run, and a run begins again when the bot server restarts and takes the job up
-        // (or when the job is taken up again in this process), so the rows of the calls and the finish name the run along with the turns
-        const run = (deps.runId ?? newRunId)();
         // The generation the last turn started on: a job that was taken and given back between two turns is read on a later one
         let lastGeneration: number | undefined;
         // Whether any turn of the bad streak was not a failure of ours (the agent said nothing, or the person's allowance or a rule stopped it)
@@ -1046,12 +1159,32 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // Orbit holds a finish intent for this job (a runner decided to abandon it and could not finish): the end is completed with the values it holds, and no turn is
             // opened, no machine is prepared and no call is admitted for the job. Whichever runner reads this (a replacement worker, a fresh process) does the same
             if (state.finishPending) {
-                const completed = await completePending(job, state.finishPending, signal, state.generation);
+                const completed = await completePending(job, state.finishPending, signal, state.generation, state.ownerEpoch);
                 if (completed === 'stale') {
                     await sleep(timing.waitMs, signal);
                     continue;
                 }
                 return;
+            }
+            // Ownership comes first (before a machine is prepared, a turn opened or a failure reported): a worker that does not hold the job's current epoch is told it was superseded by
+            // every request it makes, so it claims at the start, and a job another worker claimed since is no longer this worker's. An Orbit with no epochs asks for nothing of the kind
+            if (state.ownerEpoch !== undefined && state.ownerEpoch !== epoch) {
+                if (epoch !== undefined) {
+                    superseded.add(run);
+                    return;
+                }
+                const claimed = await claimJob(job, run, state.ownerEpoch, signal);
+                if (claimed.kind === 'stopped' || claimed.kind === 'over') return;
+                if (claimed.kind === 'superseded') {
+                    superseded.add(run);
+                    return;
+                }
+                if (claimed.kind !== 'owned') {
+                    // The job's end is held (it is completed on the next read), or Orbit could not be asked: read again after a wait
+                    await sleep(timing.waitMs, signal);
+                    continue;
+                }
+                epoch = claimed.epoch;
             }
             // The control generation this turn starts on: every action it takes for the job carries it, so one from an older turn changes nothing
             const generation = state.generation;
@@ -1073,14 +1206,18 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             };
             if (++turns > RUNNER_GUARDS.maxTurns) {
                 say('A job took more turns than allowed and was ended.');
-                if ((await finish(job, 'failed', { signal, cause: 'agent', generation, run })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'agent', generation, run, ...held() })) === 'stale') {
                     await readAgain();
                     continue;
                 }
                 return;
             }
-            const ready = await prepared(job, deps.relayUrl, run, signal);
+            const ready = await prepared(job, deps.relayUrl, run, epoch, signal);
             if (ready === 'stopped') return;
+            if (ready === 'superseded') {
+                superseded.add(run);
+                return;
+            }
             if (ready === 'look') {
                 // Waiting for the machine is not a turn: it must not use up the turns a job is allowed
                 turns--;
@@ -1088,7 +1225,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             if (ready === 'failed') {
-                if ((await finish(job, 'failed', { signal, cause: 'ours', generation, run })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'ours', generation, run, ...held() })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -1104,7 +1241,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 deps.refusals?.turn?.(job.jobId, turnNo, run);
                 say('A job ended: the machine could not reach the model relay (check COMPUTER_RELAY_URL).');
                 noteNoRelay(job, turnNo, run, 'prepare');
-                if ((await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, why: RELAY_UNREACHABLE_WHY })) === 'stale') {
+                if ((await finish(job, 'failed', { signal, cause: 'ours', generation, turns: [turnNo], run, ...held(), why: RELAY_UNREACHABLE_WHY })) === 'stale') {
                     await readAgain();
                     continue;
                 }
@@ -1127,7 +1264,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             await deps.refusals?.turnPublished?.(job.jobId)?.catch(() => undefined);
             if (signal.aborted) return;
             accepted.joined = false;
-            const result = await oneTurn(job, input, signal, renewing, accepted, generation, turnStartedAt, () => seenFromStart && !(freshWindow && accepted.joined), { turn: turnNo, run });
+            const result = await oneTurn(job, input, signal, renewing, accepted, generation, turnStartedAt, () => seenFromStart && !(freshWindow && accepted.joined), { turn: turnNo, run, ...held() });
             if (freshWindow && accepted.joined) seenFromStart = false;
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
@@ -1141,7 +1278,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 notePoolBusy(job, turnNo, run);
                 // The give-up is OWED to Orbit from here until Orbit has accepted it (or says the turn is a stale one, or the job is over): it is kept in the runner, not in this
                 // worker, so a stop and a start of the runner (a replacement worker for the same job) finishes it before any new turn begins
-                giveUps.set(job.jobId, { turnNo, run, generation, ...(result.attempt ? { attempt: result.attempt } : {}) });
+                giveUps.set(job.jobId, { turnNo, run, generation, ...(epoch === undefined ? {} : { epoch }), ...(result.attempt ? { attempt: result.attempt } : {}) });
                 const finished = await settleGiveUp(job, signal);
                 if (finished === 'stopped') return;
                 if (finished === 'stale') {
@@ -1182,10 +1319,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             if (after === null || over(after.status)) return;
+            // Another worker claimed the job while the turn went on: it is theirs, and nothing this turn said is acted on (an end Orbit holds is still completed below, by whoever reads it)
+            if (epoch !== undefined && after.ownerEpoch !== undefined && after.ownerEpoch !== epoch && !after.finishPending) {
+                superseded.add(run);
+                return;
+            }
             // An end Orbit holds for the job is completed from THIS read (the intent and the generation it showed), with no turn begun first: a later read that came from a replica that
             // had not seen the intent yet would let a prepare or a turn go out first
             if (after.finishPending) {
-                const completed = await completePending(job, after.finishPending, signal, after.generation);
+                const completed = await completePending(job, after.finishPending, signal, after.generation, after.ownerEpoch);
                 if (completed === 'stale') {
                     // The job moved on meanwhile: it is read again
                     await sleep(timing.waitMs, signal);
@@ -1223,7 +1365,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
             const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
             if (ending.kind === 'done' || ending.kind === 'failed') {
-                const ended = ending.kind === 'done' ? await finish(job, 'done', { generation, signal, run }) : await finish(job, 'failed', { signal, cause: 'agent', generation, run, why: whyOf(result.words) });
+                const ended = ending.kind === 'done' ? await finish(job, 'done', { generation, signal, run, ...held() }) : await finish(job, 'failed', { signal, cause: 'agent', generation, run, ...held(), why: whyOf(result.words) });
                 if (ended === 'stale') {
                     await readAgain();
                     continue;
@@ -1253,16 +1395,31 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                                     action: 'handover',
                                     waitingFor: ending.waitingFor,
                                     ...(ending.waitingFor === 'details' && ending.what && ending.where ? { ready: { what: ending.what, where: ending.where } } : {}),
+                                    // The provider turn this handover comes from: Orbit lands it only while the job is still on that turn (a delayed handover of an old worker never holds the replacement's job)
+                                    ...(result.responseId ? { responseId: result.responseId } : {}),
                                 },
-                                generation
+                                generation,
+                                epoch
                             )
                         )
                         // An answer that says it was refused (ok false) is no handover
                         .then((answer) => {
+                            // Another worker owns the job: this run is over, nothing is ended for it
+                            if (answer.ok === false && runStaleOf(answer)) {
+                                superseded.add(run);
+                                stale = true;
+                                return false;
+                            }
+                            // The turn the handover names is no longer the job's (`not_current`), or the job is on another control generation (`stale`): the job is read again, nothing is ended on it
+                            if (answer.ok === false && (answer.reason === 'stale' || answer.reason === 'not_current')) {
+                                stale = true;
+                                return false;
+                            }
                             if (answer.ok === false) refusedHandover = true;
                             return answer.ok !== false;
                         })
                         .catch((error) => {
+                            if (staleForOrbit(error) && runStaleOf(error)) superseded.add(run);
                             // An old turn's handover is no failure to hand over: the job is read again, and not ended
                             if (staleForOrbit(error)) {
                                 stale = true;
@@ -1274,12 +1431,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                             return false;
                         });
                 }
+                if (superseded.has(run)) return;
                 if (stale) {
                     await readAgain();
                     continue;
                 }
                 if (!handed) {
-                    if ((await finish(job, 'failed', { signal, cause: refusedHandover ? 'agent' : 'ours', generation, run })) === 'stale') {
+                    if ((await finish(job, 'failed', { signal, cause: refusedHandover ? 'agent' : 'ours', generation, run, ...held() })) === 'stale') {
                         await readAgain();
                         continue;
                     }
@@ -1395,27 +1553,37 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
 /** The runner's view of Orbit, over the bot server's own calls to it. */
 export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs' | 'getComputerJob' | 'computerJobAction' | 'computerBroker' | 'computerOpenTurn'>): RunnerOrbit {
-    const opened = async (jobId: string, step: 'turn' | 'stream', input: string | null, signal: AbortSignal): Promise<TurnOpened> => {
-        const answer = await admin.computerOpenTurn(jobId, step, input, signal);
+    const opened = async (jobId: string, step: 'turn' | 'stream', input: string | null, signal: AbortSignal, epoch?: number): Promise<TurnOpened> => {
+        const answer = await admin.computerOpenTurn(jobId, step, input, signal, epoch);
         if ('body' in answer) return { ok: true, events: readRunnerEvents(answer.body) };
-        return { ok: false, reason: answer.status >= 500 ? 'failed' : answer.reason, ...(answer.responseId ? { responseId: answer.responseId } : {}) };
+        return { ok: false, reason: answer.status >= 500 ? 'failed' : answer.reason, ...(answer.responseId ? { responseId: answer.responseId } : {}), ...(answer.superseded ? { superseded: true as const } : {}) };
     };
     return {
         running: () => admin.computerRunningJobs(),
         job: async (botId, jobId) => {
             const job = await admin.getComputerJob(botId, jobId);
-            return job ? { status: job.status, control: job.control, ...(job.generation === undefined ? {} : { generation: job.generation }), ...(job.finishPending ? { finishPending: job.finishPending } : {}) } : null;
+            return job
+                ? {
+                      status: job.status,
+                      control: job.control,
+                      ...(job.generation === undefined ? {} : { generation: job.generation }),
+                      ...(job.ownerEpoch === undefined ? {} : { ownerEpoch: job.ownerEpoch }),
+                      ...(job.finishPending ? { finishPending: job.finishPending } : {}),
+                  }
+                : null;
         },
         action: (botId, jobId, body) => admin.computerJobAction(botId, jobId, body),
         prepare: async (jobId, relay, extra) => {
             const answer = await admin.computerBroker(jobId, 'prepare', { relay, ...extra });
             if (answer.status === 200 && answer.data.ok === true) return { ok: true };
+            // Another worker owns the job (409 stale, run superseded): said apart from the other refusals, since this run is over
+            if (answer.data.reason === 'stale' && answer.data.run === 'superseded') return { ok: false, reason: 'superseded' };
             return { ok: false, reason: answer.status >= 500 || typeof answer.data.reason !== 'string' ? 'failed' : answer.data.reason };
         },
-        turn: (jobId, input, signal) => opened(jobId, 'turn', input, signal),
-        stream: (jobId, signal) => opened(jobId, 'stream', null, signal),
-        cancel: async (jobId) => {
-            await admin.computerBroker(jobId, 'cancel', {});
+        turn: (jobId, input, signal, epoch) => opened(jobId, 'turn', input, signal, epoch),
+        stream: (jobId, signal, epoch) => opened(jobId, 'stream', null, signal, epoch),
+        cancel: async (jobId, facts) => {
+            await admin.computerBroker(jobId, 'cancel', { ...(facts?.epoch === undefined ? {} : { epoch: facts.epoch }), ...(facts?.responseId ? { responseId: facts.responseId } : {}) });
         },
     };
 }

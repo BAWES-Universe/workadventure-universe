@@ -13,8 +13,8 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 import axios from 'axios';
 import { AdminApiService } from '../server/AdminApiService';
 import { AIService } from '../ai/AIService';
-import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, ConfirmationQueue, forgetSettledStarts, isComputerTool, OPEN_START_KEEP_MS, OPEN_START_SLOT, type StartKeyEntry } from '../ai/ComputerTools';
-import { runDelivered } from './helpers/deliveredComputerTool';
+import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, ConfirmationQueue, forgetSettledStarts, isComputerTool, OPEN_START_KEEP_MS, OPEN_START_SLOT, runComputerTool, type StartKeyEntry } from '../ai/ComputerTools';
+import { deliverTold, runDelivered } from './helpers/deliveredComputerTool';
 import type { StartKeyStore, StoredStartKey } from '../server/ComputerStartKeys';
 import { PRETEND_STEPS, pretendRunnerOn, runPretendJob } from '../ai/ComputerPretendRunner';
 import { describeStep, resultOf } from '../ai/ToolSteps';
@@ -26,6 +26,10 @@ const job = (over: Record<string, unknown> = {}) => ({ id: 'j1', status: 'runnin
 const asking = (answer: unknown) => ({ startComputerJob: vi.fn().mockResolvedValue(answer) });
 const run = (admin: ReturnType<typeof asking>, args: Record<string, unknown> = { job: 'Visa form' }, onStarted?: (id: string) => void) =>
     runDelivered(args, { admin, botId: BRICK, userId: 'uuid-alice', onStarted });
+
+/** A chat with no fixed line under the reply (a room): the model is the one that says it, so the note carries the words. */
+const runBare = (admin: ReturnType<typeof asking>, args: Record<string, unknown> = { job: 'Visa form' }, onStarted?: (id: string) => void) =>
+    runComputerTool(args, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', onStarted }) as Promise<Record<string, unknown>>;
 
 afterEach(() => {
     vi.useRealTimers();
@@ -74,13 +78,13 @@ describe('use_computer (#2000)', () => {
     });
 
     it('says a second job waits its turn, a used-up month waits with "Ask for more", and a busy server waits in line', async () => {
-        const turn = await run(asking({ ok: true, job: job({ status: 'queued', queuedFor: 'turn' }), restoredFrom: null }));
+        const turn = await runBare(asking({ ok: true, job: job({ status: 'queued', queuedFor: 'turn' }), restoredFrom: null }));
         expect(turn).toMatchObject({ started: false, queued: true });
         expect(String(turn.note)).toMatch(/one job at a time/);
-        const allowance = await run(asking({ ok: true, job: job({ status: 'queued', queuedFor: 'allowance' }), restoredFrom: null }));
+        const allowance = await runBare(asking({ ok: true, job: job({ status: 'queued', queuedFor: 'allowance' }), restoredFrom: null }));
         expect(String(allowance.note)).toMatch(/Ask for more/);
         expect(String(allowance.note)).toMatch(/Never give a number or a price/);
-        const busy = await run(asking({ ok: true, job: job({ status: 'queued', queuedFor: 'busy' }), restoredFrom: null }));
+        const busy = await runBare(asking({ ok: true, job: job({ status: 'queued', queuedFor: 'busy' }), restoredFrom: null }));
         expect(String(busy.note)).toMatch(/nothing needs asking for/);
     });
 
@@ -125,7 +129,7 @@ describe('use_computer (#2000)', () => {
     });
 
     it('says the job was found and has already ended (not a connection failure, not running) when a slow start was matched to a job that failed or was stopped', async () => {
-        const ended = await run(asking({ ok: false, reason: 'ended' }));
+        const ended = await runBare(asking({ ok: false, reason: 'ended' }));
         expect(ended).toMatchObject({ started: false, ended: true });
         expect(ended).not.toHaveProperty('success');
         expect(String(ended.note)).toMatch(/already ended/);
@@ -136,7 +140,7 @@ describe('use_computer (#2000)', () => {
     });
 
     it('says the job was found and has finished when Orbit tells the ask is over (`done`): a job that ran is never told as running or starting, and is not started again', async () => {
-        const done = await run(asking({ ok: false, reason: 'done' }));
+        const done = await runBare(asking({ ok: false, reason: 'done' }));
         expect(done).toMatchObject({ started: false, done: true });
         expect(done).not.toHaveProperty('success');
         expect(done).not.toHaveProperty('starting');
@@ -150,7 +154,7 @@ describe('use_computer (#2000)', () => {
     });
 
     it('says that Orbit found the job, not that the computer is starting, when a slow start was matched to a queued, waiting or running job', async () => {
-        const found = await run(asking({ ok: false, reason: 'starting' }));
+        const found = await runBare(asking({ ok: false, reason: 'starting' }));
         expect(found).toMatchObject({ started: false, found: true });
         expect(found).not.toHaveProperty('success');
         expect(found).not.toHaveProperty('starting');
@@ -366,13 +370,13 @@ describe('the key of an ask (GPT round 3, finding 3): the same ask is the same s
 
     it('tells the person a job that is already waiting for them needs them, and never that it is running', async () => {
         const started: string[] = [];
-        const result = (await run(asking({ ok: true, job: job({ status: 'waiting' }), restoredFrom: null }), { job: 'Visa form' }, (id) => started.push(id))) as { started: boolean; waiting?: boolean; note: string };
+        const result = (await runBare(asking({ ok: true, job: job({ status: 'waiting' }), restoredFrom: null }), { job: 'Visa form' }, (id) => started.push(id))) as { started: boolean; waiting?: boolean; note: string };
         expect(started).toEqual(['j1']);
         expect(result).toMatchObject({ started: true, waiting: true });
         expect(result.note).toMatch(/waiting for them/);
         expect(result.note).toMatch(/needs them/);
         expect(result.note).toMatch(/Do not say it is running/);
-        const running = (await run(asking({ ok: true, job: job(), restoredFrom: null }))) as { waiting?: boolean; note: string };
+        const running = (await runBare(asking({ ok: true, job: job(), restoredFrom: null }))) as { waiting?: boolean; note: string };
         expect(running.waiting).toBeUndefined();
         expect(running.note).toMatch(/running/);
     });
@@ -1072,7 +1076,7 @@ describe('who has the computer in a chat (#2000)', () => {
         await replaced.return(undefined);
         expect(memory.computerConfirmations).toBeInstanceOf(ConfirmationQueue);
         expect(memory.computerConfirmations).not.toBe(oldQueue);
-        await oldQueue.deliver();
+        await deliverTold(oldQueue);
         expect(confirmedOld).toEqual([]);
         // a new message from the person: what is open (not known whether it started) stays, so asking again, reworded, is still the same job
         const next = chat.generateBotResponseStream(BRICK, 1, 'a new message', '', 'none', 'matrix-dm', '');
@@ -1114,7 +1118,7 @@ describe('who has the computer in a chat (#2000)', () => {
         expect(await chat.runComputerToolCall({ job: 'Taxi booking' }, { botId: BRICK, playerId: 1 })).toMatchObject({ started: true });
         expect(ackComputerStart).not.toHaveBeenCalled();
         expect(queue.size).toBe(1);
-        await queue.deliver();
+        await deliverTold(queue);
         expect(ackComputerStart).toHaveBeenCalledTimes(1);
         expect(ackComputerStart.mock.calls[0][2]).toMatchObject({ attempt: (startComputerJob.mock.calls[0][2] as { startKey: string }).startKey });
     });

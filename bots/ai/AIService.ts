@@ -4150,6 +4150,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             ...(typeof memory?.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
             // The direct chat this was asked in: the result goes back to it, never to another chat
             ...(memory?.dmRoomId ? { origin: { kind: 'dm' as const, ref: memory.dmRoomId } } : {}),
+            // The inbound event this reply answers: a start made for it has a key made from it, so the same event delivered again makes no second job
+            ...(memory?.dmRoomId && memory.dmEventId ? { inbound: { roomId: memory.dmRoomId, eventId: memory.dmEventId } } : {}),
             apps: where.apps,
             reviewed: where.reviewed,
             // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two

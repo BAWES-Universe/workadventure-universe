@@ -649,7 +649,8 @@ describe('the person’s part', () => {
         const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }, { status: 'running', control: 'brick' }];
         const { orbit, seen } = fakeOrbit([done('[[handover details | Your passport number | visa.example.com]]'), done('[[done]]')], () => states[Math.min(looks++, states.length - 1)]);
         await runJob(orbit);
-        expect(seen.actions).toContainEqual({ action: 'handover', waitingFor: 'details', ready: { what: 'Your passport number', where: 'visa.example.com' } });
+        // the handover names the provider turn it comes from (the one its stream opened with), so Orbit lands it only while the job is still on that turn
+        expect(seen.actions).toContainEqual({ action: 'handover', waitingFor: 'details', ready: { what: 'Your passport number', where: 'visa.example.com' }, responseId: 'r' });
         expect(seen.turns[1]).toBe(RESUME_PROMPT);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
@@ -3193,7 +3194,8 @@ describe('a turn stopped while its stream is being opened', () => {
         });
     /** Opening with a signal that has already ended fails with the abort itself, as `fetch` does. */
     const opening = (events: () => AsyncGenerator<RunnerEvent>) => async (_jobId: string, ...rest: unknown[]): Promise<TurnOpened> => {
-        const signal = rest[rest.length - 1] as AbortSignal;
+        // (the epoch the runner holds the job under may come after the signal)
+        const signal = rest.find((one): one is AbortSignal => one instanceof AbortSignal) as AbortSignal;
         if (signal.aborted) throw aborted();
         return { ok: true, events: events() };
     };

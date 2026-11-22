@@ -1987,6 +1987,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const pointedArtifactIds = await this.repliedArtifactIds(botUserId, event);
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
+                ...(event.event_id ? { eventId: event.event_id } : {}),
                 pointedArtifactIds,
                 // A starter tapped under a Brick's hello (#1995); a message that waited for a resting Brick is answered as typed
                 ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),
@@ -2069,26 +2070,28 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 if (reply && !reply.failed) await sendSignIn();
                 return;
             }
+            // The id Matrix gave the event that carries the words of the reply (none when the send was suppressed, or gave none)
+            let wordsEvent: string | undefined;
             if (reply.roomLink && reply.text) {
                 // A reply that names the bot's room carries it, so the game shows a card to go there.
-                await out.sendMessage(botUserId, event.room_id, {
+                wordsEvent = await out.sendMessage(botUserId, event.room_id, {
                     msgtype: 'm.text',
                     body: reply.text,
                     [ROOM_LINK_KEY]: reply.roomLink,
                 });
             } else if (reply.text && reply.ideas) {
                 // A Brick's fixed "what I can do": the game shows its ideas to tap with it (#1995)
-                await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true });
+                wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true });
             } else if (reply.text && reply.bricks?.some((note) => note.kind === 'made')) {
                 // The Bricks this reply made: the game shows a line for each, one tap from its chat (#1996)
                 const made = reply.bricks.filter((note) => note.kind === 'made').map(({ id, name, line, look, made: isNew }) => ({ id, name, line, look, made: isNew }));
-                await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made });
+                wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made });
             } else if (reply.text) {
-                await out.sendText(botUserId, event.room_id, reply.text);
+                wordsEvent = await out.sendText(botUserId, event.room_id, reply.text);
             }
-            // Kept (and the computer jobs it names confirmed to Orbit) only once Matrix took the words of the reply: a card or a file that comes after, and fails, changes nothing of that. A reply with
-            // no words (a card or a file alone) names no job: the reply service gives one that names a job its own sentence
-            if (reply.text) reply.keep?.();
+            // Kept (and the computer jobs it names confirmed to Orbit) only once Matrix took the words of the reply AND gave the event's id: a card or a file that comes after, and fails, changes nothing
+            // of that. A send that was suppressed (the chat was cleared meanwhile), or that gave no id, confirms nothing. The words of every job the reply names are in this one event
+            if (reply.text) reply.keep?.(wordsEvent);
             // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
             // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;

@@ -44,6 +44,7 @@ import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './Compu
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
 import { ChatPurgeSweeper } from '../services/ChatPurges';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
+import { createEventDedupe } from '../matrix/MatrixEventDedupe';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
 import type { BotAvailability } from '../matrix/BotStatusNotes';
@@ -306,7 +307,8 @@ async function setupMatrix(): Promise<void> {
         keep: (botId, chatId, text) => void answersBridge.keepNearbyAnswer(botId, chatId, text),
         opened: (botId, chatId, roomId) => void answersBridge.openedFromNearby(botId, chatId, roomId),
     });
-    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge);
+    // An event Matrix sends again (a transaction retried, two servers, a restart) is handled once: the same event reaching a second router would otherwise be answered twice, and its computer start paid for twice
+    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge, { firstSeen: createEventDedupe(() => botRegistry.evidenceClient()) });
     preRouters.push(matrixRouter);
     // The game shows a bot's state in its chat header and the People list. Same cached lookup the replies use.
     const bridge = matrixBridge;

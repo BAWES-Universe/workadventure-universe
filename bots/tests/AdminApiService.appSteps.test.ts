@@ -34,6 +34,18 @@ describe('asking Orbit at 20 app steps', () => {
 });
 
 describe('what Orbit answers to a job that did not start', () => {
+    it('S2: an `earlier` answer names the older start: with a job it is told by that job\'s state; with NO job yet (id and status null, state `starting`) it is `setting_up`, never a job that is running, and the older start\'s key is kept', async () => {
+        const attempt = 'mx_older00000000000000000000000001';
+        const noJob = service(async () => ({ data: { ok: false, reason: 'earlier', job: { id: null, status: null, state: 'starting', attempt } } }));
+        expect(await noJob.orbit.startComputerJob('b', 'u', { title: 'Visa form' })).toEqual({ ok: false, reason: 'setting_up', earlier: { id: null, status: null, attempt } });
+        for (const [status, told] of [['running', 'starting'], ['queued', 'starting'], ['done', 'done'], ['failed', 'ended']] as const) {
+            const withJob = service(async () => ({ data: { ok: false, reason: 'earlier', job: { id: 'j1', status, attempt } } }));
+            const answer = await withJob.orbit.startComputerJob('b', 'u', { title: 'Visa form' });
+            expect(answer, status).toMatchObject({ ok: false, reason: told, earlier: { id: 'j1', status, attempt } });
+            expect(answer, status).not.toMatchObject({ reason: 'setting_up' });
+        }
+    });
+
     it('reads a refusal that comes back with the answer (Orbit says no in the body of a 200), and keeps the app it names', async () => {
         const refused = service(async () => ({ data: { ok: false, reason: 'cheaper_route', app: 'Notion' } }));
         expect(await refused.orbit.startComputerJob('b', 'u', { title: 'Add a page', plan: { app: 'Notion', steps: 3 } })).toEqual({ ok: false, reason: 'cheaper_route', app: 'Notion' });
@@ -95,7 +107,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
 
     it('answers "starting" only when Orbit proves THIS start made a job: the person had another job running, the start timed out, and Orbit made this one', async () => {
         const { orbit, call } = slowStart(() => ({ data: { available: true, on: true, busy: true, started: { id: 'job-new', status: 'queued' } } }));
-        expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+        expect(await orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: false, reason: 'starting' });
         expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
         const asked = call.mock.calls[1] as unknown[];
         expect(asked.slice(0, 3)).toEqual(['get', 'api/bots/b/computer-jobs', undefined]);
@@ -134,7 +146,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
                 expect(reads).toBe(2);
                 await vi.advanceTimersByTimeAsync(1);
                 expect(reads).toBe(3);
-                expect(await answer).toEqual({ ok: false, reason: 'starting' });
+                expect(await answer).toMatchObject({ ok: false, reason: 'starting' });
                 // one start, three questions about it
                 expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get', 'get', 'get']);
                 // every asking is for the same key (the start's own), however long the waits were
@@ -231,7 +243,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
 
         it('asks by the key for a start with no conversation too (nothing but the key is needed), and says "unknown" for an Orbit that does not have the read', async () => {
             const noOrigin = slowStart(() => ({ data: { started: { id: 'j', status: 'running' } } }));
-            expect(await noOrigin.orbit.startComputerJob('b', 'u', { title: 'x' })).toEqual({ ok: false, reason: 'starting' });
+            expect(await noOrigin.orbit.startComputerJob('b', 'u', { title: 'x' })).toMatchObject({ ok: false, reason: 'starting' });
             expect(noOrigin.call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
             const older = slowStart(() => ({ data: { available: true, on: true, busy: true } }));
             expect(await older.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
@@ -271,7 +283,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
 
         it.each(LOST)('asks Orbit for the job of this start after %s: found live, it is "starting", so the person is not told it failed and does not pay for a second job', async (_name, failure) => {
             const { orbit, call } = lostBy(failure, () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
-            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: false, reason: 'starting' });
             expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
             expect((call.mock.calls[1][3] as { attempt: string }).attempt).toBe(sentKey(call));
         });
@@ -329,7 +341,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
             ['429 whose body is a JSON array', answered(429, [])],
         ])('looks up the SAME key after a %s, because it does not prove Orbit made no job: found live, it is "starting"', async (_name, failure) => {
             const { orbit, call } = lostBy(failure, () => ({ data: { started: { id: 'job-1', status: 'queued' } } }));
-            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: false, reason: 'starting' });
             expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
             expect((call.mock.calls[1][3] as { attempt: string }).attempt).toBe(sentKey(call));
         });
@@ -385,7 +397,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
 
         it.each(INCOMPLETE)('asks for the job of this start by its key after %s, and says "starting" when it is live: the person is not told it failed and does not pay for a second job', async (_name, post) => {
             const { orbit, call } = answers(post, () => ({ data: { started: { id: 'job-1', status: 'running' } } }));
-            expect(await orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: false, reason: 'starting' });
             expect(call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
             expect((call.mock.calls[1][3] as { attempt: string }).attempt).toBe(sentKey(call));
         });
@@ -419,7 +431,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
             ['a JSON array', []],
         ])('looks up the key after %s (it is not Orbit\'s refusal): live is "starting", none is "unknown"', async (_name, post) => {
             const live = answers(post, () => ({ data: { started: { id: 'j', status: 'running' } } }));
-            expect(await live.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(await live.orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: false, reason: 'starting' });
             expect(live.call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
             const none = answers(post, () => ({ data: { started: null } }));
             expect(await none.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
@@ -445,7 +457,7 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         ])('does not take a "worked" reply with %s for a job that is running: the key is looked up, and what is found there is told', async (_name, id) => {
             const post = { ok: true, job: { id, status: 'running', queuedFor: null } };
             const live = answers(post, () => ({ data: { started: { id: 'j-real', status: 'running' } } }));
-            expect(await live.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(await live.orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: false, reason: 'starting' });
             expect(live.call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
             const none = answers(post, () => ({ data: { started: null } }));
             expect(await none.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
@@ -509,8 +521,17 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
     it('says "starting" for a job that is running, waiting or queued, and leaves the guest flag out when it is not known', async () => {
         for (const status of ['running', 'waiting', 'queued']) {
             const { orbit, call } = slowStart(() => ({ data: { started: { id: 'j', status } } }));
-            expect(await orbit.startComputerJob('b', 'u', { title: 'x', origin: { kind: 'dm', ref: 'r' } }), status).toEqual({ ok: false, reason: 'starting' });
+            expect(await orbit.startComputerJob('b', 'u', { title: 'x', origin: { kind: 'dm', ref: 'r' } }), status).toMatchObject({ ok: false, reason: 'starting' });
             expect((call.mock.calls[1] as unknown[])[3]).not.toHaveProperty('isGuest');
+        }
+    });
+
+    it('GPT fifth note, S1: only a QUEUED job is told as one that has not started (queued: true); a running or waiting one is not', async () => {
+        for (const status of ['running', 'waiting', 'queued']) {
+            const { orbit } = slowStart(() => ({ data: { started: { id: 'j', status } } }));
+            const told = await orbit.startComputerJob('b', 'u', { title: 'x', origin: { kind: 'dm', ref: 'r' } });
+            expect(told, status).toMatchObject({ ok: false, reason: 'starting' });
+            expect('queued' in (told as object), status).toBe(status === 'queued');
         }
     });
 

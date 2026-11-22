@@ -154,6 +154,8 @@ export interface BotPlayerMemory {
     // turn is in. Runtime only: nothing here is saved.
     pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
     dmRoomId?: string;
+    /** The Matrix event of the message this turn answers (the start of a computer job is keyed by it). Runtime only. */
+    dmEventId?: string;
     /** What a direct-message turn did about Bricks (game #1996): one it made, a suggestion to show. Goes out with the reply. Runtime only. */
     pendingBricks?: import('../ai/BrickTools').BrickNote[];
     /** The artifacts the person pointed at by replying to their card in the turn being answered (game #1781), from the

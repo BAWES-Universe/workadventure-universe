@@ -65,6 +65,8 @@ interface Modes {
     runStaleStatus?: 200 | 409;
     /** Orbit cannot make this machine ready: every prepare is answered `failed` (the key is never minted, the run never becomes the current one). */
     prepareFails?: boolean;
+    /** Orbit with ownership epochs (GPT fifth note): the job read carries `ownerEpoch`, a claim gives the next one, and every request's epoch is kept in `state.epochs`. */
+    epochs?: boolean;
 }
 
 /** Orbit as the contract says, for one job. */
@@ -102,6 +104,11 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
         /** Intents Orbit is holding before it decides (`releaseHeld`). */
         heldIntents: [] as Array<() => void>,
         turnScript: [] as Array<(signal?: AbortSignal) => AsyncGenerator<RunnerEvent>>,
+        /** With epochs: the owner epoch of the job, the claims made, the epoch each request named, and what a cancel named. */
+        ownerEpoch: 0,
+        claims: 0,
+        epochs: [] as Array<{ action: string; epoch?: unknown }>,
+        cancelFacts: [] as Array<unknown>,
     };
     /** A funded call of a turn comes to Orbit: refused while a stop is kept (`finish_pending`), else admitted. */
     const admit = (turn: number, run = 'run1') => {
@@ -151,7 +158,7 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
               })();
         return { ok: true, events };
     };
-    const orbit: RunnerOrbit = {
+    const plain: RunnerOrbit = {
         running: async () => (state.over ? [] : [job]),
         job: async () => {
             if (modes.noGeneration) return { status: state.over ? 'failed' : 'running', control: 'brick', finishPending: null };
@@ -264,6 +271,40 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
             state.order.push('cancel');
         },
     };
+    /** The same Orbit with ownership epochs: it gives the epoch in the job read, takes a claim, and notes the epoch every request names. */
+    const withEpochs: RunnerOrbit = {
+        ...plain,
+        job: async (botId, jobId) => {
+            const read = await plain.job(botId, jobId);
+            return read ? { ...read, ownerEpoch: state.ownerEpoch } : read;
+        },
+        action: async (botId, jobId, body) => {
+            if (body.action === 'claim') {
+                state.claims += 1;
+                state.ownerEpoch += 1;
+                return { ok: true, epoch: state.ownerEpoch };
+            }
+            state.epochs.push({ action: String(body.action), epoch: body.epoch });
+            return plain.action(botId, jobId, body);
+        },
+        prepare: async (jobId, relay, extra) => {
+            state.epochs.push({ action: 'prepare', epoch: extra?.epoch });
+            return plain.prepare(jobId, relay, extra);
+        },
+        turn: async (jobId, input, signal, epoch) => {
+            state.epochs.push({ action: 'turn', epoch });
+            return plain.turn(jobId, input, signal, epoch);
+        },
+        stream: async (jobId, signal, epoch) => {
+            state.epochs.push({ action: 'stream', epoch });
+            return plain.stream(jobId, signal, epoch);
+        },
+        cancel: async (jobId, facts) => {
+            state.cancelFacts.push(facts);
+            return plain.cancel(jobId, facts);
+        },
+    };
+    const orbit = modes.epochs ? withEpochs : plain;
     return { orbit, state: Object.assign(state, { admit, landLate, releaseHeld }) };
 }
 
@@ -344,6 +385,65 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         // and the committed fence is taken back once Orbit took the finish
         expect(await fenceOf(1, 'run1')).toBeNull();
     });
+    describe('GPT fifth note, E1-E6: the epoch a give-up is made under goes with its intent, its cancel and its finish, across a restart', () => {
+        it('the pool give-up claims the job first, and its intent, its cancel and its finish name the epoch the claim gave (the owner\'s own, so Orbit takes them)', async () => {
+            const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig({ epochs: true });
+            const notes = notesOf('A');
+            poolBusyTurn(notes);
+            await work(runnerOn(notes, 'run1'));
+            expect(fake.state.claims).toBe(1);
+            // the claim came before anything else the runner asked of Orbit
+            expect(fake.state.epochs[0]).toEqual({ action: 'prepare', epoch: 1 });
+            const named = (action: string) => fake.state.epochs.filter((row) => row.action === action).map((row) => row.epoch);
+            for (const action of ['prepare', 'turn', 'renew', 'finish-intent', 'finish']) expect(named(action), action).toEqual(expect.arrayContaining([1]));
+            expect(fake.state.epochs.filter((row) => row.epoch !== 1)).toEqual([]);
+            // the cancel names the epoch and the provider turn the stream opened with
+            expect(fake.state.cancelFacts).toEqual([{ epoch: 1, responseId: 'r' }]);
+            endedOnce(fake);
+        });
+
+        it('a give-up whose finish Orbit did not take is sent again by the NEXT worker of the runner with the epoch it was made under, before any claim, and that worker claims nothing', async () => {
+            let alive = true;
+            let runner!: ReturnType<typeof createComputerRunner>;
+            // the runner is stopped as its first finish goes out, and Orbit does not take it: the give-up is OWED, in the runner, to the next worker of the job
+            const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig({ epochs: true, finish: () => (alive ? 'down' : 'ok'), onFinish: (n) => (n === 1 ? runner.stop() : undefined) });
+            const notes = notesOf('A');
+            runner = runnerOn(notes, 'run1');
+            poolBusyTurn(notes);
+            await work(runner);
+            expect(fake.state.ledger).toEqual([]);
+            expect(fake.state.epochs.filter((row) => row.action === 'finish')).toEqual([{ action: 'finish', epoch: 1 }]);
+            // the job is claimed again by someone else meanwhile (the epoch moves): the owed finish still names the epoch it was made under
+            fake.state.ownerEpoch += 1;
+            alive = false;
+            runner.start(1_000_000_000);
+            await until(() => fake.state.over);
+            runner.stop();
+            await runner.idle();
+            endedOnce(fake);
+            const finishes = fake.state.epochs.filter((row) => row.action === 'finish');
+            expect(finishes.map((row) => row.epoch)).toEqual([1, 1]);
+            expect(fake.state.claims).toBe(1);
+        });
+
+        it('a fresh runner that completes the end Orbit holds claims nothing and names the epoch the job shows as its owner\'s', async () => {
+            let alive = true;
+            const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig({ epochs: true, finish: () => (alive ? 'down' : 'ok') });
+            const notesA = notesOf('A');
+            const first = runnerOn(notesA, 'run1');
+            poolBusyTurn(notesA);
+            fake.state.onIntentKept = () => first.stop();
+            await work(first);
+            alive = false;
+            await work(runnerOn(notesOf('B'), 'run2'));
+            expect(fake.state.claims).toBe(1);
+            const finishes = fake.state.epochs.filter((row) => row.action === 'finish');
+            expect(finishes[finishes.length - 1].epoch).toBe(1);
+            expect(fake.state.prepares).toBe(1);
+            expect(fake.state.ledger).toHaveLength(1);
+        });
+    });
+
     it('KEPT INTENT, FINISH LOST: a fresh runner with fresh notes completes the finish with the intent\'s values and opens no turn, prepares no machine, and admits no call (0 agent turns, 0 provider admissions, one ending in the ledger)', async () => {
         // the finish never reaches Orbit while the first runner is alive, and the first runner is stopped as soon as the intent is kept (a restart, a replaced worker)
         let alive = true;

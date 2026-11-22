@@ -5,6 +5,7 @@ import type { Server } from 'node:http';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
 import { botIdFromMatrixId, botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
+import { JOB_STATUS_WORDS, jobLine, withJobLines } from '../ai/JobStatusLine';
 import { BOT_STATUS_KEY, REPLY_LIMIT_KEY, availabilityOf, detectLanguage, replyLimitContent, statusNoteContent } from '../matrix/BotStatusNotes';
 
 const config = { homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as-secret', hsToken: 'hs-secret' };
@@ -308,7 +309,9 @@ describe('MatrixDmBridge', () => {
             const queue = new ConfirmationQueue();
             const acks: string[] = [];
             queue.add('job-key-0001', async () => void acks.push('job-key-0001'), { state: 'started', title: 'Visa form' });
-            return { acks, reply: { text: '', media: [], artifacts: [card], keep: () => void queue.deliver(), ...over } };
+            // the reply service puts the lines of the queued jobs into the reply's text (`tell`) and keeps the queue for the event that carries them
+            queue.tell();
+            return { acks, reply: { text: '', media: [], artifacts: [card], keep: (eventId?: string) => void queue.deliver(eventId), ...over } };
         };
         const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -359,7 +362,7 @@ describe('MatrixDmBridge', () => {
             client.sendText.mockRejectedValueOnce(new Error('Matrix said no'));
             await bridge.onEvent(message('a clock please'));
             await settle();
-            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'I\'m working on "Visa form" on my computer.');
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, jobLine({ state: 'started', title: 'Visa form' }));
             expect(acks).toEqual([]);
         });
 
@@ -369,7 +372,7 @@ describe('MatrixDmBridge', () => {
             client.sendMessage.mockRejectedValueOnce(new Error('card failed'));
             await bridge.onEvent(message('a clock please'));
             await settle();
-            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'I\'m working on "Visa form" on my computer.');
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, jobLine({ state: 'started', title: 'Visa form' }));
             expect(acks).toEqual(['job-key-0001']);
         });
 
@@ -400,10 +403,10 @@ describe('MatrixDmBridge', () => {
             });
             const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
             const made = await (service as any).replyNow(BOT, person, 'a picture please', [], {});
-            expect(made.text).toBe('I\'m still working on "Visa form" on my computer.');
+            expect(made.text).toBe(jobLine({ state: 'recovered', title: 'Visa form', earlier: true }));
             expect(made.media).toHaveLength(1);
             expect(acks).toEqual([]);
-            made.keep();
+            made.keep('$evt');
             await settle();
             expect(acks).toEqual(['job-key-0001']);
         });
@@ -436,7 +439,7 @@ describe('MatrixDmBridge', () => {
             const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
             const empty = await (service as any).replyNow(BOT, person, 'hi', [], {});
             expect(empty.text ?? '').toBe('');
-            empty.keep?.();
+            empty.keep?.('$evt');
             await settle();
             expect(acks).toEqual([]);
         });
@@ -446,8 +449,9 @@ describe('MatrixDmBridge', () => {
             const acks = await realReply('Your computer is on it.');
             await bridge.onEvent(message('a clock please'));
             await settle();
-            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Your computer is on it.');
-            expect(client.sendText).not.toHaveBeenCalledWith(BOT_USER, ROOM, 'I\'m working on "Visa form" on my computer.');
+            // GPT fifth note, S1: the fixed line of the job is APPENDED to the reply's own words, in the same event
+            expect(client.sendText).toHaveBeenCalledTimes(1);
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, withJobLines('Your computer is on it.', [jobLine({ state: 'started', title: 'Visa form' })]));
             expect(acks).toEqual(['job-key-0001']);
         });
 
@@ -470,6 +474,135 @@ describe('MatrixDmBridge', () => {
             await bridge.onEvent(message('a clock please'));
             await settle();
             expect(acks).toEqual([]);
+        });
+    });
+
+    describe('GPT fifth note, S1: a start is confirmed only by the event that carries its job line, and only with that event\'s id', () => {
+        /** The production reply service, over a model answer that says `words` and queues the given job notes the way the tool does. */
+        const answeredWith = async (words: string, jobs: Array<{ key: string; note: Record<string, unknown> }>) => {
+            const { DmReplyService } = await import('../server/DmReplyService');
+            const { ConversationMemory } = await import('../memory/ConversationMemory');
+            const { ConfirmationQueue } = await import('../ai/ComputerTools');
+            const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+            const memory = new ConversationMemory();
+            const acks: string[] = [];
+            const answering = vi.fn(async function* () {
+                const chat = memory.getMemory(BOT, service.playerIdFor(ALICE))!;
+                chat.computerConfirmations?.drop();
+                chat.computerConfirmations = new ConfirmationQueue();
+                for (const job of jobs) chat.computerConfirmations.add(job.key, async () => void acks.push(job.key), job.note as never);
+                yield { content: words, done: true };
+            });
+            Object.assign(service, {
+                playerIds: new Map(),
+                nextPlayerId: -1,
+                loadedBots: new Set([BOT]),
+                botManager: { getBot: () => null },
+                getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+                aiService: { generateBotResponseStream: answering },
+                conversationMemory: memory,
+                conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+            });
+            const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+            deps.reply.mockImplementationOnce(async () => (service as any).replyNow(BOT, person, 'a clock please', [], {}));
+            return acks;
+        };
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+        const visa = { key: 'job-key-0001', note: { state: 'started', title: 'Visa form' } };
+
+        it('GPT\'s repro: unrelated text ("The clock is ready.") while "Visa form" is queued: the visa line is in the SAME event, and the job is confirmed once, after the event id', async () => {
+            await bridge.onEvent(invite());
+            const order: string[] = [];
+            client.sendText.mockImplementationOnce(async () => (order.push('sent'), '$clock'));
+            const acks = await answeredWith('The clock is ready.', [{ key: 'job-key-0001', note: { state: 'queued', title: 'Visa form' } }]);
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(client.sendText).toHaveBeenCalledTimes(1);
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, withJobLines('The clock is ready.', [jobLine({ state: 'queued', title: 'Visa form' })]));
+            expect(acks).toEqual(['job-key-0001']);
+            expect(order).toEqual(['sent']);
+        });
+
+        it('a job waiting for credit is told as waiting, never as "working on"; one that started is told as started; one found again is told as found (see JobStatusLine.test for every state)', async () => {
+            const lines = (['started', 'queued', 'recovered', 'done', 'ended'] as const).map((state) => jobLine({ state, title: 'Visa form' }));
+            expect(new Set(lines).size).toBe(5);
+            expect(jobLine({ state: 'queued', title: 'Visa form', queuedFor: 'allowance' })).toBe(JOB_STATUS_WORDS.queued.allowance.titled('\u201cVisa form\u201d'));
+            expect(jobLine({ state: 'started', title: 'Visa form' })).toBe(JOB_STATUS_WORDS.started.titled('\u201cVisa form\u201d'));
+            expect(jobLine({ state: 'recovered', title: 'Visa form', earlier: true })).toBe(JOB_STATUS_WORDS.recovered.earlier.titled('\u201cVisa form\u201d'));
+        });
+
+        it('the wording and the placement live in `JobStatusLine` alone: replace them and the person gets exactly those words in that place, the same one event, the same confirmation', async () => {
+            const { JOB_STATUS_PLACEMENT } = await import('../ai/JobStatusLine');
+            const words = JOB_STATUS_WORDS.started as { titled: (title: string) => string };
+            const placement = JOB_STATUS_PLACEMENT as unknown as { afterWords: string };
+            const [titled, afterWords] = [words.titled, placement.afterWords];
+            words.titled = (title) => `REPLACED ${title}`;
+            placement.afterWords = ' || ';
+            try {
+                await bridge.onEvent(invite());
+                const acks = await answeredWith('Your computer is on it.', [visa]);
+                await bridge.onEvent(message('a clock please'));
+                await settle();
+                expect(client.sendText).toHaveBeenCalledTimes(1);
+                expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Your computer is on it. || REPLACED \u201cVisa form\u201d');
+                expect(acks).toEqual(['job-key-0001']);
+            } finally {
+                words.titled = titled;
+                placement.afterWords = afterWords;
+            }
+        });
+
+        it('a SUPPRESSED send (another DM of the same Brick is being cleared): no text event goes out and nothing is confirmed', async () => {
+            await bridge.onEvent(invite());
+            const acks = await answeredWith('Your computer is on it.', [visa]);
+            // another DM of this Brick is being cleared: every send of this Brick answers nothing (the reply was still made)
+            (bridge as any).clearingRooms.set(BOT, 1);
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(deps.reply).toHaveBeenCalled();
+            expect(client.sendText).not.toHaveBeenCalled();
+            expect(acks).toEqual([]);
+            (bridge as any).clearingRooms.delete(BOT);
+        });
+
+        it('a send that returns NO event id confirms nothing; the same send with an id confirms', async () => {
+            await bridge.onEvent(invite());
+            const none = await answeredWith('Your computer is on it.', [visa]);
+            client.sendText.mockResolvedValueOnce(undefined);
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(client.sendText).toHaveBeenCalledTimes(1);
+            expect(none).toEqual([]);
+            const blank = await answeredWith('Your computer is on it.', [visa]);
+            client.sendText.mockResolvedValueOnce('');
+            await bridge.onEvent(message('a clock please again'));
+            await settle();
+            expect(blank).toEqual([]);
+            const ok = await answeredWith('Your computer is on it.', [visa]);
+            await bridge.onEvent(message('a clock please once more'));
+            await settle();
+            expect(ok).toEqual(['job-key-0001']);
+        });
+
+        it('a send that THROWS confirms nothing', async () => {
+            await bridge.onEvent(invite());
+            const acks = await answeredWith('Your computer is on it.', [visa]);
+            client.sendText.mockRejectedValueOnce(new Error('Matrix said no'));
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(acks).toEqual([]);
+        });
+
+        it('several jobs in one reply: every line is in the one event and each job is confirmed once, with its own line', async () => {
+            await bridge.onEvent(invite());
+            const acks = await answeredWith('On it.', [
+                { key: 'job-key-0001', note: { state: 'queued', title: 'Visa form' } },
+                { key: 'job-key-0002', note: { state: 'started', title: 'Taxi' } },
+            ]);
+            await bridge.onEvent(message('a clock please'));
+            await settle();
+            expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, withJobLines('On it.', [jobLine({ state: 'queued', title: 'Visa form' }), jobLine({ state: 'started', title: 'Taxi' })]));
+            expect(acks).toEqual(['job-key-0001', 'job-key-0002']);
         });
     });
 
@@ -2786,7 +2919,7 @@ describe('DmReplyService history', () => {
             const chat = memory.getMemory(BOT, service.playerIdFor(ALICE))!;
             chat.computerConfirmations?.drop();
             chat.computerConfirmations = new ConfirmationQueue();
-            chat.computerConfirmations.add('job-key-0001', async () => void confirmed.push('job-key-0001'));
+            chat.computerConfirmations.add('job-key-0001', async () => void confirmed.push('job-key-0001'), { state: 'started', title: 'Visa form' });
             yield { content: 'Your computer is on it.', done: true };
         });
         Object.assign(service, {
@@ -2806,8 +2939,8 @@ describe('DmReplyService history', () => {
         // the next answer is sent: keep is called, and its confirmation goes, once
         const sent = await (service as any).replyNow(BOT, person, 'hi again', [], {});
         expect(confirmed).toEqual([]);
-        sent.keep();
-        sent.keep();
+        sent.keep('$evt');
+        sent.keep('$evt');
         await new Promise((resolve) => setTimeout(resolve, 10));
         expect(confirmed).toEqual(['job-key-0001']);
     });

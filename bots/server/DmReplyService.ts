@@ -23,7 +23,7 @@ import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
-import { jobLine } from '../ai/ComputerTools';
+import { withJobLines } from '../ai/JobStatusLine';
 import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
@@ -127,6 +127,8 @@ export interface DmReplyHooks {
     onSteps?: (field: StepsField, text: string) => Promise<void>;
     /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
     roomId?: string;
+    /** The Matrix event of the message (its id): the key of a computer start made for it is made from it, so the same event delivered again makes no second job. */
+    eventId?: string;
     /** The artifacts the person pointed at by replying to a card (game #1781): the bot may open those even when another bot made them. */
     pointedArtifactIds?: string[];
     /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
@@ -146,7 +148,7 @@ export interface DmReply {
     /** The AI provider failed on this message, so there is no answer; the person can send it again. */
     failed?: boolean;
     /** Remembers the text as said. Call it once the text reached the person, so an answer that never arrived isn't. */
-    keep?: () => void;
+    keep?: (eventId?: string) => void;
     /** Puts a file in `media` on the person's list of files (#1508). Call it once it reached them. */
     mediaSent?: (item: PendingMedia) => void;
     /** The bot's room, when the text names it: the game shows a card under the message to go there. */
@@ -588,6 +590,7 @@ export class DmReplyService extends BaseBehavior {
         const turnMemory = memory.getMemory(botId, playerId);
         if (turnMemory) {
             turnMemory.dmRoomId = hooks.roomId;
+            turnMemory.dmEventId = hooks.eventId;
             // Only this turn's reply: a card pointed at earlier is not pointed at again by the next message
             turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];
@@ -760,9 +763,9 @@ export class DmReplyService extends BaseBehavior {
         // The computer jobs this reply names are confirmed to Orbit once it is delivered to the person's chat (the bridge calls `keep` after a send without error), never before. A reply that
         // failed or was not sent never calls it, and a newer message drops them
         const confirmations = memory.getMemory(botId, playerId)?.computerConfirmations;
-        const keep = () => {
-            // Only when words went out: a reply with no text has told the person of nothing
-            if (replyText.trim()) void confirmations?.deliver();
+        const keep = (eventId?: string) => {
+            // Only the event Matrix accepted (its id) confirms the jobs whose lines it carries: a send that was suppressed, or that gave no id, confirmed nothing
+            if (replyText.trim()) void confirmations?.deliver(eventId);
             if (kept || !replyText) return;
             kept = true;
             memory.addMessage(botId, playerId, replyText, 'bot', DM_SPACE_NAME);
@@ -785,10 +788,10 @@ export class DmReplyService extends BaseBehavior {
         if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
         // A reply that names a computer job but has no words of its own (the model made only a card or a file) says so in one fixed sentence: the job is confirmed to Orbit only once the person
         // received an event that tells them of it, so there is always one
-        if (!replyText.trim()) {
-            const told = confirmations?.notes() ?? [];
-            if (told.length > 0) replyText = told.map(jobLine).join('\n');
-        }
+        // Every job this reply names has its fixed status line APPENDED to the reply's own words, built from what Orbit really said of it (started, waiting and not started yet, still going, done,
+        // ended), in the SAME text event: that event is the only one that confirms those jobs. The model's own sentence can say anything (or something else: "The clock is ready.")
+        const lines = confirmations?.tell() ?? [];
+        replyText = withJobLines(replyText, lines);
         // A suggestion goes out only with words, and Orbit is asked about it only as its card is sent (claimOffer)
         if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer' && note.kind !== 'app');
         const claimOffer = this.offerClaim(bricks, botId, person.uuid);

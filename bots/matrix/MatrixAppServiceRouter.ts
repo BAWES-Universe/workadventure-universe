@@ -42,7 +42,14 @@ function tokenMatches(presented: string | undefined, expected: string): boolean 
  * The application service API Synapse calls (spec: /_matrix/app/v1). Mount it before the bot API's own body parser:
  * a transaction can be larger than the default 100 kB limit.
  */
-export function createMatrixAppServiceRouter(config: MatrixAppServiceConfig, handler: MatrixEventHandler): MatrixAppServiceRouter {
+export function createMatrixAppServiceRouter(
+    config: MatrixAppServiceConfig,
+    handler: MatrixEventHandler,
+    options: {
+        /** True the first time any bot server takes in this event, false when it was taken in before (here, at another server, or before a restart): it is then handled no more. */
+        firstSeen?: (eventId: string) => Promise<boolean>;
+    } = {}
+): MatrixAppServiceRouter {
     const router = express.Router();
     const recentTxnIds: string[] = [];
     const recentTxnSet = new Set<string>();
@@ -82,9 +89,11 @@ export function createMatrixAppServiceRouter(config: MatrixAppServiceConfig, han
         // Events in one room run in order; different rooms run side by side, so one slow reply holds up no one else.
         for (const event of events) {
             const previous = roomChains.get(event.room_id) ?? Promise.resolve();
-            const next = previous.then(() =>
-                handler.onEvent(event).catch((error) => console.error('[MatrixAppService] Event handling failed:', error))
-            );
+            const next = previous.then(async () => {
+                // An event Matrix delivered again (a transaction sent again, to this server or another, or after a restart) is handled once: its id is kept in the shared store
+                if (options.firstSeen && event.event_id && !(await options.firstSeen(event.event_id).catch(() => true))) return;
+                await handler.onEvent(event).catch((error) => console.error('[MatrixAppService] Event handling failed:', error));
+            });
             roomChains.set(event.room_id, next);
             void next.then(() => {
                 if (roomChains.get(event.room_id) === next) roomChains.delete(event.room_id);

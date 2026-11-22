@@ -8,9 +8,10 @@
  * (Part 12): a second job waits its turn, a resting computer wakes, a broken one says so, a restored one says which day.
  * No count, no price, no provider or machine name ever reaches the model, so none reaches the chat.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/node';
 import type { StartKeyStore, StoredStartPayload } from '../server/ComputerStartKeys';
+import { jobLine, type JobNote } from './JobStatusLine';
 import type { AdminApiService } from '../server/AdminApiService';
 
 export const COMPUTER_TOOL = 'use_computer';
@@ -66,7 +67,7 @@ export function computerToolsNote(): string {
  * Whatever is only in this queue's memory is lost with the process: Orbit's guard then answers `earlier` once, which is true.
  */
 export class ConfirmationQueue {
-    private items = new Map<string, { send: () => Promise<void>; note?: JobNote }>();
+    private items = new Map<string, { send: () => Promise<void>; note?: JobNote; told?: true }>();
     private closed = false;
 
     /**
@@ -75,6 +76,13 @@ export class ConfirmationQueue {
      */
     add(key: string, send: () => Promise<void>, note?: JobNote): void {
         if (!this.closed) this.items.set(key, { send, ...(note ? { note } : {}) });
+    }
+
+    private starts = 0;
+
+    /** The ordinal of the next computer start of this reply (0, 1, 2 ...): with the inbound event it is a start's identity (see `startKeyFor`). A new queue (a retried reply) counts again from 0. */
+    nextStart(): number {
+        return this.starts++;
     }
 
     /** How many confirmations wait. */
@@ -87,11 +95,30 @@ export class ConfirmationQueue {
         return [...this.items.values()].flatMap((item) => (item.note ? [item.note] : []));
     }
 
-    /** The reply reached the person: each confirmation is sent once, best effort and in order, and none is sent again. Never throws. */
-    async deliver(): Promise<void> {
-        if (this.closed) return;
+    /**
+     * The reply's text now carries the fixed line of every job waiting here (see `jobLine`), in the one event that is about to be sent: only those jobs can be confirmed by that event.
+     * Returns the lines, in order and without repeats.
+     */
+    tell(): string[] {
+        const lines: string[] = [];
+        for (const item of this.items.values()) {
+            if (!item.note) continue;
+            item.told = true;
+            const line = jobLine(item.note);
+            if (!lines.includes(line)) lines.push(line);
+        }
+        return lines;
+    }
+
+    /**
+     * Matrix took the event that carries the lines (`tell`) and gave its id: each job named in it is confirmed once, best effort and in order, and none is sent again. Without an id (a send that
+     * was suppressed, or whose answer had none) nothing is confirmed: no event is known to have told the person. A job that was never told in that event is not confirmed by it. Never throws.
+     */
+    async deliver(eventId?: string): Promise<void> {
+        if (this.closed || typeof eventId !== 'string' || eventId === '') return;
         this.closed = true;
-        for (const { send } of this.items.values()) {
+        for (const { send, told } of this.items.values()) {
+            if (!told) continue;
             try {
                 await send();
             } catch {
@@ -108,29 +135,16 @@ export class ConfirmationQueue {
     }
 }
 
-/** Which job a reply names to the person and what became of it: started now, found again and still going (`recovered`), finished, or ended. `earlier` when it is the job of an earlier ask. */
-export interface JobNote {
-    state: 'started' | 'recovered' | 'done' | 'ended';
-    title?: string;
-    earlier?: boolean;
-}
+export { jobLine } from './JobStatusLine';
+export type { JobNote } from './JobStatusLine';
 
 /**
- * The fixed sentence that tells the person of a job, for a reply that has no words of its own (the model made only a card or a file): it is the reply's text, so the confirmation of the job is
- * only ever made once Matrix accepted an event that names it.
+ * The key of a computer start, made from where the ask came from: the Brick, the chat, the inbound event and which start of the reply it is. The same inbound event delivered again (Matrix
+ * may send a transaction again; a bot server restarts and finds the event again) makes the SAME key, so Orbit answers the job the first one made, and never a second reservation, with
+ * Redis empty or not. A new message is a new event, so it is a new key. The shape is Orbit's (`[A-Za-z0-9_-]{8,64}`): `mx_` and 32 letters and digits.
  */
-export function jobLine(note: JobNote): string {
-    const name = note.title ? `"${note.title.replace(/"/g, "'")}"` : '';
-    switch (note.state) {
-        case 'done':
-            return note.earlier ? 'The job you asked for earlier has finished. Its result and receipt are with this chat and in [Usage](#usage).' : 'Your job has finished. Its result and receipt are with this chat and in [Usage](#usage).';
-        case 'ended':
-            return note.earlier ? 'The job you asked for earlier has already ended. The bar above this chat shows how.' : 'Your job has already ended. The bar above this chat shows how.';
-        case 'recovered':
-            return name ? `I'm still working on ${name} on my computer.` : "I'm still working on the job you asked for earlier on my computer.";
-        default:
-            return name ? `I'm working on ${name} on my computer.` : "I'm working on your job on my computer.";
-    }
+export function startKeyFor(botId: string, roomId: string, eventId: string, ordinal: number | string): string {
+    return `mx_${createHash('sha256').update(`${botId}|${roomId}|${eventId}|${ordinal}`).digest('hex').slice(0, 32)}`;
 }
 
 export interface ComputerToolContext {
@@ -143,6 +157,8 @@ export interface ComputerToolContext {
     isGuest?: boolean;
     /** The direct chat this reply is in: the job is started from it, and its result goes back to it and nowhere else. */
     origin?: { kind: 'dm'; ref: string };
+    /** The inbound Matrix event this reply answers: a start made for it has a key made from it (`startKeyFor`), so the same event delivered again makes no second job. Without it a start has a random key. */
+    inbound?: { roomId: string; eventId: string };
     /** The apps a review in this reply said the computer could do better: a call that names one with how many steps are left is for Orbit to weigh, not sent back to the app. */
     reviewed?: ReadonlySet<string>;
     /** Called once a job is running, so a development server can pretend to do it. */
@@ -192,6 +208,9 @@ export interface StartKeyEntry {
     made?: true;
     /** With `found`: the title of the ask that job was made for, when it is known (the words of a retained start). */
     title?: string;
+    /** With `found` and `made`: the job the resend made is queued (it has not started), and Orbit's reason (`allowance`, `turn`, `busy`, `pool`). A job that is only FOUND again is never told as queued: Orbit does not say whether it runs or waits. */
+    queued?: true;
+    queuedFor?: string | null;
 }
 
 /**
@@ -363,11 +382,12 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             },
             note
         );
+    // A job that is FOUND again is told as found (`recovered`), finished or ended: Orbit does not say whether a job it finds is running or waiting
     const stateOf = (reason: string): 'recovered' | 'done' | 'ended' => (reason === 'done' ? 'done' : reason === 'ended' ? 'ended' : 'recovered');
     // A job already found for an earlier ask in this turn is every call's answer, whatever it says: nothing is sent
     const foundEarlier = context.startKeys?.get(FOUND_EARLIER_SLOT);
     if (foundEarlier?.found && now - foundEarlier.at < OPEN_START_KEEP_MS) {
-        confirmLater(foundEarlier.key, foundEarlier.found === 'starting' && !foundEarlier.made, { state: foundEarlier.made ? 'started' : stateOf(foundEarlier.found), earlier: !foundEarlier.made, ...(foundEarlier.title ? { title: foundEarlier.title } : {}) });
+        confirmLater(foundEarlier.key, foundEarlier.found === 'starting' && !foundEarlier.made, { state: foundEarlier.made ? (foundEarlier.queued ? 'queued' : 'started') : stateOf(foundEarlier.found), earlier: !foundEarlier.made, ...(foundEarlier.made && foundEarlier.queued ? { queuedFor: foundEarlier.queuedFor ?? null } : {}), ...(foundEarlier.title ? { title: foundEarlier.title } : {}) });
         return answerOf({ ok: false, reason: foundEarlier.found } as StartAnswer, context, true);
     }
     const open = context.startKeys?.get(OPEN_START_SLOT);
@@ -380,14 +400,16 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     }
     // Open until the answer says otherwise: a start in flight that a new message of the person cleared would be sent again under another key (a second job)
     const current: StoredStartPayload = { title: job, ...(brief ? { brief } : {}), ...(args.reads_only === true ? { writes: false } : {}), ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) };
-    const entry: StartKeyEntry = earlier ?? { key: randomUUID(), at: now, open: true, unchecked: true, payload: current };
+    // A new start of THIS inbound event has the key its event, chat and ordinal make (the same event again, the same key); a start the chat did not come from has a random one
+    const newKey = () => (context.inbound && context.confirmations ? startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart()) : randomUUID());
+    const entry: StartKeyEntry = earlier ?? { key: newKey(), at: now, open: true, unchecked: true, payload: current };
     // The entry is put where the next call finds it BEFORE anything is awaited
     if (entry.open) context.startKeys?.set(OPEN_START_SLOT, entry);
     else context.startKeys?.set(asked, entry);
     const go = async (): Promise<Record<string, unknown>> => {
         // An ask that Orbit answered with an earlier job of the person's is answered the same when it comes again in this turn: nothing is sent (a second job would be paid for behind the first)
         if (!entry.open && entry.found) {
-            confirmLater(entry.key, entry.found === 'starting', { state: stateOf(entry.found), earlier: true });
+            confirmLater(entry.key, entry.found === 'starting', { state: stateOf(entry.found), earlier: true, ...(entry.title ? { title: entry.title } : {}) });
             return answerOf({ ok: false, reason: entry.found } as StartAnswer, context, true);
         }
         // Open when this call began: a key that went out before (here, at another server, or in an earlier turn) and whose outcome was not known. The words it said are the ones that go again.
@@ -416,7 +438,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             }
         }
         delete entry.unchecked;
-        const startKey = entry.key;
+        let startKey = entry.key;
         // Where this start is kept once it is settled: under the ask that SENT it (the words it holds), not under whatever is asked now, so the same ask in this turn finds it
         const keptAsked = entry.payload ? askedOf(entry.payload.title, entry.payload.origin) : asked;
         // A start with this key may have gone out BEFORE this call (an earlier ask of this person, here or at another server): whatever this call's own answer is, it says nothing of that one
@@ -459,7 +481,19 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             entry.sent = true;
             try {
                 // The words of the ask that FIRST sent this key, never the words of this call (when they differ the answer is told as that earlier ask's)
-                sent = (await context.admin.startComputerJob(context.botId, context.userId, { title: said.title, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(said.brief ? { brief: said.brief } : {}), writes: said.writes, ...(said.plan ? { plan: said.plan } : {}), ...(said.origin ? { origin: said.origin } : {}) })) as unknown as StartAnswer;
+                const sendIt = async (): Promise<StartAnswer> => (await context.admin.startComputerJob(context.botId, context.userId, { title: said.title, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(said.brief ? { brief: said.brief } : {}), writes: said.writes, ...(said.plan ? { plan: said.plan } : {}), ...(said.origin ? { origin: said.origin } : {}) })) as unknown as StartAnswer;
+                sent = await sendIt();
+                // Orbit says THIS start's own attempt stopped beating or was let go (`expired`): nothing was made by it, and it may not be revived. The ask starts afresh under a NEW key (the old
+                // one is never sent again), at most twice; the key a retried message makes is the same new key, so a replay of the same event still makes one job
+                for (let afresh = 1; sent && !sent.ok && sent.reason === 'expired' && afresh <= 2; afresh++) {
+                    const old = startKey;
+                    startKey = context.inbound && context.confirmations ? startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, `${old}.${afresh}`) : randomUUID();
+                    entry.key = startKey;
+                    entry.at = Date.now();
+                    await context.startKeyStore?.delete(scope, old).catch(() => undefined);
+                    await context.startKeyStore?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
+                    sent = await sendIt();
+                }
             } catch (error) {
                 // Thrown only when the start is known to have made nothing (Orbit's own no, or nothing was sent): this ask is over, and the key goes with it unless a start with it
                 // may have gone out before (that one is still open)
@@ -470,8 +504,23 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         }
         // Orbit has a job of an earlier start of this person on this Brick that this game never confirmed it saw (a reply lost, then the record of its key gone): nothing was made for this ask.
         // THAT job is what the person is told of, its key is the one kept from now on (no words: it is only looked up), and Orbit is told it was seen, so the next ask is free to start.
+        // An older start of the person on this Brick is still going and has made no job yet: nothing is told of a job (there is none), its key is the one kept from now on (no words: it is only looked
+        // up on every ask until it has made its job), and nothing is confirmed (there is nothing to confirm)
+        if (sent?.earlier && sent.earlier.id === null) {
+            const adopted = sent.earlier.attempt;
+            if (context.startKeys?.get(keptAsked) === entry) context.startKeys.delete(keptAsked);
+            await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
+            entry.key = adopted;
+            entry.at = now;
+            entry.sent = true;
+            entry.open = true;
+            delete entry.payload;
+            context.startKeys?.set(OPEN_START_SLOT, entry);
+            await context.startKeyStore?.claim(scope, { key: adopted, at: now }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
+            return { started: false, found: true, earlier: true, note: 'An earlier job of theirs is still being set up, so nothing new was started. Say in one short sentence that the job they asked for earlier is still being set up, and that its state shows in the bar above this chat once it is going. Do not say it has started or is running. If they are asking for something different now, say it was not started and that they can ask for it again once that job is going.' };
+        }
         if (sent?.earlier) {
-            const found = sent.earlier;
+            const found = sent.earlier as { id: string; status: string; attempt: string };
             // What Orbit said is put where every other call of this turn finds it BEFORE anything is awaited: an overlapping call never goes out beside this one
             if (context.startKeys?.get(OPEN_START_SLOT) === entry) context.startKeys.delete(OPEN_START_SLOT);
             if (context.startKeys?.get(keptAsked) === entry) context.startKeys.delete(keptAsked);
@@ -497,7 +546,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // of this turn is told, as it is when a look-up finds an earlier job, and nothing else is sent (a second job would be paid for behind it)
         const resentEarlier = looked === undefined && wasOpen && !samePayload(entry.payload, current);
         if (resentEarlier && (started.ok || ['starting', 'done', 'ended'].includes(started.reason))) {
-            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: started.ok ? 'starting' : started.reason, ...(started.ok ? { made: true as const } : {}), ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
+            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: started.ok ? 'starting' : started.reason, ...(started.ok ? { made: true as const } : {}), ...(started.ok && started.job.status === 'queued' ? { queued: true as const, queuedFor: started.job.queuedFor } : {}), ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
         }
         const refused = !started.ok && !UNCERTAIN_REASONS.includes(started.reason);
         // A no from Orbit to THIS send (nothing was made by it) ends the key only when no start with it went out before: a start that may have gone out earlier is not answered by it
@@ -517,7 +566,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // yet. The confirmation waits for this reply to be delivered (`ConfirmationQueue`), and the record of the key goes after it. A look-up never confirms by itself either.
         if (started.ok || ['starting', 'done', 'ended'].includes(started.reason)) {
             const askedEarlier = looked !== undefined || resentEarlier;
-            confirmLater(startKey, !started.ok && started.reason === 'starting', { state: started.ok ? 'started' : stateOf(started.reason), earlier: !started.ok && askedEarlier, ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
+            confirmLater(startKey, !started.ok && started.reason === 'starting', { state: started.ok ? (started.job.status === 'queued' ? 'queued' : 'started') : stateOf(started.reason), earlier: !started.ok && askedEarlier, ...(started.ok && started.job.status === 'queued' ? { queuedFor: started.job.queuedFor } : {}), ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
         }
         // The answer to a look-up of a start sent EARLIER is said as that earlier job's, never as this ask's, and so is the answer of a key that went out before with other words than these
         return answerOf(started, context, looked !== undefined || resentEarlier);
@@ -530,7 +579,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
 
 
 /** An answer to a start, as one shape (`reason` and `app` when it is a no, `job` and `restoredFrom` when it is a yes). */
-type StartAnswer = { ok: boolean; reason: string; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; earlier?: { id: string; status: string; attempt: string } };
+type StartAnswer = { ok: boolean; reason: string; queued?: true; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; earlier?: { id: string | null; status: string | null; attempt: string } };
 
 /** Whether two starts said the same (title, details, writes, the way Brick weighed, the chat). */
 function samePayload(a: StoredStartPayload | undefined, b: StoredStartPayload): boolean {
@@ -540,8 +589,47 @@ function samePayload(a: StoredStartPayload | undefined, b: StoredStartPayload): 
 /** Said with the answer of a job the person asked for earlier: what is asked now may be something else, and the game cannot tell. */
 const EARLIER_ASK_NOTE = 'This is the job they asked for earlier. Say in the sentence that it is the job they asked for earlier. If they are asking for something different now, say it was not started and that they can ask for it again once this job is going.';
 
-/** What the model is told of the answer to a start (or to the look-up of one). */
+/**
+ * What the model is told of the answer to a start (or to the look-up of one). In a chat where the reply carries the job's fixed status line (a reply with a confirmation queue: the DM), that
+ * line IS what tells the person what became of the job, so the model is told NOT to say it too (they would read it twice). Where there is no line (the room chat, a voice call) the notes
+ * below tell the model to say it, as they always did.
+ */
 function answerOf(started: StartAnswer, context: ComputerToolContext, earlier = false): Record<string, unknown> {
+    const answer = answerWords(started, context, earlier);
+    if (!context.confirmations) return answer;
+    const kind = answer.queued === true ? 'queued' : answer.waiting === true ? 'waiting' : answer.found === true ? 'found' : answer.done === true ? 'done' : answer.ended === true ? 'ended' : answer.started === true ? 'started' : null;
+    if (!kind) return answer;
+    const before = answer.earlier === true;
+    const different = before ? ' If they are asking for something different now, say it was not started and that they can ask for it again once that job is over.' : '';
+    const which = before ? 'the job they asked for earlier' : 'this job';
+    const when = started.ok && started.restoredFrom ? day(started.restoredFrom) : '';
+    switch (kind) {
+        case 'queued':
+            return { ...answer, note: `${before ? 'The job they asked for earlier' : 'The job'} was queued and has not started. ${LINE_TELLS_THEM}${different}` };
+        case 'waiting':
+            return { ...answer, note: `The job started and is already waiting for them: it needs something from them before it can go on. A fixed line under your reply says it started: do not say that again. Say in one short sentence that it needs something from them first, and that the bar above this chat shows what. Do not say it is running or will carry on by itself.${different}` };
+        case 'found':
+            return { ...answer, note: `Orbit found ${which}. ${LINE_TELLS_THEM}${before ? different : ' Do not ask them to ask again.'}` };
+        case 'done':
+            return { ...answer, note: `Orbit found ${which} and it has finished. ${LINE_TELLS_THEM}${before ? different : ' Do not start it again unless they ask you to.'}` };
+        case 'ended':
+            return { ...answer, note: `Orbit found ${which} and it has already ended (it failed or was stopped). ${LINE_TELLS_THEM}${before ? different : ' Do not start it again unless they ask you to.'}` };
+        default: {
+            const running = before ? 'The job they asked for earlier is running.' : 'The job is running.';
+            return {
+                ...answer,
+                note: when
+                    ? `${running} A fixed line under your reply tells them it started: do not say that yourself. Your computer came back from its copy of ${when}: say that in one sentence; anything made after that day is gone, so offer to make it again if it matters.${different}`
+                    : `${running} A fixed line under your reply tells them it started: do not say that yourself, and do not say how long it will take.${different}`,
+            };
+        }
+    }
+}
+
+/** What a job's fixed status line already says to the person, and so what the model leaves out of its own words. */
+const LINE_TELLS_THEM = 'A fixed line under your reply already tells them what became of it, in its own words: do not say that yourself (not that it started, is waiting, was found, finished or ended, nor how it is going or how long it will take), they would read it twice. Say only what else they asked, in a word or two.';
+
+function answerWords(started: StartAnswer, context: ComputerToolContext, earlier = false): Record<string, unknown> {
     if (!started.ok) {
         switch (started.reason) {
             case 'cheaper_route':

@@ -572,9 +572,10 @@ export function readComputerJobState(status: string): 'live' | 'done' | 'ended' 
 }
 
 /** What is true of a job that was made, by its state: live is `starting` (it exists; nothing is said of the machine), finished is `done`, failed or stopped is `ended`; a state this server does not know says nothing. */
-function computerJobTold(status: string): { ok: false; reason: string } {
+function computerJobTold(status: string): { ok: false; reason: string; queued?: true } {
     const state = readComputerJobState(status);
-    return { ok: false, reason: state === 'live' ? 'starting' : state === 'unknown' ? 'unknown' : state };
+    // A queued job has not started: the person is never told it is being worked on
+    return { ok: false, reason: state === 'live' ? 'starting' : state === 'unknown' ? 'unknown' : state, ...(status === 'queued' ? { queued: true as const } : {}) };
 }
 
 /**
@@ -596,8 +597,9 @@ function finishPendingOf(raw: unknown): { outcome: 'done' | 'failed'; cause?: 'o
 
 /** The job of an earlier start of the person on this Brick that was never confirmed (Orbit's `earlier` answer): its id and state, and the key of the start that made it. */
 export interface EarlierStart {
-    id: string;
-    status: string;
+    /** Null while an older start of the person on this Brick is still going and has made no job yet (Orbit says so: `state: 'starting'`): then nothing is read of the job, only its key. */
+    id: string | null;
+    status: string | null;
     attempt: string;
 }
 
@@ -1885,7 +1887,7 @@ export class AdminApiService {
         // What is true of a job that was made, by its state (the same reading for every way an answer about it comes): live is `starting` (it exists; nothing is
         // said of the machine), one that finished is `done`, one that failed or was stopped is `ended`: it WAS made and is over, which is no connection failure of
         // the start (nothing was unreachable); a state this server does not know says nothing
-        const told = (status: string): { ok: false; reason: string } => computerJobTold(status);
+        const told = (status: string): { ok: false; reason: string; queued?: true } => computerJobTold(status);
         let answer: Awaited<ReturnType<AdminApiService['sendComputerJob']>>;
         try {
             answer = await this.sendComputerJob(viaBotId, userId, ask, startKey);
@@ -1898,7 +1900,9 @@ export class AdminApiService {
         if (answer === 'unclear') return lookUp();
         // Nothing was made for this start: the person has an earlier job that this game never confirmed it saw (Orbit names it and its key), told by its state like any job that was made
         const earlierJob = answer.ok === false && answer.reason === 'earlier' ? answer.earlier : undefined;
-        if (earlierJob) return { ...told(earlierJob.status), earlier: earlierJob };
+        // An older start still going with no job yet: nothing is said of a job (there is none), only that the start of the earlier ask is still being set up
+        if (earlierJob && earlierJob.status === null) return { ok: false, reason: 'setting_up', earlier: earlierJob };
+        if (earlierJob && earlierJob.status !== null) return { ...told(earlierJob.status), earlier: earlierJob };
         // A job that Orbit answers with is told by its state, whichever way the answer came (a start that repeated a key is answered with the job that key made,
         // which may be over): one that is still going on (queued, waiting, running) is the whole success; one that finished, or failed or was stopped, or is in a
         // state this server does not know is told the way the look-up tells it, never as a job that "is running"
@@ -1942,7 +1946,10 @@ export class AdminApiService {
         // `earlier`: the person has a job of an earlier start on this Brick that this game never confirmed it saw, and nothing was made for THIS start. It names that job and its key; one
         // that does not (no key of the shape Orbit takes, no state) is read as an answer that said nothing, and the key of this start is looked up as for any answer that did not say
         if (isOrbitRefusal(data) && data.reason === 'earlier') {
-            return job && typeof job.id === 'string' && job.id !== '' && typeof job.status === 'string' && typeof job.attempt === 'string' && START_KEY_SHAPE.test(job.attempt) ? { ok: false, reason: 'earlier', earlier: { id: job.id, status: job.status, attempt: job.attempt } } : 'unclear';
+            if (!job || typeof job.attempt !== 'string' || !START_KEY_SHAPE.test(job.attempt)) return 'unclear';
+            // An older start that is still going and made no job yet: only its key is taken (id and status are null and are not read), and it is looked up by that key
+            if (job.id === null && job.status === null && (job as { state?: unknown }).state === 'starting') return { ok: false, reason: 'earlier', earlier: { id: null, status: null, attempt: job.attempt } };
+            return typeof job.id === 'string' && job.id !== '' && typeof job.status === 'string' ? { ok: false, reason: 'earlier', earlier: { id: job.id, status: job.status, attempt: job.attempt } } : 'unclear';
         }
         // Only Orbit's own refusal, in the shape it gives it (`ok: false` and a reason that is a word), is final here; an answer that is neither a whole success nor that is `'unclear'`
         if (isOrbitRefusal(data)) {
@@ -1958,15 +1965,17 @@ export class AdminApiService {
     }
 
     /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null } | null> {
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null } | null> {
         try {
-            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; finishPending?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; ownerEpoch?: unknown; finishPending?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
             if (job && typeof job.id === 'string' && typeof job.status === 'string') {
                 // The control generation, when Orbit gives one (an Orbit that does not is not asked to fence)
                 const generation = typeof job.generation === 'number' && Number.isInteger(job.generation) && job.generation >= 0 ? job.generation : undefined;
                 const finishPending = finishPendingOf(job.finishPending);
-                return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick', ...(generation === undefined ? {} : { generation }), ...(finishPending ? { finishPending } : {}) };
+                // The job's ownership epoch (0 = never claimed), when Orbit gives one: an Orbit that does not is not asked to fence, and no claim is made
+                const ownerEpoch = typeof job.ownerEpoch === 'number' && Number.isInteger(job.ownerEpoch) && job.ownerEpoch >= 0 ? job.ownerEpoch : undefined;
+                return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick', ...(generation === undefined ? {} : { generation }), ...(ownerEpoch === undefined ? {} : { ownerEpoch }), ...(finishPending ? { finishPending } : {}) };
             }
             throw new Error('Orbit gave no job');
         } catch (error) {
@@ -2088,19 +2097,22 @@ export class AdminApiService {
         jobId: string,
         step: 'turn' | 'stream',
         input: string | null,
-        signal: AbortSignal
-    ): Promise<{ ok: true; body: ReadableStream<Uint8Array> } | { ok: false; status: number; reason: string; responseId?: string }> {
+        signal: AbortSignal,
+        epoch?: number
+    ): Promise<{ ok: true; body: ReadableStream<Uint8Array> } | { ok: false; status: number; reason: string; responseId?: string; superseded?: true }> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
-        const answer = await fetch(resolveAdminApiEndpoint(this.adminApiUrl, `api/computer/jobs/${encodeURIComponent(jobId)}/${step}`), {
+        // The ownership epoch the runner holds the job under: in the body of a turn, in the query of a reconnect (a GET has no body)
+        const address = resolveAdminApiEndpoint(this.adminApiUrl, `api/computer/jobs/${encodeURIComponent(jobId)}/${step}`);
+        const answer = await fetch(step === 'stream' && epoch !== undefined ? `${address}${address.includes('?') ? '&' : '?'}epoch=${epoch}` : address, {
             method: step === 'turn' ? 'POST' : 'GET',
             headers: { Authorization: `Bearer ${botServiceToken}`, 'Cache-Control': 'no-store', ...(step === 'turn' ? { 'Content-Type': 'application/json' } : {}), Accept: 'text/event-stream' },
-            ...(step === 'turn' ? { body: JSON.stringify({ input }) } : {}),
+            ...(step === 'turn' ? { body: JSON.stringify({ input, ...(epoch === undefined ? {} : { epoch }) }) } : {}),
             signal,
         });
         if (answer.ok && answer.body) return { ok: true, body: answer.body };
-        const data = (await answer.json().catch(() => ({}))) as { reason?: unknown; responseId?: unknown };
-        return { ok: false, status: answer.status, reason: typeof data.reason === 'string' ? data.reason : 'failed', ...(typeof data.responseId === 'string' ? { responseId: data.responseId } : {}) };
+        const data = (await answer.json().catch(() => ({}))) as { reason?: unknown; responseId?: unknown; run?: unknown };
+        return { ok: false, status: answer.status, reason: typeof data.reason === 'string' ? data.reason : 'failed', ...(typeof data.responseId === 'string' ? { responseId: data.responseId } : {}), ...(data.reason === 'stale' && data.run === 'superseded' ? { superseded: true as const } : {}) };
     }
 
     /** Has Orbit stop jobs that stopped renewing and try the ones in line again (#2000). Never throws. */

@@ -1,12 +1,20 @@
 import { randomUUID } from 'crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { deliverTold } from './helpers/deliveredComputerTool';
 import { createClient } from 'redis';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@sentry/node', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 
 import * as Sentry from '@sentry/node';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
 import { AdminApiService } from '../server/AdminApiService';
-import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, jobLine, runComputerTool, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
+import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
+import { createEventDedupe } from '../matrix/MatrixEventDedupe';
+import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, jobLine, runComputerTool, startKeyFor, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
 /**
@@ -155,15 +163,21 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
         const store = new RedisStartKeys(redis);
         const context = { admin, botId: who.botId, userId: who.userId, startKeys: memory, startKeyStore: store };
         /** One reply of this server: what it names is confirmed once it is delivered (`deliver: false` is a reply that failed, was replaced or whose send failed: nothing is confirmed). */
+        let lines: string[] = [];
         const reply = async (args: Record<string, unknown>, over: Record<string, unknown> = {}) => {
             const { deliver, ...rest } = over;
             const queue = new ConfirmationQueue();
             const answer = (await runComputerTool(args, { ...context, confirmations: queue, ...rest })) as Record<string, unknown>;
+            lines = queue.tell();
             if (deliver === false) queue.drop();
-            else await queue.deliver();
+            else await deliverTold(queue);
             return answer;
         };
         return {
+            /** The fixed lines the last reply carried under its words (what the person is told of the jobs it named). */
+            get lines() {
+                return lines;
+            },
             memory,
             context,
             reply,
@@ -349,7 +363,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
     });
 
     describe('G63-1: the look-up of an EARLIER ask\'s start is said as that earlier job, never as the ask the person makes now', () => {
-        for (const [found, says] of [['done', /the job you asked for earlier finished/], ['failed', /the job you asked for earlier has already ended/], ['running', /the job you asked for earlier was found/]] as const) {
+        for (const [found, state] of [['done', 'done'], ['failed', 'ended'], ['running', 'recovered']] as const) {
             it(`the earlier start is ${found}: the note names the earlier job, says this ask was not started, never says this ask finished; asked again in the next message it gets a new key and starts`, async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
@@ -369,10 +383,12 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 expect(orbit.posts).toEqual([]);
                 expect(answer).toMatchObject({ started: false, earlier: true });
                 const note = String(answer.note);
-                expect(note).toMatch(says);
-                expect(note).toContain('the job you asked for earlier');
+                // the state is told by the fixed line, as the EARLIER ask's (named by ITS title, never by the ask made now), in the line's own approved words; the model is told not to say it again, and what to say of the new ask
+                expect(server.lines).toEqual([jobLine({ state, earlier: true, title: 'Fill in my visa form' })]);
+                expect(note).toContain('the job they asked for earlier');
+                expect(note).toContain('do not say that yourself');
                 expect(note).toMatch(/something different now, say it was not started/);
-                expect(note).toMatch(found === 'running' ? /once the earlier job is over/ : /in their next message/);
+                expect(note).toMatch(found === 'running' ? /once this job is going|once the earlier job is over|ask for it again/ : /in their next message|ask for it again/);
                 // it never tells the person that THIS ask finished, or that Orbit found "this job"
                 expect(note).not.toMatch(/found this job/i);
                 expect(note).not.toMatch(/that your job finished/);
@@ -415,8 +431,11 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             const answer = await fresh.ask(replay);
             // the original job and its result are what the person is told of; Orbit made nothing new (its guard answered the one start that went out) and was told the job was seen
             expect(answer).toMatchObject({ started: false, done: true, earlier: true });
-            expect(String(answer.note)).toContain('the job you asked for earlier finished');
-            expect(String(answer.note)).toContain('[Usage](#usage)');
+            // told by the fixed line, as the earlier job and in the approved words (the person's words of THIS ask do not name it)
+            // (the record of the key is gone, so the words of the first ask are gone too: the line has no title, and is never the title of THIS ask)
+            expect(fresh.lines).toEqual([jobLine({ state: 'done', earlier: true })]);
+            expect(fresh.lines[0]).toContain('[Usage](#usage)');
+            expect(String(answer.note)).toContain('the job they asked for earlier');
             expect(orbit.posts.map((one) => (one.key === original ? 'original-key' : 'other-key'))).toEqual(['other-key']);
             expect(orbit.guarded).toBe(1);
             expect(orbit.jobs.size).toBe(1);
@@ -481,8 +500,10 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(orbit.reservations).toBe(1);
             // told as the job asked for earlier, never as the new ask
             expect(answer).toMatchObject({ started: true, earlier: true });
-            expect(String(answer.note)).toContain('the job they asked for earlier');
+            expect(String(answer.note)).toContain('job they asked for earlier');
             expect(String(answer.note)).toMatch(/something different now, say it was not started/);
+            // the line names A (its own title), never B
+            expect(restarted.lines).toEqual([jobLine({ state: 'started', title: 'Fill in my visa form' })]);
             expect(await held(who)).toBeNull();
         });
 
@@ -513,7 +534,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(orbit.reservations).toBe(1);
             expect(orbit.acks).toEqual([]);
             expect(await held(who)).not.toBeNull();
-            await queue.deliver();
+            await deliverTold(queue);
             expect(orbit.acks).toHaveLength(1);
             expect(orbit.acks[0].attempt).toBe(key);
             expect(await held(who)).toBeNull();
@@ -522,6 +543,30 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(await server.ask('Book me a table for Friday')).toMatchObject({ started: true });
             expect(orbit.jobs.size).toBe(2);
             expect(orbit.reservations).toBe(2);
+        });
+
+        it('S1: the resend of A\'s words makes A\'s job and Orbit QUEUES it: every call of that reply is told of A\'s job as waiting (never as started), by A\'s own title, and only that one line is under the reply', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            orbit.onPost = 'limiter-before-commit';
+            orbit.onGet = 'none';
+            const server = process_(orbit, who);
+            expect(await askWith(server, SAID)).toMatchObject({ started: false, unknown: true });
+            forgetSettledStarts(server.memory);
+            orbit.onPost = 'whole';
+            orbit.status = 'queued';
+            const queue = new ConfirmationQueue();
+            const call = (args: Record<string, unknown>) => runComputerTool(args, { ...server.context, confirmations: queue }) as Promise<Record<string, unknown>>;
+            const first = await call({ job: 'Book me a table for Friday' });
+            expect(first).toMatchObject({ started: false, queued: true, earlier: true });
+            const second = await call({ job: 'Reserve a table on Friday evening' });
+            expect(second).toMatchObject({ started: false, earlier: true });
+            const lines = queue.tell();
+            expect(lines).toHaveLength(1);
+            expect(lines[0]).toMatch(/hasn't started yet/);
+            expect(lines[0]).toContain('“Fill in my visa form”');
+            expect(lines[0]).not.toMatch(/I've started|I already have|is running/);
+            await deliverTold(queue);
         });
 
         it('CodeRabbit O1: the job the resend made is kept under the ask that SENT it: with the turn-wide answer gone, A asked again in the same turn goes under A\'s own key (the same job), never a new key and a second job', async () => {
@@ -805,12 +850,12 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 expect(orbit.jobs.get(key)?.acked).toBe(false);
                 expect(queue.size).toBe(1);
                 // the reply is handed to the chat
-                await queue.deliver();
+                await deliverTold(queue);
                 expect(orbit.acks).toEqual([{ attempt: key, userId: who.userId }]);
                 expect(orbit.jobs.get(key)?.acked).toBe(true);
                 expect(await held(who)).toBeNull();
                 // delivering again sends nothing again
-                await queue.deliver();
+                await deliverTold(queue);
                 expect(orbit.acks).toHaveLength(1);
             });
 
@@ -855,7 +900,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const queue = new ConfirmationQueue();
                 await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: queue });
                 expect(queue.notes()).toEqual([{ state: 'started', earlier: false, title: 'Fill in my visa form' }]);
-                expect(queue.notes().map(jobLine)).toEqual(['I\'m working on "Fill in my visa form" on my computer.']);
+                expect(queue.notes().map(jobLine)).toEqual([jobLine({ state: 'started', title: 'Fill in my visa form' })]);
                 // an earlier job Orbit names, done
                 const lostOrbit = new FakeOrbit();
                 lostOrbit.onPost = 'lose-after-commit';
@@ -871,11 +916,68 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 await runComputerTool({ job: 'Book me a table for Friday' }, { ...before.context, confirmations: done });
                 expect(done.notes()).toEqual([{ state: 'done', earlier: true, title: 'Fill in my visa form' }]);
                 expect(done.notes().map(jobLine)).toEqual([jobLine({ state: 'done', earlier: true, title: 'Fill in my visa form' })]);
-                await done.deliver();
+                await deliverTold(done);
                 expect(done.notes()).toEqual([]);
                 const none = new ConfirmationQueue();
                 none.add('k', async () => undefined);
                 expect(none.notes()).toEqual([]);
+            });
+
+            it('GPT fifth note, S1: a job added after the lines were told is not confirmed by that event, a queue with no event id confirms nothing, and a queue that was told once confirms only the told jobs', async () => {
+                const sent: string[] = [];
+                const queue = new ConfirmationQueue();
+                queue.add('a', async () => void sent.push('a'), { state: 'started', title: 'A' });
+                expect(queue.tell()).toEqual([jobLine({ state: 'started', title: 'A' })]);
+                queue.add('b', async () => void sent.push('b'), { state: 'started', title: 'B' });
+                await queue.deliver(undefined);
+                await queue.deliver('');
+                expect(sent).toEqual([]);
+                await queue.deliver('$event');
+                expect(sent).toEqual(['a']);
+                // a queue that was never told (no note of the job: nothing says it) confirms nothing either
+                const bare = new ConfirmationQueue();
+                bare.add('c', async () => void sent.push('c'));
+                expect(bare.tell()).toEqual([]);
+                await bare.deliver('$event');
+                expect(sent).toEqual(['a']);
+            });
+
+            it('GPT fifth note, S1: the note of a job says what Orbit really said of it: a job made now is "queued" (waiting) or "started" (running); a job FOUND again (by its key, or named as an earlier one) is "recovered", whatever its status, and never "started" or "working on"', async () => {
+                for (const found of ['made', 'looked-up', 'earlier'] as const) {
+                    for (const status of ['queued', 'running'] as const) {
+                        const who = ids();
+                        const orbit = new FakeOrbit();
+                        orbit.status = status;
+                        const server = process_(orbit, who);
+                        if (found !== 'made') {
+                            // a first ask whose answer was lost: the job is there, Orbit has it (queued or running)
+                            orbit.onPost = 'lose-after-commit';
+                            orbit.onGet = 'silent';
+                            await server.ask('Fill in my visa form', { deliver: false });
+                            orbit.onPost = 'whole';
+                            orbit.onGet = 'truth';
+                            if (found === 'earlier') {
+                                forgetSettledStarts(server.memory);
+                                await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+                            }
+                        }
+                        const queue = new ConfirmationQueue();
+                        await runComputerTool({ job: found === 'earlier' ? 'Book me a table for Friday' : 'Fill in my visa form' }, { ...server.context, confirmations: queue });
+                        const [note] = queue.notes();
+                        const line = jobLine(note);
+                        const label = `${found} ${status}`;
+                        if (found === 'made') {
+                            expect(note?.state, label).toBe(status === 'queued' ? 'queued' : 'started');
+                            expect(line, label).toBe(status === 'queued' ? jobLine({ state: 'queued', queuedFor: note.queuedFor ?? null, ...(note.title ? { title: note.title } : {}) }) : jobLine({ state: 'started', ...(note.title ? { title: note.title } : {}) }));
+                        } else {
+                            expect(note?.state, label).toBe('recovered');
+                            expect(line, label).toBe(jobLine({ state: 'recovered', ...(note.earlier ? { earlier: true } : {}), ...(note.title ? { title: note.title } : {}) }));
+                            expect(line, label).toMatch(/I already have/);
+                            expect(line, label).not.toMatch(/I've started|working on|is running/);
+                        }
+                        if (status === 'queued') expect(line, label).not.toMatch(/I've started|working on|is running/);
+                    }
+                }
             });
 
             it('a job named twice in one reply (a reworded call, a retried call) is confirmed once', async () => {
@@ -892,18 +994,22 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 await runComputerTool({ job: 'Reserve a table on Friday evening' }, { ...server.context, confirmations: queue });
                 await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: queue });
                 expect(queue.size).toBe(1);
-                await queue.deliver();
+                await deliverTold(queue);
                 expect(orbit.acks).toHaveLength(1);
             });
 
             it('two deliveries of one reply that overlap (the send is slow) send each confirmation once', async () => {
                 const queue = new ConfirmationQueue();
                 const sent: string[] = [];
-                queue.add('a', async () => {
-                    await new Promise((resolve) => setTimeout(resolve, 30));
-                    sent.push('a');
-                });
-                await Promise.all([queue.deliver(), queue.deliver()]);
+                queue.add(
+                    'a',
+                    async () => {
+                        await new Promise((resolve) => setTimeout(resolve, 30));
+                        sent.push('a');
+                    },
+                    { state: 'started', title: 'A' }
+                );
+                await Promise.all([deliverTold(queue), deliverTold(queue)]);
                 expect(sent).toEqual(['a']);
             });
 
@@ -957,21 +1063,25 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             it('a confirmation that throws, or is added after the reply was delivered or dropped, changes nothing for the others', async () => {
                 const queue = new ConfirmationQueue();
                 const sent: string[] = [];
-                queue.add('a', async () => {
-                    throw new Error('boom');
-                });
-                queue.add('b', async () => void sent.push('b'));
-                await queue.deliver();
+                queue.add(
+                    'a',
+                    async () => {
+                        throw new Error('boom');
+                    },
+                    { state: 'started', title: 'A' }
+                );
+                queue.add('b', async () => void sent.push('b'), { state: 'started', title: 'B' });
+                await deliverTold(queue);
                 expect(sent).toEqual(['b']);
-                queue.add('c', async () => void sent.push('c'));
-                await queue.deliver();
+                queue.add('c', async () => void sent.push('c'), { state: 'started', title: 'C' });
+                await deliverTold(queue);
                 expect(sent).toEqual(['b']);
                 const dropped = new ConfirmationQueue();
-                dropped.add('d', async () => void sent.push('d'));
+                dropped.add('d', async () => void sent.push('d'), { state: 'started', title: 'D' });
                 dropped.drop();
                 // an answer that names a job after the reply was dropped adds nothing either
-                dropped.add('e', async () => void sent.push('e'));
-                await dropped.deliver();
+                dropped.add('e', async () => void sent.push('e'), { state: 'started', title: 'E' });
+                await deliverTold(dropped);
                 expect(sent).toEqual(['b']);
             });
 
@@ -1175,5 +1285,319 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
         expect(orbit.posts).toEqual([]);
         expect(orbit.lookups).toEqual([key]);
         expect(down).toMatchObject({ unknown: true });
+    });
+    describe('GPT fifth note, S2: a start keeps its identity when its inbound event is delivered again', () => {
+        const KEY_SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
+        const EVENT = { roomId: '!dm:matrix.test', eventId: '$visa-1' };
+
+        it('the key of a start is made from the Brick, the chat, the inbound event and the start\'s ordinal, in the shape Orbit takes, and a start of a chat with no inbound event has a random one', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            const server = process_(orbit, who);
+            await server.ask('Fill in my visa form', { inbound: EVENT });
+            const key = orbit.posts[0].key;
+            expect(key).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0));
+            expect(key).toMatch(KEY_SHAPE);
+            expect(key.startsWith('mx_')).toBe(true);
+            expect(startKeyFor(who.botId, EVENT.roomId, '$visa-2', 0)).not.toBe(key);
+            expect(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 1)).not.toBe(key);
+            expect(startKeyFor('another-brick', EVENT.roomId, EVENT.eventId, 0)).not.toBe(key);
+            expect(startKeyFor(who.botId, '!another:matrix.test', EVENT.eventId, 0)).not.toBe(key);
+            const plain = ids();
+            const other = new FakeOrbit();
+            await process_(other, plain).ask('Fill in my visa form');
+            expect(other.posts[0].key).not.toMatch(/^mx_/);
+        });
+
+        it('two starts in one reply to one event (the first was refused for good, so the second is a new ask) have their own ordinals: two keys; the reply made again makes the same two keys', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            const server = process_(orbit, who);
+            const reply = async () => {
+                const queue = new ConfirmationQueue();
+                orbit.onPost = 'refuse-200';
+                await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: queue, inbound: EVENT });
+                orbit.onPost = 'whole';
+                await runComputerTool({ job: 'Fill in my visa form again' }, { ...server.context, confirmations: queue, inbound: EVENT });
+            };
+            await reply();
+            const keys = orbit.posts.map((one) => one.key);
+            expect(keys).toEqual([startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0), startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 1)]);
+            expect(orbit.jobs.size).toBe(1);
+            // the same event delivered again (a restart: nothing is remembered): the same two keys, one job
+            await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+            server.memory.clear();
+            await reply();
+            expect(orbit.posts.slice(2).map((one) => one.key)).toEqual(keys);
+            expect(orbit.jobs.size).toBe(1);
+            expect(orbit.reservations).toBe(1);
+        });
+
+        it('the SAME inbound event handled again, after a restart (empty memory, EMPTY Redis, the first answer acknowledged): the same key, Orbit answers the job it made: ONE job and ONE reservation', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+            expect(orbit.acks).toHaveLength(1);
+            // the restart: nothing is remembered anywhere
+            await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+            const again = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+            expect(orbit.posts.map((one) => one.key)).toEqual([orbit.posts[0].key, orbit.posts[0].key]);
+            expect(again).toMatchObject({ started: true });
+            expect(orbit.jobs.size).toBe(1);
+            expect(orbit.reservations).toBe(1);
+        });
+
+        it('CONTROL: without the event in the key (a random key), the same replay after the first answer was acknowledged makes a SECOND job and a second reservation', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            await process_(orbit, who).ask('Fill in my visa form');
+            await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+            await process_(orbit, who).ask('Fill in my visa form');
+            expect(orbit.jobs.size).toBe(2);
+            expect(orbit.reservations).toBe(2);
+        });
+
+        it('a DELIBERATE later request (a new inbound event, the same words, the first job acknowledged) is a distinct job and a distinct reservation', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            const server = process_(orbit, who);
+            await server.ask('Fill in my visa form', { inbound: EVENT });
+            forgetSettledStarts(server.memory);
+            await server.ask('Fill in my visa form', { inbound: { roomId: EVENT.roomId, eventId: '$visa-2' } });
+            expect(orbit.posts[1].key).not.toBe(orbit.posts[0].key);
+            expect(orbit.jobs.size).toBe(2);
+            expect(orbit.reservations).toBe(2);
+        });
+
+        /** The answers Orbit gave the game for S2 (its own attempt record): `expired` (this start's attempt stopped beating), and `earlier` with an older start that has made no job yet. */
+        const scripted = (orbit: FakeOrbit, answers: Array<Record<string, unknown> | 'real'>) => {
+            const real = orbit.call;
+            const queue = [...answers];
+            (orbit as unknown as { call: unknown }).call = async (method: string, path: string, body?: unknown, params?: Record<string, string>, t?: number, headers?: Record<string, string>) => {
+                if (method === 'post' && !(body as { action?: string }).action) {
+                    const next = queue.shift() ?? 'real';
+                    if (next !== 'real') {
+                        orbit.posts.push({ key: headers?.['X-Computer-Start-Attempt'] ?? '', title: (body as { title: string }).title, confirms: true });
+                        return { data: next };
+                    }
+                }
+                return real(method, path, body, params, t, headers);
+            };
+        };
+
+        it('S2 `expired` (this start\'s own attempt stopped beating): nothing was made, so the ask starts afresh under a NEW key, never the old one again; ONE job and ONE reservation, the stored key is the new one', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+            expect(answer).toMatchObject({ started: true });
+            expect(orbit.posts).toHaveLength(2);
+            const [old, fresh] = orbit.posts.map((one) => one.key);
+            expect(fresh).not.toBe(old);
+            expect(old).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0));
+            // the new key is made from the same event too: the same message delivered again would make the same new key, so a replay still makes one job
+            expect(fresh).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, `${old}.1`));
+            expect(fresh).toMatch(KEY_SHAPE);
+            expect([...orbit.jobs.keys()]).toEqual([fresh]);
+            expect(orbit.reservations).toBe(1);
+            // what the person is told confirms the job of the NEW key
+            expect(orbit.acks.map((one) => one.attempt)).toEqual([fresh]);
+        });
+
+        it('S2 `expired`, the reply that names the job not delivered: the key kept for the person is the NEW one (with the words of the ask), so the next message finds that job and makes no other', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            const server = process_(orbit, who);
+            await server.ask('Fill in my visa form', { inbound: EVENT, deliver: false });
+            const [old, fresh] = orbit.posts.map((one) => one.key);
+            expect(fresh).not.toBe(old);
+            expect(await held(who)).toMatchObject({ key: fresh, payload: { title: 'Fill in my visa form' } });
+            // the next message (a fresh process): the new key is the one looked up and its job is the one told of
+            forgetSettledStarts(server.memory);
+            orbit.lookups = [];
+            await process_(orbit, who).ask('Fill in my visa form reworded');
+            expect(orbit.lookups).toEqual([fresh]);
+            expect(orbit.jobs.size).toBe(1);
+            expect(orbit.reservations).toBe(1);
+        });
+
+        it('S2 `expired` for a start with no inbound event (a random key): the new key is random too, and one job is made', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            await process_(orbit, who).ask('Fill in my visa form');
+            expect(new Set(orbit.posts.map((one) => one.key)).size).toBe(2);
+            expect(orbit.jobs.size).toBe(1);
+            expect(orbit.reservations).toBe(1);
+        });
+
+        it('S2 `expired` again and again: at most two fresh starts are made (three posts in all), then the ask is told as one that did not start, and no key is left open', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }, { ok: false, reason: 'expired' }, { ok: false, reason: 'expired' }]);
+            const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+            expect(answer).toMatchObject({ started: false, success: false });
+            expect(orbit.posts).toHaveLength(3);
+            expect(new Set(orbit.posts.map((one) => one.key)).size).toBe(3);
+            expect(orbit.jobs.size).toBe(0);
+            expect(await held(who)).toBeNull();
+        });
+
+        it('S2 `earlier` with an older start that has made NO job yet (id and status null): its key is adopted and looked up, nothing is read of a job, nothing is acknowledged, no job is made; when the older start makes its job it is found by that key', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            const older = 'mx_older00000000000000000000000001';
+            scripted(orbit, [{ ok: false, reason: 'earlier', job: { id: null, status: null, state: 'starting', attempt: older } }]);
+            const server = process_(orbit, who);
+            const answer = await server.ask('Apply for the visa online');
+            // told as an earlier job still being set up, never as one that started or is running
+            expect(answer).toMatchObject({ started: false, found: true, earlier: true });
+            expect(String(answer.note)).toContain('still being set up');
+            expect(String(answer.note)).toContain('Do not say it has started or is running');
+            expect(orbit.jobs.size).toBe(0);
+            expect(orbit.acks).toEqual([]);
+            // the key kept from now on is the older one, with no words (it is only looked up)
+            expect(await held(who)).toMatchObject({ key: older });
+            expect((await held(who))?.payload).toBeUndefined();
+            // the person asks again: that key is looked up, nothing is sent
+            const posts = orbit.posts.length;
+            orbit.lookups = [];
+            await server.ask('Apply for the visa online');
+            expect(orbit.posts).toHaveLength(posts);
+            expect(orbit.lookups).toEqual([older]);
+            // the older start makes its job: it is found by its key and told as the earlier job
+            orbit.jobs.set(older, { id: 'job-older', status: 'running', title: 'Visa form', scope: `${who.botId}|${who.userId}`, attempt: older, acked: false });
+            const found = await server.ask('Apply for the visa online');
+            expect(found).toMatchObject({ started: false, found: true, earlier: true });
+            expect(orbit.reservations).toBe(0);
+        });
+
+        it('S2 `earlier` that names a start with no job yet is told as one still being set up, never as a job that is running or found: nothing in the line says it started, and nothing is confirmed', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'earlier', job: { id: null, status: null, state: 'starting', attempt: 'mx_older00000000000000000000000003' } }]);
+            const server = process_(orbit, who);
+            const answer = await server.ask('Apply for the visa online');
+            expect(answer).toMatchObject({ started: false, earlier: true });
+            expect(answer).not.toHaveProperty('running');
+            expect(String(answer.note)).not.toMatch(/Orbit found/);
+            expect(server.lines).toEqual([]);
+            expect(orbit.acks).toEqual([]);
+        });
+
+        it('the server hands the router the shared-store dedupe at start-up (it cannot be started in a test, so its source is read: losing it would leave an event delivered to two servers answered twice)', () => {
+            const source = readFileSync(join(__dirname, '..', 'server', 'index.ts'), 'utf8');
+            expect(source).toMatch(/import \{ createEventDedupe \} from '\.\.\/matrix\/MatrixEventDedupe';/);
+            expect(source).toMatch(/createMatrixAppServiceRouter\(matrixConfig, matrixBridge, \{ firstSeen: createEventDedupe\(\(\) => botRegistry\.evidenceClient\(\)\) \}\)/);
+        });
+
+        it('the reply made again (a retried answer, a new queue) for the same inbound event sends the same key again: one job, one reservation', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            const server = process_(orbit, who);
+            const first = new ConfirmationQueue();
+            await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: first, inbound: EVENT });
+            const second = new ConfirmationQueue();
+            await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: second, inbound: EVENT });
+            // the retried answer started again from 0: the same key, the same job
+            expect(orbit.posts[1]?.key ?? orbit.posts[0].key).toBe(orbit.posts[0].key);
+            expect(orbit.jobs.size).toBe(1);
+            expect(orbit.reservations).toBe(1);
+        });
+
+        describe('the same Matrix event delivered to two router instances (real routers, a real Redis)', () => {
+            const config = { homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as-secret', hsToken: 'hs-secret' };
+            const servers: Server[] = [];
+            afterAll(async () => {
+                await Promise.all(servers.map((one) => new Promise<void>((resolve) => one.close(() => resolve()))));
+            });
+            /** A router instance: the production router over a handler that is the computer tool for the event, as the bridge makes it. */
+            const instance = async (orbit: FakeOrbit, who: { botId: string; userId: string }, dedupe: boolean) => {
+                const handled: string[] = [];
+                const handler = {
+                    onEvent: async (event: MatrixEvent) => {
+                        handled.push(event.event_id);
+                        await process_(orbit, who).ask('Fill in my visa form', { inbound: { roomId: event.room_id, eventId: event.event_id } });
+                    },
+                    userExists: async () => true,
+                };
+                const app = express();
+                app.use(createMatrixAppServiceRouter(config, handler, dedupe ? { firstSeen: createEventDedupe(() => client as never) } : {}));
+                const server = await new Promise<Server>((resolve) => {
+                    const s = app.listen(0, () => resolve(s));
+                });
+                servers.push(server);
+                const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+                const put = (txn: string, event: Record<string, unknown>) =>
+                    fetch(`${base}/_matrix/app/v1/transactions/${txn}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' }, body: JSON.stringify({ events: [event] }) });
+                return { handled, put };
+            };
+            const event = (id: string) => ({ type: 'm.room.message', room_id: '!dm:matrix.test', sender: '@alice:matrix.test', event_id: id, content: { msgtype: 'm.text', body: 'Fill in my visa form' } });
+            const quiet = () => new Promise((resolve) => setTimeout(resolve, 150));
+
+            it('with the shared dedupe: the second instance does not handle the event at all; ONE job, ONE reservation', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const id = `$dup-${randomUUID()}`;
+                const one = await instance(orbit, who, true);
+                const two = await instance(orbit, who, true);
+                expect((await one.put('t1', event(id))).status).toBe(200);
+                await vi.waitFor(() => expect(one.handled).toEqual([id]));
+                // Synapse sends the same transaction again, to the other server
+                expect((await two.put('t1', event(id))).status).toBe(200);
+                await quiet();
+                expect(two.handled).toEqual([]);
+                expect(orbit.jobs.size).toBe(1);
+                expect(orbit.reservations).toBe(1);
+                await client.del(`matrix:event:${id}`);
+            });
+
+            it('with the dedupe EMPTY (a restart, Redis flushed): the second instance handles the event, and the key made from it still answers the one job: ONE job, ONE reservation', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const id = `$dup-${randomUUID()}`;
+                const one = await instance(orbit, who, false);
+                const two = await instance(orbit, who, false);
+                await one.put('t1', event(id));
+                await vi.waitFor(() => expect(one.handled).toEqual([id]));
+                await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+                await two.put('t2', event(id));
+                await vi.waitFor(() => expect(two.handled).toEqual([id]));
+                await quiet();
+                expect(orbit.jobs.size).toBe(1);
+                expect(orbit.reservations).toBe(1);
+            });
+
+            it('a DELIBERATE later message (a new event) is handled and is a distinct job and reservation', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const one = await instance(orbit, who, true);
+                const a = `$a-${randomUUID()}`;
+                const b = `$b-${randomUUID()}`;
+                await one.put('t1', event(a));
+                await vi.waitFor(() => expect(one.handled).toEqual([a]));
+                await quiet();
+                await one.put('t2', event(b));
+                await vi.waitFor(() => expect(one.handled).toEqual([a, b]));
+                await quiet();
+                expect(orbit.jobs.size).toBe(2);
+                expect(orbit.reservations).toBe(2);
+                await client.del([`matrix:event:${a}`, `matrix:event:${b}`]);
+            });
+
+            it('the dedupe never costs a message: with the shared store down or failing every event is handled', async () => {
+                const first = await createEventDedupe(() => null)('$x');
+                expect(first).toBe(true);
+                const failing = createEventDedupe(() => ({ eval: async () => Promise.reject(new Error('down')) }));
+                expect(await failing('$x')).toBe(true);
+                expect(await createEventDedupe(() => client as never, 60)('')).toBe(true);
+                const id = `$once-${randomUUID()}`;
+                const dedupe = createEventDedupe(() => client as never, 60);
+                expect([await dedupe(id), await dedupe(id), await dedupe(id)]).toEqual([true, false, false]);
+                expect(await client.ttl(`matrix:event:${id}`)).toBeGreaterThan(0);
+                await client.del(`matrix:event:${id}`);
+            });
+        });
     });
 });

@@ -1473,6 +1473,7 @@ export class PersistentMemory extends ConversationMemory {
             pendingArtifacts: undefined,
             pendingBricks: undefined,
             dmRoomId: undefined,
+            dmEventId: undefined,
             pointedArtifacts: undefined,
             artifactCalls: undefined,
             instantCalls: undefined,
