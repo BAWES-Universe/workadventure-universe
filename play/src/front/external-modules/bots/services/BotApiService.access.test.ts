@@ -312,6 +312,13 @@ describe("an Orbit that does not answer about who may use a bot", () => {
             (api) => api.brickComputerAction("b1", "fill-details", { what: "x", where: "y" }),
         ],
         ["dismissing a computer notice", (api) => api.dismissBrickComputerNotice("b1", "j1")],
+        ["pausing one computer job", (api) => api.brickComputerJobAction("b1", "j1", "pause")],
+        [
+            "doing one computer job first now",
+            (api) => api.brickComputerJobAction("b1", "j1", "first", { pauseRunning: true }),
+        ],
+        ["telling one computer job something new", (api) => api.noteToBrickComputerJob("b1", "j1", "Use 12 March")],
+        ["reading one computer job's Activity", (api) => api.getBrickComputerJobActivity("b1", "j1")],
         ["reading the Bricks of a room", (api) => api.getRoomBricks("/@/team/universe/room")],
         ["giving a Brick a home", (api) => api.placeBrickHome("b1", "/@/team/universe/room", {})],
         ["reading where a Brick lives", (api) => api.getBrickHome("b1")],
@@ -487,5 +494,47 @@ describe("saving who may use a bot", () => {
         await expect(service().saveBotRule("b1", { userId: "u1" }, { chat: "no" })).rejects.toThrow(
             "The bot's owner always has access"
         );
+    });
+});
+
+describe("the calls on one computer job (computers plan, piece 7)", () => {
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+    });
+
+    it("sends each to its own route on Orbit, with only what that call needs", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(() => Promise.resolve(json({ computer: {} })));
+        const api = service();
+        await api.brickComputerJobAction("b 1", "j/1", "pause");
+        await api.brickComputerJobAction("b 1", "j/1", "resume");
+        await api.brickComputerJobAction("b 1", "j/1", "first");
+        await api.brickComputerJobAction("b 1", "j/1", "first", { pauseRunning: true });
+        await api.brickComputerJobAction("b 1", "j/1", "cancel");
+        await api.noteToBrickComputerJob("b 1", "j/1", "Use 12 March");
+        await api.getBrickComputerJobActivity("b 1", "j/1");
+        const sent = fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET", init?.body ?? null]);
+        const job = `${ORBIT}/api/bricks/b%201/computer/jobs/j%2F1`;
+        expect(sent).toEqual([
+            [`${job}/pause`, "POST", null],
+            [`${job}/resume`, "POST", null],
+            [`${job}/first`, "POST", null],
+            [`${job}/first`, "POST", JSON.stringify({ pauseRunning: true })],
+            [`${job}/cancel`, "POST", null],
+            [`${job}/note`, "POST", JSON.stringify({ text: "Use 12 March" })],
+            [`${job}/activity`, "GET", null],
+        ]);
+    });
+
+    it("passes on why Orbit refused, so the panel can say it", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            json({ error: "Hand it back first", reason: "taken_over" }, 409)
+        );
+        await expect(service().brickComputerJobAction("b1", "j1", "pause")).rejects.toMatchObject({
+            status: 409,
+            reason: "taken_over",
+        });
     });
 });

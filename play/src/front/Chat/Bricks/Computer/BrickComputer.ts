@@ -5,7 +5,13 @@
 
 export type MachineState = "none" | "waking" | "resting" | "working" | "cold" | "broken" | "restoring" | "stopped";
 export type JobStatus = "queued" | "running" | "waiting" | "done" | "stopped" | "failed";
-export type QueuedFor = "turn" | "allowance" | "busy" | "pool";
+/** Why a job in line has not started. "paused": the person (or the month running out) paused it; it waits for Resume and holds no room. */
+export type QueuedFor = "turn" | "allowance" | "busy" | "pool" | "paused";
+/**
+ * Who paused a job: the person, the month's computer time running out while it ran ("allowance"), or a spending limit the person set
+ * themselves being reached ("rule"). The last two carry on by themselves when more arrives.
+ */
+export type PausedWhy = "person" | "allowance" | "rule";
 export type WaitingFor = "details" | "signin" | "upload" | "pay" | "submit" | "answer";
 
 export interface ComputerJob {
@@ -20,6 +26,9 @@ export interface ComputerJob {
     control: "brick" | "person";
     /** What Brick is ready to put in at the hand-over, and where: the one tap approves exactly this. */
     ready: { what: string; where: string } | null;
+    /** When a paused job was paused (ISO), and why. Null for every job that is not paused. */
+    pausedAt: string | null;
+    pausedWhy: PausedWhy | null;
 }
 
 /** How the last job ended, when the person should hear it: nobody answered its handover, or this month's computer time ran out. */
@@ -48,7 +57,7 @@ export interface BrickComputerView {
 
 const MACHINES: readonly string[] = ["none", "waking", "resting", "working", "cold", "broken", "restoring", "stopped"];
 const STATUSES: readonly string[] = ["queued", "running", "waiting", "done", "stopped", "failed"];
-const QUEUED: readonly string[] = ["turn", "allowance", "busy", "pool"];
+const QUEUED: readonly string[] = ["turn", "allowance", "busy", "pool", "paused"];
 const WAITING: readonly string[] = ["details", "signin", "upload", "pay", "submit", "answer"];
 const TEXT_MAX = 200;
 
@@ -79,6 +88,16 @@ export function parseComputerJob(value: unknown): ComputerJob | undefined {
                 : null,
         control: row.control === "person" ? "person" : "brick",
         ready: what && where ? { what, where } : null,
+        ...pausedOf(row),
+    };
+}
+
+/** A job is paused only while it sits in line marked paused; anything else Orbit says about a pause is ignored. */
+function pausedOf(row: Record<string, unknown>): { pausedAt: string | null; pausedWhy: PausedWhy | null } {
+    if (row.status !== "queued" || row.queuedFor !== "paused") return { pausedAt: null, pausedWhy: null };
+    return {
+        pausedAt: typeof row.pausedAt === "string" && row.pausedAt ? row.pausedAt : null,
+        pausedWhy: row.pausedWhy === "allowance" || row.pausedWhy === "rule" ? row.pausedWhy : "person",
     };
 }
 
@@ -162,13 +181,116 @@ export const canWatch = (view: BrickComputerView | undefined): boolean =>
 export const noticeToTell = (view: BrickComputerView | undefined): ComputerNotice | null =>
     view && view.on && view.notice && !holdsComputer(view.job) && view.queued.length === 0 ? view.notice : null;
 
-/** What the bar says is true now: "waking" while the machine starts, otherwise the job. Null when nothing is happening. */
-export type BarState = "waking" | "working" | "waiting" | "queued";
+/** A job that waits in line only for its person to say Resume. */
+export const isPaused = (job: ComputerJob | null | undefined): job is ComputerJob =>
+    !!job && job.status === "queued" && job.queuedFor === "paused";
+
+/** The jobs in line that will start by themselves, in the order Orbit starts them. Paused jobs are not among them. */
+export const inLine = (view: BrickComputerView | undefined): ComputerJob[] =>
+    view ? view.queued.filter((job) => !isPaused(job)) : [];
+
+/** The paused jobs, in the order Orbit sends them. */
+export const pausedJobs = (view: BrickComputerView | undefined): ComputerJob[] =>
+    view ? view.queued.filter(isPaused) : [];
+
+/**
+ * What the bar says is true now: "waking" while the machine starts, otherwise the job. "queued" when nothing holds the computer and
+ * a job will start by itself; "paused" when the only jobs left are paused. Null when nothing is happening.
+ */
+export type BarState = "waking" | "working" | "waiting" | "queued" | "paused";
 export function barState(view: BrickComputerView | undefined): BarState | null {
     if (!view || !view.on) return null;
     if (holdsComputer(view.job)) {
         if (view.job.status === "waiting") return "waiting";
         return view.machine === "waking" || view.machine === "restoring" ? "waking" : "working";
     }
-    return view.queued.length > 0 ? "queued" : null;
+    if (inLine(view).length > 0) return "queued";
+    return pausedJobs(view).length > 0 ? "paused" : null;
+}
+
+/** The job the bar is about: the one holding the computer, else the next to start, else the first paused one. */
+export function barJob(view: BrickComputerView | undefined): ComputerJob | null {
+    if (!view) return null;
+    if (holdsComputer(view.job)) return view.job;
+    return inLine(view)[0] ?? pausedJobs(view)[0] ?? null;
+}
+
+/**
+ * The calls a person can make on one job of a Brick's computer (game piece 7 of the computers plan). Orbit decides; these only say
+ * which taps make sense for what the page shows now, so a tap Orbit would refuse is not offered.
+ * - pause: the job holding the computer while Brick has it (not while the person has taken the screen over: they hand it back
+ *   first), or a job waiting in line, which then stays out of the line until Resume.
+ * - resume: a paused job.
+ * - Do this next, one tap that does all of it: "first-now" pauses the job holding the computer, starts this one at once, and the
+ *   paused one goes on by itself afterwards. While nothing can be paused (the computer is free, or the person holds its screen) it is
+ *   "first": the job moves to the front of the line. Not offered on the job that is already next with the computer free: it starts
+ *   by itself.
+ * - cancel: any one job, running, waiting, in line or paused. The others carry on. It always asks first (see `endQuestion`).
+ */
+export type JobControl = "pause" | "resume" | "first" | "first-now" | "cancel";
+
+export function jobControls(view: BrickComputerView | undefined, jobId: string): JobControl[] {
+    if (!view || !view.on) return [];
+    const holder = holdsComputer(view.job) ? view.job : null;
+    if (holder && holder.id === jobId) {
+        return holder.control === "brick" ? ["pause", "cancel"] : ["cancel"];
+    }
+    const job = view.queued.find((queued) => queued.id === jobId);
+    if (!job) return [];
+    if (isPaused(job)) return ["resume", "cancel"];
+    const controls: JobControl[] = [];
+    if (holder?.control === "brick") controls.push("first-now");
+    // The job already next in line gains nothing from moving first: it starts as soon as the computer is free
+    else if (inLine(view)[0]?.id !== jobId) controls.push("first");
+    controls.push("pause", "cancel");
+    return controls;
+}
+
+/** Every job Stop ends: the one holding the computer and every job in line, paused ones too. */
+export const jobsStopEnds = (view: BrickComputerView | undefined): ComputerJob[] =>
+    view ? [...(holdsComputer(view.job) ? [view.job] : []), ...view.queued] : [];
+
+/**
+ * The question Stop and Cancel always ask before anything ends, since Pause is the safe choice and the question teaches the difference.
+ * - "one": a single job would end. It offers Pause instead when that job can be paused (`pauseInstead`), never while the person holds
+ *   its screen.
+ * - "all": Stop would end several jobs: "Keep going" or "Stop all", with how many.
+ * Null when there is nothing to end.
+ */
+export type EndQuestion =
+    | { kind: "one"; job: ComputerJob; pauseInstead: boolean }
+    | { kind: "all"; jobs: ComputerJob[] };
+
+export function endQuestion(
+    view: BrickComputerView | undefined,
+    what: { stop: true } | { cancel: string }
+): EndQuestion | null {
+    const ending = "stop" in what ? jobsStopEnds(view) : jobsStopEnds(view).filter((job) => job.id === what.cancel);
+    if (ending.length === 0) return null;
+    if (ending.length > 1) return { kind: "all", jobs: ending };
+    const [job] = ending;
+    return { kind: "one", job, pauseInstead: jobControls(view, job.id).includes("pause") };
+}
+
+/** One step of a job's Activity: what it did, in order. */
+export interface ComputerStep {
+    seq: number;
+    label: string;
+    at: string | null;
+}
+
+/** Orbit's answer for a job's Activity (`{ steps }`), read safely: oldest first, each step once. Undefined when it is not one. */
+export function parseJobActivity(value: unknown): ComputerStep[] | undefined {
+    const root = value as { steps?: unknown } | null;
+    if (!root || typeof root !== "object" || !Array.isArray(root.steps)) return undefined;
+    const bySeq = new Map<number, ComputerStep>();
+    for (const item of root.steps) {
+        const row = item as Record<string, unknown> | null;
+        if (!row || typeof row !== "object") continue;
+        const seq = typeof row.seq === "number" && Number.isFinite(row.seq) ? Math.trunc(row.seq) : undefined;
+        const label = text(row.label);
+        if (seq === undefined || !label) continue;
+        bySeq.set(seq, { seq, label, at: typeof row.at === "string" && row.at ? row.at : null });
+    }
+    return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }

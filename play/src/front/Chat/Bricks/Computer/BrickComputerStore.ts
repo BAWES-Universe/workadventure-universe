@@ -1,7 +1,16 @@
 import { get, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../../../external-modules/bots/services/BotApiService";
-import { parseBrickComputer, parseJobAnswer, holdsComputer, type BrickComputerView } from "./BrickComputer";
+import {
+    parseBrickComputer,
+    parseJobActivity,
+    parseJobAnswer,
+    holdsComputer,
+    inLine,
+    type BrickComputerView,
+    type ComputerStep,
+    type JobControl,
+} from "./BrickComputer";
 
 /**
  * Each Brick's computer as its owner sees it (game #2000), read from Orbit. Reading never makes or wakes anything. A Brick
@@ -9,6 +18,9 @@ import { parseBrickComputer, parseJobAnswer, holdsComputer, type BrickComputerVi
  */
 const computers = writable<Map<string, BrickComputerView>>(new Map());
 export const brickComputers: Readable<Map<string, BrickComputerView>> = { subscribe: computers.subscribe };
+
+/** How often what is shown is read again while a job runs, waits or is in line. */
+const POLL_MS = 4000;
 
 /**
  * Answers can come back in a different order than they were asked for: a read that was on its way when the owner tapped Stop
@@ -89,7 +101,155 @@ export async function dismissComputerNotice(brickId: string, jobId: string): Pro
     }
 }
 
-const POLL_MS = 4000;
+/**
+ * Why Orbit refused a call on one job, in the words the panel needs:
+ * - taken-over: the person has the screen; Brick can't be paused until they hand it back.
+ * - ending: the job is already ending (it finished, or a stop is on its way); the ending stands.
+ * - gone: the job is no longer this Brick's to change (it ended, or it was never there).
+ * - changed: the job moved on since the page was drawn (already resumed, already started); the page is read again.
+ * - failed: Orbit could not be reached or said something else.
+ */
+export type JobRefusal = "taken-over" | "ending" | "gone" | "changed" | "failed";
+export type JobCallResult = { ok: true } | { ok: false; why: JobRefusal };
+
+function refusalOf(error: unknown): JobRefusal {
+    const refused = error as { status?: number; reason?: string } | null;
+    if (!refused || typeof refused !== "object") return "failed";
+    if (refused.status === 404) return "gone";
+    if (refused.status !== 409) return "failed";
+    if (refused.reason === "taken_over") return "taken-over";
+    if (refused.reason === "ending") return "ending";
+    if (refused.reason === "over") return "gone";
+    return "changed";
+}
+
+/** The jobs with a call on its way, per Brick, so their row can show it and a second tap waits for the first. */
+const pending = writable<Map<string, ReadonlySet<string>>>(new Map());
+export const pendingJobCalls: Readable<Map<string, ReadonlySet<string>>> = { subscribe: pending.subscribe };
+/** The call on its way for each job, and what it is ("pause", "cancel", a note's words), so only the very same tap is joined. */
+const inFlight = new Map<string, { what: string; answer: Promise<JobCallResult> }>();
+
+function markPending(brickId: string, jobId: string, on: boolean) {
+    pending.update((all) => {
+        const next = new Map(all);
+        const jobs = new Set(next.get(brickId) ?? []);
+        if (on) jobs.add(jobId);
+        else jobs.delete(jobId);
+        if (jobs.size > 0) next.set(brickId, jobs);
+        else next.delete(brickId);
+        return next;
+    });
+}
+
+/**
+ * One call on one job and what Orbit answered, the computer it sends back put on screen so every place that shows the Brick agrees.
+ * The same tap again while it is on its way gets the first one's answer: nothing is sent twice. A different tap on the same job (Cancel
+ * while Pause is on its way) waits for the first answer and then goes out, so Orbit sees them in the order they were tapped and none
+ * is lost. Any refusal reads the computer again, since the page was showing something that is no longer true.
+ */
+async function jobCall(
+    brickId: string,
+    jobId: string,
+    what: string,
+    send: () => Promise<unknown>
+): Promise<JobCallResult> {
+    const key = `${brickId}\u0000${jobId}`;
+    const running = inFlight.get(key);
+    if (running?.what === what) return running.answer;
+    const before = running?.answer;
+    const call = (async (): Promise<JobCallResult> => {
+        if (before) await before;
+        const sentAs = ticket(brickId);
+        markPending(brickId, jobId, true);
+        try {
+            const answer = await send();
+            const view = parseBrickComputer(answer);
+            if (view) put(brickId, view, sentAs);
+            else await loadBrickComputer(brickId);
+            return { ok: true };
+        } catch (error) {
+            console.warn("A call on a Brick's computer job was refused", error);
+            await loadBrickComputer(brickId);
+            return { ok: false, why: refusalOf(error) };
+        } finally {
+            markPending(brickId, jobId, false);
+        }
+    })();
+    const entry = { what, answer: call };
+    inFlight.set(key, entry);
+    try {
+        return await call;
+    } finally {
+        if (inFlight.get(key) === entry) inFlight.delete(key);
+    }
+}
+
+/** Pause, Resume, Do this next (now, pausing what runs, with "first-now") or Cancel, on one job. */
+export function brickComputerJobAction(brickId: string, jobId: string, control: JobControl): Promise<JobCallResult> {
+    return jobCall(brickId, jobId, control, () =>
+        control === "first-now"
+            ? botApiService.brickComputerJobAction(brickId, jobId, "first", { pauseRunning: true })
+            : botApiService.brickComputerJobAction(brickId, jobId, control)
+    );
+}
+
+/** Tells one job something new in the person's own words. Words that are only spaces send nothing. */
+export async function noteToComputerJob(brickId: string, jobId: string, words: string): Promise<JobCallResult> {
+    const note = words.trim();
+    if (!note) return { ok: false, why: "changed" };
+    return jobCall(brickId, jobId, `note\u0000${note}`, () =>
+        botApiService.noteToBrickComputerJob(brickId, jobId, note)
+    );
+}
+
+/** Each job's Activity, as last read: the steps it has done so far, oldest first. A job not read yet has no entry. */
+const activities = writable<Map<string, ComputerStep[]>>(new Map());
+export const jobActivities: Readable<Map<string, ComputerStep[]>> = { subscribe: activities.subscribe };
+const activityAsked = new Map<string, number>();
+const activityShown = new Map<string, number>();
+
+/** Reads one job's Activity again. Resolves to the steps, or undefined when they could not be read (what was shown stays). */
+export async function loadJobActivity(brickId: string, jobId: string): Promise<ComputerStep[] | undefined> {
+    const sentAs = (activityAsked.get(jobId) ?? 0) + 1;
+    activityAsked.set(jobId, sentAs);
+    try {
+        const steps = parseJobActivity(await botApiService.getBrickComputerJobActivity(brickId, jobId));
+        if (!steps || sentAs < (activityShown.get(jobId) ?? 0)) return steps;
+        activityShown.set(jobId, sentAs);
+        activities.update((all) => new Map(all).set(jobId, steps));
+        return steps;
+    } catch (error) {
+        console.warn("Could not read a computer job's Activity", error);
+        return undefined;
+    }
+}
+
+/** True while the job still has the computer or waits in line to: its Activity can still grow. */
+const stillGoing = (brickId: string, jobId: string): boolean => {
+    const view = get(computers).get(brickId);
+    if (!view) return true;
+    return (holdsComputer(view.job) && view.job.id === jobId) || view.queued.some((job) => job.id === jobId);
+};
+
+/**
+ * Keeps one job's Activity up to date while it is shown: read at once, then again every few seconds while the job is still going,
+ * and once more when it ends so its last step shows. Reading is all it does. Returns the function that lets go.
+ */
+export function followJobActivity(brickId: string, jobId: string): () => void {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+        const going = stillGoing(brickId, jobId);
+        await loadJobActivity(brickId, jobId);
+        if (stopped || !going) return;
+        timer = setTimeout(() => void tick(), POLL_MS);
+    };
+    void tick();
+    return () => {
+        stopped = true;
+        if (timer) clearTimeout(timer);
+    };
+}
 
 /** One loop per Brick, however many pieces on screen show it: the bar, the page card and the screen share it. */
 const loops = new Map<string, { holders: number; stop: () => void }>();
@@ -102,7 +262,8 @@ function startLoop(brickId: string): () => void {
     const tick = async () => {
         const view = await loadBrickComputer(brickId);
         if (stopped) return;
-        if (view) busy = holdsComputer(view.job) || view.queued.length > 0;
+        // A paused job does nothing until the person says Resume: only work that goes on by itself keeps the fast pace
+        if (view) busy = holdsComputer(view.job) || inLine(view).length > 0;
         timer = setTimeout(() => void tick(), busy ? POLL_MS : POLL_MS * 5);
     };
     void tick();
