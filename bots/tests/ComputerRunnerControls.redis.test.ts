@@ -115,7 +115,7 @@ function controlsOrbit(options: { afterListing?: () => void; noEpochs?: boolean;
             if (script.kind === 'failed-words') return yield { type: 'completed', outputText: script.words ?? 'I cannot. [[failed]]', usage: null };
             if (script.kind === 'silent') return yield { type: 'completed', outputText: '', usage: null };
             if (script.kind === 'handover') return yield { type: 'completed', outputText: script.words ?? 'Which date? [[handover answer]]', usage: null };
-            if (script.kind === 'broken') return yield { type: 'failed', code: 'server_error', message: 'the model broke' };
+            if (script.kind !== 'hang') return yield { type: 'failed', code: 'server_error', message: 'the model broke' };
             // A hanging turn: it ends when Orbit cancels it (a pause, a note) or when the runner lets go of it
             let cut!: () => void;
             const cancelled = new Promise<'cut'>((resolve) => (cut = () => resolve('cut')));

@@ -24,7 +24,9 @@
 
 import type { StepsField } from '../ai/ToolSteps';
 
-export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule' | 'late';
+export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule' | 'late' | 'paused' | 'carrying_on';
+/** Why Orbit paused a job by itself (computers plan, piece 3): the person's month of computer time is used up, or a spending limit they set was reached. */
+export type PausedWhy = 'allowance' | 'rule';
 export type Waiting = 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer';
 
 /** A file a finished job made, handed over to be put in the chat as a card. */
@@ -76,9 +78,11 @@ export interface ComputerReport {
     through: string | null;
     /** Only for `late`: Orbit let the Apps go unconfirmed, released their hold and was never paid for them: the one fact "you weren't charged" rests on. False for every other kind. */
     holdReleased: boolean;
+    /** Only for `paused`: why Orbit paused the job (never the person's own Pause: they just did it). Null for every other kind. */
+    pausedWhy: PausedWhy | null;
 }
 
-const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late'];
+const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late', 'paused', 'carrying_on'];
 
 /** The longest an App's name is said, and how many are named before "and N more": a follow-up is one short message. */
 const APP_NAME_MAX = 40;
@@ -158,6 +162,10 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true || seq === null)) return null;
     // A wait is told by its number: without one it could not be marked as told for that wait only
     if (kind === 'needs' && (seq === null || waiting(report.waitingFor) === null)) return null;
+    // A pause Orbit made (the month or the person's own limit) and its carrying on are told once each, by the pause's number: without one they could not be marked for that pause only
+    const pausedWhy = kind === 'paused' && (report.pausedWhy === 'allowance' || report.pausedWhy === 'rule') ? (report.pausedWhy as PausedWhy) : null;
+    if (kind === 'paused' && (seq === null || pausedWhy === null)) return null;
+    if (kind === 'carrying_on' && seq === null) return null;
     return {
         key: report.key,
         jobId: report.jobId,
@@ -183,6 +191,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         searchApps,
         holdReleased: kind === 'late' && report.holdReleased === true,
         through,
+        pausedWhy,
     };
 }
 
@@ -306,6 +315,14 @@ export function reportText(report: ComputerReport): string {
             const said = report.why ? ` You said: “${report.why.replace(/[.!?]+$/, '')}”.` : '';
             return `I stopped ${name} because of a rule you set.${said} ${receiptOf(report)} My computer kept what I had ready.`;
         }
+        // A job Orbit paused by itself mid-job (decisions 23 Nov, section 1): said once, with no number and no price; nothing of it is lost and it carries on by itself
+        case 'paused':
+            return report.pausedWhy === 'rule'
+                ? `I paused “${name}”: it reached the spending limit you set. Nothing is lost. Raise the limit or say resume.`
+                : `I paused “${name}”: this month's computer time is used up. Nothing is lost. Tap Ask for more in [Usage](#usage) and it carries on by itself.`;
+        // And once when it carries on by itself
+        case 'carrying_on':
+            return `I'm carrying on with “${name}”.`;
         case 'late': {
             // Only what Orbit's record proves: the provider's log confirmed it later, nothing was ever charged for it. Said once, as one message, whatever the number of Apps
             // The count of ALL the distinct Apps Orbit named (the names kept are only the first few): "and N more" is how many were left out, whatever the limit of names kept
