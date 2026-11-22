@@ -2816,7 +2816,7 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             });
         });
 
-        it('takes the commit back (the one time it does) when the turn is found to be no pool-only turn while it is written: nothing is cancelled and the turn goes on without a fence', async () => {
+        it('a refusal of another kind arriving while the fence is being committed (Orbit already holds the intent) does not stop the give-up: the end is Orbit\'s now, and the committed fence is taken back once Orbit took the finish', async () => {
             await withFakeClock(async () => {
                 const { record, notes, orbit, seen } = rigGiveUp();
                 record.latency.commitMs = 1000;
@@ -2826,16 +2826,15 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
                 await vi.advanceTimersByTimeAsync(210_000);
                 await running;
-                expect(record.log).toEqual(['close', 'commit', 'release', 'finish']);
-                expect(seen.cancels).toBe(0);
-                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+                expect(record.log).toEqual(['close', 'commit', 'cancel', 'finish', 'release']);
+                expect(seen.cancels).toBe(1);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
                 expect(record.committed).toEqual([]);
                 expect(record.fences).toEqual([]);
-                expect(await record.forServer('B').noteAccepted!(JOB.jobId, Date.now(), { turn: 1, run: 'run1' })).toBe(true);
             });
         });
 
-        it('does not give the turn up when asking to commit the fence throws (nothing is known of the fence): nothing is cancelled, the close is taken back with the unconfirmed mark, and the turn goes on', async () => {
+        it('asking to commit the fence throws AFTER Orbit kept the intent (nothing is known of the fence): the give-up still goes on (the intent bars new work), the close is taken back with the unconfirmed mark, and no fence is left committed', async () => {
             await withFakeClock(async () => {
                 const { record, notes, orbit, seen } = rigGiveUp();
                 const reopened: Array<{ unconfirmed?: true; committed?: true }> = [];
@@ -2853,16 +2852,17 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 const running = runJob(orbit, JOB, RELAY, refusals, () => 'run1');
                 await vi.advanceTimersByTimeAsync(210_000);
                 await running;
-                // (the pool is still full at the next look, so the turn is looked at again: every close that was taken back was an unconfirmed one)
+                // every close that was taken back was an unconfirmed one
                 expect(reopened.length).toBeGreaterThanOrEqual(1);
                 for (const one of reopened) expect(one).toEqual({ unconfirmed: true });
-                expect(seen.cancels).toBe(0);
-                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+                expect(seen.cancels).toBe(1);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
                 expect(record.counts.releases).toBe(0);
+                expect(record.committed).toEqual([]);
             });
         });
 
-        it('does not give the turn up on a fence the store says is no longer the one the close wrote: the close is taken back and the turn goes on', async () => {
+        it('a fence the store says is no longer the one the close wrote, AFTER Orbit kept the intent: the close is taken back and the give-up still goes on (the intent bars new work)', async () => {
             await withFakeClock(async () => {
                 const { record, notes, orbit, seen } = rigGiveUp();
                 record.commitSays.gone = true;
@@ -2871,8 +2871,8 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 await vi.advanceTimersByTimeAsync(210_000);
                 await running;
                 expect(record.log.slice(0, 3)).toEqual(['close', 'commit', 'retract']);
-                expect(seen.cancels).toBe(0);
-                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+                expect(seen.cancels).toBe(1);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
             });
         });
     });
