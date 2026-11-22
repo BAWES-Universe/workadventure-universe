@@ -281,9 +281,13 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     }
     delete entry.unchecked;
     const startKey = entry.key;
+    // The entry follows the store's key in place (a later start of the ask may adopt another attempt's key while this one is still waiting for its answer): this start settles and
+    // drops the entry only while it still stands for the key THIS start sent. An answer that comes late for an attempt the entry has left says nothing of the attempt it holds now
+    const mine = () => entry.key === startKey;
     // An ask that went nowhere (Orbit said no before it made anything, or the request itself failed with an answer that is final) is not kept: asking again is a new ask
     const dropKey = async () => {
-        if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
+        if (mine() && context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
+        // (the store takes back only this exact key: the claim of the attempt the entry holds now stays)
         await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
     };
     let started;
@@ -298,9 +302,12 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const refused = !started.ok && !UNCERTAIN_REASONS.includes(started.reason);
     if (refused) await dropKey();
     // Only an outcome that is not known, or a job found live, keeps its key across turns (and across a restart: the stored key is deleted when the outcome is settled). An entry that
-    // an answer has settled stays settled: a later start of the same ask (several share one entry) whose answer is not known does not open it again
-    entry.open = entry.open && !started.ok && OPEN_REASONS.includes(started.reason);
-    if (!entry.open && !refused) await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
+    // an answer has settled stays settled: a later start of the same ask (several share one entry) whose answer is not known does not open it again. Only the attempt the entry
+    // stands for settles it
+    if (mine()) {
+        entry.open = entry.open && !started.ok && OPEN_REASONS.includes(started.reason);
+        if (!entry.open && !refused) await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
+    }
     if (!started.ok) {
         switch (started.reason) {
             case 'cheaper_route':

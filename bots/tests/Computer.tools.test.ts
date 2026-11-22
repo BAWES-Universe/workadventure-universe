@@ -672,6 +672,99 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
         expect(new Set(keysOf(alone)).size).toBe(1);
     });
 
+    describe('an answer that comes late for an attempt the shared entry has left (CodeRabbit on cb0aebad)', () => {
+        const scopeOf = `${BRICK}|uuid-alice|${JSON.stringify([null, null, 'visa form'])}`;
+        const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+        /**
+         * A start of K1 whose answer is still pending; meanwhile another server settles K1 and takes K2 for a new ask, and a retry here adopts K2 (the entry follows it in place) and
+         * waits for its own answer. Then `late` is what K1's answer turns out to be, and `second` what K2's start answers.
+         */
+        async function lateFirst(late: unknown, second: unknown) {
+            const { store, held } = sharedStore();
+            const memory = new Map<string, StartKeyEntry>();
+            let answerFirst!: () => void;
+            const first = { startComputerJob: vi.fn(async () => { await new Promise<void>((resolve) => (answerFirst = resolve)); return late; }) };
+            let answerSecond!: () => void;
+            const retry = { startComputerJob: vi.fn(async () => { await new Promise<void>((resolve) => (answerSecond = resolve)); return second; }) };
+            const ask = (admin: unknown) => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
+            const one = ask(first);
+            await tick();
+            const k1 = keysOf(first as never)[0];
+            // another server settles K1 and holds K2 for the next ask
+            held.clear();
+            held.set(scopeOf, { key: 'second-attempt-02', at: Date.now(), keepMs: START_KEY_KEEP_MS });
+            const two = ask(retry);
+            await tick();
+            const entry = [...memory.values()][0];
+            return { memory, held, entry, k1, one, two, answerFirst: () => answerFirst(), answerSecond: () => answerSecond(), retry, first };
+        }
+
+        it('a late success of K1 does not settle the entry that now stands for K2: the K2 retry that comes back unknown keeps the claim, and the entry stays open', async () => {
+            const run = await lateFirst({ ok: true, job: job(), restoredFrom: null }, { ok: false, reason: 'unknown' });
+            expect(run.entry).toMatchObject({ key: 'second-attempt-02', open: true });
+            run.answerFirst();
+            await run.one;
+            // K1 made its job; the entry is not its to settle, and K2's claim is not its to take back
+            expect(run.entry).toMatchObject({ key: 'second-attempt-02', open: true });
+            expect([...run.held.values()].map((one) => one.key)).toEqual(['second-attempt-02']);
+            run.answerSecond();
+            await run.two;
+            // K2 does not know its outcome: its claim stays, so a later ask is K2 again, never a third key
+            expect(run.entry).toMatchObject({ key: 'second-attempt-02', open: true });
+            expect([...run.held.values()].map((one) => one.key)).toEqual(['second-attempt-02']);
+            expect(keysOf(run.retry as never)).toEqual(['second-attempt-02']);
+            expect([...run.memory.values()]).toEqual([run.entry]);
+            const third = asking({ ok: false, reason: 'unknown' });
+            await runComputerTool({ job: 'Visa form' }, { admin: third as never, botId: BRICK, userId: 'uuid-alice', startKeys: run.memory, startKeyStore: { claim: vi.fn(async (_s: string, entry: StoredStartKey) => ({ key: 'second-attempt-02', at: entry.at })), delete: vi.fn() } });
+            expect(keysOf(third)).toEqual(['second-attempt-02']);
+        });
+
+        it('a late refusal of K1 takes only K1 back: the entry and the claim of K2 stay', async () => {
+            const run = await lateFirst({ ok: false, reason: 'off' }, { ok: false, reason: 'unknown' });
+            run.answerFirst();
+            await run.one;
+            expect([...run.memory.values()]).toEqual([run.entry]);
+            expect(run.entry).toMatchObject({ key: 'second-attempt-02', open: true });
+            expect([...run.held.values()].map((one) => one.key)).toEqual(['second-attempt-02']);
+            run.answerSecond();
+            await run.two;
+            expect(run.entry.open).toBe(true);
+            expect([...run.held.values()].map((one) => one.key)).toEqual(['second-attempt-02']);
+        });
+
+        it('a late K1 that throws (a start that made nothing) does not remove the entry K2 holds either', async () => {
+            const { store, held } = sharedStore();
+            const memory = new Map<string, StartKeyEntry>();
+            let fail!: () => void;
+            const first = { startComputerJob: vi.fn(async () => { await new Promise<void>((_resolve, reject) => (fail = () => reject(new Error('nothing sent')))); }) };
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const ask = (admin: unknown) => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
+            const one = ask(first);
+            await tick();
+            held.clear();
+            held.set(scopeOf, { key: 'second-attempt-02', at: Date.now(), keepMs: START_KEY_KEEP_MS });
+            const retry = asking({ ok: false, reason: 'unknown' });
+            const two = ask(retry);
+            await tick();
+            await two;
+            fail();
+            await one;
+            warn.mockRestore();
+            expect([...memory.values()].map((entry) => entry.key)).toEqual(['second-attempt-02']);
+            expect([...held.values()].map((one) => one.key)).toEqual(['second-attempt-02']);
+        });
+
+        it('the same attempt still settles its own entry, and a late unknown still cannot reopen it', async () => {
+            const { store, held } = sharedStore();
+            const memory = new Map<string, StartKeyEntry>();
+            await runComputerTool({ job: 'Visa form' }, { admin: asking({ ok: true, job: job(), restoredFrom: null }) as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
+            expect([...memory.values()][0].open).toBe(false);
+            expect(held.size).toBe(0);
+            await runComputerTool({ job: 'Visa form' }, { admin: asking({ ok: false, reason: 'unknown' }) as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
+            expect([...memory.values()][0].open).toBe(false);
+        });
+    });
+
     it('judges a stored key by the moment it was first sent, never by the time it is read: one sent nine minutes and fifty-nine seconds ago is still the key', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-11-21T10:09:59Z'));
