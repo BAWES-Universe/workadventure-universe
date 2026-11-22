@@ -13,7 +13,7 @@
  * The person's own Stop, a computer turned off and a Brick deleted are never offered: they just did it.
  *
  * The late follow-up (`late`): an App that was let go unconfirmed (so its hold was released and nothing was charged) may be confirmed later by the provider's log. Orbit then offers
- * one more message for the job, once per batch of Apps confirmed together (its key ends in the time the batch covers up to, `through`, which is said back in the acknowledgement), in the same conversation: "Update: <App> did go out after all. We couldn't confirm it earlier. You weren't charged for it." ("for them" for several Apps). The game only says
+ * one more message for the job, once per batch of Apps confirmed together (its key ends in the time the batch covers up to, `through`, which is said back in the acknowledgement), in the same conversation: "Update: <App> confirmed the step completed. You weren’t charged for that step." (a search App, Exa or Tavily: "Update: your Exa search completed. You weren’t charged for that step."; "those steps" for several). It never says "sent" or "delivered": Orbit names the App and nothing of what the step did. The game only says
  * it, from Orbit's facts: it never charges, refunds or decides anything. Orbit offers it only to a game that asks for it (`accepts=late`), so an older game never meets the kind.
  *
  * The file card: the files a finished job made come as `handed`: they are the person's own, kept by Orbit (and shown in their Files) whether or not the chat took them.
@@ -205,6 +205,12 @@ const sentence = (text: string): string => {
     return /[.!?…]["”’)]?$/.test(trimmed) ? trimmed : `${trimmed}.`;
 };
 const capital = (text: string): string => (text ? text[0].toUpperCase() + text.slice(1) : text);
+/** The Apps whose step is a search (it sends nothing): their late confirmation is said as the search that completed. */
+const SEARCH_APPS = new Set(['exa', 'tavily']);
+const isSearchApp = (name: string): boolean => SEARCH_APPS.has(name.toLowerCase().replace(/\s+search$/, '').trim());
+/** The "N more" entry that stands for the Apps left out of the names. */
+const MORE_APPS = /^\d+ more$/;
+
 const list = (items: string[]): string => (items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
 const DONE_WORDS: Record<string, (where: string | null) => string> = {
@@ -297,7 +303,16 @@ export function reportText(report: ComputerReport): string {
             // The count of ALL the distinct Apps Orbit named (the names kept are only the first few): "and N more" is how many were left out, whatever the limit of names kept
             const total = Math.max(report.appsTotal, report.apps.length);
             const named = total > APPS_NAMED ? [...report.apps.slice(0, APPS_NAMED - 1), `${total - (APPS_NAMED - 1)} more`] : report.apps;
-            return `Update: ${list(named)} did go out after all. We couldn’t confirm it earlier. You weren’t charged for ${total === 1 ? 'it' : 'them'}.`;
+            // What Orbit's record proves is that the provider confirmed a step of the App completed: "sent" or "delivered" is never said (Orbit names the App and nothing of what the step did;
+            // a search App's step is a search, which sends nothing). A search App is said as its search that completed
+            const searches = named.filter(isSearchApp).map((one) => one.replace(/\s+search$/i, ''));
+            const others = named.filter((one) => !isSearchApp(one));
+            const several = others.length > 1 || others.some((one) => MORE_APPS.test(one));
+            const said = [
+                ...(searches.length > 0 ? [`your ${list(searches)} ${searches.length === 1 ? 'search' : 'searches'} completed`] : []),
+                ...(others.length > 0 ? [`${list(others)} confirmed the ${several ? 'steps' : 'step'} completed`] : []),
+            ];
+            return `Update: ${said.join(', and ')}. You weren’t charged for ${total === 1 ? 'that step' : 'those steps'}.`;
         }
     }
 }

@@ -507,25 +507,40 @@ const lateOf = (over: Record<string, unknown> = {}): ComputerReport => {
     return one;
 };
 
-describe('the late follow-up: an App that went out after all', () => {
-    it('says it in Brick’s approved words, one App or several, as one message', () => {
-        expect(reportText(lateOf())).toBe('Update: Gmail did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.');
-        expect(reportText(lateOf({ apps: ['Gmail', 'Slack'] }))).toBe('Update: Gmail and Slack did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
-        expect(reportText(lateOf({ apps: ['Gmail', 'Slack', 'Notion'] }))).toBe('Update: Gmail, Slack and Notion did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
+describe('the late follow-up: an App step the provider confirmed after all', () => {
+    it('says it in Brick’s approved words, one App or several, as one message: the provider confirmed the step completed, never that anything was sent', () => {
+        expect(reportText(lateOf())).toBe('Update: Gmail confirmed the step completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Slack'] }))).toBe('Update: Gmail and Slack confirmed the steps completed. You weren’t charged for those steps.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Slack', 'Notion'] }))).toBe('Update: Gmail, Slack and Notion confirmed the steps completed. You weren’t charged for those steps.');
         // The first sentence is the news a locked phone shows
-        expect(firstSentence(reportText(lateOf()))).toBe('Update: Gmail did go out after all.');
+        expect(firstSentence(reportText(lateOf()))).toBe('Update: Gmail confirmed the step completed.');
+    });
+
+    it('says a SEARCH App\'s step as its search that completed, never that it went out or was sent (GPT round 4: a search sends nothing)', () => {
+        expect(reportText(lateOf({ apps: ['Exa'] }))).toBe('Update: your Exa search completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['Tavily'] }))).toBe('Update: your Tavily search completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['exa search'], appsTotal: 1 }))).toBe('Update: your exa search completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['Exa', 'Tavily'] }))).toBe('Update: your Exa and Tavily searches completed. You weren’t charged for those steps.');
+        // an Exa step next to an App whose step is not a search: each is said as what it is
+        expect(reportText(lateOf({ apps: ['Exa', 'Gmail'] }))).toBe('Update: your Exa search completed, and Gmail confirmed the step completed. You weren’t charged for those steps.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Slack', 'Tavily'] }))).toBe('Update: your Tavily search completed, and Gmail and Slack confirmed the steps completed. You weren’t charged for those steps.');
+        // the first sentence is the news a locked phone shows
+        expect(firstSentence(reportText(lateOf({ apps: ['Exa'] })))).toBe('Update: your Exa search completed.');
+        for (const apps of [['Exa'], ['Gmail'], ['Exa', 'Tavily', 'Gmail'], Array.from({ length: 9 }, (_unused, index) => `App${index}`)]) {
+            expect(reportText(lateOf({ apps })), apps.join()).not.toMatch(/went out|did go out|\bsent\b|delivered|after all/i);
+        }
     });
 
     it('names no more than five Apps, and says how many more, so it stays one short message', () => {
         const five = reportText(lateOf({ apps: ['A1', 'A2', 'A3', 'A4', 'A5'] }));
-        expect(five).toBe('Update: A1, A2, A3, A4 and A5 did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
+        expect(five).toBe('Update: A1, A2, A3, A4 and A5 confirmed the steps completed. You weren’t charged for those steps.');
         const seven = reportText(lateOf({ apps: ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7'] }));
-        expect(seven).toBe('Update: A1, A2, A3, A4 and 3 more did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
+        expect(seven).toBe('Update: A1, A2, A3, A4 and 3 more confirmed the steps completed. You weren’t charged for those steps.');
     });
 
     it('is built only from what Orbit gives: the title, the files, the receipt and the number of a report are never in it', () => {
         const text = reportText(lateOf({ title: 'Secret invoice title', files: ['a.pdf'], effects: [{ kind: 'send', state: 'done', where: 'the embassy' }], why: 'because', refundPendingMicros: 5000 }));
-        expect(text).toBe('Update: Gmail did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.');
+        expect(text).toBe('Update: Gmail confirmed the step completed. You weren’t charged for that step.');
     });
 
     it('reads Orbit’s report: the Apps of its batch, that the hold was released, how far it covers (`through`), and the conversation it began in', () => {
@@ -572,17 +587,17 @@ describe('the late follow-up: an App that went out after all', () => {
         expect(thirty.apps).toHaveLength(12);
         expect(thirty.appsTotal).toBe(30);
         // the whole of them is what "more" counts, not the dozen that are kept
-        expect(reportText(thirty)).toBe('Update: App0, App1, App2, App3 and 26 more did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.');
+        expect(reportText(thirty)).toBe('Update: App0, App1, App2, App3 and 26 more confirmed the steps completed. You weren’t charged for those steps.');
         // just past what is kept, and just past what is named
-        expect(reportText(lateOf({ apps: Array.from({ length: 13 }, (_unused, index) => `App${index}`) }))).toContain('App3 and 9 more did go out');
-        expect(reportText(lateOf({ apps: Array.from({ length: 6 }, (_unused, index) => `App${index}`) }))).toContain('App3 and 2 more did go out');
+        expect(reportText(lateOf({ apps: Array.from({ length: 13 }, (_unused, index) => `App${index}`) }))).toContain('App3 and 9 more confirmed the steps completed');
+        expect(reportText(lateOf({ apps: Array.from({ length: 6 }, (_unused, index) => `App${index}`) }))).toContain('App3 and 2 more confirmed the steps completed');
         // a name said twice (any case or spacing), a blank and a thing that is not text are not Apps: only distinct names count
         const counted = lateOf({ apps: ['Gmail', 'gmail', '  GMAIL ', '', '   ', 7, null, 'Slack', ...Array.from({ length: 20 }, (_unused, index) => `Tool${index}`), 'tool3'] });
         expect(counted.appsTotal).toBe(22);
-        expect(reportText(counted)).toContain('Gmail, Slack, Tool0, Tool1 and 18 more did go out');
+        expect(reportText(counted)).toContain('Gmail, Slack, Tool0, Tool1 and 18 more confirmed the steps completed');
         // a few Apps: no "more", and "it" for one
         expect(lateOf({ apps: ['Gmail', 'gmail'] }).appsTotal).toBe(1);
-        expect(reportText(lateOf({ apps: ['Gmail', 'gmail'] }))).toContain('You weren’t charged for it.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'gmail'] }))).toContain('You weren’t charged for that step.');
         // another kind of report counts none
         expect(computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done' })?.appsTotal).toBe(0);
     });
@@ -692,8 +707,8 @@ describe('the late follow-up: an App that went out after all', () => {
         const { runner, said, told } = round([first, second]);
         expect(await runner.tick()).toBe(2);
         expect(said.map((one) => [one.transactionId, one.text])).toEqual([
-            [`computer-told:job-1:late:${Date.parse(T1)}`, 'Update: Gmail and Slack did go out after all. We couldn’t confirm it earlier. You weren’t charged for them.'],
-            [`computer-told:job-1:late:${Date.parse(T2)}`, 'Update: Notion did go out after all. We couldn’t confirm it earlier. You weren’t charged for it.'],
+            [`computer-told:job-1:late:${Date.parse(T1)}`, 'Update: Gmail and Slack confirmed the steps completed. You weren’t charged for those steps.'],
+            [`computer-told:job-1:late:${Date.parse(T2)}`, 'Update: Notion confirmed the step completed. You weren’t charged for that step.'],
         ]);
         expect(told).toEqual([{ jobId: 'job-1', kind: 'late', seq: 1, through: T1 }, { jobId: 'job-1', kind: 'late', seq: 2, through: T2 }]);
     });
