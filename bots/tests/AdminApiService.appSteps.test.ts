@@ -422,6 +422,26 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
             expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
         });
 
+        // CodeRabbit on 8a20b473: a reply that says it worked but names no job is no job; the keyed look-up tells what the start made
+        it.each([
+            ['an empty id', ''],
+            ['no id', undefined],
+            ['an id that is not text', 5],
+        ])('does not take a "worked" reply with %s for a job that is running: the key is looked up, and what is found there is told', async (_name, id) => {
+            const post = { ok: true, job: { id, status: 'running', queuedFor: null } };
+            const live = answers(post, () => ({ data: { started: { id: 'j-real', status: 'running' } } }));
+            expect(await live.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'starting' });
+            expect(live.call.mock.calls.map((one) => one[0])).toEqual(['post', 'get']);
+            const none = answers(post, () => ({ data: { started: null } }));
+            expect(await none.orbit.startComputerJob('b', 'u', ASK)).toEqual({ ok: false, reason: 'unknown' });
+        });
+
+        it('still takes a "worked" reply whose job has an id (one character is enough), as before', async () => {
+            const { orbit, call } = answers({ ok: true, job: { id: 'j', status: 'running', queuedFor: null } }, () => ({ data: {} }));
+            expect(await orbit.startComputerJob('b', 'u', ASK)).toMatchObject({ ok: true, job: { id: 'j', status: 'running' } });
+            expect(call.mock.calls.map((one) => one[0])).toEqual(['post']);
+        });
+
         it('keeps a whole success whose job is queued, running or waiting as the success it is', async () => {
             for (const status of ['queued', 'running', 'waiting']) {
                 const { orbit } = answers({ ok: true, job: { id: 'j', status, queuedFor: null } }, () => ({ data: {} }));

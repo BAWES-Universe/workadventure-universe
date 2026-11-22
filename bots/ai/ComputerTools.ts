@@ -93,6 +93,13 @@ export interface StartKeyEntry {
     key: string;
     at: number;
     open: boolean;
+    /**
+     * The claim of this entry's key in the shared store while it is going on: every start of the same ask that overlaps it waits for THIS one and sends the key it settled on, so
+     * two calls of one ask made at the same moment (parallel tool calls) never go out under two keys. Cleared when it is over.
+     */
+    claiming?: Promise<boolean>;
+    /** Made by this call and not yet confirmed by the shared store: this process knew no key of the ask (a restart, or the first ask here). Gone once the store answered or the start was let go on. */
+    unchecked?: true;
 }
 
 /** How long the key of an ask whose outcome is open is sent again for the same ask: long enough for a person to ask again, short enough that a new job is a new job. */
@@ -239,16 +246,41 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const now = Date.now();
     const earlier = context.startKeys?.get(asked);
     // Open until the answer says otherwise: a start in flight whose key a new message of the person cleared would be sent again under another key (a second job)
-    let entry: StartKeyEntry = earlier && now - earlier.at < START_KEY_KEEP_MS ? earlier : { key: randomUUID(), at: now, open: true };
+    const entry: StartKeyEntry = earlier && now - earlier.at < START_KEY_KEEP_MS ? earlier : { key: randomUUID(), at: now, open: true, unchecked: true };
+    // The entry is put where the next call of this ask finds it BEFORE anything is awaited: two calls of one ask made at the same moment (parallel tool calls) share this one entry
+    // and its claim, so they send one key
+    context.startKeys?.set(asked, entry);
     // The FIRST key of this ask wins, across bot servers and restarts: one step in the shared store keeps ours BEFORE the start is sent (with what is left of the ten minutes)
     // unless it already holds a key of this ask that is still good, and answers the one it holds. Two servers handling the same ask at once, a restart that forgot the process's
-    // memory, and an ask racing a stored one all send that one key. When the store does not answer, our own key goes on (the process's memory is all there is)
+    // memory, and an ask racing a stored one all send that one key. The entry follows the store's key (in place, so a call that shares it sends the same one).
     if (context.startKeyStore) {
-        const held = await context.startKeyStore.claim(scope, { key: entry.key, at: entry.at }, START_KEY_KEEP_MS - (now - entry.at), START_KEY_KEEP_MS).catch(() => undefined);
-        if (held && held.key !== entry.key) entry = { key: held.key, at: held.at, open: true };
+        const store = context.startKeyStore;
+        if (!entry.claiming) {
+            const claiming: Promise<boolean> = (async () => {
+                const held = await store.claim(scope, { key: entry.key, at: entry.at }, START_KEY_KEEP_MS - (now - entry.at), START_KEY_KEEP_MS).catch(() => undefined);
+                if (held && held.key !== entry.key) {
+                    // Another attempt of this ask holds the key: this is that attempt, and its outcome is open until the answer says otherwise
+                    entry.key = held.key;
+                    entry.at = held.at;
+                    entry.open = true;
+                }
+                // Whether the key is settled: the store said it (ours kept, or the one it held). A store that did not answer settles nothing
+                return !!held;
+            })().finally(() => {
+                if (entry.claiming === claiming) entry.claiming = undefined;
+            });
+            entry.claiming = claiming;
+        }
+        const confirmed = await entry.claiming;
+        // When this process knows no key of this ask (a restart, or the first ask here) and the store, which may hold the key of an attempt a restart forgot, did not answer, a new key
+        // could make a second job beside that attempt's: nothing is sent, and the ask is told as one that could not be checked. A key this process already knows goes on as before
+        if (!confirmed && entry.unchecked && (store.expected?.() ?? true)) {
+            if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
+            return { started: false, unconfirmed: true, note: 'I could not check just now whether this job is already going, so I did not start it. Say in one short sentence that you could not start it just now and that they can ask again in a moment. Do not say it failed, and do not say it started.' };
+        }
     }
+    delete entry.unchecked;
     const startKey = entry.key;
-    context.startKeys?.set(asked, entry);
     // An ask that went nowhere (Orbit said no before it made anything, or the request itself failed with an answer that is final) is not kept: asking again is a new ask
     const dropKey = async () => {
         if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
@@ -265,8 +297,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     }
     const refused = !started.ok && !UNCERTAIN_REASONS.includes(started.reason);
     if (refused) await dropKey();
-    // Only an outcome that is not known, or a job found live, keeps its key across turns (and across a restart: the stored key is deleted when the outcome is settled)
-    entry.open = !started.ok && OPEN_REASONS.includes(started.reason);
+    // Only an outcome that is not known, or a job found live, keeps its key across turns (and across a restart: the stored key is deleted when the outcome is settled). An entry that
+    // an answer has settled stays settled: a later start of the same ask (several share one entry) whose answer is not known does not open it again
+    entry.open = entry.open && !started.ok && OPEN_REASONS.includes(started.reason);
     if (!entry.open && !refused) await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
     if (!started.ok) {
         switch (started.reason) {
@@ -313,6 +346,10 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         return { started: false, queued: true, note: 'It waits in line: every computer is busy just now and nothing needs asking for. Say so in one line, and that it starts by itself.' };
     }
     context.onStarted?.(made.id);
+    // A job that is already waiting for the person (it needs them before it can go on) is not "running": the person is told it needs them
+    if (made.status === 'waiting') {
+        return { started: true, waiting: true, note: 'The job started and is already waiting for them: it needs something from them before it can go on. Say in one short sentence that the job needs them, and that the bar above this chat shows what. Do not say it is running or will carry on by itself.' };
+    }
     const when = restoredFrom ? day(restoredFrom) : '';
     return {
         started: true,

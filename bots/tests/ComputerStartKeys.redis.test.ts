@@ -76,14 +76,55 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         expect(await store.claim(odd, { key: 'new-key-0000003', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000003', at });
     });
 
-    it('lets the key go by itself when its life is over', async () => {
+    it('lets the key go by itself when its life is over (the life the claim set, never one the test sets)', async () => {
         const store = new RedisStartKeys(() => client as never);
         const s = scope('expires');
         await store.claim(s, { key: 'a-start-key-0001', at: Date.now() }, 1, LIFE);
-        expect(await client.pTTL(startKeyNameOf(s))).toBeLessThanOrEqual(1000);
-        await client.pExpire(startKeyNameOf(s), 30);
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        // the claim sets the life (at least a second): it is there, and it is the one asked for
+        const life = await client.pTTL(startKeyNameOf(s));
+        expect(life).toBeGreaterThan(0);
+        expect(life).toBeLessThanOrEqual(1000);
+        await new Promise((resolve) => setTimeout(resolve, life + 150));
         expect(await client.get(startKeyNameOf(s))).toBeNull();
+    });
+
+    it('replaces an entry whose key is not of the shape Orbit takes, in the claim itself, and answers the caller\'s key: a held key is returned only when it can be sent (8 to 64 of letters, digits, _ and -)', async () => {
+        const store = new RedisStartKeys(() => client as never);
+        const at = Date.now();
+        const bad: Array<[string, string]> = [
+            ['empty', ''],
+            ['short', 'abc1234'],
+            ['long', 'k'.repeat(65)],
+            ['space', 'has a space-01'],
+            ['dot', 'has.dot.in.it-1'],
+            ['newline', 'line-one\nline-two'],
+            ['slash', 'a/b/c/d/e/f/g/h'],
+            ['quote', 'quote"key-000001'],
+        ];
+        for (const [name, key] of bad) {
+            const s = scope(`bad-${name}`);
+            await client.set(startKeyNameOf(s), JSON.stringify({ key, at }), { PX: 60_000 });
+            expect(await store.claim(s, { key: 'caller-key-00001', at }, LIFE, LIFE), name).toEqual({ key: 'caller-key-00001', at });
+            expect(JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null'), name).toEqual({ key: 'caller-key-00001', at });
+        }
+        // the shape is checked by the script itself: the raw answer of the script is never a bad key
+        const raw = scope('bad-raw');
+        await client.set(startKeyNameOf(raw), JSON.stringify({ key: 'has a space-01', at }), { PX: 60_000 });
+        const { CLAIM_START_KEY } = await import('../server/ComputerStartKeys');
+        const answer = await client.eval(CLAIM_START_KEY, { keys: [startKeyNameOf(raw)], arguments: [JSON.stringify({ key: 'caller-key-00002', at }), '60000', String(at - LIFE)] });
+        expect(JSON.parse(String(answer)).key).toBe('caller-key-00002');
+    });
+
+    it('leaves a held entry whose key is of the shape alone, at both ends of it (8 and 64 characters, with _ and -)', async () => {
+        const store = new RedisStartKeys(() => client as never);
+        const at = Date.now();
+        for (const [name, key] of [['eight', 'a_b-1234'], ['sixty-four', `A${'z9_-'.repeat(15)}kkk`]] as const) {
+            expect(key.length === 8 || key.length === 64, name).toBe(true);
+            const s = scope(`good-${name}`);
+            await client.set(startKeyNameOf(s), JSON.stringify({ key, at: at - 1000 }), { PX: 60_000 });
+            expect(await store.claim(s, { key: 'caller-key-00001', at }, LIFE, LIFE), name).toEqual({ key, at: at - 1000 });
+            expect(JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null'), name).toEqual({ key, at: at - 1000 });
+        }
     });
 
     it('two servers asking at the same moment with nothing held agree on ONE key (many at once, each with a key of its own)', async () => {

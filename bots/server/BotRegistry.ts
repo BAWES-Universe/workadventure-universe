@@ -71,6 +71,8 @@ export class BotRegistry {
      * that drops is an outage, not a server on its own.
      */
     private sharedStoreSeen = false;
+    /** Whether a shared store was named for this server (a host in its config or REDIS_HOST): one that is named and does not answer is an outage, not a server on its own. */
+    private sharedStoreNamed = false;
     /** The connection that hears Brick changes from other bot servers (#1996), once listening. */
     private brickListener: RedisClientType | null = null;
     private serverId: string;
@@ -90,6 +92,7 @@ export class BotRegistry {
         }
     ) {
         this.serverId = serverId;
+        this.sharedStoreNamed = !!(redisConfig?.host || process.env.REDIS_HOST);
         
         const host = redisConfig?.host || process.env.REDIS_HOST || 'redis';
         const port = redisConfig?.port || parseInt(process.env.REDIS_PORT || '6379');
@@ -419,6 +422,11 @@ export class BotRegistry {
     /** Whether the shared store has ever been reached: on one machine without Redis it never is, and nothing is kept in it. */
     forgetQueueInUse(): boolean {
         return this.sharedStoreSeen || !!isUp(this.redis);
+    }
+
+    /** Whether a shared store is expected to hold things for this server: it was named for it, or it has been reached. A store that is expected and does not answer is down. */
+    sharedStoreExpected(): boolean {
+        return this.sharedStoreNamed || this.sharedStoreSeen;
     }
 
     /** The shared store's client while it is connected (and ready), null while it is not: where the forgets Orbit has not taken yet are kept for every bot server. */

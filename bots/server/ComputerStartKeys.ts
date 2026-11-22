@@ -28,17 +28,23 @@ export interface StartKeyStore {
     claim(scope: string, entry: StoredStartKey, keepMs: number, lifeMs: number): Promise<StoredStartKey | undefined>;
     /** Takes the key back only while the store still holds exactly this key. */
     delete(scope: string, key: string): Promise<void>;
+    /**
+     * Whether a shared store is expected to hold the keys of this server's asks (one is set up). A store that is expected and did not answer a claim means a key of this ask may
+     * be held there that this process cannot see: nothing new is sent then. A server with no shared store at all (one machine, no Redis) has only its own memory. Taken as true when absent.
+     */
+    expected?(): boolean;
 }
 
 /**
- * Keeps the entry ARGV[1] with a life of ARGV[2] ms unless the name already holds an entry of this shape (a key and a number moment) first sent at or after ARGV[3] (the
+ * Keeps the entry ARGV[1] with a life of ARGV[2] ms unless the name already holds an entry of this shape (a key of the shape Orbit takes and a number moment) first sent at or after ARGV[3] (the
  * oldest moment still good, ms): then that one is left as it is. Answers the entry that is held after this, as the store holds it. One step: two callers at once cannot both win.
  */
 export const CLAIM_START_KEY = `
 local held = redis.call('GET', KEYS[1])
 if held then
   local ok, entry = pcall(cjson.decode, held)
-  if ok and type(entry) == 'table' and type(entry.key) == 'string' and type(entry.at) == 'number' and entry.at >= tonumber(ARGV[3]) then
+  -- Only an entry of the shape the caller reads (the key Orbit takes: 8 to 64 of letters, digits, _ and -, and a number moment): anything else is replaced, never returned
+  if ok and type(entry) == 'table' and type(entry.key) == 'string' and #entry.key >= 8 and #entry.key <= 64 and string.find(entry.key, '^[A-Za-z0-9_%-]+$') and type(entry.at) == 'number' and entry.at >= tonumber(ARGV[3]) then
     return held
   end
 end
@@ -66,8 +72,13 @@ export class RedisStartKeys implements StartKeyStore {
     constructor(
         private readonly redis: () => EvidenceRedis | null,
         /** A call not answered within this fails: a store gone silent never holds a tool call. */
-        private readonly deadlineMs = 1000
+        private readonly deadlineMs = 1000,
+        private readonly isExpected: () => boolean = () => true
     ) {}
+
+    expected(): boolean {
+        return this.isExpected();
+    }
 
     private async within<T>(work: Promise<T>): Promise<T> {
         let timer: NodeJS.Timeout | undefined;
@@ -122,8 +133,12 @@ export class RedisStartKeys implements StartKeyStore {
  * Gives the AI service the place the start keys wait: the shared store the relay and the runner already use. Called once by the server at start-up (`server/index.ts`, which
  * a test reads, since the server cannot be started in a test): a server that did not call it would keep its keys in the process's own memory only, and a restart would forget them.
  */
-export function wireComputerStartKeys(ai: { setComputerStartKeys(store: StartKeyStore | undefined): void }, redis: () => EvidenceRedis | null): RedisStartKeys {
-    const keys = new RedisStartKeys(redis);
+export function wireComputerStartKeys(
+    ai: { setComputerStartKeys(store: StartKeyStore | undefined): void },
+    redis: () => EvidenceRedis | null,
+    expected: () => boolean = () => true
+): RedisStartKeys {
+    const keys = new RedisStartKeys(redis, 1000, expected);
     ai.setComputerStartKeys(keys);
     return keys;
 }

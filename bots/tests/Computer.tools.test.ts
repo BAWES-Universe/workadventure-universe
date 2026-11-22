@@ -286,6 +286,81 @@ describe('the key of an ask (GPT round 3, finding 3): the same ask is the same s
         forgetSettledStarts(undefined);
     });
 
+    it('an entry that a successful or ended call settled stays settled when a later call of the same ask (they share one entry) comes back unknown: the next message removes it', async () => {
+        const kept = new Map<string, StartKeyEntry>();
+        await withKeys(asking({ ok: false, reason: 'unknown' }), kept);
+        expect([...kept.values()][0].open).toBe(true);
+        await withKeys(asking({ ok: true, job: job(), restoredFrom: null }), kept);
+        expect([...kept.values()][0].open).toBe(false);
+        const entry = [...kept.values()][0];
+        // the second call of the same ask finds the same entry: its unknown answer does not open it again
+        await withKeys(asking({ ok: false, reason: 'unknown' }), kept);
+        expect([...kept.values()]).toEqual([entry]);
+        expect(entry.open).toBe(false);
+        // the same when it ended
+        await withKeys(asking({ ok: false, reason: 'starting' }), kept);
+        expect(entry.open).toBe(false);
+        forgetSettledStarts(kept);
+        expect(kept.size).toBe(0);
+        // an entry nothing has settled keeps its unknown outcome open (no regression)
+        const open = new Map<string, StartKeyEntry>();
+        await withKeys(asking({ ok: false, reason: 'unknown' }), open);
+        await withKeys(asking({ ok: false, reason: 'starting' }), open);
+        expect([...open.values()][0].open).toBe(true);
+        forgetSettledStarts(open);
+        expect(open.size).toBe(1);
+    });
+
+    it('two starts of one ask made at the same moment (parallel tool calls) send ONE key: the entry is shared before anything is awaited, and so is the claim in the shared store', async () => {
+        const kept = new Map<string, StartKeyEntry>();
+        let release: (value: StoredStartKey) => void = () => undefined;
+        const claims: StoredStartKey[] = [];
+        const store: StartKeyStore = {
+            claim: vi.fn((_scope: string, entry: StoredStartKey) => {
+                claims.push(entry);
+                return new Promise<StoredStartKey>((resolve) => {
+                    release = resolve;
+                });
+            }),
+            delete: vi.fn().mockResolvedValue(undefined),
+        };
+        const admin = asking({ ok: false, reason: 'unknown' });
+        const ask = () => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: kept, startKeyStore: store });
+        const both = Promise.all([ask(), ask()]);
+        // both are waiting for the store and the ask is already in the chat's memory under one entry
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(kept.size).toBe(1);
+        expect(store.claim).toHaveBeenCalledTimes(1);
+        // another server's key won: both calls send THAT key, and the shared entry follows it
+        release({ key: 'held-by-another-01', at: Date.now() - 2000 });
+        await both;
+        expect(keysOf(admin)).toEqual(['held-by-another-01', 'held-by-another-01']);
+        expect([...kept.values()].map((entry) => entry.key)).toEqual(['held-by-another-01']);
+    });
+
+    it('two starts at the same moment, no key known and the store silent: neither sends anything, and both are told the ask could not be checked', async () => {
+        const store: StartKeyStore = { claim: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined) };
+        const kept = new Map<string, StartKeyEntry>();
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        const told = await Promise.all([1, 2].map(() => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: kept, startKeyStore: store })));
+        expect(admin.startComputerJob).not.toHaveBeenCalled();
+        expect(told).toEqual([expect.objectContaining({ unconfirmed: true }), expect.objectContaining({ unconfirmed: true })]);
+        expect(kept.size).toBe(0);
+    });
+
+    it('tells the person a job that is already waiting for them needs them, and never that it is running', async () => {
+        const started: string[] = [];
+        const result = (await run(asking({ ok: true, job: job({ status: 'waiting' }), restoredFrom: null }), { job: 'Visa form' }, (id) => started.push(id))) as { started: boolean; waiting?: boolean; note: string };
+        expect(started).toEqual(['j1']);
+        expect(result).toMatchObject({ started: true, waiting: true });
+        expect(result.note).toMatch(/waiting for them/);
+        expect(result.note).toMatch(/needs them/);
+        expect(result.note).toMatch(/Do not say it is running/);
+        const running = (await run(asking({ ok: true, job: job(), restoredFrom: null }))) as { waiting?: boolean; note: string };
+        expect(running.waiting).toBeUndefined();
+        expect(running.note).toMatch(/running/);
+    });
+
     it('takes the key back when Orbit said no before it made anything (a refusal that is final, or a failure that made nothing): asking again is a new ask', async () => {
         for (const reason of ['off', 'paused', 'broken_start', 'not_owner', 'cheaper_route', 'something_new']) {
             const admin = asking({ ok: false, reason });
@@ -540,20 +615,61 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
             claim: vi.fn().mockRejectedValue(new Error('down')),
             delete: vi.fn().mockRejectedValue(new Error('down')),
         };
-        const memory = new Map<string, StartKeyEntry>();
+        // this process already knows the key of the ask (an attempt it made itself): the store's silence changes nothing
+        const memory = new Map<string, StartKeyEntry>([[JSON.stringify([null, null, 'visa form']), { key: 'my-own-key-0001', at: Date.now() - 1000, open: true }]]);
         const admin = asking({ ok: false, reason: 'unknown' });
         const ask = () => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: failing });
         expect(await ask()).toBeTruthy();
         expect(await ask()).toBeTruthy();
         expect(admin.startComputerJob).toHaveBeenCalledTimes(2);
-        expect(keysOf(admin)[1]).toBe(keysOf(admin)[0]);
+        expect(keysOf(admin)).toEqual(['my-own-key-0001', 'my-own-key-0001']);
+        // a store that is not expected to hold anything (one machine, no shared store) never stops an ask, known key or not
+        const alone: StartKeyStore = { ...failing, expected: () => false };
         const settled = asking({ ok: true, job: job(), restoredFrom: null });
-        await runComputerTool({ job: 'Another' }, { admin: settled as never, botId: BRICK, userId: 'uuid-alice', startKeyStore: failing });
+        await runComputerTool({ job: 'Another' }, { admin: settled as never, botId: BRICK, userId: 'uuid-alice', startKeyStore: alone });
         const refused = asking({ ok: false, reason: 'off' });
-        await runComputerTool({ job: 'Another again' }, { admin: refused as never, botId: BRICK, userId: 'uuid-alice', startKeyStore: failing });
-        expect(failing.delete).toHaveBeenCalled();
+        await runComputerTool({ job: 'Another again' }, { admin: refused as never, botId: BRICK, userId: 'uuid-alice', startKeyStore: alone });
+        expect(alone.delete).toHaveBeenCalled();
         expect(settled.startComputerJob).toHaveBeenCalledTimes(1);
         expect(refused.startComputerJob).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['fails', () => vi.fn().mockRejectedValue(new Error('down'))],
+        ['answers nothing', () => vi.fn().mockResolvedValue(undefined)],
+    ])('sends NOTHING when this process knows no key of the ask and the shared store %s: a key of an attempt a restart forgot may be held there, and a new key would make a second job beside it (a second charge); the ask is told as one that could not be checked, and nothing is kept for it', async (_name, claim) => {
+        const failing: StartKeyStore = { claim: claim(), delete: vi.fn().mockResolvedValue(undefined) };
+        const memory = new Map<string, StartKeyEntry>();
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        const told = await runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: failing });
+        expect(admin.startComputerJob).not.toHaveBeenCalled();
+        expect(told).toMatchObject({ started: false, unconfirmed: true });
+        expect(String((told as { note: string }).note)).toMatch(/did not start it/);
+        expect(String((told as { note: string }).note)).toMatch(/do not say it started/i);
+        expect(memory.size).toBe(0);
+    });
+
+    it('goes on with the key the store holds when it answers in time, with no key known here (the held attempt\'s key, never a new one)', async () => {
+        const { store, held } = sharedStore();
+        const scope = `${BRICK}|uuid-alice|${JSON.stringify([null, null, 'visa form'])}`;
+        held.set(scope, { key: 'held-by-restart-1', at: Date.now() - 5000, keepMs: START_KEY_KEEP_MS });
+        const admin = asking({ ok: false, reason: 'unknown' });
+        await asAfterRestart(admin, store);
+        expect(keysOf(admin)).toEqual(['held-by-restart-1']);
+    });
+
+    it('two starts of one ask made at the same moment send the same key when the store keeps ours, and when there is no store at all', async () => {
+        const { store, held } = sharedStore();
+        const kept = new Map<string, StartKeyEntry>();
+        const admin = asking({ ok: false, reason: 'unknown' });
+        await Promise.all([1, 2, 3].map(() => runComputerTool({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: kept, startKeyStore: store })));
+        expect(new Set(keysOf(admin)).size).toBe(1);
+        expect(store.claim).toHaveBeenCalledTimes(1);
+        expect(held.size).toBe(1);
+        const alone = asking({ ok: false, reason: 'unknown' });
+        const memory = new Map<string, StartKeyEntry>();
+        await Promise.all([1, 2].map(() => runComputerTool({ job: 'Visa form' }, { admin: alone as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory })));
+        expect(new Set(keysOf(alone)).size).toBe(1);
     });
 
     it('judges a stored key by the moment it was first sent, never by the time it is read: one sent nine minutes and fifty-nine seconds ago is still the key', async () => {

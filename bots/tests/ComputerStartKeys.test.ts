@@ -22,7 +22,7 @@ function fakeRedis(over: Partial<EvidenceRedis> = {}) {
                 if (old) {
                     try {
                         const entry = JSON.parse(old.value) as { key?: unknown; at?: unknown };
-                        if (typeof entry.key === 'string' && typeof entry.at === 'number' && entry.at >= Number(options.arguments[2])) return old.value;
+                        if (typeof entry.key === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(entry.key) && typeof entry.at === 'number' && entry.at >= Number(options.arguments[2])) return old.value;
                     } catch {
                         /* not an entry: written over */
                     }
@@ -157,11 +157,18 @@ describe('the start-up wiring of the start keys', () => {
         expect(held.size).toBe(1);
     });
 
+    it('tells whether a shared store is expected (set up) from the answer the server gives, and expects one when none is given', () => {
+        const { redis } = fakeRedis();
+        expect(new RedisStartKeys(() => redis).expected()).toBe(true);
+        expect(wireComputerStartKeys({ setComputerStartKeys: () => undefined }, () => redis, () => false).expected()).toBe(false);
+        expect(wireComputerStartKeys({ setComputerStartKeys: () => undefined }, () => redis, () => true).expected()).toBe(true);
+    });
+
     it('is called by the server at start-up, with the AI service and the shared client of the bot registry (the server cannot be started in a test, so its source is read: losing the call would silently leave every key in memory)', () => {
         const source = readFileSync(join(__dirname, '..', 'server', 'index.ts'), 'utf8');
         expect(source).toMatch(/import \{ wireComputerStartKeys \} from '\.\/ComputerStartKeys';/);
-        expect(source).toContain('wireComputerStartKeys(aiService, () => botRegistry.evidenceClient());');
+        expect(source).toContain('wireComputerStartKeys(aiService, () => botRegistry.evidenceClient(), () => botRegistry.sharedStoreExpected());');
         // and not behind a condition or inside a function that may never run: it is a statement of the module, on a line of its own
-        expect(source).toMatch(/^wireComputerStartKeys\(aiService, \(\) => botRegistry\.evidenceClient\(\)\);$/m);
+        expect(source).toMatch(/^wireComputerStartKeys\(aiService, \(\) => botRegistry\.evidenceClient\(\), \(\) => botRegistry\.sharedStoreExpected\(\)\);$/m);
     });
 });

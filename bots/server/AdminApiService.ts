@@ -1859,7 +1859,8 @@ export class AdminApiService {
         );
         const data = response.data;
         const job = data?.job;
-        if (data?.ok === true && job && typeof job.id === 'string' && typeof job.status === 'string') {
+        // A job with no id is no job: a reply that says it worked without saying which job is asked for by its key like one that did not say
+        if (data?.ok === true && job && typeof job.id === 'string' && job.id !== '' && typeof job.status === 'string') {
             return {
                 ok: true,
                 job: { id: job.id, status: job.status, queuedFor: typeof job.queuedFor === 'string' ? job.queuedFor : null },
