@@ -582,6 +582,21 @@ function computerJobTold(status: string): { ok: false; reason: string; queued?: 
  * The end Orbit holds for a job (its finish intent), as the job read gives it: `outcome` is the one thing it must have; the rest is read only when it is well formed, and the end is completed
  * with what is there. Null when there is none (or it is not one).
  */
+/** The notes of a job read, kept only when each has a whole positive number and some words, oldest first; one number once. */
+export function jobNotesOf(raw: unknown): Array<{ seq: number; text: string }> {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<number>();
+    const notes: Array<{ seq: number; text: string }> = [];
+    for (const one of raw) {
+        const note = one as { seq?: unknown; text?: unknown } | null;
+        if (typeof note?.seq === 'number' && Number.isInteger(note.seq) && note.seq > 0 && typeof note.text === 'string' && note.text.trim() && !seen.has(note.seq)) {
+            seen.add(note.seq);
+            notes.push({ seq: note.seq, text: note.text });
+        }
+    }
+    return notes.sort((a, b) => a.seq - b.seq);
+}
+
 function finishPendingOf(raw: unknown): { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null {
     if (!isPlainObject(raw) || (raw.outcome !== 'done' && raw.outcome !== 'failed')) return null;
     const turns = Array.isArray(raw.turns) ? raw.turns.filter((one): one is number => typeof one === 'number' && Number.isInteger(one) && one >= 0) : [];
@@ -1965,9 +1980,9 @@ export class AdminApiService {
     }
 
     /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null } | null> {
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null; resumed?: boolean; notes?: Array<{ seq: number; text: string }> } | null> {
         try {
-            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; ownerEpoch?: unknown; finishPending?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; ownerEpoch?: unknown; finishPending?: unknown; resumed?: unknown; notes?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
             if (job && typeof job.id === 'string' && typeof job.status === 'string') {
                 // The control generation, when Orbit gives one (an Orbit that does not is not asked to fence)
@@ -1975,7 +1990,19 @@ export class AdminApiService {
                 const finishPending = finishPendingOf(job.finishPending);
                 // The job's ownership epoch (0 = never claimed), when Orbit gives one: an Orbit that does not is not asked to fence, and no claim is made
                 const ownerEpoch = typeof job.ownerEpoch === 'number' && Number.isInteger(job.ownerEpoch) && job.ownerEpoch >= 0 ? job.ownerEpoch : undefined;
-                return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick', ...(generation === undefined ? {} : { generation }), ...(ownerEpoch === undefined ? {} : { ownerEpoch }), ...(finishPending ? { finishPending } : {}) };
+                // What the person told the job that its agent has not had yet (computers plan piece 2), in order: only notes with a whole number and some words
+                const notes = jobNotesOf(job.notes);
+                return {
+                    id: job.id,
+                    status: job.status,
+                    control: typeof job.control === 'string' ? job.control : 'brick',
+                    ...(generation === undefined ? {} : { generation }),
+                    ...(ownerEpoch === undefined ? {} : { ownerEpoch }),
+                    ...(finishPending ? { finishPending } : {}),
+                    // The job was paused before (piece 1): the agent carries on in the same conversation, told it was paused
+                    ...(job.resumed === true ? { resumed: true } : {}),
+                    ...(notes.length > 0 ? { notes } : {}),
+                };
             }
             throw new Error('Orbit gave no job');
         } catch (error) {

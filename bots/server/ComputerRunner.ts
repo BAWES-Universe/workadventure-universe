@@ -72,13 +72,32 @@ export interface FinishPending {
     generation?: number;
 }
 
+/** What the person told a job after it started (Orbit's `computer_job_notes`): given to the agent in order, each once, and said back to Orbit by its number (`notes-sent`). */
+export interface JobNote {
+    seq: number;
+    text: string;
+}
+
+/** The job as Orbit has it, as the runner reads it. */
+export interface RunnerJobState {
+    status: string;
+    control: string;
+    generation?: number;
+    ownerEpoch?: number;
+    finishPending?: FinishPending | null;
+    /** The job was paused before (and resumed): the agent carries on in the same conversation, told it was paused. */
+    resumed?: boolean;
+    /** What the person told the job that the agent has not been given yet, in order. */
+    notes?: JobNote[];
+}
+
 export interface RunnerOrbit {
     running(): Promise<RunnableJob[]>;
     /**
      * The job as Orbit has it, or null when it is gone. `generation` is the job's control generation: it moves when the person takes the machine
      * or gives it back, and when the job pauses or resumes. Absent from an Orbit that does not give it (nothing is then sent or checked).
      */
-    job(botId: string, jobId: string): Promise<{ status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: FinishPending | null } | null>;
+    job(botId: string, jobId: string): Promise<RunnerJobState | null>;
     action(botId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
     /** `extra` goes along with the address (see `PrepareFacts`). */
     prepare(jobId: string, relay: string, extra?: PrepareFacts): Promise<{ ok: true } | { ok: false; reason: string }>;
@@ -203,7 +222,34 @@ export const RESUME_PROMPT =
 
 export const CONTINUE_PROMPT = 'Carry on with the job. If it is finished, end your reply with [[done]]. If you need the person, end with [[handover KIND | what | where]]. If you cannot go on, end with [[failed]].';
 
+/** The first words after a pause: the job and its rules again (the agent may never have had a turn of it), and where it stands. */
+export const RESUMED_HEAD =
+    'This job was paused for a while and is carrying on now, on the same computer. Look at the current page first: it may have changed, and a site may have signed you out (if so, ask the person to sign in with the handover line). Carry on from where the job stands, without doing again what is already done. If you were waiting for the person when it paused, ask them again. The job and its rules, as a reminder:';
+
+/** A resumed job's first turn: told it was paused, then the job as at its start. */
+export const resumedPrompt = (job: { jobId: string; title: string; brief: string | null; writes: boolean }): string => `${RESUMED_HEAD}\n\n${jobPrompt(job)}`;
+
+/** The turn after one that was cut short so the person's new words reach the agent at once. */
+export const NOTE_PROMPT =
+    'You were stopped in the middle of a step so you could read what the person said, below. Look at the current page first, since the step may have been cut short, then carry on with the job with this in mind. Remember how to end your reply: [[done]], [[failed]] or [[handover KIND | what | where]].';
+
+/** The turn after the person answered in the chat while the job waited for them (they did not use the computer). */
+export const ANSWERED_PROMPT =
+    'The person answered you in the chat instead of on the computer: their words are below. Look at the current page first, then carry on with the job using what they said. If a step still needs them on the computer (signing in, paying, submitting), ask again with the handover line. Remember how to end your reply: [[done]], [[failed]] or [[handover KIND | what | where]].';
+
+/**
+ * The person's notes as the agent reads them, after the words of the turn: each one quoted, oldest first. They are the person's own words for THEIR job, and they come after
+ * everything the agent was told before, so they win over it.
+ */
+export function notesBlock(notes: JobNote[]): string {
+    const quoted = notes.map((note) => note.text.trim().split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
+    return [notes.length === 1 ? 'The person has told you this about the job since it started. It is from them, and it goes before anything you were told earlier:' : 'The person has told you these about the job since it started, oldest first. They are from them, and they go before anything you were told earlier:', '', quoted.join('\n\n')].join('\n');
+}
+
 const over = (status: string) => status === 'done' || status === 'stopped' || status === 'failed';
+
+/** How many jobs the runner remembers the note numbers of (the oldest is forgotten first): far more than it ever works on at once. */
+const NOTES_KEPT = 5000;
 
 export interface RunnerDeps {
     orbit: RunnerOrbit;
@@ -410,6 +456,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * taken back once Orbit accepts it. They belong to the runner, not to a worker: a worker that is stopped leaves its give-up for the next worker of the job.
      */
     const giveUps = new Map<string, { turnNo: number; run: string; generation: number | undefined; epoch?: number; attempt?: CloseAttempt }>();
+    /**
+     * The highest note number the agent of each job has been given (its words reached it), whatever worker gave it: a note is given once even when Orbit's `notes-sent` answer
+     * was lost, and a worker after a pause carries on from it (the agent's conversation is the same one). Forgotten when the job is over.
+     */
+    const notesGiven = new Map<string, number>();
     // Counts each start and stop, so a poll that was asked before a stop can tell it was
     let generation = 0;
     // Whether a 400 for the finish intent has been reported to Sentry by this runner (once)
@@ -487,17 +538,35 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         return stale ? 'stale' : unsent ? 'unsent' : 'ended';
     }
 
-    /** Waits while the person has the machine or the job waits for them. 'back' when it is Brick's again, 'over' when it is not coming back. */
-    async function waitForBrick(job: RunnableJob, signal: AbortSignal): Promise<'back' | 'over' | 'stopped'> {
+    /**
+     * Waits while the person has the machine or the job waits for them. 'back' when it is Brick's again, 'answered' when it is Brick's again on the same control generation with
+     * notes the agent has not had (the person answered in the chat, not on the computer), 'over' when it is not coming back. 'left' when the job is no longer this worker's to wait
+     * for: it went back in line (paused, or put behind a job done first) or another worker owns it now. A paused job is never waited on: its worker leaves, and the job's next
+     * stretch is taken up by a fresh claim when it runs again.
+     */
+    async function waitForBrick(job: RunnableJob, signal: AbortSignal, held: { epoch?: number; generation?: number; delivered: () => number } = { delivered: () => 0 }): Promise<'back' | 'answered' | 'over' | 'stopped' | 'left'> {
         for (;;) {
             if (signal.aborted) return 'stopped';
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
             // undefined: Orbit could not be asked; null: the job is gone
             if (state === null || (state && over(state.status))) return 'over';
-            if (state && state.status === 'running' && state.control === 'brick') return 'back';
+            if (state && leftUs(state, held.epoch)) return 'left';
+            if (state && state.status === 'running' && state.control === 'brick') {
+                const answered = held.generation !== undefined && state.generation === held.generation && newNotes(state, held.delivered()).length > 0;
+                return answered ? 'answered' : 'back';
+            }
             await sleep(timing.waitMs, signal);
         }
     }
+
+    /** The job went back in line (paused, or put behind a job done first), or another worker claimed it since this one did (and no end is held that is still to be completed). */
+    function leftUs(state: RunnerJobState, epoch: number | undefined): boolean {
+        if (state.status === 'queued') return true;
+        return epoch !== undefined && state.ownerEpoch !== undefined && state.ownerEpoch !== epoch && !state.finishPending;
+    }
+
+    /** The notes of a read that the agent has not had: past the highest number given to it. */
+    const newNotes = (state: RunnerJobState | null | undefined, through: number): JobNote[] => (state?.notes ?? []).filter((note) => note.seq > through).sort((a, b) => a.seq - b.seq);
 
     /** The relay's address, asked once in a while and not for every turn: what it answered and when. */
     let probed: { relay: string; at: number; result: RelayProbeResult } | null = null;
@@ -555,6 +624,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         turn: boolean;
         /** Set by `oneTurn` when it took up a turn that was already going (a reconnect to it, or Orbit said the agent was busy with one) instead of starting it. */
         joined?: boolean;
+        /** Called once when the agent took THIS turn's own input (a turn it started with these words, not one it was already on): what was in the words reached it. */
+        onSent?: () => void;
     }
 
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
@@ -707,6 +778,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     turnController.abort();
                     return;
                 }
+                if (answer.ok === false && answer.reason === 'paused') {
+                    // Orbit paused the job (the month's computer time or the person's own limit ran out, or the person paused it): Orbit owns the pause, its turn cancel and the
+                    // time it charged. Like `ending`: the turn stops, nothing is cancelled or finished here, and it is no bad turn; the job is read again and this run leaves it
+                    lost = true;
+                    turnController.abort();
+                    return;
+                }
                 if (answer.ok === false && answer.reason === 'ending') {
                     // Orbit holds this job's end already (a kept finish intent, or a pool cutoff it decided): its finalizer owns the ending and the cancel, so the renewal adds nothing and
                     // writes nothing. This turn stops and nothing is cancelled here; the job is read again, and the end it holds is completed
@@ -804,6 +882,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (first === STOPPED_HERE) return stoppedHere();
             let opened: TurnOpened = first;
             // The agent is still on a turn of its own (we lost it, or Orbit restarted): read that one instead of starting another
+            // The agent took the words of THIS turn (it was not already on a turn of its own): whatever they carried has reached it
+            if (input !== null && !('reason' in opened)) accepted.onSent?.();
             if ('reason' in opened && opened.reason === 'busy') {
                 // The agent was on a turn that this process did not start
                 accepted.joined = true;
@@ -1044,7 +1124,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * finish intent or a pool cutoff: no ownership is taken, the end is completed or awaited); 'over' when the job is gone; 'superseded' when another worker kept claiming ahead of this one
      * (a delayed claim always lands there); 'unsent' when Orbit could not be asked or answered something else (asked again after a wait).
      */
-    async function claimJob(job: RunnableJob, run: string, seen: number, signal: AbortSignal): Promise<{ kind: 'owned'; epoch: number } | { kind: 'pending' | 'over' | 'superseded' | 'unsent' | 'stopped' }> {
+    async function claimJob(job: RunnableJob, run: string, seen: number, signal: AbortSignal): Promise<{ kind: 'owned'; epoch: number } | { kind: 'pending' | 'over' | 'superseded' | 'unsent' | 'stopped' | 'left' }> {
         let at = seen;
         for (let attempt = 0; attempt < 3; attempt++) {
             if (signal.aborted) return { kind: 'stopped' };
@@ -1064,12 +1144,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (answer.ok === true && typeof answer.epoch === 'number' && Number.isInteger(answer.epoch) && answer.epoch > 0) return { kind: 'owned', epoch: answer.epoch };
             if (answer.reason === 'finish_pending' || answer.reason === 'cutoff') return { kind: 'pending' };
             if (answer.reason === 'over') return { kind: 'over' };
+            // The job went back in line (paused, or put behind a job done first) before this worker could claim it: it is not this worker's, and its next stretch is claimed afresh
+            if (answer.reason === 'not_running') return { kind: 'left' };
             if (answer.reason !== 'stale' && answer.reason !== 'superseded') return { kind: 'unsent' };
             // Someone claimed since this worker read the job: the job is read again and claimed on what it shows (a few times only: another worker that keeps winning owns it)
             const next = await orbit.job(job.botId, job.jobId).catch(() => undefined);
             if (signal.aborted) return { kind: 'stopped' };
             if (next === null || (next && over(next.status))) return { kind: 'over' };
             if (!next) return { kind: 'unsent' };
+            if (next.status === 'queued') return { kind: 'left' };
             if (next.finishPending) return { kind: 'pending' };
             if (next.ownerEpoch === undefined) return { kind: 'unsent' };
             at = next.ownerEpoch;
@@ -1112,6 +1195,30 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         let pending: string | null = job.hasTurn ? null : jobPrompt(job);
         let input: string | null = pending;
         const follow = (prompt: string) => pending ?? prompt;
+        // Whether this worker has read that the job was paused before (its first words are then the resumed ones), so it is read once
+        let resumedRead = false;
+        // The person's notes: the highest number the agent has had (for this job, across workers), and the highest offered in the words of the turn being read
+        const given = (): number => notesGiven.get(job.jobId) ?? 0;
+        let offered = 0;
+        // Orbit not told yet that the agent had the notes up to this number (its answer was lost): told again before the next turn, never given to the agent again
+        let untold: number | null = null;
+        const forget = () => notesGiven.delete(job.jobId);
+        /** Tells Orbit the agent has had every note up to `through`, as the job's owner. A replaced worker is told so (its run ends); a lost answer is told again later. */
+        const tellNotesSent = async (through: number): Promise<void> => {
+            try {
+                const answer = await orbit.action(job.botId, job.jobId, { action: 'notes-sent', through, ...held() });
+                if (answer.ok === false && runStaleOf(answer)) superseded.add(run);
+                if (answer.ok === true || answer.ok === false) untold = untold !== null && untold > through ? untold : null;
+                else untold = Math.max(untold ?? 0, through);
+            } catch (error) {
+                if (staleForOrbit(error) && runStaleOf(error)) superseded.add(run);
+                else if (statusOf(error) === 404) untold = null;
+                else {
+                    untold = Math.max(untold ?? 0, through);
+                    say('Could not tell Orbit a job had its notes:', error);
+                }
+            }
+        };
         const renewing: Renewing = { nextAt: 0 };
         const accepted: Accepted = { turn: false };
         let turns = 0;
@@ -1138,22 +1245,28 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             // taken up again only after the one before it has ended, so a replaced run in this process is told by Orbit's answer, never by a second worker)
             if (superseded.has(run)) return;
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
-            if (state === null || (state && over(state.status))) return;
+            if (state === null || (state && over(state.status))) {
+                forget();
+                return;
+            }
             if (state === undefined) {
                 // Orbit could not be asked: wait a moment and ask again
                 await sleep(timing.waitMs, signal);
                 continue;
             }
+            // The job went back in line (paused, or put behind a job done first), or another worker owns it now: this worker leaves it with nothing ended or cancelled (Orbit
+            // already stopped the turn and charged the stretch). It is never waited on: when it runs again a fresh worker claims it and carries on in the same conversation
+            if (leftUs(state, epoch)) return;
             if (state.status !== 'running' || state.control !== 'brick') {
-                const back = await waitForBrick(job, signal);
-                if (back !== 'back') return;
+                const back = await waitForBrick(job, signal, { epoch, generation: state.generation, delivered: given });
+                if (back !== 'back' && back !== 'answered') return;
                 // The person had the machine: what came before is no part of the job's next streak, nor of the next turn's window
                 turnStartedAt = null;
                 bad = 0;
                 notOurs = false;
                 confirmed = false;
                 badTurns = [];
-                input = follow(RESUME_PROMPT);
+                input = follow(back === 'answered' ? ANSWERED_PROMPT : RESUME_PROMPT);
                 continue;
             }
             // Orbit holds a finish intent for this job (a runner decided to abandon it and could not finish): the end is completed with the values it holds, and no turn is
@@ -1174,7 +1287,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     return;
                 }
                 const claimed = await claimJob(job, run, state.ownerEpoch, signal);
-                if (claimed.kind === 'stopped' || claimed.kind === 'over') return;
+                if (claimed.kind === 'stopped' || claimed.kind === 'over' || claimed.kind === 'left') return;
                 if (claimed.kind === 'superseded') {
                     superseded.add(run);
                     return;
@@ -1186,6 +1299,18 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 }
                 epoch = claimed.epoch;
             }
+            // A job that was paused and carries on: the agent is told so in its first words (the same conversation goes on), and is given the job again, since it may never have
+            // had a turn of it. Only while its first words are still to be taken: a turn of this stretch already going is reconnected to as usual
+            if (state.resumed && !resumedRead) {
+                resumedRead = true;
+                if (pending !== null) {
+                    pending = resumedPrompt(job);
+                    if (input !== null) input = pending;
+                }
+            }
+            // Orbit was not told the agent had its notes (the answer was lost): told now, before anything else of the turn
+            if (untold !== null) await tellNotesSent(untold);
+            if (superseded.has(run)) return;
             // The control generation this turn starts on: every action it takes for the job carries it, so one from an older turn changes nothing
             const generation = state.generation;
             // The person took the machine and gave it back after the last turn's closing read: this is not a plain "carry on", the agent looks at the page first
@@ -1264,7 +1389,23 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             await deps.refusals?.turnPublished?.(job.jobId)?.catch(() => undefined);
             if (signal.aborted) return;
             accepted.joined = false;
-            const result = await oneTurn(job, input, signal, renewing, accepted, generation, turnStartedAt, () => seenFromStart && !(freshWindow && accepted.joined), { turn: turnNo, run, ...held() });
+            // What the person told the job since the agent last heard from them goes with these words, after them; once the agent took the words, Orbit is told by the notes'
+            // highest number (a retry never gives a note twice, a lost answer never drops one). A turn only reconnected to carries none: its words were sent before
+            const fresh = input === null ? [] : newNotes(state, given());
+            offered = Math.max(given(), ...fresh.map((note) => note.seq));
+            let telling: Promise<void> | undefined;
+            accepted.onSent =
+                fresh.length > 0
+                    ? () => {
+                          notesGiven.set(job.jobId, Math.max(given(), offered));
+                          if (notesGiven.size > NOTES_KEPT) notesGiven.delete(notesGiven.keys().next().value as string);
+                          telling = tellNotesSent(offered);
+                      }
+                    : undefined;
+            const words = input !== null && fresh.length > 0 ? `${input}\n\n${notesBlock(fresh)}` : input;
+            const result = await oneTurn(job, words, signal, renewing, accepted, generation, turnStartedAt, () => seenFromStart && !(freshWindow && accepted.joined), { turn: turnNo, run, ...held() });
+            accepted.onSent = undefined;
+            if (telling) await telling;
             if (freshWindow && accepted.joined) seenFromStart = false;
             if (accepted.turn) pending = null;
             if (result.kind === 'stopped') return;
@@ -1318,7 +1459,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 input = follow(CONTINUE_PROMPT);
                 continue;
             }
-            if (after === null || over(after.status)) return;
+            if (after === null || over(after.status)) {
+                forget();
+                return;
+            }
+            // Paused, or put back in line behind a job done first, while the turn went on: Orbit stopped the turn and charged its stretch. Nothing of what the turn said is acted on,
+            // it is no bad turn, and nothing is cancelled or finished here: this worker leaves, and the job's next stretch is claimed afresh
+            if (after.status === 'queued') return;
             // Another worker claimed the job while the turn went on: it is theirs, and nothing this turn said is acted on (an end Orbit holds is still completed below, by whoever reads it)
             if (epoch !== undefined && after.ownerEpoch !== undefined && after.ownerEpoch !== epoch && !after.finishPending) {
                 superseded.add(run);
@@ -1336,9 +1483,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 return;
             }
             if (after.status !== 'running' || after.control !== 'brick') {
-                const back = await waitForBrick(job, signal);
-                if (back !== 'back') return;
-                input = follow(RESUME_PROMPT);
+                const back = await waitForBrick(job, signal, { epoch, generation: after.generation, delivered: given });
+                if (back !== 'back' && back !== 'answered') return;
+                input = follow(back === 'answered' ? ANSWERED_PROMPT : RESUME_PROMPT);
                 bad = 0;
                 notOurs = false;
                 confirmed = false;
@@ -1355,6 +1502,14 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 notOurs = false;
                 confirmed = false;
                 badTurns = [];
+                continue;
+            }
+            // The person told the job something while this turn went on (Orbit cut the turn short for it, or it came as the turn ended): the turn's words are not acted on (an
+            // ending they said may be what the person just changed), it is neither a failure nor a refusal, it does not count in the streak or in the job's turns, and the next turn
+            // gives the agent the person's words at once. A note that was in this turn's own words is no new one: a turn that could not even take them is judged as usual
+            if (newNotes(after, Math.max(offered, given())).length > 0) {
+                input = follow(NOTE_PROMPT);
+                turns--;
                 continue;
             }
             if (result.fenced) {
@@ -1443,9 +1598,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     }
                     return;
                 }
-                const back = await waitForBrick(job, signal);
-                if (back !== 'back') return;
-                input = follow(RESUME_PROMPT);
+                const back = await waitForBrick(job, signal, { epoch, generation, delivered: given });
+                if (back !== 'back' && back !== 'answered') return;
+                input = follow(back === 'answered' ? ANSWERED_PROMPT : RESUME_PROMPT);
                 continue;
             }
             // No ending said: carry on, but not for ever when turns keep going wrong
@@ -1569,6 +1724,8 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
                       ...(job.generation === undefined ? {} : { generation: job.generation }),
                       ...(job.ownerEpoch === undefined ? {} : { ownerEpoch: job.ownerEpoch }),
                       ...(job.finishPending ? { finishPending: job.finishPending } : {}),
+                      ...(job.resumed ? { resumed: true } : {}),
+                      ...(job.notes && job.notes.length > 0 ? { notes: job.notes } : {}),
                   }
                 : null;
         },
