@@ -155,6 +155,8 @@ export interface StartKeyEntry {
     payload?: StoredStartPayload;
     /** Set when Orbit answered `earlier` for this ask: the state of the job it named (`starting`, `done`, `ended`, `unknown`). The ask made nothing; the same ask in this turn is answered the same, with nothing sent. */
     found?: string;
+    /** With `found`: the job was MADE by the resend of this start (not found live by a look-up), so once it is confirmed its record goes. */
+    made?: true;
 }
 
 /**
@@ -306,7 +308,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         return { started: false, success: false, note: `You have ${fits} connected, and this names it: do the job through ${fits} first. Only if it truly cannot (it has no such action, or the job lives on a website screen), call use_computer again and say why in app_cannot. Say nothing about this to the person unless the app cannot do it either.` };
     }
     // The way Brick weighed: Orbit works out which way costs least and says so (no price comes back, and none goes to the model)
-    const planned = text(args.app, 120) || fits || '';
+    // (at most 120 letters, as the name the model gave is: a connected app's name is held to the same, so what is stored with the key is always what the reader of the store takes back)
+    const planned = text(args.app, 120) || text(fits, 120);
     const steps = typeof args.app_steps === 'number' && Number.isInteger(args.app_steps) && args.app_steps >= 1 ? Math.min(args.app_steps, 10000) : undefined;
     const plan = planned ? { app: planned, ...(steps !== undefined ? { steps } : {}), ...(appCannot ? { appCannot } : {}) } : undefined;
     // ONE open start per Brick and person (not per title): while a start is open (sent and its outcome not known, or its job found live) every ask of this person to this Brick is that
@@ -324,7 +327,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     // A job already found for an earlier ask in this turn is every call's answer, whatever it says: nothing is sent
     const foundEarlier = context.startKeys?.get(FOUND_EARLIER_SLOT);
     if (foundEarlier?.found && now - foundEarlier.at < OPEN_START_KEEP_MS) {
-        confirmLater(foundEarlier.key, foundEarlier.found === 'starting');
+        confirmLater(foundEarlier.key, foundEarlier.found === 'starting' && !foundEarlier.made);
         return answerOf({ ok: false, reason: foundEarlier.found } as StartAnswer, context, true);
     }
     const open = context.startKeys?.get(OPEN_START_SLOT);
@@ -374,16 +377,21 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         }
         delete entry.unchecked;
         const startKey = entry.key;
+        // Where this start is kept once it is settled: under the ask that SENT it (the words it holds), not under whatever is asked now, so the same ask in this turn finds it
+        const keptAsked = entry.payload ? askedOf(entry.payload.title, entry.payload.origin) : asked;
         // A start with this key may have gone out BEFORE this call (an earlier ask of this person, here or at another server): whatever this call's own answer is, it says nothing of that one
         const priorSend = entry.sent === true;
         const leave = () => {
             if (context.startKeys?.get(OPEN_START_SLOT) === entry) context.startKeys.delete(OPEN_START_SLOT);
             if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
+            if (context.startKeys?.get(keptAsked) === entry) context.startKeys.delete(keptAsked);
         };
         // An ask that went nowhere (Orbit said no before it made anything, or the request itself failed with an answer that is final) is not kept: asking again is a new ask
+        // The record goes (only the record of THIS key: a record of another is never deleted) while the entry still stands where the next call finds it, so an overlapping call waits for
+        // this one and sees how it ended; the entry leaves its place after
         const dropKey = async () => {
-            leave();
             await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
+            leave();
         };
         let looked: StartAnswer | undefined;
         // A start that may already have gone out is looked up by its key BEFORE anything is sent. Orbit says what the job of that key is (live, done, ended), or that it cannot say (nothing
@@ -424,7 +432,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // THAT job is what the person is told of, its key is the one kept from now on (no words: it is only looked up), and Orbit is told it was seen, so the next ask is free to start.
         if (sent?.earlier) {
             const found = sent.earlier;
-            await dropKey();
+            // What Orbit said is put where every other call of this turn finds it BEFORE anything is awaited: an overlapping call never goes out beside this one
+            if (context.startKeys?.get(OPEN_START_SLOT) === entry) context.startKeys.delete(OPEN_START_SLOT);
+            if (context.startKeys?.get(keptAsked) === entry) context.startKeys.delete(keptAsked);
             entry.key = found.attempt;
             entry.at = now;
             entry.sent = true;
@@ -434,6 +444,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             context.startKeys?.set(asked, entry);
             context.startKeys?.set(FOUND_EARLIER_SLOT, { key: found.attempt, at: now, open: false, found: sent.reason });
             confirmLater(found.attempt, sent.reason === 'starting');
+            // The record of the key that made nothing goes (that key only, and only if the store still holds it)
+            await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
             return answerOf({ ok: false, reason: sent.reason } as StartAnswer, context, true);
         }
         // A look-up of an earlier send found its job: that is the answer of every call in this turn
@@ -441,6 +453,12 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: (looked as unknown as StartAnswer).reason });
         }
         const started = (looked ?? sent) as StartAnswer;
+        // The words that went out are an EARLIER ask's (the resend of a start the game could not settle, while the person asks something else now), and they made a job: that job is what every call
+        // of this turn is told, as it is when a look-up finds an earlier job, and nothing else is sent (a second job would be paid for behind it)
+        const resentEarlier = looked === undefined && wasOpen && !samePayload(entry.payload, current);
+        if (resentEarlier && (started.ok || ['starting', 'done', 'ended'].includes(started.reason))) {
+            context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: started.ok ? 'starting' : started.reason, ...(started.ok ? { made: true as const } : {}) });
+        }
         const refused = !started.ok && !UNCERTAIN_REASONS.includes(started.reason);
         // A no from Orbit to THIS send (nothing was made by it) ends the key only when no start with it went out before: a start that may have gone out earlier is not answered by it
         if (refused && !priorSend) await dropKey();
@@ -451,7 +469,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             // Settled: its key serves this turn's asks of this title, and no other ask
             if (context.startKeys?.get(OPEN_START_SLOT) === entry) {
                 context.startKeys.delete(OPEN_START_SLOT);
-                context.startKeys.set(asked, entry);
+                context.startKeys.set(keptAsked, entry);
             }
             // The record of its key is NOT deleted here: it stays in the store until the confirmation is sent (below), so a reply that never reaches the person leaves it for the next ask to find
         }
@@ -459,7 +477,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // yet. The confirmation waits for this reply to be delivered (`ConfirmationQueue`), and the record of the key goes after it. A look-up never confirms by itself either.
         if (started.ok || ['starting', 'done', 'ended'].includes(started.reason)) confirmLater(startKey, !started.ok && started.reason === 'starting');
         // The answer to a look-up of a start sent EARLIER is said as that earlier job's, never as this ask's, and so is the answer of a key that went out before with other words than these
-        return answerOf(started, context, looked !== undefined || (wasOpen && !samePayload(entry.payload, current)));
+        return answerOf(started, context, looked !== undefined || resentEarlier);
     };
     entry.inflight = go().finally(() => {
         delete entry.inflight;

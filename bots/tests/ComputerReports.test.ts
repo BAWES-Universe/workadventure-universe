@@ -533,6 +533,14 @@ describe('the late follow-up: an App step the provider confirmed after all', () 
         }
     });
 
+    it('CodeRabbit #7: the search Apps are known for every name Orbit listed, not only the first twelve: an App that is said and comes last in a long list of searches is still said as its search', () => {
+        const others = Array.from({ length: 12 }, (_unused, index) => `Finder${index}`);
+        const long = lateOf({ apps: ['Brave', 'Gmail'], searchApps: [...others, 'Brave'] });
+        expect(long.searchApps).toHaveLength(13);
+        expect(long.searchApps).toContain('Brave');
+        expect(reportText(long)).toBe('Update: your Brave search completed, and Gmail confirmed the step completed. You weren’t charged for those steps.');
+    });
+
     it('reads the search Apps Orbit names (`searchApps`) together with the two it knows itself: an App Orbit says is a search is said as its search that completed, whatever it is called', () => {
         expect(reportText(lateOf({ apps: ['Brave'], searchApps: ['Brave'] }))).toBe('Update: your Brave search completed. You weren’t charged for that step.');
         expect(reportText(lateOf({ apps: ['Gmail', 'Brave search'], searchApps: ['brave'] }))).toBe('Update: your Brave search completed, and Gmail confirmed the step completed. You weren’t charged for those steps.');
@@ -562,12 +570,12 @@ describe('the late follow-up: an App step the provider confirmed after all', () 
     it('reads Orbit’s report: the Apps of its batch, that the hold was released, how far it covers (`through`), and the conversation it began in', () => {
         const one = lateOf();
         expect(one).toMatchObject({ key: `computer-told:job-1:late:${Date.parse(T1)}`, kind: 'late', apps: ['Gmail'], holdReleased: true, through: T1, origin: { kind: 'dm', ref: '!dm:chat.test' } });
-        // From an Orbit that sends no `through` it is still read, with none (the ack then covers what Orbit has confirmed by then)
-        expect(computerReportOf({ ...lateRaw, through: undefined })?.through).toBeNull();
-        expect(computerReportOf({ ...lateRaw, through: null })?.through).toBeNull();
+        // A report that does not say how far it goes is never told: it could only be acknowledged for what Orbit has confirmed by the time of the acknowledgement, App steps the chat never read
+        expect(computerReportOf({ ...lateRaw, through: undefined })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: null })).toBeNull();
         // Only a time is kept, and it is said back exactly as Orbit gave it
-        expect(computerReportOf({ ...lateRaw, through: 'yesterday' })?.through).toBeNull();
-        expect(computerReportOf({ ...lateRaw, through: 5 })?.through).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: 'yesterday' })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: 5 })).toBeNull();
         expect(computerReportOf({ ...lateRaw, through: '2026-11-21T22:00:00.123456Z' })?.through).toBe('2026-11-21T22:00:00.123456Z');
         // `through` belongs to a late report: any other kind has none
         expect(computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done' })?.through).toBeNull();

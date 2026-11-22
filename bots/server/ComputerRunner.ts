@@ -428,6 +428,12 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             .then((answer) => {
                 // Orbit says "stale" in a 200 too (an older generation than the job's own): nothing was ended
                 if (answer.ok === false && answer.reason === 'stale') stale = true;
+                // Only Orbit's own word that it ended the job (the job as it stands, or `ok: true`) says so: an empty 200, or a body that says nothing of the job, came from something on the way (or
+                // an Orbit that did not do it), and the end is not taken as made: whatever waited for it (a committed fence, a pending give-up) waits on
+                else if (!(answer.ok === true || (typeof answer.job === 'object' && answer.job !== null))) {
+                    unsent = true;
+                    say('Could not end a job: Orbit answered without saying it was ended');
+                }
             })
             .catch((error) => {
             if (staleForOrbit(error)) stale = true;
@@ -590,17 +596,17 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 return;
             }
             // Orbit holds the end: the fence is COMMITTED now (it holds for as long as the cancel and the finish take). A commit that is refused or never confirmed does not stop the
-            // give-up (the intent already bars new work, and Orbit refuses the turn's calls): the fence of this close is taken back, committed or not, and the finish goes on
+            // give-up (the intent already bars new work, and Orbit refuses the turn's calls), and the fence of this close is NOT taken back either: a call Orbit took up before it kept the
+            // intent could still be on its way to the provider, and a fence that is reopened here would let the relay forward it. It stands (a fence that was never committed clears
+            // itself after its own short life, one whose commit was not confirmed is held like a committed one) until Orbit has accepted the finish
             if (tentative && deps.refusals?.commitTurn) {
-                let committed = false;
                 try {
-                    committed = await deps.refusals.commitTurn(job.jobId, tentative);
+                    await deps.refusals.commitTurn(job.jobId, tentative);
                 } catch {
                     tentative.unconfirmed = true;
                 }
-                if (committed) gaveUpOn = tentative;
-                else await takeBack();
-            } else if (tentative) gaveUpOn = tentative;
+            }
+            if (tentative) gaveUpOn = tentative;
             gaveUp = true;
             // The turn ended by its own terminal event while the intent was on its way: Orbit holds the end now, nothing is left to stop here, and the machine is not cancelled (a cancel
             // is the job's, not this turn's). The end is completed from what Orbit holds
@@ -1122,8 +1128,17 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
             if (after === null || over(after.status)) return;
-            // An end Orbit holds for the job is completed at the top of the loop, with no turn begun first
-            if (after.finishPending) continue;
+            // An end Orbit holds for the job is completed from THIS read (the intent and the generation it showed), with no turn begun first: a later read that came from a replica that
+            // had not seen the intent yet would let a prepare or a turn go out first
+            if (after.finishPending) {
+                const completed = await completePending(job, after.finishPending, signal, after.generation);
+                if (completed === 'stale') {
+                    // The job moved on meanwhile: it is read again
+                    await sleep(timing.waitMs, signal);
+                    continue;
+                }
+                return;
+            }
             if (after.status !== 'running' || after.control !== 'brick') {
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;

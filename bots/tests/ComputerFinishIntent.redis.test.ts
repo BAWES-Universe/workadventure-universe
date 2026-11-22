@@ -41,13 +41,19 @@ interface Modes {
     /** What the intent answers: kept (default), a thrown error, or a refusal. */
     intent?: (n: number) => 'ok' | 'down' | 'old' | 'unknown-job' | 'stale' | 'cutoff' | 'other' | 'hang' | 'lost-ack' | 'late' | 'hold';
     /** What a finish does: taken (default), lost on its way (never got there), or its answer lost after it was done. */
-    finish?: (n: number) => 'ok' | 'down' | 'answer-lost';
+    finish?: (n: number) => 'ok' | 'down' | 'answer-lost' | 'empty';
+    /** With a finish that answers `empty` (an HTTP 200 with nothing in it: something on the way, not Orbit): looked at before the answer goes back. */
+    onEmpty?: () => Promise<void>;
     /** How long Orbit takes over the intent before it answers (it is kept the moment it arrives). */
     intentDelayMs?: number;
     /** Done at the start of the nth finish, before Orbit answers it (the world moves while a finish is on its way). */
     onFinish?: (n: number) => void;
     /** The job reads that do not show the intent (a read from before it was kept). */
     hideReads?: number;
+    /** After the intent was shown this many times, the reads that follow do not show it (a read answered by something that had not seen it yet). */
+    hideAfterShown?: number;
+    /** The job reads say nothing of the control generation (an Orbit from before it). */
+    noGeneration?: boolean;
     /** Which calls Orbit refuses with `finish_pending` while an intent is kept (all of them by contract). */
     refuses?: Array<'prepare' | 'turn' | 'renew'>;
 }
@@ -59,6 +65,8 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
         generation: 1,
         pending: null as (FinishPending & { at: number }) | null,
         hidden: modes.hideReads ?? 0,
+        shown: 0,
+        prepareAttempts: 0,
         turnsOpened: 0,
         turnAttempts: 0,
         streams: 0,
@@ -119,7 +127,12 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
     const orbit: RunnerOrbit = {
         running: async () => (state.over ? [] : [job]),
         job: async () => {
+            if (modes.noGeneration) return { status: state.over ? 'failed' : 'running', control: 'brick', finishPending: null };
             if (state.over) return { status: 'failed', control: 'brick', generation: state.generation };
+            if (state.pending && modes.hideAfterShown !== undefined) {
+                if (state.shown >= modes.hideAfterShown) return { status: 'running', control: 'brick', generation: state.generation, finishPending: null };
+                state.shown += 1;
+            }
             if (state.hidden > 0 && state.pending) {
                 state.hidden--;
                 return { status: 'running', control: 'brick', generation: state.generation, finishPending: null };
@@ -176,6 +189,10 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
                 modes.onFinish?.(state.finishes.length);
                 const mode = (modes.finish ?? (() => 'ok'))(state.finishes.length);
                 if (mode === 'down') throw new Error('Orbit could not be reached');
+                if (mode === 'empty') {
+                    await modes.onEmpty?.();
+                    return {};
+                }
                 if (state.over) return { ok: true, already: true };
                 if (body.generation !== undefined && (body.generation as number) < state.generation) return { ok: false, reason: 'stale', job: { id: job.jobId } };
                 // While an intent is kept the job ends with the INTENT's values, whatever the finish says
@@ -188,6 +205,7 @@ function intentOrbit(job: RunnableJob, modes: Modes = {}) {
             return { ok: true };
         },
         prepare: async () => {
+            state.prepareAttempts += 1;
             if (refuses('prepare')) return { ok: false, reason: 'finish_pending' };
             state.prepares += 1;
             return { ok: true };
@@ -319,6 +337,42 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         expect(sent).toMatchObject({ action: 'finish', outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, turns: [1], run: 'run1' });
         // no provider call of the turn is taken up by another server's relay (the committed fence holds)
         expect(await admission(1)).toBe(false);
+    });
+
+    it('CodeRabbit #4: an empty HTTP 200 for the finish is NOT an end: the committed fence stays, the finish is sent again, and the fence goes only once Orbit answers with the job; the job ends once', async () => {
+        const seen: Array<{ committed: boolean } | null> = [];
+        let fenceOfRef!: (turn: number, run: string) => Promise<{ committed: boolean } | null>;
+        const { fake, notesOf, runnerOn, poolBusyTurn, work, fenceOf } = rig({
+            finish: (n) => (n === 1 ? 'empty' : 'ok'),
+            onEmpty: async () => void seen.push(await fenceOfRef(1, 'run1')),
+        });
+        fenceOfRef = fenceOf;
+        const notes = notesOf('A');
+        poolBusyTurn(notes);
+        await work(runnerOn(notes, 'run1'));
+        expect(fake.state.finishes).toHaveLength(2);
+        expect(seen).toEqual([{ committed: true }]);
+        endedOnce(fake);
+        expect(await fenceOf(1, 'run1')).toBeNull();
+    });
+
+    it('CodeRabbit #5: the read after a turn shows the kept intent and the next read does not: the end is completed from the read that showed it, and no prepare or turn goes out first', async () => {
+        const { fake, job, notesOf, runnerOn, work } = rig({ intent: () => 'lost-ack', hideAfterShown: 1 });
+        const notes = notesOf('A');
+        fake.state.turnScript.push(async function* () {
+            yield { type: 'created', id: 'r', sessionId: 's' };
+            setTimeout(() => notes.record(job.botId, job.jobId, poolRefusal), 0);
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null };
+        });
+        await work(runnerOn(notes, 'run1'));
+        expect(fake.state.pending).not.toBeNull();
+        expect(fake.state.ledger).toHaveLength(1);
+        expect(fake.state.ledger[0]).toMatchObject({ outcome: 'failed', cause: 'ours', why: POOL_BUSY_WHY, by: 'finish' });
+        // the first prepare and the first turn are the job's own start: nothing after the intent
+        expect(fake.state.prepareAttempts).toBe(1);
+        expect(fake.state.turnAttempts).toBe(1);
+        expect(fake.state.finishes).toHaveLength(1);
     });
 
     it('a replacement worker of the SAME runner (stop, then start) reads the kept intent too and ends the job once, opening no turn', async () => {
@@ -621,14 +675,16 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         expect(fake.state.ledger).toEqual([{ outcome: 'done', cause: undefined, why: undefined, turns: undefined, run: undefined, by: 'finish' }]);
     });
     it('a runner that sends no intent (0.4.3) and a finish with no generation are still taken: nothing about the intent is needed to end a job', async () => {
-        const { fake, notesOf, runnerOn, work, job } = rig();
+        // an Orbit whose job read has no control generation: the runner has none to send, so the finish carries none (and the ledger could not tell otherwise)
+        const { fake, notesOf, runnerOn, work, job } = rig({ noGeneration: true });
         fake.state.turnScript.push(async function* () {
             yield { type: 'created', id: 'r', sessionId: 's' };
             yield { type: 'completed', outputText: 'Filed. [[done]]', usage: null };
         });
-        void notesOf;
         await work(runnerOn(notesOf('A'), 'run1'));
         expect(fake.state.intents).toEqual([]);
+        expect(fake.state.finishes).toHaveLength(1);
+        expect('generation' in fake.state.finishes[0]).toBe(false);
         expect(fake.state.ledger).toEqual([{ outcome: 'done', cause: undefined, why: undefined, turns: undefined, run: undefined, by: 'finish' }]);
         expect(job.jobId).toBeTruthy();
     });
@@ -656,13 +712,15 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
     });
 
     it('a give-up of the same runner begun on the OLD generation, after the generation moved: its finish is answered stale, the job is read again, and the end is completed from the intent, once', async () => {
-        const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig({ finish: (n) => (n === 1 ? 'down' : 'ok') });
+        // Orbit processes BOTH finishes: the first names the generation the give-up began on and is answered stale, the second names the one the job is on now
+        const { fake, notesOf, runnerOn, poolBusyTurn, work } = rig();
         const notes = notesOf('A');
         const runner = runnerOn(notes, 'run1');
         poolBusyTurn(notes);
         // the generation moves after the intent is kept and before the first finish goes
         fake.state.onIntentKept = () => (fake.state.generation = 2);
         await work(runner);
+        expect(fake.state.finishes.map((one) => one.generation)).toEqual([1, 2]);
         endedOnce(fake);
         expect(fake.state.turnsOpened).toBe(1);
         expect(fake.state.prepares).toBe(1);
@@ -672,15 +730,25 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         const { fake, notesOf, runnerOn, work, job, seenBy } = rig();
         const notes = notesOf('A');
         // the close is slow, and the turn completes while it is being written
+        // no timings: the turn ends only after the close was entered, and the close is released only after the runner has read the end of the turn
+        let entered!: () => void;
+        const closeEntered = new Promise<void>((resolve) => (entered = resolve));
+        let observed!: () => void;
+        const turnObserved = new Promise<void>((resolve) => (observed = resolve));
         const slow = { ...seenBy(notes), closeTurn: async (...args: Parameters<NonNullable<RefusalNotes['closeTurn']>>) => {
-            await new Promise((resolve) => setTimeout(resolve, 250));
+            entered();
+            await turnObserved;
             return notes.closeTurn!(...args);
         } };
         fake.state.turnScript.push(async function* () {
             yield { type: 'created', id: 'r', sessionId: 's' };
             setTimeout(() => notes.record(job.botId, job.jobId, poolRefusal), 0);
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            yield { type: 'completed', outputText: 'Filed after all. [[done]]', usage: null };
+            await closeEntered;
+            try {
+                yield { type: 'completed', outputText: 'Filed after all. [[done]]', usage: null };
+            } finally {
+                observed();
+            }
         });
         await work(runnerOn(notes, 'run1', { refusals: slow }));
         expect(fake.state.intents).toEqual([]);

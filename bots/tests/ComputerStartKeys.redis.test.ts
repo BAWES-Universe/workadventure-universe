@@ -141,8 +141,10 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
 
     it('two servers handling the same ask at the same moment (empty memory on both) send the SAME X-Computer-Start-Attempt: one job, never two', async () => {
         const s = 'brick-race';
-        // a record a run that was cut short left in a shared Redis must not decide this one
-        await client.del(startKeyNameOf('brick-race|uuid-race'));
+        // a Brick and a person of this run alone: no record a run that was cut short left in a shared Redis can decide this one, and none of this run's is left behind
+        const botId = `brick-race-${run}`;
+        const userId = `uuid-race-${run}`;
+        scopes.push(`${botId}|${userId}`);
         const ask = () => {
             const sent: string[] = [];
             const admin = {
@@ -152,22 +154,22 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
                 }),
             };
             const store = new RedisStartKeys(() => client as never);
-            return { sent, run: () => runDelivered({ job: `Race ${s} ${run}` }, { admin: admin as never, botId: 'brick-race', userId: 'uuid-race', startKeys: new Map(), startKeyStore: store }) };
+            return { sent, run: () => runDelivered({ job: `Race ${s} ${run}` }, { admin: admin as never, botId, userId, startKeys: new Map(), startKeyStore: store }) };
         };
         const servers = Array.from({ length: 6 }, ask);
         await Promise.all(servers.map((one) => one.run()));
         const keys = servers.flatMap((one) => one.sent);
         expect(keys).toHaveLength(6);
         expect(new Set(keys).size).toBe(1);
-        // tidy: the scope this test made (its name is a hash of the Brick and person)
-        const name = startKeyNameOf('brick-race|uuid-race');
-        expect(JSON.parse((await client.get(name)) ?? 'null')).toMatchObject({ key: keys[0] });
-        await client.del(name);
+        expect(JSON.parse((await client.get(startKeyNameOf(`${botId}|${userId}`))) ?? 'null')).toMatchObject({ key: keys[0] });
     });
 
     it('a new ask racing a stored one between a read and a write has no gap: the stored key is the one sent, after a restart too (a fresh memory)', async () => {
         const store = new RedisStartKeys(() => client as never);
         const job = `Stored ${run}`;
+        const botId = `brick-stored-${run}`;
+        const userId = `uuid-stored-${run}`;
+        scopes.push(`${botId}|${userId}`);
         const sent: string[] = [];
         const admin = {
             startComputerJob: vi.fn(async (_bot: string, _user: string, body: { startKey: string }) => {
@@ -175,11 +177,27 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
                 return { ok: false, reason: 'starting' };
             }),
         };
-        const ask = () => runDelivered({ job }, { admin: admin as never, botId: 'brick-stored', userId: 'uuid-stored', startKeys: new Map(), startKeyStore: store });
+        const ask = () => runDelivered({ job }, { admin: admin as never, botId, userId, startKeys: new Map(), startKeyStore: store });
         await ask();
         await Promise.all([ask(), ask(), ask()]);
         expect(new Set(sent).size).toBe(1);
-        await client.del(startKeyNameOf('brick-stored|uuid-stored'));
+    });
+
+    it('the way weighed that is stored with a key is always read back: a connected app with a very long name is held to the length of a name the model gives, so the key can still be resent with its words after a restart', async () => {
+        const store = new RedisStartKeys(() => client as never);
+        const botId = `brick-long-${run}`;
+        const userId = `uuid-long-${run}`;
+        scopes.push(`${botId}|${userId}`);
+        const longName = `Acme ${'Ledger '.repeat(400)}`;
+        const admin = { startComputerJob: vi.fn(async () => ({ ok: false, reason: 'unknown' })) };
+        await runDelivered({ job: 'Reconcile the books', details: longName.trim(), app_steps: 5, app_cannot: 'the app has no such action at all' }, { admin: admin as never, botId, userId, apps: [longName.trim()], startKeys: new Map(), startKeyStore: store });
+        expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+        const stored = JSON.parse((await client.get(startKeyNameOf(`${botId}|${userId}`))) ?? 'null') as { key: string; payload?: { plan?: { app: string } } };
+        expect(stored.payload?.plan?.app.length).toBeGreaterThan(0);
+        expect(stored.payload!.plan!.app.length).toBeLessThanOrEqual(120);
+        // a restarted server reads it back with its words
+        const read = await store.claim(`${botId}|${userId}`, { key: 'another-key-0001', at: Date.now() }, LIFE, LIFE);
+        expect(read).toMatchObject({ key: stored.key, payload: { plan: { app: stored.payload!.plan!.app } } });
     });
 
     it('deletes only the key it is told: the key of an ask that started again since stays, and a missing key is nothing', async () => {

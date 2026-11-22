@@ -713,23 +713,32 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
 
     describe('an answer that comes late for an attempt the shared entry has left (CodeRabbit on cb0aebad; GPT round 4 made it impossible)', () => {
         const scopeOf = `${BRICK}|uuid-alice`;
-        const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+        // No timers: a call is entered when its mock says so, and "has not gone out" is read after every pending step of the other call has run (many turns of the microtask queue)
+        const deferred = () => {
+            let resolve!: () => void;
+            const promise = new Promise<void>((done) => (resolve = done));
+            return { promise, resolve };
+        };
+        const settle = async () => {
+            for (let step = 0; step < 100; step++) await Promise.resolve();
+        };
 
         it('a second ask never goes out while the first is in flight: it waits and sees how it ended, so an answer cannot come late for a key the entry has left', async () => {
             const { store, held } = sharedStore();
             const memory = new Map<string, StartKeyEntry>();
             let answerFirst!: () => void;
-            const first = { startComputerJob: vi.fn(async () => { await new Promise<void>((resolve) => (answerFirst = resolve)); return { ok: true, job: job(), restoredFrom: null }; }) };
+            const entered = deferred();
+            const first = { startComputerJob: vi.fn(async () => { entered.resolve(); await new Promise<void>((resolve) => (answerFirst = resolve)); return { ok: true, job: job(), restoredFrom: null }; }) };
             const retry = asking({ ok: false, reason: 'unknown' });
             const ask = (admin: unknown, title = 'Visa form') => runDelivered({ job: title }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
             const one = ask(first);
-            await tick();
+            await entered.promise;
             const k1 = keysOf(first as never)[0];
             // another server settles K1 and holds K2 for the next ask while the first is still waiting for its answer
             held.clear();
             held.set(scopeOf, { key: 'second-attempt-02', at: Date.now(), payload: { title: 'Visa form' }, keepMs: OPEN_START_KEEP_MS });
             const two = ask(retry, 'Another job');
-            await tick();
+            await settle();
             // the retry has NOT gone out: it waits for the first
             expect(retry.startComputerJob).not.toHaveBeenCalled();
             answerFirst();
@@ -748,14 +757,15 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
             const { store } = sharedStore();
             const memory = new Map<string, StartKeyEntry>();
             let fail!: () => void;
-            const first = { startComputerJob: vi.fn(async () => { await new Promise<void>((_resolve, reject) => (fail = () => reject(new Error('nothing sent')))); }) };
+            const entered = deferred();
+            const first = { startComputerJob: vi.fn(async () => { entered.resolve(); await new Promise<void>((_resolve, reject) => (fail = () => reject(new Error('nothing sent')))); }) };
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
             const ask = (admin: unknown) => runDelivered({ job: 'Visa form' }, { admin: admin as never, botId: BRICK, userId: 'uuid-alice', startKeys: memory, startKeyStore: store });
             const one = ask(first);
-            await tick();
+            await entered.promise;
             const retry = asking({ ok: false, reason: 'unknown' });
             const two = ask(retry);
-            await tick();
+            await settle();
             expect(retry.startComputerJob).not.toHaveBeenCalled();
             fail();
             await one;

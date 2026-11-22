@@ -486,6 +486,128 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(await held(who)).toBeNull();
         });
 
+        it('CodeRabbit O1/#1: A is unknown and the next ask B resends A\'s words, which makes A\'s job: every other call of that reply (B reworded, B again, A again) is told of that job and sends nothing; the record goes once the reply is delivered; the next message starts a job of its own', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            orbit.onPost = 'limiter-before-commit';
+            orbit.onGet = 'none';
+            const server = process_(orbit, who);
+            expect(await askWith(server, SAID)).toMatchObject({ started: false, unknown: true });
+            const key = orbit.posts[0].key;
+            // the person's next message: the chat asks something else, in one reply with several calls
+            forgetSettledStarts(server.memory);
+            orbit.onPost = 'whole';
+            orbit.posts = [];
+            const queue = new ConfirmationQueue();
+            const call = (args: Record<string, unknown>) => runComputerTool(args, { ...server.context, confirmations: queue }) as Promise<Record<string, unknown>>;
+            const first = await call({ job: 'Book me a table for Friday' });
+            expect(orbit.posts).toHaveLength(1);
+            expect(orbit.posts[0].key).toBe(key);
+            expect(first).toMatchObject({ started: true, earlier: true });
+            const reworded = await call({ job: 'Reserve a table on Friday evening' });
+            const again = await call({ job: 'Book me a table for Friday' });
+            const visa = await call(SAID);
+            for (const answer of [reworded, again, visa]) expect(answer).toMatchObject({ started: false, found: true, earlier: true });
+            expect(orbit.posts).toHaveLength(1);
+            expect(orbit.jobs.size).toBe(1);
+            expect(orbit.reservations).toBe(1);
+            expect(orbit.acks).toEqual([]);
+            expect(await held(who)).not.toBeNull();
+            await queue.deliver();
+            expect(orbit.acks).toHaveLength(1);
+            expect(orbit.acks[0].attempt).toBe(key);
+            expect(await held(who)).toBeNull();
+            // a deliberate ask in the next message is a job of its own
+            forgetSettledStarts(server.memory);
+            expect(await server.ask('Book me a table for Friday')).toMatchObject({ started: true });
+            expect(orbit.jobs.size).toBe(2);
+            expect(orbit.reservations).toBe(2);
+        });
+
+        it('CodeRabbit O1: the job the resend made is kept under the ask that SENT it: with the turn-wide answer gone, A asked again in the same turn goes under A\'s own key (the same job), never a new key and a second job', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            orbit.onPost = 'limiter-before-commit';
+            orbit.onGet = 'none';
+            const server = process_(orbit, who);
+            await askWith(server, SAID);
+            const key = orbit.posts[0].key;
+            forgetSettledStarts(server.memory);
+            orbit.onPost = 'whole';
+            expect(await server.ask('Book me a table for Friday')).toMatchObject({ started: true, earlier: true });
+            // the resend was confirmed once its reply was delivered, so Orbit no longer guards: only A's own key keeps the second ask from being a second job
+            expect(orbit.jobs.get(key)?.acked).toBe(true);
+            server.memory.delete(FOUND_EARLIER_SLOT);
+            orbit.posts = [];
+            await askWith(server, SAID);
+            expect(orbit.jobs.size).toBe(1);
+            expect(orbit.reservations).toBe(1);
+            expect(orbit.posts.every((one) => one.key === key)).toBe(true);
+        });
+
+        it('the same, when the resend finds A\'s job already DONE: the later calls of the reply are told of it, and A asked again is not sent as a new job', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            orbit.onPost = 'limiter-before-commit';
+            orbit.onGet = 'none';
+            const server = process_(orbit, who);
+            await askWith(server, SAID);
+            const key = orbit.posts[0].key;
+            forgetSettledStarts(server.memory);
+            orbit.onPost = 'whole';
+            orbit.status = 'done';
+            orbit.posts = [];
+            const first = await server.ask('Book me a table for Friday');
+            expect(first).toMatchObject({ started: false, done: true, earlier: true });
+            expect(await askWith(server, SAID)).toMatchObject({ done: true, earlier: true });
+            expect(orbit.posts).toHaveLength(1);
+            expect(orbit.posts[0].key).toBe(key);
+            expect(orbit.jobs.size).toBe(1);
+        });
+
+        it('CodeRabbit #2: Orbit answers `earlier` and the record of the key that made nothing is still being deleted: an overlapping call of the reply (another title) is answered with the earlier job at once and goes nowhere near Orbit', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            orbit.onPost = 'lose-after-commit';
+            orbit.onGet = 'silent';
+            const before = process_(orbit, who);
+            await before.ask('Fill in my visa form', { deliver: false });
+            await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+            orbit.onPost = 'whole';
+            orbit.onGet = 'truth';
+            orbit.posts = [];
+            const server = process_(orbit, who);
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            const real = RedisStartKeys.prototype.delete;
+            let entered = 0;
+            const spy = vi.spyOn(RedisStartKeys.prototype, 'delete').mockImplementation(async function (this: RedisStartKeys, scope: string, key: string) {
+                entered += 1;
+                await gate;
+                return real.call(this, scope, key);
+            });
+            try {
+                const queue = new ConfirmationQueue();
+                const call = (job: string) => runComputerTool({ job }, { ...server.context, confirmations: queue }) as Promise<Record<string, unknown>>;
+                const one = call('Book me a table for Friday');
+                const end = Date.now() + 3000;
+                while (entered === 0 && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 5));
+                expect(entered).toBeGreaterThan(0);
+                const posts = orbit.posts.length;
+                const other = await call('Reserve a table on Friday evening');
+                expect(other).toMatchObject({ started: false, earlier: true });
+                expect(orbit.posts).toHaveLength(posts);
+                release();
+                expect(await one).toMatchObject({ started: false, earlier: true });
+                expect(orbit.posts).toHaveLength(posts);
+                expect(orbit.jobs.size).toBe(1);
+                expect(orbit.reservations).toBe(1);
+            } finally {
+                release();
+                spy.mockRestore();
+            }
+        });
+
         it('the same ask sent again unchanged is told as an ordinary start (nothing to say about an earlier job)', async () => {
             const who = ids();
             const orbit = new FakeOrbit();
@@ -620,6 +742,8 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                     expect(orbit.lookups).toEqual([original]);
                     // the look-up itself confirmed nothing: the guard still stands for the job the game never learned of
                     expect(orbit.jobs.get(original)?.acked).toBe(false);
+                    // and the game confirmed nothing either: it never held the result (the reply was lost)
+                    expect(orbit.acks).toEqual([]);
                     // the record is gone (24 h life) and the process is a fresh one
                     await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
                     orbit.onPost = 'whole';
@@ -657,6 +781,8 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                     expect(await server.ask('Fill in my visa form')).toMatchObject({ done: true, earlier: true });
                     expect(orbit.posts).toEqual([]);
                     expect(orbit.jobs.get(original)?.acked).toBe(true);
+                    // the confirmation is the game's own explicit one (an Orbit whose read confirms would make `acked` true on its own, so this is what shows the game sent it): exactly one
+                    expect(orbit.acks).toEqual([{ attempt: original, userId: who.userId }]);
                     forgetSettledStarts(server.memory);
                     expect(await server.ask('Fill in my visa form')).toMatchObject({ started: true });
                     expect(orbit.jobs.size).toBe(2);

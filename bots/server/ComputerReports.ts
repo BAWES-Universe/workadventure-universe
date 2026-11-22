@@ -92,9 +92,9 @@ const DOMAIN_DOT = /(?<=[\p{L}\p{N}])[.\u3002\uff0e\uff61](?=[\p{L}\p{N}])/gu;
 /**
  * The Apps of a late report as plain names: no markup or control characters, and nothing a chat could turn into a link (the name of an App is not ours: an address or a
  * domain in it is written `example·com`, `https: //example·com`, which reads as what it is and is no link), whole characters, no repeats, in the order Orbit gave them.
- * `names` are the ones to say (at most APPS_KEPT); `total` is how many distinct names there were in all, counted before that limit.
+  * `names` are the ones to say (at most `keep`, APPS_KEPT unless said); `total` is how many distinct names there were in all, counted before that limit.
  */
-function appsOf(raw: unknown): { names: string[]; total: number } {
+function appsOf(raw: unknown, keep = APPS_KEPT): { names: string[]; total: number } {
     if (!Array.isArray(raw)) return { names: [], total: 0 };
     const seen = new Set<string>();
     const names: string[] = [];
@@ -110,7 +110,7 @@ function appsOf(raw: unknown): { names: string[]; total: number } {
             .trim();
         if (!plain || seen.has(plain.toLowerCase())) continue;
         seen.add(plain.toLowerCase());
-        if (names.length < APPS_KEPT) names.push(plain);
+        if (names.length < keep) names.push(plain);
     }
     return { names, total: seen.size };
 }
@@ -149,10 +149,14 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     const kind = report.kind as ReportKind;
     const seq = typeof report.seq === 'number' && Number.isFinite(report.seq) ? report.seq : null;
     const { names: apps, total: appsTotal } = kind === 'late' ? appsOf(report.apps) : { names: [], total: 0 };
-    const searchApps = kind === 'late' ? appsOf(report.searchApps).names : [];
+    // Which of the Apps were searches is known for EVERY name Orbit listed (not only the ones the message says): an App that is said can come last in a long list of searches
+    const searchApps = kind === 'late' ? appsOf(report.searchApps, Number.POSITIVE_INFINITY).names : [];
     // "You weren't charged" is only said when Orbit says the hold was released, and an App is only named when there is a name to say: otherwise there is nothing true to tell
     // Orbit numbers every late report, and refuses (400) the acknowledgement of one that has no number: a late report without a number is never told, so it is never acknowledged without one (a refusal that would come back for ever)
-    if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true || seq === null)) return null;
+    // The acknowledgement of a late report names how far the report went (`through`, the moment of the latest confirmation it lists): Orbit marks only what was confirmed up to it as told. One that does not
+    // say it cannot be acknowledged for what it listed (Orbit would cover whatever was confirmed by the time of the acknowledgement, App steps the chat never read), so it is never told
+    const through = kind === 'late' && typeof report.through === 'string' && Number.isFinite(Date.parse(report.through)) ? report.through : null;
+    if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true || seq === null || through === null)) return null;
     // A wait is told by its number: without one it could not be marked as told for that wait only
     if (kind === 'needs' && (seq === null || waiting(report.waitingFor) === null)) return null;
     return {
@@ -179,7 +183,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         appsTotal,
         searchApps,
         holdReleased: kind === 'late' && report.holdReleased === true,
-        through: kind === 'late' && typeof report.through === 'string' && Number.isFinite(Date.parse(report.through)) ? report.through : null,
+        through,
     };
 }
 

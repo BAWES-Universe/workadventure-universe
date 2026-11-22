@@ -3428,6 +3428,14 @@ describe('calls of a job that arrive at another bot server', () => {
                             const rig = await closeWith('once');
                             rig.store.state.commitLostAfter = 3;
                             expect(await rig.a.commitTurn!('once', rig.attempt)).toBe(false);
+                            // the job has ANOTHER fence in the store, committed, for another turn and run: the cleanup of the first must never touch it
+                            rig.store.state.commitLostAfter = 0;
+                            await begin(rig.a, 'once', 2, 'run-2');
+                            const sinceTwo = rig.a.mark();
+                            rig.advance(10);
+                            const second: CloseAttempt = {};
+                            expect(await rig.a.closeTurn('once', sinceTwo, second)).toBe(true);
+                            expect(await rig.a.commitTurn!('once', second)).toBe(true);
                             rig.store.state.failRetract = 6;
                             const before = rig.store.state.retractWaiting;
                             await rig.a.reopenTurn('once', rig.attempt);
@@ -3441,6 +3449,9 @@ describe('calls of a job that arrive at another bot server', () => {
                             expect(rig.a.fenceCleanupsPending()).toBe(1);
                             rig.store.state.failRetract = 0;
                             await vi.waitFor(() => expect(rig.a.fenceCleanupsPending()).toBe(0));
+                            // the fence of the first close is gone (its turn takes calls again) and the other turn's committed fence still stands
+                            expect(await rig.b.accepted('once', { turn: 1, run: 'run-1' })).toBe(true);
+                            expect(await rig.b.accepted('once', { turn: 2, run: 'run-2' })).toBe(false);
                             // one background chain, not one per call: after it has confirmed, nothing more is asked
                             await new Promise((resolve) => setTimeout(resolve, 60));
                             // (six failed foreground tries, the one plain retraction of the other moment, and the one background retraction that confirmed)
