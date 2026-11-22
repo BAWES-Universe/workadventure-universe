@@ -282,7 +282,11 @@ async function control(name: string, args: Record<string, unknown>, context: Com
                 if (!answer.ok) return refused(reasonOf(answer), running && reasonOf(answer) === 'taken_over' ? running : job, view);
                 const nowHas = answer.view?.job?.id === job.id;
                 // The mock's two lines: what has the computer now, then the job that was working, paused, which carries on by itself right after
-                if (running) return { result: { done: true }, lines: [lineOf(nowHas || !answer.view ? CONTROL_WORDS.firstStarted : CONTROL_WORDS.firstNext, job.title), lineOf(CONTROL_WORDS.firstPausedOther, running.title)] };
+                if (running) {
+                    // signInsKept false: the paused job's sign-ins could not be put away (absent: nothing held the machine, say nothing)
+                    const pausedLine = lineOf(CONTROL_WORDS.firstPausedOther, running.title) + (answer.signInsKept === false ? ` ${CONTROL_WORDS.signInAgain}` : '');
+                    return { result: { done: true }, lines: [lineOf(nowHas || !answer.view ? CONTROL_WORDS.firstStarted : CONTROL_WORDS.firstNext, job.title), pausedLine] };
+                }
                 if (nowHas) return { result: { done: true }, lines: [lineOf(CONTROL_WORDS.firstStarted, job.title)] };
                 // First on a paused job carries it on (Orbit's rule): said as a resume
                 if (isPaused(job)) return { result: { done: true }, lines: [resumedLine(job, answer.view)] };

@@ -178,6 +178,17 @@ describe('do this first, and do this next', () => {
         expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.firstStarted, 'Taxi booking'), lineOf(CONTROL_WORDS.firstPausedOther, 'Visa form')]);
     });
 
+    it('"do this first" whose paused job lost its sign-ins says so after the paused line; signInsKept true or absent says nothing about sign-ins', async () => {
+        const after = viewOf(working({ id: 'job-taxi', title: 'Taxi booking' }), [inLine('job-visa', 'Visa form')]);
+        for (const [signInsKept, extra] of [[false, ` ${CONTROL_WORDS.signInAgain}`], [true, ''], [undefined, '']] as const) {
+            const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { first: { ...after, ...(signInsKept === undefined ? {} : { signInsKept }) } });
+            const c = chat(orbit.admin);
+            await c.run(JOB_FIRST_TOOL, { job: 'taxi', pause_running: true });
+            expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.firstStarted, 'Taxi booking'), lineOf(CONTROL_WORDS.firstPausedOther, 'Visa form') + extra]);
+        }
+        expect(CONTROL_WORDS.pausedSignInLost.plain.endsWith(CONTROL_WORDS.signInAgain)).toBe(true);
+    });
+
     it('"do this first" when the computer could not take it this second: it is next, and the paused one still comes back after', async () => {
         const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { first: viewOf(null, [inLine('job-taxi', 'Taxi booking'), inLine('job-visa', 'Visa form')]) });
         const c = chat(orbit.admin);

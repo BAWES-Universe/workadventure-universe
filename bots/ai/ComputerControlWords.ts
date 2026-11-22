@@ -88,6 +88,8 @@ export const CONTROL_WORDS = {
         titled: (title) => `${title} is paused and carries on by itself right after it.`,
         plain: 'The job that was working is paused and carries on by itself right after it.',
     } as ControlLine,
+    /** MOCK sentence (the last sentence of "Paused, sign-in could not be put away"), said after the second "Do this first" line when the paused job's sign-ins could not be kept. */
+    signInAgain: "You'll sign in to the site again when it carries on.",
     /** FINAL: "Do this first" when the computer needs a moment: it is first in line (the second line above still follows). */
     firstNext: {
         titled: (title) => `${title} is first in line and starts by itself.`,
