@@ -1465,4 +1465,23 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
             expect(orbit.acted(), said).toEqual(cancels ? [{ action: 'cancel', jobId: 'job-visa' }] : []);
         }
     });
+
+    // CodeRabbit on 8f22995a (old thread r4666780215): the action word at the start of a longer title masks itself the same way
+    it('a title that starts with an action word ("Pause it review") is the title only right after an ending verb: "Yes, pause it" cannot confirm its cancel', async () => {
+        for (const [said, cancels] of [
+            ['Yes, pause it', false],
+            ['Yes, pause it review', false],
+            ['yes pause it', false],
+            ['Yes, cancel Pause it review', true],
+            ['yes, end the pause it review job', true],
+        ] as const) {
+            const orbit = door(viewOf(working({ title: 'Pause it review' })), { cancel: viewOf(null) });
+            const c = chat(orbit.admin);
+            await c.run(CANCEL_JOB_TOOL, { job: 'review' });
+            await c.deliver();
+            c.nextMessage(said);
+            await c.run(CANCEL_JOB_TOOL, { job: 'review' });
+            expect(orbit.acted(), said).toEqual(cancels ? [{ action: 'cancel', jobId: 'job-visa' }] : []);
+        }
+    });
 });

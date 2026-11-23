@@ -171,7 +171,7 @@ function endsJobBefore(tokens: string[], at: number): boolean {
 
 /**
  * Whether a message asks for ANOTHER action than ending (pause, resume, redirect). Words that are part of a job's own title as it was asked about do not count ("Yes, cancel Pause menu audit"
- * confirms the cancel of that job): a run of the message that is a run of two or more words of a title is the title's, and is read out first; a whole one-word title is the title's only right after a verb that ends a job ("yes, cancel Pause"), so a job called "Pause" never turns "Yes, pause it" into a confirmation. "Yes, pause it" has no such run.
+ * confirms the cancel of that job): a run of the message that is a run of the title's words (two or more, or the whole of a one-word title) is the title's, and is read out first, only right after a verb that ends a job ("yes, cancel Pause"), so a job called "Pause" never turns "Yes, pause it" into a confirmation. "Yes, pause it" has no such run.
  */
 function namesAnotherAction(message: string, asks: Array<Pick<ControlAsk, 'titles'>>): boolean {
     const tokens = tokensOf(message);
@@ -185,8 +185,10 @@ function namesAnotherAction(message: string, asks: Array<Pick<ControlAsk, 'title
                 while (at + length < tokens.length && start + length < title.length && tokens[at + length] === title[start + length]) length++;
                 // A title that is a single word is the same word as an action when the job is called "Pause": it is the title only when the person is naming the job to end ("yes, cancel Pause"), never
                 // when it is the action ("yes, pause it"), so it counts as the title only right after an ending verb (with "the", "job"... between)
-                const named = length === 1 && title.length === 1 && endsJobBefore(tokens, at);
-                if (length >= 2 || named) for (let i = 0; i < length; i++) own[at + i] = true;
+                // The same holds for a longer title that starts with an action word ("Pause it review": "Yes, pause it" matches its first two words): a run of the title is the title's, and its action
+                // words are no action, only right after an ending verb
+                const named = (length >= 2 || (length === 1 && title.length === 1)) && endsJobBefore(tokens, at);
+                if (named) for (let i = 0; i < length; i++) own[at + i] = true;
             }
         }
     }
