@@ -403,6 +403,29 @@ describe('finding 6: a continuation Orbit refuses never becomes a fresh paid job
         expect(cannotContinueOf({ why: 'not_continuable', status: 'done' })).toEqual({ why: 'not_continuable', status: 'done' });
         expect(cannotContinueOf({})).toEqual({ why: 'not_continuable' });
         expect(cannotContinueOf({ why: 'something new', endedBy: 'someone' })).toEqual({ why: 'not_continuable' });
+        // Orbit sends what it says about the job under `job` ({ title, status, endedBy }, Orbit B's contract of 23 Nov): read the same there
+        expect(cannotContinueOf({ why: 'not_continuable', job: { title: 'Visa form', endedBy: 'person', status: 'stopped' } })).toEqual({ why: 'not_continuable', endedBy: 'person', status: 'stopped' });
+        expect(cannotContinueOf({ why: 'not_continuable', job: { title: 'Visa form', status: 'done' } })).toEqual({ why: 'not_continuable', status: 'done' });
+        // What the refusal itself names wins, and a `job` that says nothing of the kind leaves the line to name no reason
+        expect(cannotContinueOf({ why: 'not_continuable', endedBy: 'off', job: { endedBy: 'person' } })).toEqual({ why: 'not_continuable', endedBy: 'off' });
+        expect(cannotContinueOf({ why: 'not_continuable', job: { title: 'Visa form' } })).toEqual({ why: 'not_continuable' });
+        expect(cannotContinueOf({ why: 'not_continuable', job: 'Visa form' })).toEqual({ why: 'not_continuable' });
+    });
+
+    // Orbit B's contract of 23 Nov: the words are the same whichever shape the refusal comes in
+    it('says the approved words when Orbit names the job under `job`', async () => {
+        const name = quotedTitle('Visa form');
+        for (const [more, line] of [
+            [{ job: { title: 'Visa form', endedBy: 'person', status: 'stopped' } }, TRY_AGAIN_WORDS.endedByPerson.titled(name)],
+            [{ job: { title: 'Visa form', status: 'done' } }, TRY_AGAIN_WORDS.alreadyFinished.titled(name)],
+            [{ job: { title: 'Visa form', endedBy: 'off' } }, TRY_AGAIN_WORDS.endedByOff.titled(name)],
+        ] as const) {
+            const { answer, lines, offered } = await start('not_continuable', more as Record<string, unknown>);
+            expect(answer).toMatchObject({ started: false, reason: 'cannot_continue' });
+            expect(lines).toEqual([line]);
+            expect(offered).toEqual(['Visa form']);
+            request.mockClear();
+        }
     });
 
     it('names no title when there is none to name, and the words stand on their own', () => {

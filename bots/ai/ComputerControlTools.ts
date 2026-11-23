@@ -490,6 +490,12 @@ function refused(reason: string, job: ComputerControlJob, view: ComputerControlV
         case 'unknown':
             // Not a failure: it may have happened. Not success either
             return { result: { done: false, unknown: true }, lines: [CONTROL_REFUSALS.unknown] };
+        // Orbit would not take the control's own id (finding 4): none was sent, or the same one came with other arguments. Nothing was done, and it is a fault of ours, never
+        // something the person did: they are told it could not be done, and the log says what Orbit refused so it is not silent
+        case 'command_missing':
+        case 'command_reused':
+            console.warn(`[ComputerControlTools] Orbit would not take a control's own id: ${reason}`);
+            return no(CONTROL_REFUSALS.couldNot);
         default:
             return no(CONTROL_REFUSALS.couldNot);
     }

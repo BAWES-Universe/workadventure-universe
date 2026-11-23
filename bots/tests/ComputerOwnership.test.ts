@@ -326,11 +326,12 @@ describe('GPT fifth note, E1/E2: the worker claims the job first, and names its 
         expect(fake.state.superseded).toEqual([]);
     });
 
-    it('a claim that lands after another worker claimed is told so: the job is read again and claimed on what it shows, at most three times, then the run is over with nothing sent', async () => {
+    // GPT's sixth answer, finding 3: the job is read again ONCE, never in a loop
+    it('a claim that lands after another worker claimed is told so: the job is read again and claimed on what it shows ONCE, then the run is over with nothing sent', async () => {
         // Another claim lands ahead of each of this worker's tries
         const fake = ownedOrbit(JOB, { epoch: 0, before: { claim: () => void fake.replace() } });
         await runJob(fake);
-        expect(fake.of('claim')).toHaveLength(3);
+        expect(fake.of('claim')).toHaveLength(2);
         // Nothing but claims: no prepare, no turn, no finish, no cancel, no renewal, and the other worker's marker stands
         expect(fake.asked().every((kind) => kind === 'claim')).toBe(true);
         expect(fake.state.cancelled).toEqual([]);
@@ -464,6 +465,38 @@ describe('GPT fifth note, E1/E2: the worker claims the job first, and names its 
         });
     });
 
+    /**
+     * Test G3 (GPT's sixth answer, deferral 7): a turn whose stream never began — the connection dropped, so Orbit never answered and this worker cannot tell whether the turn opened —
+     * with the job already another worker's since. The old worker counts it as a failed turn of its own and sends the end of the streak; the fence is what keeps the replacement whole:
+     * Orbit answers the finish stale, NOTHING is ended, nothing is cancelled, and the old worker stops there without claiming the job back.
+     */
+    it('G3: a turn lost before its stream began, with the job another worker\'s since, ends nothing: the old finish is fenced and the worker stops there', async () => {
+        // Its own reads lag (a replica that has not seen the other claim), so it works on to the end of its streak instead of being told by a read
+        const fake = ownedOrbit(JOB, { epoch: 1, staleReads: true });
+        let lost = 0;
+        const dropped = async (): Promise<TurnOpened> => {
+            lost += 1;
+            // The other worker claims while the third turn is on its way: its request never reached Orbit, so no ownership was checked for it
+            if (lost === RUNNER_GUARDS.maxBadTurns) fake.replace();
+            return { ok: false, reason: 'failed' };
+        };
+        fake.orbit.turn = dropped;
+        fake.orbit.stream = dropped;
+        await runJob(fake);
+        expect(lost).toBe(RUNNER_GUARDS.maxBadTurns);
+        const ends = fake.of('finish');
+        expect(ends).toHaveLength(1);
+        expect(ends[0].epoch).toBe(2);
+        expect(ends[0].answer).toBe('superseded');
+        expect(fake.state.ended).toBeNull();
+        expect(fake.state.status).toBe('running');
+        expect(fake.state.cancelled).toEqual([]);
+        // The replacement's key, provider turn, reservation and admitted call are all where they were
+        expect(fake.markerIntact()).toBe(true);
+        // It does not claim the job back, and sends no second end
+        expect(fake.of('claim')).toHaveLength(1);
+    });
+
     it('E2: a worker that finds the job on an epoch it did not claim (another worker claimed while it worked) does nothing more', async () => {
         const fake = ownedOrbit(JOB, { epoch: 0, turns: [async function* () { fake.replace(); yield { type: 'created', id: 'resp-1', sessionId: 's' }; yield { type: 'completed', outputText: 'Done. [[done]]', usage: null }; }] });
         await runJob(fake);
@@ -502,31 +535,32 @@ describe('GPT fifth note, E1/E2: the worker claims the job first, and names its 
         expect(fake.markerIntact()).toBe(true);
     });
 
-    it('E2: the early failure with no relay address claims first, and ends the job with its run and its epoch', async () => {
+    /**
+     * GPT's sixth answer, finding 3: a bot server with no model relay of its own cannot run any job, so it claims NOTHING and ends NOTHING, whatever state the job is in. It leaves the job
+     * where it is, for a server that has a relay (at once when no worker owns it, after the owner's lease otherwise). A job no server can run is given back when its reservation lapses.
+     */
+    it('a server with no relay address leaves the job alone: no claim, no end, and it says why in the log', async () => {
         const fake = ownedOrbit(JOB, { epoch: 2 });
-        await runJob(fake, JOB, { relayUrl: null });
-        expect(fake.asked()).toEqual(['claim', 'finish']);
-        expect(fake.of('finish')[0].epoch).toBe(3);
-        expect(fake.of('finish')[0].body).toMatchObject({ outcome: 'failed', cause: 'ours', run: 'run1' });
-        expect(fake.state.ended).toMatchObject({ outcome: 'failed', by: 'finish' });
-    });
-
-    it('E2: the early failure of a worker that is not the owner ends nothing (its claim lands after another one)', async () => {
-        const fake = ownedOrbit(JOB, { epoch: 0, before: { claim: () => fake.replace() } });
-        await runJob(fake, JOB, { relayUrl: null });
-        // three claims, each behind another worker's: the run is over with nothing ended
-        expect(fake.of('claim')).toHaveLength(3);
-        expect(fake.of('finish')).toEqual([]);
+        const log = await runJob(fake, JOB, { relayUrl: null });
+        expect(fake.asked()).toEqual([]);
         expect(fake.state.ended).toBeNull();
         expect(fake.state.status).toBe('running');
+        // The owner epoch is untouched, so a worker that CAN run the job claims on what the job shows
+        expect(fake.state.ownerEpoch).toBe(2);
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('COMPUTER_RELAY_URL'));
     });
 
-    it('E2: the early failure completes an end Orbit already holds instead of claiming the job', async () => {
+    it('a server with no relay address does not complete an end Orbit holds either: it is left for a server that can run jobs', async () => {
         const fake = ownedOrbit(JOB, { epoch: 4 });
         fake.state.pending = { outcome: 'failed', cause: 'ours', why: 'pool', turns: [1], run: 'old', generation: 1 };
         await runJob(fake, JOB, { relayUrl: null });
-        expect(fake.of('claim')).toEqual([]);
-        expect(fake.state.ended).toMatchObject({ outcome: 'failed', by: 'intent', why: 'pool' });
+        expect(fake.asked()).toEqual([]);
+        expect(fake.state.ended).toBeNull();
+        // A server WITH a relay completes it, as always
+        const same = ownedOrbit(JOB, { epoch: 4 });
+        same.state.pending = { outcome: 'failed', cause: 'ours', why: 'pool', turns: [1], run: 'old', generation: 1 };
+        await runJob(same);
+        expect(same.state.ended).toMatchObject({ outcome: 'failed', by: 'intent', why: 'pool' });
     });
 
     it('a job that holds an end (a kept finish intent) is completed from any worker with no claim, no prepare and no turn', async () => {
@@ -557,12 +591,12 @@ describe('GPT fifth note, E1/E2: the worker claims the job first, and names its 
         expect(fake.state.ended).toMatchObject({ outcome: 'done', by: 'finish' });
     });
 
-    it('mixed versions: the early failure with no relay address on an Orbit with no epochs still ends the job, naming its run', async () => {
+    it('mixed versions: a server with no relay address leaves a job of an Orbit with no epochs alone too', async () => {
         const fake = ownedOrbit(JOB, { epoch: 'legacy' });
         await runJob(fake, JOB, { relayUrl: null });
-        expect(fake.asked()).toEqual(['finish']);
-        expect(fake.of('finish')[0].epoch).toBeUndefined();
-        expect(fake.of('finish')[0].body).toMatchObject({ run: 'run1', outcome: 'failed', cause: 'ours' });
+        expect(fake.asked()).toEqual([]);
+        expect(fake.state.ended).toBeNull();
+        expect(fake.state.status).toBe('running');
     });
 
     const stillOn = (words = 'Still working on it.') =>
@@ -624,7 +658,6 @@ describe('GPT fifth note, E1/E2: the worker claims the job first, and names its 
             { name: 'more turns than allowed (maxTurns)', make: () => ownedOrbit(JOB, { epoch: 2, turns: [saying('Still on it.'), saying('Still on it.'), saying('Still on it.')] }), guard: 1, outcome: 'failed' },
             { name: 'the machine could not be prepared', make: () => ownedOrbit(JOB, { epoch: 2, prepare: 'failed' }), outcome: 'failed' },
             { name: 'the machine cannot reach the relay (unreachable)', make: () => ownedOrbit(JOB, { epoch: 2, prepare: 'relay_unreachable' }), outcome: 'failed' },
-            { name: 'no relay is set up for the runner at all', make: () => ownedOrbit(JOB, { epoch: 2 }), relay: null, outcome: 'failed' },
             { name: 'a handover Orbit refuses', make: () => ownedOrbit(JOB, { epoch: 2, refuseHandover: true, turns: [saying('Need you. [[handover signin]]')] }), outcome: 'failed' },
             { name: 'the bad-turn streak (three turns in a row end badly)', make: () => ownedOrbit(JOB, { epoch: 2, turns: [failing(), failing(), failing(), failing(), failing()] }), outcome: 'failed' },
         ];

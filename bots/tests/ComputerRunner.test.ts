@@ -453,12 +453,14 @@ describe('a job that runs', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
-    it('ends as failed, and says why in the log, when there is no relay address to give the machine', async () => {
+    // GPT's sixth answer, finding 3: a server with no relay cannot run the job, and must not take it from a server that can, nor end it
+    it('leaves the job alone, and says why in the log, when there is no relay address to give the machine', async () => {
         const { orbit, seen } = fakeOrbit([]);
         await runJob(orbit, JOB, null);
         expect(seen.prepares).toEqual([]);
         expect(seen.turns).toEqual([]);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(finished(seen)).toEqual([]);
+        expect(seen.actions).toEqual([]);
         expect(quiet.error).toHaveBeenCalledWith(expect.stringContaining('COMPUTER_RELAY_URL'));
     });
 
@@ -910,7 +912,7 @@ describe('a turn that is lost, or room that is gone', () => {
             const status = (code: number) => Object.assign(new Error(`status ${code}`), { response: { status: code } });
             const failing: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
 
-            it('sends a failure with its cause AND the generation of the turn it ends: the agent’s own words, turns of ours, a handover Orbit said no to, one it could not take, and no relay', async () => {
+            it('sends a failure with its cause AND the generation of the turn it ends: the agent’s own words, turns of ours, a handover Orbit said no to, and one it could not take; with no relay it ends nothing', async () => {
                 const at = () => ({ status: 'running', control: 'brick', generation: 4 });
                 const agent = fakeOrbit([done('The site is down. [[failed]]')], at);
                 await runJob(agent.orbit);
@@ -931,10 +933,10 @@ describe('a turn that is lost, or room that is gone', () => {
                     expect(finished(handover.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause, generation: 4 }]);
                 }
 
-                // no relay: nothing is read of the job yet, so no generation, and the failure is ours
+                // no relay: the job is left for a server that can run it, so nothing is ended at all (finding 3)
                 const none = fakeOrbit([], at);
                 await runJob(none.orbit, JOB, null);
-                expect(finished(none.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+                expect(finished(none.seen)).toEqual([]);
             });
 
             it('a failure refused as stale ends nothing, and the job is read again: the next failure names its cause with the generation it has now', async () => {

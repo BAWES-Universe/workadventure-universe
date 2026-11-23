@@ -125,9 +125,13 @@ export interface RunnerTiming {
     poolGiveUpMs?: number;
     /** The most a turn that ends waits for the give-up that was still writing to the shared store (a close, or taking one back) to finish: it is bounded, never open-ended. */
     cleanupMs?: number;
+    /** How often the worker that owns a job renews its lease at Orbit, in every state it holds the job (GPT's sixth answer, finding 3). */
+    beatMs?: number;
+    /** How long a lease lasts at Orbit: how long a job another worker holds is left alone when Orbit's `held` answer names no time. */
+    leaseMs?: number;
 }
 
-export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000, cleanupMs: 10_000 };
+export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000, cleanupMs: 10_000, beatMs: 30_000, leaseMs: 90_000 };
 
 export const RUNNER_GUARDS = {
     /** Jobs the runner works on at once. */
@@ -272,6 +276,9 @@ const over = (status: string) => status === 'done' || status === 'stopped' || st
 
 /** How many jobs the runner remembers the note numbers of (the oldest is forgotten first): far more than it ever works on at once. */
 const NOTES_KEPT = 5000;
+
+/** How many jobs the runner remembers another worker's lease for (finding 3). The oldest is forgotten first; a job forgotten early is read again and held off afresh. */
+const HELD_KEPT = 5000;
 
 export interface RunnerDeps {
     orbit: RunnerOrbit;
@@ -488,6 +495,16 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * or a replacement tells Orbit under its own epoch, and never gives the agent the text again. Forgotten when the job is over.
      */
     const notesUntold = new Map<string, number>();
+    /**
+     * Jobs another worker holds with a lease that was still alive when this runner asked for them (Orbit's `held`, GPT's sixth answer, finding 3): when its lease ends, by `now()`. The
+     * runner leaves such a job alone until then and claims NOTHING in between, so a healthy owner is never claimed over and no worker goes round a claim loop. An owner that dies leaves
+     * its lease to lapse, and the job is taken up on the first look after it.
+     */
+    const heldUntil = new Map<string, number>();
+    const holdOff = (jobId: string, until: number): void => {
+        heldUntil.set(jobId, until);
+        if (heldUntil.size > HELD_KEPT) heldUntil.delete(heldUntil.keys().next().value as string);
+    };
     // Counts each start and stop, so a poll that was asked before a stop can tell it was
     let generation = 0;
     // Whether a 400 for the finish intent has been reported to Sentry by this runner (once)
@@ -504,6 +521,61 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
     // What a failure says can hold what a request held (an address, a header): nothing secret reaches a log
     const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? redactSecrets(error.message) : '');
+
+    /**
+     * The jobs this runner's workers own right now (GPT's sixth answer, finding 3): the run that owns each, the epoch it holds, and whether the job is over as far as that worker knows.
+     * While a job is here its lease at Orbit is renewed every `beatMs`, in every state the worker holds it, so another worker never claims over a healthy owner. When the worker stops
+     * gracefully the lease is given back at once, so a replacement takes the job up without waiting for it to lapse.
+     */
+    const owned = new Map<string, { run: string; epoch: number; over?: true }>();
+    const beats = new Map<string, ReturnType<typeof setInterval>>();
+    const stopBeating = (jobId: string): void => {
+        const beat = beats.get(jobId);
+        if (beat) clearInterval(beat);
+        beats.delete(jobId);
+    };
+    /** Renews the lease of a job this runner owns. A stale answer says another run holds it: that run is over (as it is anywhere else) and the beat stops. */
+    const beatOnce = async (job: RunnableJob): Promise<void> => {
+        const mine = owned.get(job.jobId);
+        if (!mine || mine.over || superseded.has(mine.run)) return;
+        try {
+            const answer = await orbit.action(job.botId, job.jobId, { action: 'beat', run: mine.run, epoch: mine.epoch });
+            if (answer.ok === false && runStaleOf(answer)) {
+                superseded.add(mine.run);
+                stopBeating(job.jobId);
+            }
+        } catch (error) {
+            if (staleForOrbit(error) && runStaleOf(error)) {
+                superseded.add(mine.run);
+                stopBeating(job.jobId);
+            } else if (statusOf(error) === 404) mine.over = true;
+            else say('Could not renew the lease of a job:', error);
+        }
+    };
+    /** A worker owns the job under this epoch: its lease is kept alive from now until the worker stops. */
+    const takeLease = (job: RunnableJob, run: string, epoch: number): void => {
+        owned.set(job.jobId, { run, epoch });
+        if (beats.has(job.jobId)) return;
+        const beat = setInterval(() => void beatOnce(job), timing.beatMs ?? 30_000);
+        beat.unref?.();
+        beats.set(job.jobId, beat);
+    };
+    /** The job is over as far as this worker knows (it ended it, or Orbit's finalizer did): there is no lease left to give back. */
+    const leaseOver = (jobId: string): void => {
+        const mine = owned.get(jobId);
+        if (mine) mine.over = true;
+        stopBeating(jobId);
+    };
+    /** Gives the lease back as the worker stops (the server is stopping, a deploy, the job went back in line), so a replacement does not wait for it to lapse. Never throws. */
+    const giveLeaseBack = async (job: RunnableJob): Promise<void> => {
+        stopBeating(job.jobId);
+        const mine = owned.get(job.jobId);
+        owned.delete(job.jobId);
+        if (!mine || mine.over || superseded.has(mine.run)) return;
+        await orbit.action(job.botId, job.jobId, { action: 'release', run: mine.run, epoch: mine.epoch }).catch((error) => {
+            if (statusOf(error) !== 404) say('Could not give a job back as its worker stopped:', error);
+        });
+    };
 
     /**
      * Ends the job at Orbit. A failure says whose it was: `ours` (no relay, a machine that would not get ready, turns that kept going wrong,
@@ -562,6 +634,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 say('Could not end a job:', error);
             }
         });
+        if (!stale && !unsent) leaseOver(job.jobId);
         return stale ? 'stale' : unsent ? 'unsent' : 'ended';
     }
 
@@ -1163,9 +1236,22 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * finish intent or a pool cutoff: no ownership is taken, the end is completed or awaited); 'over' when the job is gone; 'superseded' when another worker kept claiming ahead of this one
      * (a delayed claim always lands there); 'unsent' when Orbit could not be asked or answered something else (asked again after a wait).
      */
-    async function claimJob(job: RunnableJob, run: string, seen: number, signal: AbortSignal): Promise<{ kind: 'owned'; epoch: number } | { kind: 'pending' | 'over' | 'superseded' | 'unsent' | 'stopped' | 'left' }> {
+    /**
+     * When the lease of the worker that holds a job ends, from what Orbit's `held` answer says (`until`: an ISO time or a count of milliseconds). An answer that names none, or names
+     * something that cannot be read or is already past, is taken as a whole lease from now; one that names a time far ahead is held to one lease, so a wrong answer cannot park a job.
+     */
+    function leaseEndsAt(until: unknown): number {
+        const lease = timing.leaseMs ?? 90_000;
+        const at = now();
+        const read = typeof until === 'number' ? until : typeof until === 'string' ? Date.parse(until) : Number.NaN;
+        if (!Number.isFinite(read) || read <= at) return at + lease;
+        return Math.min(read, at + lease);
+    }
+
+    async function claimJob(job: RunnableJob, run: string, seen: number, signal: AbortSignal): Promise<{ kind: 'owned'; epoch: number } | { kind: 'held'; until: number } | { kind: 'pending' | 'over' | 'superseded' | 'unsent' | 'stopped' | 'left' }> {
         let at = seen;
-        for (let attempt = 0; attempt < 3; attempt++) {
+        // Read again and claim on what the job shows AT MOST ONCE (finding 3): a worker that lands behind another's claim twice leaves the job to it instead of going round again
+        for (let attempt = 0; attempt < 2; attempt++) {
             if (signal.aborted) return { kind: 'stopped' };
             let answer: Record<string, unknown>;
             try {
@@ -1183,6 +1269,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (answer.ok === true && typeof answer.epoch === 'number' && Number.isInteger(answer.epoch) && answer.epoch > 0) return { kind: 'owned', epoch: answer.epoch };
             if (answer.reason === 'finish_pending' || answer.reason === 'cutoff') return { kind: 'pending' };
             if (answer.reason === 'over') return { kind: 'over' };
+            // The job has a healthy owner: its lease was still alive. Nothing is claimed, nothing is read again, and the job is left alone until the lease ends (finding 3)
+            if (answer.reason === 'held') return { kind: 'held', until: leaseEndsAt(answer.until) };
             // The job went back in line (paused, or put behind a job done first) before this worker could claim it: it is not this worker's, and its next stretch is claimed afresh
             if (answer.reason === 'not_running') return { kind: 'left' };
             if (answer.reason !== 'stale' && answer.reason !== 'superseded') return { kind: 'unsent' };
@@ -1206,21 +1294,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         // The ownership epoch this worker holds the job under (Orbit gives it at a claim): every request that changes the job carries it. Undefined for an Orbit that has no epochs
         let epoch: number | undefined;
         const held = (): { epoch?: number } => (epoch === undefined ? {} : { epoch });
+        // This bot server has no model relay of its own, so it cannot run ANY job (GPT's sixth answer, finding 3): it claims nothing and ends nothing, and leaves the job where it is, so a
+        // server that has a relay takes it up (at once when no one owns it, after the owner's lease otherwise). A job no server can run is given back by Orbit when its reservation lapses.
+        // Ending it here would end the jobs of a whole deployment from one misconfigured server, and claiming it would take it from a worker that is running it.
         if (!deps.relayUrl) {
-            log.error('[ComputerRunner] A job cannot run: no address is set for the model relay (COMPUTER_RELAY_URL or BOT_SERVER_URL).');
-            // The end of a job is a request like any other: it names its run, and (for an Orbit with owners) the job is claimed first, so a worker that never owned the job cannot end it
-            const known = await orbit.job(job.botId, job.jobId).catch(() => undefined);
-            if (known === null || (known && over(known.status))) return;
-            if (known?.finishPending) {
-                await completePending(job, known.finishPending, signal, known.generation, known.ownerEpoch);
-                return;
-            }
-            if (known?.ownerEpoch !== undefined) {
-                const claimed = await claimJob(job, run, known.ownerEpoch, signal);
-                if (claimed.kind !== 'owned') return;
-                epoch = claimed.epoch;
-            }
-            await finish(job, 'failed', { signal, cause: 'ours', run, ...(epoch === undefined ? {} : { epoch }) });
+            log.error('[ComputerRunner] A job cannot run here and was left for another server: no address is set for the model relay (COMPUTER_RELAY_URL or BOT_SERVER_URL).');
             return;
         }
         // A give-up this runner owes Orbit for this job (a worker of it was stopped while Orbit had not taken the finish): it is finished BEFORE anything else, so no new turn opens until
@@ -1307,6 +1385,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             const state = await orbit.job(job.botId, job.jobId).catch(() => undefined);
             if (state === null || (state && over(state.status))) {
                 forget();
+                leaseOver(job.jobId);
                 return;
             }
             if (state === undefined) {
@@ -1345,7 +1424,17 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     return;
                 }
                 const claimed = await claimJob(job, run, state.ownerEpoch, signal);
-                if (claimed.kind === 'stopped' || claimed.kind === 'over' || claimed.kind === 'left') return;
+                if (claimed.kind === 'over') {
+                    leaseOver(job.jobId);
+                    return;
+                }
+                if (claimed.kind === 'stopped' || claimed.kind === 'left') return;
+                // The job has a healthy owner (its lease is alive): this worker leaves it alone until the lease ends, and claims nothing in between (finding 3)
+                if (claimed.kind === 'held') {
+                    holdOff(job.jobId, claimed.until);
+                    log.info?.(`[ComputerRunner] A job is already being run by another worker and was left to it until its lease ends.`);
+                    return;
+                }
                 if (claimed.kind === 'superseded') {
                     superseded.add(run);
                     return;
@@ -1356,6 +1445,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     continue;
                 }
                 epoch = claimed.epoch;
+                takeLease(job, run, epoch);
             }
             // A job that was paused and carries on: the agent is told so in its first words (the same conversation goes on), and is given the job again, since it may never have
             // had a turn of it. Only while its first words are still to be taken: a turn of this stretch already going is reconnected to as usual
@@ -1733,9 +1823,17 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         if (stopped || mine !== generation) return;
         for (const job of jobs) {
             if (workers.has(job.jobId) || workers.size >= RUNNER_GUARDS.maxJobs) continue;
+            // A job another worker holds with a live lease is left alone until that lease ends: nothing is claimed for it in between (finding 3)
+            const until = heldUntil.get(job.jobId);
+            if (until !== undefined) {
+                if (until > now()) continue;
+                heldUntil.delete(job.jobId);
+            }
             const controller = new AbortController();
             const done = work(job, controller.signal)
                 .catch((error) => say('A job stopped on an error:', error))
+                // A worker that stops while it still owns a job gives its lease back at once, so a replacement takes the job up without waiting for the lease to lapse
+                .finally(() => giveLeaseBack(job))
                 .finally(() => workers.delete(job.jobId));
             workers.set(job.jobId, { controller, done });
         }

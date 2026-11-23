@@ -647,8 +647,13 @@ export function cannotContinueOf(data: Record<string, unknown>): CannotContinue 
     const whys: readonly CannotContinue['why'][] = ['not_found', 'not_theirs', 'live', 'not_continuable', 'no_conversation'];
     const said = typeof data.why === 'string' ? data.why : '';
     const why = whys.find((one) => one === said) ?? 'not_continuable';
-    const endedBy = data.endedBy === 'person' || data.endedBy === 'off' ? (data.endedBy as 'person' | 'off') : undefined;
-    const status = typeof data.status === 'string' && data.status ? data.status.slice(0, 40) : undefined;
+    // Orbit names who ended the job and how it stood on the refusal itself or under `job` (`{ why, job: { title, status, endedBy } }`): both are read, so the words are the right
+    // ones whichever shape comes back. Nothing is guessed from a shape that has neither
+    const about = isPlainObject(data.job) ? data.job : {};
+    const by = data.endedBy ?? about.endedBy;
+    const how = typeof data.status === 'string' && data.status ? data.status : about.status;
+    const endedBy = by === 'person' || by === 'off' ? (by as 'person' | 'off') : undefined;
+    const status = typeof how === 'string' && how ? how.slice(0, 40) : undefined;
     return { why, ...(endedBy ? { endedBy } : {}), ...(status ? { status } : {}) };
 }
 

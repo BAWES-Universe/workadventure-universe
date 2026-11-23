@@ -1108,6 +1108,27 @@ describe('finding 4: each control goes to Orbit under its own id', () => {
         expect(orbit.asks.every((ask) => ask.commandId === undefined)).toBe(true);
     });
 
+    // Orbit B's contract of 23 Nov: a control with no id, or an id reused with other arguments, is refused with 400 and NOTHING is done
+    it('a control Orbit refuses for its id is not told as done, and the log says which refusal it was', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try {
+            for (const reason of ['command_missing', 'command_reused'] as const) {
+                const orbit = door(viewOf(working()));
+                orbit.admin.controlComputerJobs.mockImplementation(async (_bot: string, _user: string, ask: ComputerControlAsk) => {
+                    orbit.asks.push(ask);
+                    return ask.action === 'list' ? controlAnswerOf(viewOf(working())) : { ok: false as const, reason };
+                });
+                const c = chat(orbit.admin);
+                const answer = await c.run(PAUSE_JOB_TOOL);
+                expect(answer, reason).toMatchObject({ done: false, success: false, reason });
+                expect(c.queue.tell(), reason).toEqual([CONTROL_REFUSALS.couldNot]);
+                expect(warn, reason).toHaveBeenCalledWith(expect.stringContaining(reason));
+            }
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     it('a control asked outside a chat message still goes under one id for the turn', async () => {
         const orbit = door(viewOf(working()));
         const state = newControlState();
