@@ -81,7 +81,9 @@ describe("calls on one job of a Brick's computer", () => {
     it("pauses a job and shows the computer Orbit answers with: the job paused in line", async () => {
         game.brickComputerJobAction.mockResolvedValue(computer({ machine: "resting", queued: [pausedVisa] }));
         expect(await brickComputerJobAction(BRICK, "j1", "pause")).toEqual({ ok: true });
-        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "j1", "pause", { commandId: expect.any(String) });
+        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "j1", "pause", {
+            commandId: expect.any(String),
+        });
         expect(brickComputerOf(BRICK)?.job).toBeNull();
         expect(brickComputerOf(BRICK)?.queued[0]).toMatchObject({ id: "j1", queuedFor: "paused", pausedWhy: "person" });
         expect(game.getBrickComputer).not.toHaveBeenCalled();
@@ -264,7 +266,12 @@ describe("calls on one job of a Brick's computer", () => {
     it("sends a note in the person's words, without the spaces around them, and nothing for spaces alone", async () => {
         game.noteToBrickComputerJob.mockResolvedValue(computer({ job: running }));
         expect(await noteToComputerJob(BRICK, "j1", "  Use 12 March instead \n")).toEqual({ ok: true });
-        expect(game.noteToBrickComputerJob).toHaveBeenCalledWith(BRICK, "j1", "Use 12 March instead", expect.any(String));
+        expect(game.noteToBrickComputerJob).toHaveBeenCalledWith(
+            BRICK,
+            "j1",
+            "Use 12 March instead",
+            expect.any(String)
+        );
         expect(await noteToComputerJob(BRICK, "j1", "   ")).toEqual({ ok: false, why: "changed" });
         expect(game.noteToBrickComputerJob).toHaveBeenCalledTimes(1);
     });

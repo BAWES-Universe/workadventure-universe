@@ -543,14 +543,7 @@ describe("the calls on one computer job (computers plan, piece 7)", () => {
         const ids = fetchMock.mock.calls.map(
             ([, init]) => (init?.headers as Record<string, string> | undefined)?.["X-Computer-Command"]
         );
-        expect(ids).toEqual([
-            "cmd-00000001",
-            "cmd-00000002",
-            "cmd-00000003",
-            "cmd-00000004",
-            undefined,
-            undefined,
-        ]);
+        expect(ids).toEqual(["cmd-00000001", "cmd-00000002", "cmd-00000003", "cmd-00000004", undefined, undefined]);
     });
 
     it("sends the SAME id again when a renewed sign-in resends the request, so the control is done once", async () => {

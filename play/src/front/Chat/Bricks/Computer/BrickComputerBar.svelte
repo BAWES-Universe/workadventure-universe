@@ -132,8 +132,12 @@
                 /></span
             ><span class="cb-l">{fullLine}</span></button
         >
-        <button type="button" class="cb-quiet" disabled={busy || stopping} data-testid="brickComputerBarStop" on:click={stop}
-            >{$LL.chat.brick.computer.stop()}</button
+        <button
+            type="button"
+            class="cb-quiet"
+            disabled={busy || stopping}
+            data-testid="brickComputerBarStop"
+            on:click={stop}>{$LL.chat.brick.computer.stop()}</button
         >
         {#if state === "paused" && pausedJob}
             <button

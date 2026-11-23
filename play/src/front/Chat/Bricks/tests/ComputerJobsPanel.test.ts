@@ -180,7 +180,9 @@ describe("the job controls on a Brick's computer", () => {
         game.brickComputerJobAction.mockResolvedValue(computer({ machine: "resting", queued: [visaPaused] }));
         inRow("visa", "computerJobPause")?.click();
         await settle();
-        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "visa", "pause", { commandId: expect.any(String) });
+        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "visa", "pause", {
+            commandId: expect.any(String),
+        });
         expect(words(row("visa"))).toContain("Paused · progress kept · not using computer time");
         expect(inRow("visa", "computerJobResume")).not.toBeNull();
         expect(inRow("visa", "computerJobCancel")).not.toBeNull();
@@ -195,7 +197,9 @@ describe("the job controls on a Brick's computer", () => {
         game.brickComputerJobAction.mockResolvedValue(computer({ job: { ...taxi, id: "visa", title: "Visa form" } }));
         one("brickComputerBarResume")?.click();
         await settle();
-        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "visa", "resume", { commandId: expect.any(String) });
+        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "visa", "resume", {
+            commandId: expect.any(String),
+        });
         expect(one("brickComputerBarResume")).toBeNull();
         expect(words(one("brickComputerBar"))).toContain("Visa form");
     });
@@ -221,7 +225,9 @@ describe("the job controls on a Brick's computer", () => {
         game.brickComputerJobAction.mockResolvedValue(computer({ job: taxi, queued: [hotel, visaBack] }));
         inRow("hotel", "computerJobFirst")?.click();
         await settle();
-        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "hotel", "first", { commandId: expect.any(String) });
+        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "hotel", "first", {
+            commandId: expect.any(String),
+        });
         expect(words(row("hotel"))).toContain("Next in line");
         expect(inRow("hotel", "computerJobFirst")).toBeNull();
     });
@@ -232,7 +238,9 @@ describe("the job controls on a Brick's computer", () => {
         inRow("hotel", "computerJobCancel")?.click();
         await settle();
         expect(inSheet("computerEndAsk")).toBeNull();
-        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "hotel", "cancel", { commandId: expect.any(String) });
+        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "hotel", "cancel", {
+            commandId: expect.any(String),
+        });
         // Back to the jobs: the other two carry on
         expect(row("hotel")).toBeNull();
         expect(row("taxi")).not.toBeNull();
@@ -255,7 +263,9 @@ describe("the job controls on a Brick's computer", () => {
         game.brickComputerJobAction.mockResolvedValue(computer({ job: taxi, queued: [hotel] }));
         inSheet("computerEndAskEnd")?.click();
         await settle();
-        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "visa", "cancel", { commandId: expect.any(String) });
+        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "visa", "cancel", {
+            commandId: expect.any(String),
+        });
         expect(row("visa")).toBeNull();
     });
 
@@ -296,9 +306,12 @@ describe("the job controls on a Brick's computer", () => {
     it("CodeRabbit: Stop on the bar is off while its request is on its way, so a second tap sends no second Stop", async () => {
         await showBar(computer({ job: taxi }));
         let answer!: (value: unknown) => void;
-        game.brickComputerAction.mockImplementationOnce(() => new Promise((resolve) => {
-            answer = resolve;
-        }));
+        game.brickComputerAction.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
         one("brickComputerBarStop")?.click();
         await settle();
         expect((one("brickComputerBarStop") as HTMLButtonElement | null)?.disabled).toBe(true);
@@ -427,7 +440,9 @@ describe("the job controls on a Brick's computer", () => {
         game.brickComputerJobAction.mockResolvedValue(computer({ job: taxi, queued: [visaBack] }));
         cancelOn("hotel")?.click();
         await settle();
-        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "hotel", "cancel", { commandId: expect.any(String) });
+        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "hotel", "cancel", {
+            commandId: expect.any(String),
+        });
         expect(sheet()).toBeNull();
     });
 });

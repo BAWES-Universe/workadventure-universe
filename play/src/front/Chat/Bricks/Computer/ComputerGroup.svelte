@@ -226,8 +226,11 @@
                         >
                     </div>
                     {#if working}
-                        <PageButton tall disabled={busy || stopping} testId="brickComputerStop" on:click={() => act("stop")}
-                            >{$LL.chat.brick.computer.stop()}</PageButton
+                        <PageButton
+                            tall
+                            disabled={busy || stopping}
+                            testId="brickComputerStop"
+                            on:click={() => act("stop")}>{$LL.chat.brick.computer.stop()}</PageButton
                         >
                         {#if canWatch(view)}
                             <PageButton tall go testId="brickComputerWatch" on:click={() => openBrickScreen(brick)}

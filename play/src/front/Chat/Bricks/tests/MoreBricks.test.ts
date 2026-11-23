@@ -204,14 +204,20 @@ describe("more Bricks (#1996): what Orbit and a Brick say, as the game reads it"
 
     // GPT's sixth answer, finding 6
     it("reads the job a Brick could not carry on only when it is whole and from a bot", () => {
-        const content = { msgtype: "m.text", body: "Visa form", "universe.computer_new_job_offer": { title: " Visa  form " } };
+        const content = {
+            msgtype: "m.text",
+            body: "Visa form",
+            "universe.computer_new_job_offer": { title: " Visa  form " },
+        };
         expect(readNewJobOffer(BRICK, content)).toEqual({ title: "Visa form" });
         expect(readNewJobOffer("@sara:chat.test", content)).toBeUndefined();
         expect(readNewJobOffer(null, content)).toBeUndefined();
         expect(readNewJobOffer(BRICK, { ...content, msgtype: "m.notice" })).toBeUndefined();
         expect(readNewJobOffer(BRICK, { msgtype: "m.text", body: "All done." })).toBeUndefined();
         for (const title of [undefined, null, "", "   ", 7]) {
-            expect(readNewJobOffer(BRICK, { ...content, "universe.computer_new_job_offer": { title } })).toBeUndefined();
+            expect(
+                readNewJobOffer(BRICK, { ...content, "universe.computer_new_job_offer": { title } })
+            ).toBeUndefined();
         }
         expect(readNewJobOffer(BRICK, { ...content, "universe.computer_new_job_offer": "Visa form" })).toBeUndefined();
     });

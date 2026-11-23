@@ -17,7 +17,11 @@ export function openComputerJobs(brick: BrickRef, job?: ComputerJob): void {
  * The promise settles when the request that was sent (the one that ends at once) is over, whatever came of it; with a question the sheet that asks it holds the person's next tap, so
  * it settles as the sheet opens. A button that sent it stays off until then, so a second tap never sends a second Stop.
  */
-export function askToEnd(brick: BrickRef, what: { stop: true } | { cancel: string }, onEnded?: () => void): Promise<void> {
+export function askToEnd(
+    brick: BrickRef,
+    what: { stop: true } | { cancel: string },
+    onEnded?: () => void
+): Promise<void> {
     if (endQuestion(brickComputerOf(brick.id), what)) {
         openModal(ComputerJobsSheet, { brick, start: { face: "ask", what }, onEnded });
         return Promise.resolve();

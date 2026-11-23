@@ -90,8 +90,11 @@ describe("more Bricks in a Brick's chat (#1996)", () => {
         expect(card.newJobOffer).toEqual({ title: "Visa form" });
         // A person's own message never carries one, and neither does a notice
         expect(
-            message(ME, { msgtype: "m.text", body: "Visa form", "universe.computer_new_job_offer": { title: "Visa form" } })
-                .newJobOffer
+            message(ME, {
+                msgtype: "m.text",
+                body: "Visa form",
+                "universe.computer_new_job_offer": { title: "Visa form" },
+            }).newJobOffer
         ).toBeUndefined();
         expect(
             message(BRICK, {
