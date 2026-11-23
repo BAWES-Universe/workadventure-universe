@@ -22,6 +22,33 @@ export function holdsAKey(text: string | undefined | null): boolean {
     return KEY_SHAPES.some((shape) => shape.test(text));
 }
 
+/** What a key is replaced by in anything kept for later, and the mark on the event that says one was there. */
+const KEY_REMOVED = '[a key was here and is not kept]';
+export const KEY_REDACTED_FIELD = 'universe.key_redacted';
+
+/**
+ * The event as it may be KEPT (the durable inbox writes it to the shared store before the Brick has looked at it): every text in it that holds a key is replaced, and the content says one
+ * was there, so the Brick refuses the message when it is read back as it would have live. An event that holds none is returned as it is.
+ */
+export function withoutKeys<T>(event: T): T {
+    let found = false;
+    const walk = (value: unknown, depth: number): unknown => {
+        if (typeof value === 'string') {
+            if (!holdsAKey(value)) return value;
+            found = true;
+            return KEY_REMOVED;
+        }
+        if (depth > 8 || typeof value !== 'object' || value === null) return value;
+        if (Array.isArray(value)) return value.map((one) => walk(one, depth + 1));
+        return Object.fromEntries(Object.entries(value).map(([name, one]) => [name, walk(one, depth + 1)]));
+    };
+    const clean = walk(event, 0);
+    if (!found) return event;
+    const out = clean as Record<string, unknown>;
+    const content = typeof out.content === 'object' && out.content !== null ? (out.content as Record<string, unknown>) : {};
+    return { ...out, content: { ...content, [KEY_REDACTED_FIELD]: true } } as T;
+}
+
 const WORDS: Record<NoteLanguage, string> = {
     en: "That looks like a key, so I didn't read it or keep it. The message is still in this chat, though: please delete it and change that key, because anyone who can see it could use it. Keys don't go in chat. Ask me to connect the app and I'll give you a safe form for the new one.",
     ar: "يبدو هذا كمفتاح، لذلك لم أقرأه ولم أحتفظ به. لكن الرسالة ما زالت في هذه الدردشة: يرجى حذفها وتغيير ذلك المفتاح، لأن أي شخص يراها يمكنه استخدامه. المفاتيح لا توضع في الدردشة. اطلب مني ربط التطبيق وسأعطيك نموذجًا آمنًا للمفتاح الجديد.",

@@ -280,8 +280,10 @@ describe('Brick is told about "try again" only when the person asks for it', () 
         expect(await ai.tryAgainNoteFor(BRICK, 1)).toBe('');
         expect(memory.computerRetry).toBeUndefined();
         expect(computerState).not.toHaveBeenCalled();
-        // Used up by that turn: the flag is gone
-        expect(memory.newJobAsked).toBeUndefined();
+        // It lasts the whole turn (a second look in the same turn, such as the retry when nothing was saved, finds it too); the next turn's start clears or sets it afresh
+        expect(memory.newJobAsked).toEqual({ title: 'Visa form' });
+        expect(await ai.tryAgainNoteFor(BRICK, 1)).toBe('');
+        expect(computerState).not.toHaveBeenCalled();
     });
 
     it('words that ask, with nothing named in the short-lived read, read Orbit again once (the job may have ended a moment ago)', async () => {
@@ -317,7 +319,7 @@ describe('CodeRabbit N7: another chat of the same person starts with none of the
         memory.addMessage('brick-1', 7, 'cancel the visa one', 'person', 'dm');
         const live = memory.getMemory('brick-1', 7);
         const controls = newControlState();
-        controls.asks.set('cancel|job-visa', { kind: 'cancel', jobIds: ['job-visa'], told: true, answerable: true });
+        controls.asks.set('cancel|job-visa', { kind: 'cancel', jobIds: ['job-visa'], titles: ['Visa form'], told: true, answerable: true });
         live.computerControls = controls;
         live.computerRetry = { id: 'job-old', title: 'Visa form' };
         live.computerConfirmations = new ConfirmationQueue();

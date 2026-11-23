@@ -86,6 +86,42 @@ describe('MatrixDmBridge after the full review', () => {
             expect(stores.deps.reply.mock.calls[0][4]).toMatchObject({ note: true, connectedApp: { app: 'notion', name: 'Notion' } });
         });
 
+        // CodeRabbit on #2114: the continuation goes with the ORIGINAL event's hook and has an identity made from it
+        it('carries the original event\'s paid hook, and the same continuation has the same identity wherever it is handled', async () => {
+            const original: MatrixEvent = { type: APP_CONNECTED_EVENT, room_id: ROOM, sender: ALICE, event_id: '$c9', content: { app: 'notion', name: 'Notion' } };
+            await bridge.onEvent(invite());
+            const paid = vi.fn(async () => undefined);
+            await bridge.onEvent(original, { paid });
+            expect(paid).toHaveBeenCalledTimes(1);
+            const first = stores.deps.reply.mock.calls[0][4].eventId as string;
+            expect(first).toMatch(/^\$app-[0-9a-f]{32}$/);
+            // another server (a fresh bridge) handles the same event: the same continuation, so a start it makes carries the same key
+            const other = new MatrixDmBridge(config, client as never, stores.deps);
+            await other.onEvent(invite());
+            await other.onEvent(original, { paid });
+            expect(stores.deps.reply.mock.calls[1][4].eventId).toBe(first);
+        });
+
+        it('a failure before anything was paid for goes back to the inbox (it throws); after that, and with no inbox, it is a lost line that costs nothing', async () => {
+            const original: MatrixEvent = { type: APP_CONNECTED_EVENT, room_id: ROOM, sender: ALICE, event_id: '$c10', content: { app: 'notion', name: 'Notion' } };
+            await bridge.onEvent(invite());
+            stores.deps.checkAccess.mockClear();
+            vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5 * 60_000 });
+            try {
+                stores.deps.checkAccess.mockRejectedValueOnce(new Error('Orbit unreachable'));
+                await expect(bridge.onEvent(original, { paid: async () => undefined })).rejects.toThrow('Orbit unreachable');
+                // handed out again: carried on now
+                await bridge.onEvent(original, { paid: async () => undefined });
+                expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+                // with no inbox hooks the same failure is only a line that is lost
+                const bare: MatrixEvent = { ...original, event_id: '$c11' };
+                stores.deps.checkAccess.mockRejectedValueOnce(new Error('Orbit unreachable'));
+                await expect(bridge.onEvent(bare)).resolves.toBeUndefined();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         it('is not carried on when the App is not connected, or Orbit cannot say', async () => {
             await bridge.onEvent(invite());
             stores.deps.appConnected.mockResolvedValueOnce(false);

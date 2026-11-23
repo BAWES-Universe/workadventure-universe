@@ -129,9 +129,11 @@ export interface RunnerTiming {
     beatMs?: number;
     /** How long a lease lasts at Orbit: how long a job another worker holds is left alone when Orbit's `held` answer names no time. */
     leaseMs?: number;
+    /** The longest a job that another worker holds is left alone before this runner asks for it again (the holder may have given it back): the answer to a live lease writes nothing. */
+    heldRecheckMs?: number;
 }
 
-export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000, cleanupMs: 10_000, beatMs: 30_000, leaseMs: 90_000 };
+export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000, cleanupMs: 10_000, beatMs: 30_000, leaseMs: 90_000, heldRecheckMs: 15_000 };
 
 export const RUNNER_GUARDS = {
     /** Jobs the runner works on at once. */
@@ -502,7 +504,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      */
     const heldUntil = new Map<string, number>();
     const holdOff = (jobId: string, until: number): void => {
-        heldUntil.set(jobId, until);
+        // Never longer than a short while: the holder may give the job back well before its lease would have lapsed (a rolling restart), and nothing tells this runner so. The look that comes
+        // after is one claim that writes nothing when the lease is still alive, so a live lease is kept to (no claim over a healthy owner) and a released job is taken up at once
+        heldUntil.set(jobId, Math.min(until, now() + (timing.heldRecheckMs ?? 15_000)));
         if (heldUntil.size > HELD_KEPT) heldUntil.delete(heldUntil.keys().next().value as string);
     };
     // Counts each start and stop, so a poll that was asked before a stop can tell it was
@@ -543,21 +547,28 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         try {
             // Orbit's contract: ownership is the epoch alone, so the body carries nothing else (an extra `run` may be refused)
             const answer = await orbit.action(job.botId, job.jobId, { action: 'beat', epoch: mine.epoch });
+            // The answer is for the lease this beat was sent for. A worker that stopped while it was in flight gave the lease back, and a replacement may hold the job (with a beat and a
+            // reader of its own) by now: what the answer says is noted for the run it came from, but never stops what is the replacement's
+            const current = owned.get(job.jobId) === mine;
             // The job is over, or went back in line: there is nothing left to hold, so the beat stops and nothing is given back
             if (answer.ok === false && answer.reason === 'over') {
                 mine.over = true;
-                stopBeating(job.jobId);
+                if (current) stopBeating(job.jobId);
             } else if (answer.ok === false && runStaleOf(answer)) {
                 superseded.add(mine.run);
-                stopBeating(job.jobId);
-                // The turn this run has open stops too, as it does for a superseded answer to the notes: nothing is cancelled and nothing is ended
-                turnStoppers.get(job.jobId)?.();
+                if (current) {
+                    stopBeating(job.jobId);
+                    // The turn this run has open stops too, as it does for a superseded answer to the notes: nothing is cancelled and nothing is ended
+                    turnStoppers.get(job.jobId)?.();
+                }
             }
         } catch (error) {
             if (staleForOrbit(error) && runStaleOf(error)) {
                 superseded.add(mine.run);
-                stopBeating(job.jobId);
-                turnStoppers.get(job.jobId)?.();
+                if (owned.get(job.jobId) === mine) {
+                    stopBeating(job.jobId);
+                    turnStoppers.get(job.jobId)?.();
+                }
             } else if (statusOf(error) === 404) mine.over = true;
             else say('Could not renew the lease of a job:', error);
         }

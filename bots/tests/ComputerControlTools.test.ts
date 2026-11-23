@@ -333,6 +333,59 @@ describe('cancel one job: Brick always asks first, and only the person\'s next m
         expect(orbit.acted()).toEqual([]);
     });
 
+    // CodeRabbit on #2114: one reply that asks about two cancels is answered by a yes that names ONE of them
+    it('two cancel questions in one reply: a yes that names one cancels that one only, and the other is asked again', async () => {
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]), { cancel: viewOf(working()) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Visa form'), lineOf(CONTROL_WORDS.askCancel, 'Hotel booking')]);
+        c.nextMessage('Yes, cancel the visa one');
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        const second = await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+        // the hotel is asked about again, and not cancelled
+        expect(second).toMatchObject({ done: false, asked: true });
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form'), lineOf(CONTROL_WORDS.askCancel, 'Hotel booking')]);
+    });
+
+    it('two cancel questions in one reply: a bare yes, or one that fits both, cancels neither', async () => {
+        for (const said of ['Yes', 'yes cancel the booking and the form', 'ok do it']) {
+            const orbit = door(viewOf(working({ title: 'Visa booking form' }), [paused('job-hotel', 'Hotel booking')]), { cancel: viewOf(null) });
+            const c = chat(orbit.admin);
+            await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+            await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+            await c.deliver();
+            c.nextMessage(said);
+            await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+            await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+            expect(orbit.acted(), said).toEqual([]);
+        }
+    });
+
+    it('a cancel question and a stop question in one reply: a yes that names neither cancels and stops nothing; "stop everything" answers the stop only', async () => {
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]), { stop: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        await c.run(STOP_COMPUTER_TOOL);
+        await c.deliver();
+        c.nextMessage('Yes please');
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        await c.run(STOP_COMPUTER_TOOL);
+        expect(orbit.acted()).toEqual([]);
+        await c.deliver();
+        c.nextMessage();
+        const again = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]), { stop: viewOf(null) });
+        const d = chat(again.admin);
+        await d.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        await d.run(STOP_COMPUTER_TOOL);
+        await d.deliver();
+        d.nextMessage('yes, stop everything');
+        await d.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        await d.run(STOP_COMPUTER_TOOL);
+        expect(again.acted()).toEqual([{ action: 'stop' }]);
+    });
+
     it('says it is already ending, or over, when Orbit says so, and never that it was cancelled', async () => {
         for (const [reason, line] of [
             ['ending', lineOf(CONTROL_REFUSALS.ending, 'Visa form')],
@@ -1036,14 +1089,14 @@ describe('finding 4: each control goes to Orbit under its own id', () => {
         const c = chat(orbit.admin);
         await c.run(PAUSE_JOB_TOOL);
         const [first] = orbit.commands();
-        expect(first).toBe(uuidv5(`$msg:one:pause:job-visa:0`, COMPUTER_COMMAND_NAMESPACE));
+        expect(first).toBe(uuidv5('$msg:one:pause:job-visa:', COMPUTER_COMMAND_NAMESPACE));
         // the same control in the same message, from a reply written again: the same id (and here the turn's own record means nothing is even sent twice)
         c.retry();
         await c.run(PAUSE_JOB_TOOL);
         expect(orbit.commands()).toEqual([first]);
         // another kind, and another job, each get their own
         await c.run(RESUME_JOB_TOOL, { job: 'taxi' });
-        expect(orbit.commands()).toEqual([first, uuidv5('$msg:one:resume:job-taxi:0', COMPUTER_COMMAND_NAMESPACE)]);
+        expect(orbit.commands()).toEqual([first, uuidv5('$msg:one:resume:job-taxi:', COMPUTER_COMMAND_NAMESPACE)]);
     });
 
     it('sends the SAME id again when the request itself broke before Orbit answered, so the control is done once', async () => {
@@ -1069,8 +1122,8 @@ describe('finding 4: each control goes to Orbit under its own id', () => {
         await c.run(TELL_JOB_TOOL, { message: 'Use 12 March instead.' });
         await c.run(TELL_JOB_TOOL, { message: 'And aisle seat.' });
         const [one, two] = orbit.commands();
-        expect(one).toBe(uuidv5('$msg:one:note:job-visa:0', COMPUTER_COMMAND_NAMESPACE));
-        expect(two).toBe(uuidv5('$msg:one:note:job-visa:1', COMPUTER_COMMAND_NAMESPACE));
+        expect(one).toBe(uuidv5('$msg:one:note:job-visa:Use 12 March instead.', COMPUTER_COMMAND_NAMESPACE));
+        expect(two).toBe(uuidv5('$msg:one:note:job-visa:And aisle seat.', COMPUTER_COMMAND_NAMESPACE));
         // the same words again in the same message are the same note: nothing is sent
         await c.run(TELL_JOB_TOOL, { message: 'Use 12 March instead.' });
         expect(orbit.commands()).toEqual([one, two]);
@@ -1079,8 +1132,24 @@ describe('finding 4: each control goes to Orbit under its own id', () => {
         await c.run(TELL_JOB_TOOL, { message: 'Use 12 March instead.' }, '$msg:two');
         const ids = orbit.commands();
         expect(ids).toHaveLength(3);
-        expect(ids[2]).toBe(uuidv5('$msg:two:note:job-visa:0', COMPUTER_COMMAND_NAMESPACE));
+        expect(ids[2]).toBe(uuidv5('$msg:two:note:job-visa:Use 12 March instead.', COMPUTER_COMMAND_NAMESPACE));
         expect(new Set(ids).size).toBe(3);
+    });
+
+    // CodeRabbit on #2114: the id of a note is made from its words, never from the order the notes of a turn came in
+    it('makes the same ids for the same two notes of one message when they are replayed in the other order', async () => {
+        const told = { ...viewOf(working()), note: { seq: 1, delivery: 'now' } };
+        const first = door(viewOf(working()), { note: told });
+        await chat(first.admin).run(TELL_JOB_TOOL, { message: 'Use 12 March instead.' });
+        await chat(first.admin).run(TELL_JOB_TOOL, { message: 'And aisle seat.' });
+        // a fresh state (the reply written again after a restart), the two notes made in the other order
+        const second = door(viewOf(working()), { note: told });
+        const c = chat(second.admin);
+        await c.run(TELL_JOB_TOOL, { message: 'And aisle seat.' });
+        await c.run(TELL_JOB_TOOL, { message: 'Use 12 March instead.' });
+        const [march, aisle] = first.commands();
+        expect(second.commands()).toEqual([aisle, march]);
+        expect(march).not.toBe(aisle);
     });
 
     it('gives cancel, do-this-first and stop their own ids, and stop names the jobs it was asked about', async () => {
@@ -1090,15 +1159,15 @@ describe('finding 4: each control goes to Orbit under its own id', () => {
         await c.deliver();
         c.nextMessage('Yes');
         await c.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:two');
-        expect(orbit.commands()).toEqual([uuidv5('$msg:two:cancel:job-visa:0', COMPUTER_COMMAND_NAMESPACE)]);
+        expect(orbit.commands()).toEqual([uuidv5('$msg:two:cancel:job-visa:', COMPUTER_COMMAND_NAMESPACE)]);
         await c.run(JOB_FIRST_TOOL, { job: 'taxi', pause_running: true }, '$msg:two');
-        expect(orbit.commands()[1]).toBe(uuidv5('$msg:two:first:job-taxi:0', COMPUTER_COMMAND_NAMESPACE));
+        expect(orbit.commands()[1]).toBe(uuidv5('$msg:two:first:job-taxi:true', COMPUTER_COMMAND_NAMESPACE));
         await c.run(STOP_COMPUTER_TOOL, {}, '$msg:two');
         await c.deliver();
         c.nextMessage('Yes');
         await c.run(STOP_COMPUTER_TOOL, {}, '$msg:three');
-        // Stop names no one job, so its id is the message's own stop (the jobs it was asked about keep it apart from a later stop in the same message)
-        expect(orbit.commands()[2]).toBe(uuidv5('$msg:three:stop::0', COMPUTER_COMMAND_NAMESPACE));
+        // Stop names no one job, so its id is made from the jobs it was asked about (in a fixed order), and a stop over other jobs is another id
+        expect(orbit.commands()[2]).toBe(uuidv5('$msg:three:stop::job-taxi|job-visa', COMPUTER_COMMAND_NAMESPACE));
     });
 
     // Fable's final lines for the two answers the game cannot say more about (23 Nov, brick-four-job-lines), checked against the exact text and never against the constants
@@ -1146,5 +1215,57 @@ describe('finding 4: each control goes to Orbit under its own id', () => {
         const [id] = orbit.commands();
         expect(id).toMatch(/^[0-9a-f-]{36}$/);
         expect(state.commands.get('pause|job-visa|')).toBe(id);
+    });
+});
+
+describe('CodeRabbit on #2114: exact selectors, a replay that needs no list, and a resumed job that is waiting', () => {
+    it('two jobs whose ids differ only in a dash or an underscore are two jobs: a pause for one never replays the other', async () => {
+        const orbit = door(viewOf(working({ id: 'job-a', title: 'Alpha form' }), [inLine('job_a', 'Beta form')]));
+        const c = chat(orbit.admin);
+        await c.run(PAUSE_JOB_TOOL, { job: 'job-a' });
+        await c.run(PAUSE_JOB_TOOL, { job: 'job_a' });
+        expect(orbit.acted()).toEqual([
+            { action: 'pause', jobId: 'job-a' },
+            { action: 'pause', jobId: 'job_a' },
+        ]);
+    });
+
+    it('a cancel Orbit accepted is told as cancelled when the reply is written again and the list cannot be read: it never reads as "nothing changed" and nothing is sent twice', async () => {
+        let list = true;
+        const asks: ComputerControlAsk[] = [];
+        const admin = {
+            controlComputerJobs: vi.fn(async (_b: string, _u: string, ask: ComputerControlAsk) => {
+                asks.push(ask);
+                if (ask.action === 'list') return list ? controlAnswerOf(viewOf(working())) : ({ ok: false as const, reason: 'unknown' } as never);
+                return controlAnswerOf(viewOf(null));
+            }),
+        };
+        const c = chat(admin);
+        await c.run(CANCEL_JOB_TOOL);
+        await c.deliver();
+        c.nextMessage('Yes');
+        await c.run(CANCEL_JOB_TOOL, {}, '$msg:two');
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form')]);
+        // the same reply written again: Orbit's list cannot be read now
+        c.retry();
+        list = false;
+        await c.run(CANCEL_JOB_TOOL, {}, '$msg:two');
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form')]);
+        expect(asks.filter((ask) => ask.action === 'cancel')).toHaveLength(1);
+    });
+
+    it('a control that was never sent still needs the list: with none, it is told as one that could not be done', async () => {
+        const admin = { controlComputerJobs: vi.fn(async () => ({ ok: false as const, reason: 'unknown' }) as never) };
+        const c = chat(admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        expect(await c.deliver()).toEqual([CONTROL_REFUSALS.couldNot]);
+    });
+
+    it('carrying on a job that comes back waiting for the person (a sign-in) is never said as working now', async () => {
+        const waiting = viewOf(working({ id: 'job-hotel', title: 'Hotel booking', status: 'waiting', waitingFor: 'signin' }));
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]), { resume: waiting });
+        const c = chat(orbit.admin);
+        await c.run(RESUME_JOB_TOOL);
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.resumeAsked, 'Hotel booking')]);
     });
 });

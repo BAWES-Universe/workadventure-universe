@@ -87,6 +87,8 @@ interface ControlAsk {
     kind: 'cancel' | 'stop';
     /** The job a cancel is for; for Stop, every job that would end, as they were when it was asked. */
     jobIds: string[];
+    /** The titles of those jobs, as they were when it was asked: what a yes that names one of several questions is matched on. */
+    titles: string[];
     /** The question reached the person (the reply that carries it was delivered). */
     told: boolean;
     /** A message of the person's came after it was told: this turn may answer it. */
@@ -154,6 +156,19 @@ export function isClearYes(message: string | undefined): boolean {
     return YES_FIRST.has(first) || (second !== undefined && YES_PAIRS.has(`${first} ${second}`)) || YES_PAIRS.has(first);
 }
 
+/** How far a message names the question: the whole-word overlap with the titles of the jobs a cancel is about, and for Stop the words that mean everything. 0 names it not at all. */
+function askNamedBy(message: string, ask: ControlAsk): number {
+    const tokens = new Set(tokensOf(message));
+    if (ask.kind === 'stop') return ['all', 'everything', 'both', 'everyone', 'jobs'].some((word) => tokens.has(word)) ? 1 : 0;
+    let best = 0;
+    for (const title of ask.titles) {
+        const words = plain(title).split(' ').filter((word) => word.length >= 3 && !COMMON.has(word));
+        const shared = words.filter((word) => tokens.has(word) || tokens.has(word.replace(/s$/, '')) || tokens.has(`${word}s`)).length;
+        best = Math.max(best, shared);
+    }
+    return best;
+}
+
 /**
  * A new message from the person (not a reply asked again): a question that was delivered now has its answer in this message, and only in this one, and only when this message is a clear
  * yes; any other message ends it. A question that was never delivered was never asked and goes; this turn's controls start clean, and a control that began on an older message is abandoned.
@@ -162,10 +177,22 @@ export function startControlTurn(state: ControlState | undefined, message?: stri
     if (!state) return;
     state.turn += 1;
     state.said = typeof message === 'string' ? message : '';
-    const yes = isClearYes(message);
+    const answered = new Set<string>();
+    if (isClearYes(message)) {
+        const told = [...state.asks].filter(([, ask]) => ask.told && !ask.answerable);
+        // One question was asked: a yes answers it. Several were asked in one reply (cancel this job, cancel that one): a yes answers ONE of them, and only when it names it; a bare yes, or one
+        // that fits more than one, answers none, and every question ends (they are asked again, so the person says which)
+        if (told.length === 1) answered.add(told[0][0]);
+        else if (told.length > 1) {
+            const scores = told.map(([key, ask]) => ({ key, score: askNamedBy(message as string, ask) }));
+            const best = Math.max(...scores.map((one) => one.score));
+            const top = scores.filter((one) => one.score === best);
+            if (best > 0 && top.length === 1) answered.add(top[0].key);
+        }
+    }
     for (const [key, ask] of state.asks) {
-        if (!ask.told || ask.answerable || !yes) state.asks.delete(key);
-        else ask.answerable = true;
+        if (answered.has(key)) ask.answerable = true;
+        else state.asks.delete(key);
     }
     state.calls.clear();
     state.resolved.clear();
@@ -193,7 +220,7 @@ export const COMPUTER_COMMAND_NAMESPACE = '6f1d2a7e-3b64-4a10-9c8e-5d2f4b7a1c90'
 
 /**
  * The id one control goes to Orbit under (GPT's sixth answer, finding 4): made from the person's message, the kind of control, the job and how many controls of that kind and job
- * this turn has already made, so it is the SAME every time this control is sent and a different one for a second, deliberate control of the same kind. Random (and so done once per
+ * asks (the words of a note, say), so it is the SAME every time this control is sent and a different one for a control that asks something else. Random (and so done once per
  * request only) when the control was not asked in a message of a chat.
  */
 export function commandIdOf(state: ControlState, eventId: string | undefined, kind: string, jobId: string, extra = ''): string {
@@ -206,9 +233,9 @@ export function commandIdOf(state: ControlState, eventId: string | undefined, ki
         state.commands.set(slot, once);
         return once;
     }
-    let n = 0;
-    for (const other of state.commands.keys()) if (other.startsWith(`${kind}|${jobId}|`)) n += 1;
-    const id = uuidv5(`${eventId}:${kind}:${jobId}:${n}`, COMPUTER_COMMAND_NAMESPACE);
+    // What the control asks (the words of a note, the jobs of a stop) is part of its identity, never the order the controls of the turn happened to come in: replayed in another order
+    // they make the same ids, and Orbit never sees one id with other words
+    const id = uuidv5(`${eventId}:${kind}:${jobId}:${extra}`, COMPUTER_COMMAND_NAMESPACE);
     state.commands.set(slot, id);
     return id;
 }
@@ -320,6 +347,26 @@ function say(context: ComputerControlContext, lines: string[], result: Record<st
 /** What a control that began on an older message is told: it sends nothing and says nothing to the person. */
 const STALE_CALL = { done: false, stale: true, note: 'A newer message from them came in while this was being looked at, so nothing was changed. Answer their newer message instead.' };
 
+/** What names a job in this turn's record of who a control went to: the person's words EXACTLY (two jobs whose ids differ only in a dash are two jobs), never a cleaned-up version of them. */
+const resolvedKeyOf = (name: string, words: string, args: Record<string, unknown>): string => `${name}|${JSON.stringify(words)}|${args.pause_running === true}`;
+
+/** The key this turn already holds for the control being asked (the job it first went to, and the control it sent), when it was sent. */
+function recordedControl(name: string, args: Record<string, unknown>, state: ControlState): string | null {
+    if (name === STOP_COMPUTER_TOOL) return [...state.calls.keys()].find((one) => one.startsWith('stop|')) ?? null;
+    const job = state.resolved.get(resolvedKeyOf(name, clean(args.job, JOB_WORDS_MAX), args));
+    if (!job) return null;
+    let key: string | null = null;
+    if (name === PAUSE_JOB_TOOL) key = `pause|${job.id}`;
+    else if (name === RESUME_JOB_TOOL) key = `resume|${job.id}`;
+    else if (name === JOB_FIRST_TOOL) key = `first|${job.id}|${args.pause_running === true}`;
+    else if (name === CANCEL_JOB_TOOL) key = `cancel|${job.id}`;
+    else if (name === TELL_JOB_TOOL) {
+        const message = cleanMessage(args.message);
+        key = message ? `note|${job.id}|${message}` : null;
+    }
+    return key && state.calls.has(key) ? key : null;
+}
+
 async function control(name: string, args: Record<string, unknown>, context: ComputerControlContext, turn: number): Promise<Record<string, unknown>> {
     if (!isComputerControlTool(name)) return { error: 'Unknown tool.' };
     const door = (ask: Omit<ComputerControlAsk, 'isGuest'>): Promise<ComputerControlAnswer> =>
@@ -327,6 +374,10 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     /** A control that changes something carries its own id: the same control sent again is done once (finding 4). Reading the list changes nothing and carries none. */
     const acting = (ask: Omit<ComputerControlAsk, 'isGuest' | 'commandId'>, extra = ''): Promise<ComputerControlAnswer> =>
         door({ ...ask, commandId: commandIdOf(context.state, context.inbound?.eventId, ask.action, ask.jobId ?? '', extra) });
+    // A control this turn already sent (a reply written again) says what it did from the record of it, BEFORE the list is read: a list that cannot be read now must not make an accepted
+    // cancel read as "nothing changed"
+    const recorded = recordedControl(name, args, context.state);
+    if (recorded) return once(context, recorded, () => Promise.reject(new Error('unused')));
     const listed = await door({ action: 'list' });
     if (!listed.ok || !listed.view) {
         if (name === COMPUTER_JOBS_TOOL) return { success: false, note: "Their jobs could not be read just now. Say so in one plain sentence, and that the bar above this chat shows them." };
@@ -341,7 +392,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     if (context.state.turn !== turn) return STALE_CALL;
     if (name === STOP_COMPUTER_TOOL) return stopAll(view, jobs, context, door);
     // The same control again in this turn (a reply asked again) goes to the job it first named, and replays what it did, whatever the list shows by now
-    const resolvedKey = `${name}|${plain(words)}|${args.pause_running === true}`;
+    const resolvedKey = resolvedKeyOf(name, words, args);
     const resolved = context.state.resolved.get(resolvedKey);
     if (!resolved && !jobs.length) return say(context, [CONTROL_REFUSALS.noJobs], { done: false, success: false });
 
@@ -410,7 +461,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
             if (context.state.calls.has(key)) return once(context, key, () => Promise.reject(new Error('unused')));
             const ask = context.state.asks.get(key);
             // A job that has started (or is paused) is always named back first; one that never started used nothing and goes at once (the approved mock, pictures 13 and 14)
-            if (hasStarted(job) && (!ask || !ask.told || !ask.answerable)) return askFirst(context, key, { kind: 'cancel', jobIds: [job.id] }, [lineOf(CONTROL_WORDS.askCancel, job.title)]);
+            if (hasStarted(job) && (!ask || !ask.told || !ask.answerable)) return askFirst(context, key, { kind: 'cancel', jobIds: [job.id], titles: [job.title] }, [lineOf(CONTROL_WORDS.askCancel, job.title)]);
             context.state.asks.delete(key);
             return once(context, key, async () => {
                 const answer = await acting({ action: 'cancel', jobId: job.id });
@@ -436,7 +487,8 @@ async function control(name: string, args: Record<string, unknown>, context: Com
 function resumedLine(job: ComputerControlJob, after: ComputerControlView | null): string {
     const now = after ? jobsOf(after).find((one) => one.id === job.id) : undefined;
     if (!after || !now) return lineOf(CONTROL_WORDS.resumeAsked, job.title);
-    if (after.job?.id === job.id) return lineOf(CONTROL_WORDS.resumedNow, job.title);
+    // Working now is said only of a job that IS working: a job the view shows as waiting for the person (a sign-in, say) has not carried on, and nothing more is claimed of it than that it was asked to
+    if (after.job?.id === job.id) return lineOf(now.status === 'running' ? CONTROL_WORDS.resumedNow : CONTROL_WORDS.resumeAsked, job.title);
     if (isPaused(now) && now.pausedWhy === 'allowance') return lineOf(CONTROL_WORDS.stillPausedAllowance, job.title);
     if (isPaused(now) && now.pausedWhy === 'rule') return lineOf(CONTROL_WORDS.stillPausedRule, job.title);
     if (now.queuedFor === 'allowance') return lineOf(CONTROL_WORDS.stillPausedAllowance, job.title);
@@ -518,7 +570,7 @@ async function once(context: ComputerControlContext, key: string, act: () => Pro
 }
 
 /** Cancel and Stop ask first: the question goes under the reply, and counts as asked only once that reply was delivered. */
-function askFirst(context: ComputerControlContext, key: string, ask: Pick<ControlAsk, 'kind' | 'jobIds'>, lines: string[]): Record<string, unknown> {
+function askFirst(context: ComputerControlContext, key: string, ask: Pick<ControlAsk, 'kind' | 'jobIds' | 'titles'>, lines: string[]): Record<string, unknown> {
     const kept = context.state.asks.get(key);
     // The same question again in this turn (or a reply asked again) is the same question: it is not answered by it
     const entry: ControlAsk = kept && !kept.answerable && sameJobs(kept.jobIds, ask.jobIds) ? kept : { ...ask, told: false, answerable: false };
@@ -549,12 +601,12 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
     const ask = context.state.asks.get(key);
     if (!ask || !ask.told || !ask.answerable || !sameJobs(ask.jobIds, ids)) {
         if (ask && ask.answerable) context.state.asks.delete(key);
-        return askFirst(context, key, { kind: 'stop', jobIds: ids }, [CONTROL_WORDS.askStop(quotedTitles(jobs.map((job) => job.title)))]);
+        return askFirst(context, key, { kind: 'stop', jobIds: ids, titles: jobs.map((job) => job.title) }, [CONTROL_WORDS.askStop(quotedTitles(jobs.map((job) => job.title)))]);
     }
     context.state.asks.delete(key);
     return once(context, `stop|${ids.join('|')}`, async () => {
         // Stop names no one job: its id is made from the jobs it was asked about, so a stop asked again over the same jobs is one stop (finding 4)
-        const answer = await door({ action: 'stop', commandId: commandIdOf(context.state, context.inbound?.eventId, 'stop', '', ids.join('|')) });
+        const answer = await door({ action: 'stop', commandId: commandIdOf(context.state, context.inbound?.eventId, 'stop', '', [...ids].sort().join('|')) });
         if (!answer.ok) return refused(reasonOf(answer), jobs[0], view);
         const only = jobs.length === 1 ? jobs[0] : null;
         return { result: { done: true }, lines: [only ? lineOf(hasStarted(only) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, only.title) : CONTROL_WORDS.stoppedAll(jobs.length)] };

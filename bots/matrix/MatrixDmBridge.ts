@@ -16,7 +16,8 @@ import {
     type BotNoteState,
     type NoteLanguage,
 } from './BotStatusNotes';
-import { holdsAKey, keyInChatReply } from './KeyInChat';
+import { KEY_REDACTED_FIELD, holdsAKey, keyInChatReply } from './KeyInChat';
+import { PaidFenceError } from './MatrixEventInbox';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
@@ -528,7 +529,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         if (event.type === APP_CONNECTED_EVENT) {
-            await this.onAppConnected(event);
+            await this.onAppConnected(event, hooks);
         }
     }
 
@@ -536,31 +537,38 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * The person connected an App from a Brick's card (game #2001): the Brick carries on with what they asked, exactly as it
      * would with a message from them (access, steps and all), told in a line that is from the system and not their words. Only
      * from a person in their own two-person chat with the bot; whether they may chat with it is checked as for any message.
-     * Never throws; a lost answer costs nothing, since the card already said what happened.
+     * A failure before anything was paid for goes back to the inbox (when it came through it); after that a lost answer costs nothing, since the card already said what happened.
      */
     /** The App a continuation line from the system is about. Only this bridge sets it, never the content of a message. */
     private connectedNotes = new WeakMap<MatrixEvent, { app: string; name: string }>();
 
-    private async onAppConnected(event: MatrixEvent): Promise<void> {
+    private async onAppConnected(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const connected = connectedAppOf(event.content);
-        if (!connected || !this.firstSighting(event.event_id)) return;
-        const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Start your answer with the one word “Connected.” in their language, then carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
-        try {
-            const carried: MatrixEvent = {
-                type: 'm.room.message',
-                room_id: event.room_id,
-                sender: event.sender,
-                event_id: `$app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
-                origin_server_ts: Date.now(),
-                content: { msgtype: 'm.text', body: note },
-            };
-            // Said by the bridge, outside the message's own content: a person's message can hold any content at all
-            this.connectedNotes.set(carried, connected);
-            await this.onMessage(carried);
-        } catch (error: any) {
-            console.warn(`[MatrixDmBridge] Could not carry on after an App was connected in ${event.room_id}:`, error?.message ?? error);
-        }
+        if (!connected) return;
+        // The hook of the ORIGINAL event goes with the continuation: once the Brick has begun the paid turn that carries on, no other server is handed the event and answers it a second time
+        await this.handledOnce(event.event_id, hooks, async (tracked) => {
+            const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Start your answer with the one word “Connected.” in their language, then carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
+            let paid = false;
+            try {
+                const carried: MatrixEvent = {
+                    type: 'm.room.message',
+                    room_id: event.room_id,
+                    sender: event.sender,
+                    // Made from the original event's id: the same event handled again (another server, a second try) is the same continuation, never a new one
+                    event_id: `$app-${createHash('sha256').update(event.event_id).digest('hex').slice(0, 32)}`,
+                    origin_server_ts: event.origin_server_ts ?? Date.now(),
+                    content: { msgtype: 'm.text', body: note },
+                };
+                // Said by the bridge, outside the message's own content: a person's message can hold any content at all
+                this.connectedNotes.set(carried, connected);
+                await this.onMessage(carried, undefined, tracked ? { paid: async () => { await tracked.paid(); paid = true; } } : undefined);
+            } catch (error: any) {
+                // A fence that was not confirmed, or a failure before anything was paid for, goes back to the inbox; a lost answer after that costs nothing, since the card already said what happened
+                if (error instanceof PaidFenceError || (tracked && !paid)) throw error;
+                console.warn(`[MatrixDmBridge] Could not carry on after an App was connected in ${event.room_id}:`, error?.message ?? error);
+            }
+        });
     }
 
     /**
@@ -1796,9 +1804,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         let paid = false;
         const tracked = hooks
             ? {
+                  // Paid only once it was written down: a fence that fails throws, and nothing paid for begins
                   paid: async () => {
-                      paid = true;
                       await hooks.paid();
+                      paid = true;
                   },
               }
             : undefined;
@@ -1966,7 +1975,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // Every paste gets the answer: the person is waiting on this message, like any other, and a dropped one would leave them guessing
             await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).catch(() => undefined);
         };
-        if (holdsAKey(String(content.body ?? ''))) {
+        // A message read back from the durable inbox had its key taken out before it was kept (the store never holds one): the mark says there was one, and it is refused as it was live
+        if (content[KEY_REDACTED_FIELD] === true || holdsAKey(String(content.body ?? ''))) {
             await refuseKey();
             return;
         }
@@ -2231,6 +2241,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             answered = true;
         } catch (error: any) {
+            // The fence before paid work was not confirmed: this is not an answer that failed, and no note is sent. The event goes back to the inbox as one nothing was paid for
+            if (error instanceof PaidFenceError) throw error;
             console.error(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}:`, error?.message ?? error);
             await couldNotAnswer(config);
         } finally {

@@ -5,6 +5,8 @@ import type { Server } from 'node:http';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
 import { botIdFromMatrixId, botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
+import { PaidFenceError } from '../matrix/MatrixEventInbox';
+import { KEY_REDACTED_FIELD, keyInChatReply } from '../matrix/KeyInChat';
 import { JOB_STATUS_WORDS, jobLine, withJobLines } from '../ai/JobStatusLine';
 import { BOT_STATUS_KEY, REPLY_LIMIT_KEY, availabilityOf, detectLanguage, replyLimitContent, statusNoteContent } from '../matrix/BotStatusNotes';
 
@@ -292,6 +294,34 @@ describe('MatrixDmBridge', () => {
             vi.useRealTimers();
             await new Promise<void>((resolve) => server.close(() => resolve()));
         }
+    });
+
+    // CodeRabbit on #2114 (I9): the fence before paid work must succeed
+    it('a fence that was not confirmed starts nothing and sends no note; the event goes back and is answered when it comes again', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValue({ text: 'hello back', media: [] } as never);
+        const event = message('hello');
+        const lost = vi.fn(async () => {
+            throw new PaidFenceError('Another server holds this event now');
+        });
+        await expect(bridge.onEvent(event, { paid: lost })).rejects.toThrow(PaidFenceError);
+        expect(deps.reply).not.toHaveBeenCalled();
+        // no "couldn't answer" note: it is not an answer that failed
+        expect(client.sendMessage.mock.calls.filter((call: any[]) => call[2]?.msgtype === 'm.notice')).toEqual([]);
+        // handed out again with a fence that works: answered, once
+        const ok = vi.fn(async () => undefined);
+        await bridge.onEvent(event, { paid: ok });
+        expect(ok).toHaveBeenCalledTimes(1);
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+    });
+
+    // CodeRabbit on #2114 (I10): a message read back from the inbox had its key taken out before it was kept
+    it('a message kept with its key taken out is refused as a key, never given to the model', async () => {
+        await bridge.onEvent(invite());
+        const kept = { ...message('[a key was here and is not kept]'), content: { msgtype: 'm.text', body: '[a key was here and is not kept]', [KEY_REDACTED_FIELD]: true } } as MatrixEvent;
+        await bridge.onEvent(kept);
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ body: keyInChatReply('en') }));
     });
 
     it('tries the bot name again next time when setting it failed', async () => {

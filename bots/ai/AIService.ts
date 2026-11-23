@@ -4022,7 +4022,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         delete memory.computerRetry;
         // They tapped "Start a new job" on the card for a job Orbit would not carry on (finding 6): this turn starts it afresh, so carrying one on is not offered in it
         if (memory.newJobAsked) {
-            delete memory.newJobAsked;
             return '';
         }
         try {

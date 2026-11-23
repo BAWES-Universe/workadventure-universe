@@ -1189,4 +1189,40 @@ describe('CodeRabbit: the confirmations of an accepted event are sent once each,
         await delivering;
         expect(sent).toEqual(['one', 'two']);
     });
+
+    // CodeRabbit on #2114: a newer turn can begin (and drop this queue) while the reply that carries these lines is being SENT
+    it('a newer turn that drops the queue while the reply is being sent does not take away what that reply told: the event Matrix then accepts still confirms it and asks its questions', async () => {
+        const queue = new ConfirmationQueue();
+        const sent: string[] = [];
+        const asked: string[] = [];
+        queue.add('key-told-0001', async () => void sent.push('told'), { state: 'started', title: 'Visa form' });
+        queue.say('Cancel “Visa form”?', () => void asked.push('told question'));
+        // the reply is built: its text carries these lines
+        queue.tell();
+        // something the reply did NOT carry (added after its text was built) goes with a drop
+        queue.add('key-late-0002', async () => void sent.push('late'), { state: 'started', title: 'Taxi booking' });
+        queue.say('Cancel “Taxi booking”?', () => void asked.push('late question'));
+        // the person's next message begins its turn while the send is awaited
+        queue.drop();
+        // nothing more is added to a replaced queue, not even before its reply's event comes back
+        queue.add('key-after-0003', async () => void sent.push('after'), { state: 'started', title: 'Hotel' });
+        queue.say('Cancel “Hotel”?', () => void asked.push('after question'));
+        // what a reply built from it now would carry is only what was there when it was dropped and had been put into a reply
+        expect(queue.tell().join('\n')).not.toMatch(/Hotel/);
+        expect(queue.tell().join('\n')).not.toMatch(/Taxi/);
+        await queue.deliver('$event');
+        expect(sent).toEqual(['told']);
+        expect(asked).toEqual(['told question']);
+    });
+
+    it('a replaced queue whose reply was never delivered confirms and asks nothing', async () => {
+        const queue = new ConfirmationQueue();
+        const sent: string[] = [];
+        queue.add('key-told-0001', async () => void sent.push('told'), { state: 'started', title: 'Visa form' });
+        queue.tell();
+        queue.drop();
+        // no event came back for it: nothing calls deliver, and an event with no id confirms nothing either
+        await queue.deliver(undefined);
+        expect(sent).toEqual([]);
+    });
 });

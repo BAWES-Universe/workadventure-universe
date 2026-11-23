@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { EvidenceRedis } from '../server/ComputerEvidenceStore';
+import { withoutKeys } from './KeyInChat';
 
 /**
  * The durable inbox of Matrix events (GPT's sixth answer, finding 9; Opus's design of 23 Nov, section 9).
@@ -29,9 +30,16 @@ export const RECOVER_EVERY_MS = 30 * 1000;
 export const MAX_TRIES = 3;
 /** How long the shared store has to answer: the router waits for the first step before it answers Matrix, so it can never wait long. */
 export const INBOX_DEADLINE_MS = 3000;
+/** Where an event came in, in the order this process took them: milliseconds with a count behind them, so two events taken in the same millisecond keep their order. */
+let arrivals = 0;
+const arrivalOf = (): number => Date.now() * 1000 + (arrivals++ % 1000);
 /** How many stale entries one scan takes. */
 export const RECOVER_BATCH = 50;
 
+/**
+ * Every script that changes an entry names the TOKEN of one acquisition (a new one each time a server takes an event in or takes it over, never the server's own name): a handle whose
+ * entry was recovered (even by the same server) can neither beat it, mark it paid, finish it, give it back nor undo it. The token is matched whole, up to the bar that ends it.
+ */
 /** Takes the event into the inbox: `1` when this server holds it now, `0` when it is already held or was handled. */
 const TAKE = `
 if redis.call('EXISTS', KEYS[1]) == 1 then
@@ -45,7 +53,7 @@ return 1
 /** Still working: the entry's score moves to now, only while it is still this server's. */
 const BEAT = `
 local held = redis.call('GET', KEYS[1])
-if not held or string.sub(held, 1, 2 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] then
+if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
   return 0
 end
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
@@ -59,7 +67,7 @@ return 1
  */
 const PAID = `
 local held = redis.call('GET', KEYS[1])
-if not held or string.sub(held, 1, 2 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] then
+if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
   return 0
 end
 if string.sub(held, -2) == '|$' then
@@ -71,7 +79,7 @@ return 1
 /** Handled: the entry becomes `d` for a day and leaves the inbox, only while it is still this server's. */
 const DONE = `
 local held = redis.call('GET', KEYS[1])
-if not held or string.sub(held, 1, 2 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] then
+if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
   return 0
 end
 redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
@@ -85,7 +93,7 @@ return 1
  */
 const RELEASE = `
 local held = redis.call('GET', KEYS[1])
-if not held or string.sub(held, 1, 2 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] then
+if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
   return 0
 end
 local tries = tonumber(string.match(held, '|(%d+)$')) or 1
@@ -105,7 +113,7 @@ return 1
  */
 const UNDO = `
 local held = redis.call('GET', KEYS[1])
-if not held or string.sub(held, 1, 2 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] or string.sub(held, -2) == '|$' then
+if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' or string.sub(held, -2) == '|$' then
   return 0
 end
 redis.call('DEL', KEYS[1])
@@ -158,6 +166,14 @@ redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[4])
 return payload
 `;
 
+/** The fence before paid work was not confirmed: the event is not this server's to answer (or the store could not say), so nothing paid for begins. Not an answer failed, and no note is sent. */
+export class PaidFenceError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'PaidFenceError';
+    }
+}
+
 /** An event this server holds: it says it is still working by itself, and ends one way or the other. Never throws. */
 export interface InboxEntry {
     /** Handled (whatever came of the handling): no other server takes it, and a redelivery is not handled again. */
@@ -166,7 +182,7 @@ export interface InboxEntry {
     release(): Promise<void>;
     /** The transaction this event came in was refused, so it is taken back out as if never taken and the resend takes it in afresh (a failed step leaves it to be recovered instead). */
     undo(): Promise<void>;
-    /** Something the person pays for is about to begin: written down BEFORE it does, so a server that dies in the middle never has it handled again by another. Never throws. */
+    /** Something the person pays for is about to begin: written down BEFORE it does, so a server that dies in the middle never has it handled again by another. Throws `PaidFenceError` when it could not be written down (the event is another server's now, or the store did not answer): nothing paid for may begin then. */
     paid(): Promise<void>;
 }
 
@@ -176,8 +192,8 @@ export type Taken = false | InboxEntry;
 export interface EventInbox {
     /** Takes the event in before Matrix is answered. Throws only when the store could not be reached (the router then answers Matrix that it must send it again). */
     take(eventId: string, event: unknown): Promise<Taken>;
-    /** The entries whose owner went away, with the event each one holds: this server now holds them. Never throws. */
-    recover(): Promise<Array<{ event: unknown; entry: InboxEntry }>>;
+    /** The entries whose owner went away, with the event each one holds and where it came in (`arrived`: kept with the event when it was taken, so events that share a time come back in the order they arrived): this server now holds them. Never throws. */
+    recover(): Promise<Array<{ event: unknown; entry: InboxEntry; arrived?: number }>>;
     /** The name this server holds its entries under (for the tests). */
     readonly owner: string;
 }
@@ -190,9 +206,13 @@ type Client = Pick<EvidenceRedis, 'eval'> & { zRangeByScore?: (key: string, min:
  */
 export function createEventInbox(
     client: () => Client | null,
-    options: { owner?: string; ttlSeconds?: number; beatEveryMs?: number; staleMs?: number; deadlineMs?: number; maxTries?: number; batch?: number; log?: (message: string, detail?: unknown) => void } = {}
+    options: { owner?: string; expected?: () => boolean; ttlSeconds?: number; beatEveryMs?: number; staleMs?: number; deadlineMs?: number; maxTries?: number; batch?: number; log?: (message: string, detail?: unknown) => void } = {}
 ): EventInbox {
     const owner = options.owner ?? randomUUID();
+    /** Whether a shared store is expected for this server (it was set up): then a store that is not connected means events cannot be kept, and the transaction is refused. */
+    const expected = options.expected ?? (() => false);
+    /** A new token for each time this server holds an event: it names the acquisition, not the server. */
+    const tokenOf = (): string => `${owner}:${randomUUID()}`;
     const ttlSeconds = options.ttlSeconds ?? EVENT_SEEN_SECONDS;
     const beatEveryMs = options.beatEveryMs ?? BEAT_EVERY_MS;
     const staleMs = options.staleMs ?? BEAT_STALE_MS;
@@ -204,6 +224,19 @@ export function createEventInbox(
     const nothing: InboxEntry = { done: async () => undefined, release: async () => undefined, undo: async () => undefined, paid: async () => undefined };
 
     const keysOf = (eventId: string) => [`${EVENT_SEEN_PREFIX}${eventId}`, INBOX_KEY, `${INBOX_EVENT_PREFIX}${eventId}`];
+    /** Any single call to the store against the same deadline. */
+    const within = async <T>(call: Promise<T>): Promise<T> => {
+        let timer: NodeJS.Timeout | undefined;
+        try {
+            const late = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error('Shared store did not answer in time')), deadlineMs);
+                timer.unref?.();
+            });
+            return await Promise.race([call, late]);
+        } finally {
+            clearTimeout(timer);
+        }
+    };
     /** One step in the store against a deadline that rejects: a store that never answers must not hold the room. */
     const step = async (redis: Client, script: string, eventId: string, args: string[]): Promise<unknown> => {
         let timer: NodeJS.Timeout | undefined;
@@ -219,9 +252,9 @@ export function createEventInbox(
     };
 
     /** An entry this server holds: it beats while it is held, and the beat stops when it ends. */
-    const entryOf = (redis: Client, eventId: string): InboxEntry => {
+    const entryOf = (redis: Client, eventId: string, token: string): InboxEntry => {
         const beat = setInterval(() => {
-            void step(redis, BEAT, eventId, [owner, String(ttlSeconds), String(Date.now()), eventId]).catch((error) => say('Could not say an event is still being handled:', error));
+            void step(redis, BEAT, eventId, [token, String(ttlSeconds), String(Date.now()), eventId]).catch((error) => say('Could not say an event is still being handled:', error));
         }, beatEveryMs);
         beat.unref?.();
         let over = false;
@@ -232,13 +265,21 @@ export function createEventInbox(
             await step(redis, script, eventId, args).catch((error) => say(`Could not mark an event as ${what}; it is taken up again by another server:`, error));
         };
         return {
-            done: () => end(DONE, [owner, String(ttlSeconds), eventId], 'handled'),
-            release: () => end(RELEASE, [owner, String(ttlSeconds), String(maxTries), eventId], 'to be tried again'),
-            undo: () => end(UNDO, [owner, eventId], 'taken back'),
-            // Awaited before the first paid call. A store that fails here is logged and the turn goes on: recovery will most likely fail on the same store too
+            done: () => end(DONE, [token, String(ttlSeconds), eventId], 'handled'),
+            release: () => end(RELEASE, [token, String(ttlSeconds), String(maxTries), eventId], 'to be tried again'),
+            undo: () => end(UNDO, [token, eventId], 'taken back'),
+            // Awaited before the first paid call, and it must SUCCEED: when it does not (another server holds the event now, or the store did not answer) it throws, and nothing paid for
+            // begins. The event then goes back for another try, as one that nothing was paid for
             paid: async () => {
-                if (over) return;
-                await step(redis, PAID, eventId, [owner, String(ttlSeconds)]).catch((error) => say('Could not write down that an event began paid work:', error));
+                if (over) throw new PaidFenceError('The event had already ended here');
+                let answer: unknown;
+                try {
+                    answer = await step(redis, PAID, eventId, [token, String(ttlSeconds)]);
+                } catch (error) {
+                    say('Could not write down that an event began paid work; it is not started:', error);
+                    throw new PaidFenceError('The shared store did not confirm that paid work began');
+                }
+                if (answer !== 1 && answer !== '1') throw new PaidFenceError('Another server holds this event now');
             },
         };
     };
@@ -248,32 +289,45 @@ export function createEventInbox(
         take: async (eventId, event) => {
             if (!eventId) return nothing;
             const redis = client();
-            if (!redis) return nothing;
-            const took = await step(redis, TAKE, eventId, [owner, String(ttlSeconds), String(Date.now()), JSON.stringify(event), eventId]);
+            if (!redis) {
+                // The store is expected (it is set up for this server) and not connected: the event is NOT acknowledged as kept. The router answers Matrix that the transaction must come
+                // again, so nothing that this process then loses was ever promised
+                if (expected()) throw new Error('The shared store is expected but not connected');
+                return nothing;
+            }
+            const token = tokenOf();
+            // What is written to the store holds no key: a key typed into the chat never reaches Redis, and the entry says only that one was there (the Brick refuses it as it would live)
+            const kept = JSON.stringify({ arrived: arrivalOf(), event: withoutKeys(event) });
+            const took = await step(redis, TAKE, eventId, [token, String(ttlSeconds), String(Date.now()), kept, eventId]);
             if (took === 0 || took === '0') return false;
-            return entryOf(redis, eventId);
+            return entryOf(redis, eventId, token);
         },
         recover: async () => {
             const redis = client();
             if (!redis || !redis.zRangeByScore) return [];
-            const found: Array<{ event: unknown; entry: InboxEntry }> = [];
+            const found: Array<{ event: unknown; entry: InboxEntry; arrived?: number }> = [];
             try {
                 const cutoff = Date.now() - staleMs;
-                // The oldest beats first, so the events of a room come back in the order they arrived
-                const stale = await redis.zRangeByScore(INBOX_KEY, 0, cutoff, { LIMIT: { offset: 0, count: batch } });
+                // The oldest beats first. The scan is bounded by the same deadline as every step: a store that accepts the call and never answers ends it, and the next look is a new one
+                const stale = await within(redis.zRangeByScore(INBOX_KEY, 0, cutoff, { LIMIT: { offset: 0, count: batch } }));
                 for (const eventId of stale) {
+                    const token = tokenOf();
                     // eslint-disable-next-line no-await-in-loop
-                    const payload = await step(redis, TAKEOVER, eventId, [owner, String(ttlSeconds), String(Date.now()), eventId, String(cutoff), String(maxTries)]).catch((error) => {
+                    const payload = await step(redis, TAKEOVER, eventId, [token, String(ttlSeconds), String(Date.now()), eventId, String(cutoff), String(maxTries)]).catch((error) => {
                         say('Could not take over an event left by another server:', error);
                         return null;
                     });
                     if (typeof payload !== 'string') continue;
                     try {
-                        found.push({ event: JSON.parse(payload), entry: entryOf(redis, eventId) });
+                        const read = JSON.parse(payload) as { arrived?: unknown; event?: unknown };
+                        // Entries are kept as `{ arrived, event }`; one kept bare (before that) is the event itself
+                        const wrapped = typeof read === 'object' && read !== null && 'event' in read;
+                        const arrived = wrapped && typeof read.arrived === 'number' ? read.arrived : undefined;
+                        found.push({ event: wrapped ? read.event : read, entry: entryOf(redis, eventId, token), ...(arrived === undefined ? {} : { arrived }) });
                     } catch (error) {
                         say('An event left by another server could not be read; it is dropped:', error);
                         // eslint-disable-next-line no-await-in-loop
-                        await step(redis, DONE, eventId, [owner, String(ttlSeconds), eventId]).catch(() => undefined);
+                        await step(redis, DONE, eventId, [token, String(ttlSeconds), eventId]).catch(() => undefined);
                     }
                 }
             } catch (error) {

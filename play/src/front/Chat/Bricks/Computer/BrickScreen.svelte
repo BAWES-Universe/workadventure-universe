@@ -54,8 +54,12 @@
         // Stop ends every job on the computer (asking first when that is several): the screen closes once something has ended
         if (action === "stop") {
             const brickAtTap = brick.id;
+            // Pending until the request is over, whatever came of it (a question hands the next tap to its sheet): a second tap never sends a second Stop
+            busy = true;
             void askToEnd(brick, { stop: true }, () => {
                 if (!gone && brick.id === brickAtTap) onClose();
+            }).finally(() => {
+                busy = false;
             });
             return;
         }

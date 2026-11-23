@@ -63,6 +63,10 @@ export function createMatrixAppServiceRouter(
     const recentTxnIds: string[] = [];
     const recentTxnSet = new Set<string>();
     const roomChains = new Map<string, Promise<void>>();
+    /** The transactions being taken in right now, by id: what each answers is whether its events were all kept. */
+    const pendingTxns = new Map<string, Promise<boolean>>();
+    /** The look for events another server left, while one is going on (one at a time). */
+    let recovering: Promise<number> | null = null;
     let closing = false;
 
     const requireHomeserver = (req: Request, res: Response, next: NextFunction) => {
@@ -83,24 +87,34 @@ export function createMatrixAppServiceRouter(
             return;
         }
         const txnId = req.params.txnId;
+        // Seen and KEPT: acknowledged again. A transaction still being taken in is not acknowledged until it is: if its intake fails and is rolled back, a duplicate that was told 200 would
+        // leave Matrix believing events were kept that were not
         if (recentTxnSet.has(txnId)) {
             res.json({});
             return;
         }
-        recentTxnSet.add(txnId);
-        recentTxnIds.push(txnId);
-        if (recentTxnIds.length > RECENT_TXN_LIMIT) {
-            recentTxnSet.delete(recentTxnIds.shift()!);
+        const pending = pendingTxns.get(txnId);
+        if (pending) {
+            void pending.then((kept) => {
+                if (res.headersSent) return;
+                if (kept) res.json({});
+                else res.status(500).json({ errcode: 'M_UNKNOWN', error: 'Could not take the transaction in' });
+            });
+            return;
         }
         const events: MatrixEvent[] = Array.isArray(req.body?.events) ? req.body.events : [];
-        void takeIn(events, res, txnId);
+        const intake = takeIn(events, res, txnId);
+        pendingTxns.set(txnId, intake);
+        void intake.finally(() => {
+            if (pendingTxns.get(txnId) === intake) pendingTxns.delete(txnId);
+        });
     };
 
-    /** Forgets a transaction that was refused, so the transaction Synapse sends again is taken in and not answered as one already seen (Opus G6R-1). */
-    const forgetTxn = (txnId: string): void => {
-        recentTxnSet.delete(txnId);
-        const at = recentTxnIds.indexOf(txnId);
-        if (at >= 0) recentTxnIds.splice(at, 1);
+    /** A transaction whose events were all kept: a copy of it that comes later is answered at once and handled by no one. */
+    const rememberTxn = (txnId: string): void => {
+        recentTxnSet.add(txnId);
+        recentTxnIds.push(txnId);
+        if (recentTxnIds.length > RECENT_TXN_LIMIT) recentTxnSet.delete(recentTxnIds.shift()!);
     };
 
     /**
@@ -108,7 +122,7 @@ export function createMatrixAppServiceRouter(
      * An event the inbox already holds, or that was handled, is not handled again. A store that is connected but fails leaves Matrix unanswered with a 500, so it sends the transaction
      * again and nothing is lost; a store that is not connected at all is the fallback of before (handle it, remember nothing).
      */
-    const takeIn = async (events: MatrixEvent[], res: Response, txnId: string): Promise<void> => {
+    const takeIn = async (events: MatrixEvent[], res: Response, txnId: string): Promise<boolean> => {
         const mine: Array<{ event: MatrixEvent; entry?: InboxEntry }> = [];
         try {
             for (const event of events) {
@@ -125,14 +139,15 @@ export function createMatrixAppServiceRouter(
             console.error('[MatrixAppService] Could not keep a transaction in the shared store; Synapse is asked to send it again:', error instanceof Error ? error.message : error);
             // What was already kept is taken back out as if never taken: the transaction that comes again holds those events too, and takes them in afresh in their order
             await Promise.all(mine.map((one) => one.entry?.undo().catch(() => undefined)));
-            // Before Matrix is told: its resend of the same transaction must be taken in, not answered 200 as a duplicate that took nothing
-            forgetTxn(txnId);
             if (!res.headersSent) res.status(500).json({ errcode: 'M_UNKNOWN', error: 'Could not take the transaction in' });
-            return;
+            return false;
         }
+        // Remembered BEFORE Matrix is answered: a copy that comes after the answer is a duplicate of events that are kept
+        rememberTxn(txnId);
         // Answer at once: Synapse holds later transactions until this one returns, and a reply can take a while.
         res.json({});
         for (const one of mine) work(one.event, one.entry);
+        return true;
     };
 
     /** Handles one event (its own room in order), and ends its inbox entry: done, or back for another try when nothing of it was paid for. */
@@ -144,9 +159,11 @@ export function createMatrixAppServiceRouter(
             try {
                 await handler.onEvent(event, {
                     // Written down in the shared store BEFORE the paid work begins: a server that dies after this leaves an entry no other server hands out again
+                    // It counts as paid only once it was written down: when that fails (another server holds the event now, or the store did not answer) it throws, nothing paid for begins,
+                    // and the event goes back as one that nothing was paid for
                     paid: async () => {
-                        paid = true;
                         await entry?.paid();
+                        paid = true;
                     },
                 });
             } catch (error) {
@@ -169,17 +186,29 @@ export function createMatrixAppServiceRouter(
      * Takes up the events another server left behind (its handler died with it): they are handled here, in the order they arrived for each room. Called on a timer by the bot server, and
      * by the tests. Never throws.
      */
-    const recover = async (): Promise<number> => {
-        if (closing || !options.inbox) return 0;
-        const left = await options.inbox.recover();
-        // In the order the events arrived: every taken entry beat from the moment it was taken, so their scores are near each other and a tie sorts by event id, not by arrival
-        const arrived = (one: { event: unknown }): number => {
+    const scan = async (): Promise<number> => {
+        const left = await options.inbox!.recover();
+        // In the order the events arrived: every taken entry beat from the moment it was taken, so their scores are near each other and a tie sorts by event id, not by arrival. Events
+        // that share one time keep the order they were taken in (the count the inbox kept with each)
+        const sentAt = (one: { event: unknown }): number => {
             const at = (one.event as { origin_server_ts?: unknown } | null)?.origin_server_ts;
             return typeof at === 'number' && Number.isFinite(at) ? at : Number.MAX_SAFE_INTEGER;
         };
-        const ordered = left.map((one, index) => ({ one, index })).sort((a, b) => arrived(a.one) - arrived(b.one) || a.index - b.index);
+        const ordered = left.map((one, index) => ({ one, index })).sort((a, b) => sentAt(a.one) - sentAt(b.one) || (a.one.arrived ?? Number.MAX_SAFE_INTEGER) - (b.one.arrived ?? Number.MAX_SAFE_INTEGER) || a.index - b.index);
         for (const { one } of ordered) work(one.event as MatrixEvent, one.entry);
         return left.length;
+    };
+    const recover = (): Promise<number> => {
+        if (closing || !options.inbox) return Promise.resolve(0);
+        // One look at a time: a store that is slow to answer is not asked again by every tick of the timer
+        if (recovering) return recovering;
+        const look = scan()
+            .catch(() => 0)
+            .finally(() => {
+                if (recovering === look) recovering = null;
+            });
+        recovering = look;
+        return look;
     };
 
     const userQuery = async (req: Request, res: Response) => {
@@ -215,8 +244,18 @@ export function createMatrixAppServiceRouter(
         closing = true;
         let timer: NodeJS.Timeout | undefined;
         const timedOut = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs)));
-        // Chains only grow while transactions are taken in, and those are refused now, so this set is final.
-        const done = Promise.all([...roomChains.values()]).then(() => true as const);
+        // Nothing new is admitted now, but what already was can still add work: a transaction being taken in, and a look for left-behind events, hand their events to the room chains when they
+        // finish. Both are waited for first, then the chains, so none of that work starts after the wait has ended
+        const done = (async () => {
+            await Promise.all([...pendingTxns.values(), recovering ?? Promise.resolve(0)].map((one) => one.catch(() => undefined)));
+            for (;;) {
+                const chains = [...roomChains.values()];
+                if (chains.length === 0) return true as const;
+                // eslint-disable-next-line no-await-in-loop
+                await Promise.all(chains);
+                if (roomChains.size === 0) return true as const;
+            }
+        })();
         try {
             return await Promise.race([done, timedOut]);
         } finally {

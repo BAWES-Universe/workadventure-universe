@@ -19,6 +19,8 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn(), captureMessage: vi.f
 const JOB: RunnableJob = { jobId: 'job-1', botId: 'brick-1', title: 'Visa form', brief: 'Two people, Kuwait', writes: true, hasTurn: false };
 const RELAY = 'https://bot-server.example.test';
 const LEASE_MS = 90_000;
+/** How long a job another worker holds is left alone before it is asked for again (the holder may have given it back). */
+const RECHECK_MS = 15_000;
 const quiet = () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() });
 const TIMING = { ...RUNNER_TIMING, waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0], beatMs: 30_000, leaseMs: LEASE_MS };
 
@@ -122,15 +124,15 @@ function leasedOrbit(options: { epoch?: number; clock?: () => number; turns?: Ar
     };
 }
 
-const runnerOn = (fake: ReturnType<typeof leasedOrbit>, extra: { runId?: string; now?: () => number; relayUrl?: string | null } = {}) => {
+const runnerOn = (fake: ReturnType<typeof leasedOrbit>, extra: { runId?: string; now?: () => number; relayUrl?: string | null; orbit?: RunnerOrbit; runIds?: () => string } = {}) => {
     const log = quiet();
     const instance = createComputerRunner({
-        orbit: fake.orbit,
+        orbit: extra.orbit ?? fake.orbit,
         relayUrl: extra.relayUrl === undefined ? RELAY : extra.relayUrl,
         sleep: async () => undefined,
         log,
         timing: TIMING,
-        runId: () => extra.runId ?? 'run1',
+        runId: extra.runIds ?? (() => extra.runId ?? 'run1'),
         ...(extra.now ? { now: extra.now } : {}),
     });
     return { instance, log };
@@ -297,23 +299,30 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         expect(fake.state.status).toBe('running');
         expect(log.info).toHaveBeenCalled();
 
-        // Ticks while the lease is alive ask Orbit nothing about the job
-        at += 20_000;
+        // Ticks inside the short while after it ask Orbit nothing about the job
+        at += 10_000;
         await instance.tick();
         await instance.idle();
         expect(fake.of('claim')).toHaveLength(1);
+
+        // After it the job is asked for again, once: the lease is still alive, so nothing is written and nothing is ended
+        at += 10_000;
+        await instance.tick();
+        await instance.idle();
+        expect(fake.of('claim').map((row) => row.answer)).toEqual(['held', 'held']);
+        expect(fake.state.ownerEpoch).toBe(4);
 
         // Once the lease has ended the job is taken up on the first look, with no one to hold it
         at += 30_000;
         fake.state.leaseUntil = null;
         await instance.tick();
         await instance.idle();
-        expect(fake.of('claim')).toHaveLength(2);
-        expect(fake.of('claim')[1].answer).toBe('claimed');
+        expect(fake.of('claim')).toHaveLength(3);
+        expect(fake.of('claim')[2].answer).toBe('claimed');
         expect(fake.state.status).toBe('done');
     });
 
-    it('a `held` answer that names no time, or one already past, holds the job for a whole lease; one far ahead for no longer than that', async () => {
+    it('a `held` answer that names no time, one already past, or one far ahead holds the job for the short while and no longer', async () => {
         for (const until of [undefined, 'not a time', 500_000, new Date(9_000_000_000_000).toISOString()] as const) {
             let at = 1_000_000;
             const fake = leasedOrbit({ epoch: 4, clock: () => at });
@@ -328,8 +337,8 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
             await instance.tick();
             await instance.idle();
             expect(claims, String(until)).toBe(1);
-            // Still held just before a whole lease is up, and looked at again just after it
-            at += LEASE_MS - 1000;
+            // Still held just before the short while is up, and looked at again just after it: never held for longer than that, whatever the answer named
+            at += RECHECK_MS - 1000;
             await instance.tick();
             await instance.idle();
             expect(claims, String(until)).toBe(1);
@@ -338,6 +347,96 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
             await instance.idle();
             expect(claims, String(until)).toBe(2);
         }
+    });
+
+    // CodeRabbit on #2114: a lease that ends sooner than the short while is looked at when it ends, and a holder that gives the job back early does not leave it idle
+    it('a lease that ends before the short while is up is looked at when it ends', async () => {
+        let at = 1_000_000;
+        const fake = leasedOrbit({ epoch: 4, clock: () => at });
+        fake.state.leaseUntil = at + 5_000;
+        const { instance } = runnerOn(fake, { now: () => at });
+        await instance.tick();
+        await instance.idle();
+        expect(fake.of('claim')).toHaveLength(1);
+        at += 4_000;
+        await instance.tick();
+        await instance.idle();
+        expect(fake.of('claim')).toHaveLength(1);
+        at += 2_000;
+        await instance.tick();
+        await instance.idle();
+        expect(fake.of('claim').map((row) => row.answer)).toEqual(['held', 'claimed']);
+    });
+
+    it('a holder that gives the job back early (a rolling restart) does not leave it idle for the rest of its lease: the next look after the short while takes it up', async () => {
+        let at = 1_000_000;
+        const fake = leasedOrbit({ epoch: 4, clock: () => at });
+        // another worker holds it for a whole lease
+        fake.state.leaseUntil = at + LEASE_MS;
+        const { instance } = runnerOn(fake, { now: () => at });
+        await instance.tick();
+        await instance.idle();
+        expect(fake.of('claim').map((row) => row.answer)).toEqual(['held']);
+        // the holder releases at once, long before its lease would have lapsed
+        fake.state.leaseUntil = null;
+        at += 5_000;
+        await instance.tick();
+        await instance.idle();
+        expect(fake.of('claim')).toHaveLength(1);
+        at += RECHECK_MS;
+        await instance.tick();
+        await instance.idle();
+        expect(fake.of('claim').map((row) => row.answer)).toEqual(['held', 'claimed']);
+        expect(fake.state.status).toBe('done');
+    });
+
+    // CodeRabbit on #2114 (I12)
+    it('a beat answered superseded after its worker stopped and the job was taken up again here stops nothing of the new worker: its beat goes on and its turn stays open', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+        let at = 1_000_000;
+        const fake = leasedOrbit({ epoch: 2, clock: () => at, holdTurn: true });
+        const original = fake.orbit.action;
+        let answerLate: ((value: Record<string, unknown>) => void) | undefined;
+        let delayed = false;
+        fake.orbit.action = async (botId, jobId, body) => {
+            // the FIRST beat is slow: its answer is read after the worker it was for has gone
+            if (String(body.action) === 'beat' && !delayed) {
+                delayed = true;
+                return new Promise<Record<string, unknown>>((resolve) => (answerLate = resolve));
+            }
+            return original(botId, jobId, body);
+        };
+        // each stretch of work is a run of its own, as it is in the server
+        let runs = 0;
+        const { instance } = runnerOn(fake, { now: () => at, runIds: () => `run-${++runs}` });
+        await instance.tick();
+        await vi.advanceTimersByTimeAsync(0);
+        const firstEpoch = fake.state.ownerEpoch;
+        at += 30_000;
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(delayed).toBe(true);
+        // the worker stops while that beat is in flight, and the job is taken up again here under a new epoch
+        instance.stop();
+        await vi.advanceTimersByTimeAsync(0);
+        await instance.idle();
+        at += 1_000;
+        instance.start(10_000_000);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(instance.active()).toEqual([JOB.jobId]);
+        expect(fake.state.ownerEpoch).toBe(firstEpoch + 1);
+        const beatsBefore = fake.of('beat').length;
+        // the old beat's answer arrives now: another run holds the job
+        answerLate?.({ ok: false, reason: 'stale', run: 'superseded' });
+        await vi.advanceTimersByTimeAsync(0);
+        // the new worker is still working, and its beat goes on under its own epoch
+        expect(instance.active()).toEqual([JOB.jobId]);
+        at += 30_000;
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(fake.of('beat').length).toBeGreaterThan(beatsBefore);
+        expect(fake.of('beat').at(-1)?.epoch).toBe(firstEpoch + 1);
+        instance.stop();
+        await vi.advanceTimersByTimeAsync(0);
+        await instance.idle();
     });
 
     // Orbit's second claim refusal: a resumed job whose browser is still being settled answers `not_ready` and writes nothing; the job is looked at again after a short wait, not held off for a lease
@@ -372,7 +471,10 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         let at = 1_000_000;
         const fake = leasedOrbit({ epoch: 1, clock: () => at, holdTurn: true });
         // Two bot servers, each its own runner, on one Orbit and one job
-        const first = runnerOn(fake, { runId: 'run-A', now: () => at });
+        // The first server's connection to Orbit can be cut: once it is, nothing it sends (a release, a beat) arrives
+        let dead = false;
+        const cut: RunnerOrbit = { ...fake.orbit, action: async (botId, jobId, body) => (dead ? ({ ok: true } as never) : fake.orbit.action(botId, jobId, body)) };
+        const first = runnerOn(fake, { runId: 'run-A', now: () => at, orbit: cut });
         const second = runnerOn(fake, { runId: 'run-B', now: () => at });
         await first.instance.tick();
         await vi.advanceTimersByTimeAsync(0);
@@ -392,12 +494,24 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         expect(fake.of('beat').length).toBeGreaterThanOrEqual(4);
         expect(fake.of('beat').every((row) => row.epoch === owner)).toBe(true);
 
-        // The first server dies: nothing is released, so the second waits out the lease and then takes the job over ONCE
+        // The first server dies: nothing reaches Orbit from it any more, so nothing is released and the lease is left to lapse. The second waits it out and then takes the job over ONCE
+        dead = true;
         first.instance.stop();
         await vi.advanceTimersByTimeAsync(0);
         await first.instance.idle();
+        const lapses = fake.state.leaseUntil as number;
+        expect(lapses).toBeGreaterThan(at);
         fake.state.asked.length = 0;
-        at += LEASE_MS + 1000;
+        // just before it lapses: still the first server's, and the second is told so
+        at = lapses - 1000;
+        await second.instance.tick();
+        await second.instance.idle();
+        expect(fake.of('claim').map((row) => row.answer)).toEqual(['held']);
+        expect(fake.of('release')).toEqual([]);
+        expect(fake.state.ownerEpoch).toBe(owner);
+        fake.state.asked.length = 0;
+        // just after: the job is taken up
+        at = lapses + 1000;
         await second.instance.tick();
         await vi.advanceTimersByTimeAsync(0);
         // ONE takeover: the job is the second server's now, and it is running it (its turn is open, so it is not awaited here)

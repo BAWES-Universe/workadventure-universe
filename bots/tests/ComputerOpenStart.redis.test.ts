@@ -13,7 +13,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { AdminApiService } from '../server/AdminApiService';
 import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
-import { createEventInbox, INBOX_KEY, type EventInbox, type InboxEntry } from '../matrix/MatrixEventInbox';
+import { createEventInbox, INBOX_KEY, PaidFenceError, type EventInbox, type InboxEntry } from '../matrix/MatrixEventInbox';
 import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, jobLine, runComputerTool, startKeyFor, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
@@ -1457,7 +1457,8 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                     delete: (scope: string, key: string) => real.delete(scope, key),
                     claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
                         claims += 1;
-                        if (claims === 2) return { key: HELD, at: Date.now(), payload: entry.payload } as never;
+                        // The held key stands for the words of the OTHER attempt, which are not the words of the one that expired
+                        if (claims === 2) return { key: HELD, at: Date.now(), payload: { title: 'The held ask', writes: true } } as never;
                         return real.claim(scope, entry as never, keep, life);
                     },
                 };
@@ -1473,11 +1474,72 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                     expect(orbit.jobs.size).toBe(1);
                 } else {
                     expect(sentKeys).toEqual([startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0), HELD]);
+                    // and the words that go with it are the held key's own, not the local proposal's
+                    expect(orbit.posts.map((one) => one.title)).toEqual(['Fill in my visa form', 'The held ask']);
                     expect(answer).toMatchObject({ started: true });
                     expect([...orbit.jobs.keys()]).toEqual([HELD]);
                 }
                 expect(orbit.reservations).toBe(made ? 0 : 1);
             }
+        });
+
+        it('S2 `expired`, the shared store expected but it did not confirm the new key: nothing is sent under it (another server may hold a key of this ask), and the next ask checks it again', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            const server = process_(orbit, who);
+            const real = new RedisStartKeys(() => client as never);
+            let claims = 0;
+            const store = {
+                expected: () => true,
+                delete: (scope: string, key: string) => real.delete(scope, key),
+                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
+                    claims += 1;
+                    // the first key is kept; the replacement's claim times out
+                    if (claims === 2) return undefined;
+                    return real.claim(scope, entry as never, keep, life);
+                },
+            };
+            const answer = await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
+            expect(answer).toMatchObject({ started: false, unconfirmed: true });
+            // only the first key (answered expired) reached Orbit: the replacement was never sent
+            expect(orbit.posts).toHaveLength(1);
+            expect(orbit.jobs.size).toBe(0);
+            // the next ask claims the replacement afresh, and then sends it: one job, one reservation
+            const again = await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
+            expect(again).toMatchObject({ started: true });
+            expect(orbit.posts).toHaveLength(2);
+            expect(orbit.jobs.size).toBe(1);
+            expect(orbit.reservations).toBe(1);
+        });
+
+        it('S2 `expired`, the key adopted holds no words: the words of the attempt that expired are not kept under it, so neither this ask nor the next one sends it', async () => {
+            const HELD = 'mx_held0000000000000000000000000002';
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            const server = process_(orbit, who);
+            const real = new RedisStartKeys(() => client as never);
+            let claims = 0;
+            const store = {
+                expected: () => true,
+                delete: (scope: string, key: string) => real.delete(scope, key),
+                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
+                    claims += 1;
+                    if (claims === 2) return { key: HELD, at: Date.now() } as never;
+                    if (claims > 2) return { key: HELD, at: Date.now() } as never;
+                    return real.claim(scope, entry as never, keep, life);
+                },
+            };
+            const context = { ...server.context, startKeyStore: store as never, inbound: EVENT };
+            const first = await runComputerTool({ job: 'Fill in my visa form' }, { ...context, confirmations: new ConfirmationQueue() });
+            expect(first).toMatchObject({ started: false, unknown: true });
+            expect(orbit.posts).toHaveLength(1);
+            // the entry the next ask finds stands for the adopted key and has no words
+            const second = await runComputerTool({ job: 'Fill in my visa form' }, { ...context, confirmations: new ConfirmationQueue() });
+            expect(second).toMatchObject({ started: false, unknown: true });
+            expect(orbit.posts).toHaveLength(1);
+            expect(orbit.jobs.size).toBe(0);
         });
 
         it('S2 `expired` for a start with no inbound event (a random key): the new key is random too, and one job is made', async () => {
@@ -1547,7 +1609,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
         it('the server hands the router the durable inbox at start-up, and looks for the events other servers left behind (it cannot be started in a test, so its source is read: losing either would lose a person\'s message)', () => {
             const source = readFileSync(join(__dirname, '..', 'server', 'index.ts'), 'utf8');
             expect(source).toMatch(/import \{ createEventInbox, RECOVER_EVERY_MS \} from '\.\.\/matrix\/MatrixEventInbox';/);
-            expect(source).toMatch(/createMatrixAppServiceRouter\(matrixConfig, matrixBridge, \{ inbox: createEventInbox\(\(\) => botRegistry\.evidenceClient\(\)\) \}\)/);
+            expect(source).toMatch(/createMatrixAppServiceRouter\(matrixConfig, matrixBridge, \{ inbox: createEventInbox\(\(\) => botRegistry\.evidenceClient\(\), \{ expected: \(\) => botRegistry\.sharedStoreExpected\(\) \}\) \}\)/);
             expect(source).toMatch(/matrixRecoverInterval = setInterval\(\(\) => void matrixRouter\?\.recover\(\), RECOVER_EVERY_MS\)/);
             expect(source).toMatch(/if \(matrixRecoverInterval\) clearInterval\(matrixRecoverInterval\)/);
         });
@@ -1786,7 +1848,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 await vi.waitFor(() => expect(answers).toEqual([id]));
             });
 
-            it('G6R-2: a paid entry whose owner is still beating is left alone, and a store that fails the paid step does not stop the turn', async () => {
+            it('G6R-2: a paid entry whose owner is still beating is left alone; a store that fails the paid step starts NOTHING paid, and the event is given back and answered once by a server that can write the mark (CodeRabbit on #2114, I9)', async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
                 const id = fresh('alive');
@@ -1798,15 +1860,26 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 // fresh score: its owner is alive, so another server takes nothing
                 expect(await two.recover()).toBe(0);
                 expect(await stateOf(id)).toMatch(/\|\$$/);
-                // the paid step failing is logged and the turn goes on
-                const real = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000 });
+                // the paid step failing: the turn does NOT begin (nothing is paid for without the mark written), and the event goes back for another try
                 const broken = createEventInbox(() => ({ eval: async (script: string, options: unknown) => (/\$/.test(script) && /'\|\$'/.test(script) ? Promise.reject(new Error('down')) : (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, options)) }), { ttlSeconds: 60, beatEveryMs: 60_000, log: () => undefined });
                 const ok = fresh('paidfail');
                 const answers: string[] = [];
                 const three = await instance(orbit, who, { inbox: broken, answers });
                 await three.put('t3', event(ok));
+                await vi.waitFor(() => expect(three.handled).toEqual([ok]));
+                await quiet();
+                expect(answers).toEqual([]);
+                expect(orbit.jobs.size).toBe(0);
+                expect(orbit.reservations).toBe(0);
+                // given back, not closed: a server whose store works takes it up and answers it, once
+                expect(await stateOf(ok)).toMatch(/^p\|-\|/);
+                const four = await instance(orbit, who, { answers });
+                expect(await four.recover()).toBe(1);
                 await vi.waitFor(() => expect(answers).toEqual([ok]));
-                expect(real.owner).not.toBe(broken.owner);
+                await vi.waitFor(async () => expect(await stateOf(ok)).toBe('d'));
+                // the first event, whose owner died after paying, is never handed out
+                await client.del([`matrix:event:${id}`, `matrix:inbox:${id}`]);
+                await client.zRem(INBOX_KEY, id);
             });
 
             it('G6R-2: the paid step is AWAITED: with a slow store the paid work begins only after it was written down', async () => {
@@ -1841,7 +1914,8 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 expect(taken).not.toBe(false);
                 // another server took it over meanwhile
                 await client.set(`matrix:event:${id}`, 'p|server-two|2');
-                await (taken as { paid(): Promise<void> }).paid();
+                // the mark is refused, and it says so: nothing paid for may begin on the strength of it
+                await expect((taken as { paid(): Promise<void> }).paid()).rejects.toThrow(PaidFenceError);
                 expect(await stateOf(id)).toBe('p|server-two|2');
                 await (taken as { done(): Promise<void> }).done();
                 // nothing of this test is left in the inbox for the next one to find

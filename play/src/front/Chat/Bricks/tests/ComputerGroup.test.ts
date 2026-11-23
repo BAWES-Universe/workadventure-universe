@@ -562,6 +562,37 @@ describe("a Brick's computer on screen (#2000)", () => {
         second.$destroy();
     });
 
+    it("sends one Stop however often it is tapped while the first is pending, and the button works again once it is over, whatever came of it", async () => {
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
+        await loadBrickComputer(BRICK);
+        const onClose = vi.fn();
+        piece = new BrickScreen({ target, props: { brick, onClose } });
+        await settle();
+        let answer: (value: unknown) => void = () => undefined;
+        game.brickComputerAction.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        byId("brickScreenStop")?.click();
+        await settle();
+        byId("brickScreenStop")?.click();
+        byId("brickScreenStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(1);
+        expect((byId("brickScreenStop") as HTMLButtonElement | null)?.disabled).toBe(true);
+        // Orbit refused: the screen stays, the button is on again, and a new tap is a new Stop
+        answer(null);
+        await settle();
+        expect(onClose).not.toHaveBeenCalled();
+        expect((byId("brickScreenStop") as HTMLButtonElement | null)?.disabled).toBe(false);
+        game.brickComputerAction.mockResolvedValue({ job: job({ status: "stopped" }) });
+        byId("brickScreenStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(2);
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
     it("still closes on Stop when the screen is still the one that was tapped", async () => {
         game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
         await loadBrickComputer(BRICK);

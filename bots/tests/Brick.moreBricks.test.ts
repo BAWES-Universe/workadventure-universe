@@ -381,6 +381,50 @@ describe('A reply that made a Brick, or suggests one', () => {
         expect(memory.getMemory(BRICK, service.playerIdFor(ALICE))?.newJobAsked).toBeUndefined();
     });
 
+    // CodeRabbit on #2114: a tap on "Start a new job" is its own reply, in either order
+    it('keeps a tap on "Start a new job" out of a batch of typed words, and typed words out of its batch', async () => {
+        for (const tapFirst of [true, false]) {
+            const { service, generate } = makeReplies(brickConfig);
+            // the first reply is slow, so what comes next waits behind it
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            generate.mockImplementationOnce(async function* () {
+                await gate;
+                yield { content: 'First.', done: false };
+                yield { content: '', done: true, metadata: {} };
+            });
+            const first = service.reply(BRICK, person, 'hello', [], { roomId: ROOM });
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            const tap = () => service.reply(BRICK, person, 'Start a new job', [], { roomId: ROOM, eventId: '$tap', newJobAsked: { title: 'Visa form' } });
+            const typed = () => service.reply(BRICK, person, 'and one more thing', [], { roomId: ROOM, eventId: '$typed' });
+            const second = tapFirst ? tap() : typed();
+            const third = tapFirst ? typed() : tap();
+            release();
+            const replies = await Promise.all([first, second, third]);
+            // three turns, none answered together with another
+            expect(generate).toHaveBeenCalledTimes(3);
+            expect(replies.some((reply) => reply?.answeredTogether)).toBe(false);
+            const asked = generate.mock.calls.map((call) => String((call as unknown as unknown[])[2]));
+            const tapAsked = asked.find((text) => /call use_computer with job "Visa form"/.test(text));
+            expect(tapAsked, String(tapFirst)).toBeDefined();
+            // the typed words never reached the tap's turn, and the tap's words never reached theirs
+            expect(tapAsked).not.toContain('and one more thing');
+            expect(asked.filter((text) => text.includes('and one more thing')).every((text) => !/call use_computer with job "Visa form"/.test(text))).toBe(true);
+        }
+    });
+
+    it('an offer a failed turn set is not shown under a later reply', async () => {
+        const { service, generate, memory } = makeReplies(brickConfig);
+        generate.mockImplementationOnce(async function* () {
+            memory.getMemory(BRICK, service.playerIdFor(ALICE))!.pendingNewJob = { title: 'Visa form' };
+            yield { content: 'Here is', done: false };
+            throw new Error('provider down');
+        });
+        await service.reply(BRICK, person, 'try the visa form again', [], { roomId: ROOM }).catch(() => null);
+        const next = await service.reply(BRICK, person, 'thanks', [], { roomId: ROOM });
+        expect(next).not.toHaveProperty('newJob');
+    });
+
     it('asks Orbit about a suggestion only when its card is about to go out, once, and says when to leave it out', async () => {
         const offer: BrickNote = { kind: 'offer', topic: 'Recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
         const suggest = (memory: ConversationMemory, playerId: number) => void (memory.getMemory(BRICK, playerId)!.pendingBricks ??= []).push({ ...offer });
@@ -1007,7 +1051,11 @@ describe('the card that starts a job afresh when Orbit would not carry it on', (
     it('sends it as its own card AFTER the answer, and never without words of an answer', async () => {
         const { bridge, client, deps } = makeBridge();
         const order: string[] = [];
-        client.sendText.mockImplementation(async () => void order.push('answer'));
+        // a send that Matrix took gives its event id, as a real one does: the case of a send with no confirmed id is a different one
+        client.sendText.mockImplementation(async () => {
+            order.push('answer');
+            return '$evt';
+        });
         client.sendMessage.mockImplementation(async () => void order.push('card'));
         deps.reply.mockResolvedValue({ text: "“Visa form” can't carry on, because you ended it.", media: [], newJob: { title: 'Visa form' } });
         await bridge.onEvent(invite());

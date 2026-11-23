@@ -819,6 +819,14 @@ describe.runIf(!!REAL_REDIS)('the runner and the computer job controls (piece 6)
             scripts.push({ kind: 'done' });
             await runner.tick();
             await until(() => state.notes[0].state === 'sent');
+            // the replacement has gone through its scripted `done` turn BEFORE the inputs are counted: it sends `notes-sent` before it opens its next turn, so counting earlier could pass
+            // before a duplicate of the note was sent. It opened that turn, and ended the job
+            await idleWithin(runner);
+            // the job's turn, the turn that carried the note (the first worker's), and the replacement's own: it carried on with the job and did not hand the note over again
+            expect(state.inputs).toHaveLength(3);
+            expect(state.inputs[2].startsWith('Carry on with the job.')).toBe(true);
+            expect(state.inputs[2]).not.toContain('Use 12 March');
+            expect(state.finishes).toEqual([expect.objectContaining({ outcome: 'done', epoch: state.ownerEpoch })]);
             const told = state.requests.filter((one) => one.kind === 'notes-sent');
             expect(told.map((one) => one.body?.through)).toEqual(told.map(() => 1));
             const accepted = told.filter((one) => one.answer === 'ok');

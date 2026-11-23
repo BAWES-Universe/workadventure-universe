@@ -73,14 +73,17 @@ export function computerToolsNote(): string {
  */
 export class ConfirmationQueue {
     private items = new Map<string, { send: () => Promise<void>; note?: JobNote; told?: true }>();
+    /** Delivered: the one event that could confirm anything has been taken. */
     private closed = false;
+    /** A newer turn (or the same reply asked again) replaced this queue: nothing new is added to it, and what was never put into a reply is gone. What WAS (the lines the reply being sent carries) stays until that event is taken. */
+    private dropped = false;
 
     /**
      * A job was named to the person in this reply: its confirmation waits for the reply to be delivered. One per key. `note` says which job and what became of it (see `jobLine`): the reply carries
      * a fixed sentence built from it when the answer has no words of its own, so what is confirmed is always something the person was told.
      */
     add(key: string, send: () => Promise<void>, note?: JobNote): void {
-        if (!this.closed) this.items.set(key, { send, ...(note ? { note } : {}) });
+        if (!this.closed && !this.dropped) this.items.set(key, { send, ...(note ? { note } : {}) });
     }
 
     private starts = 0;
@@ -127,7 +130,7 @@ export class ConfirmationQueue {
      * once Matrix took that event (a question that was never delivered was never asked). Nothing is confirmed to Orbit by it. The same line twice in one reply is said once.
      */
     say(line: string, onTold?: () => void): void {
-        if (this.closed || !line) return;
+        if (this.closed || this.dropped || !line) return;
         const same = this.said.find((said) => said.line === line);
         if (same) {
             if (onTold) {
@@ -175,11 +178,15 @@ export class ConfirmationQueue {
         this.items.clear();
     }
 
-    /** The reply was not delivered, or a newer message replaced it: nothing is sent, and no question it carried was asked. */
+    /**
+     * The reply was not delivered, or a newer message replaced it: what was never put into a reply is gone, and nothing new is added. The jobs and the questions of a reply that was ALREADY
+     * handed over to be sent (`tell` was called for it) stay: a newer turn can begin while that send is awaited, and the event Matrix then accepts did tell the person of them, so it
+     * still confirms those jobs and asks those questions (`deliver`). A reply that never gets delivered leaves them in a queue nothing refers to any more.
+     */
     drop(): void {
-        this.closed = true;
-        this.items.clear();
-        this.said = [];
+        this.dropped = true;
+        for (const [key, item] of [...this.items]) if (!item.told) this.items.delete(key);
+        this.said = this.said.filter((said) => said.told);
     }
 }
 
@@ -547,13 +554,14 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             // A key whose words nobody holds (a record that had none) cannot be sent: whatever the person asks now is not what that key stands for. It stays open and is looked up on every ask.
             const firstWords = entry.payload;
             if (!firstWords) return { started: false, unknown: true, note: COULD_NOT_CHECK_NOTE };
-            // Typed, so the closure below sees words and never a possible nothing (a `let` narrowed above is not narrowed inside it)
-            let said: StoredStartPayload = firstWords;
             entry.sent = true;
             try {
-                // The words of the ask that FIRST sent this key, never the words of this call (when they differ the answer is told as that earlier ask's)
-                const sendIt = async (): Promise<StartAnswer> => (await context.admin.startComputerJob(context.botId, context.userId, { title: said.title, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(said.brief ? { brief: said.brief } : {}), writes: said.writes, ...(said.plan ? { plan: said.plan } : {}), ...(said.origin ? { origin: said.origin } : {}), ...(said.continues ? { continuesJobId: said.continues } : {}) })) as unknown as StartAnswer;
-                sent = await sendIt();
+                // The words of the ask that FIRST sent this key, never the words of this call (when they differ the answer is told as that earlier ask's). They are a parameter, so what is
+                // sent is always words that were checked, never a variable that may change or be empty by the time it is read
+                const sendWith = async (words: StoredStartPayload, key: string): Promise<StartAnswer> =>
+                    (await context.admin.startComputerJob(context.botId, context.userId, { title: words.title, startKey: key, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(words.brief ? { brief: words.brief } : {}), writes: words.writes, ...(words.plan ? { plan: words.plan } : {}), ...(words.origin ? { origin: words.origin } : {}), ...(words.continues ? { continuesJobId: words.continues } : {}) })) as unknown as StartAnswer;
+                let said: StoredStartPayload = firstWords;
+                sent = await sendWith(said, startKey);
                 // Orbit says THIS start's own attempt stopped beating or was let go (`expired`): nothing was made by it, and it may not be revived. The ask starts afresh under a NEW key (the old
                 // one is never sent again), at most twice; the key a retried message makes is the same new key, so a replay of the same event still makes one job
                 for (let afresh = 1; sent && !sent.ok && sent.reason === 'expired' && afresh <= 2; afresh++) {
@@ -562,12 +570,22 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                     entry.key = startKey;
                     entry.at = Date.now();
                     await context.startKeyStore?.delete(scope, old).catch(() => undefined);
-                    const held: StoredStartKey | undefined = await context.startKeyStore?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
+                    const store = context.startKeyStore;
+                    const held: StoredStartKey | undefined = await store?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
+                    // The shared store is expected and did not confirm the new key: another server may hold a key of this ask that this one cannot see, so nothing is sent (as for the first key).
+                    // The new key is checked again on the next ask
+                    if (store && !held && (store.expected?.() ?? true)) {
+                        entry.unchecked = true;
+                        return { started: false, unconfirmed: true, note: COULD_NOT_CHECK_NOTE };
+                    }
                     // Another server already holds a key of this ask: that is the one to send (the store's contract), so it is looked up first, and what it said is what goes with it. Two keys must never reach Orbit
                     if (held && held.key !== startKey) {
                         startKey = held.key;
                         entry.key = held.key;
                         entry.at = held.at;
+                        // The words that key said are the store's, set (or cleared) NOW, before anything is looked up: the words of the attempt that expired are not the words of the key adopted
+                        if (held.payload) entry.payload = held.payload;
+                        else delete entry.payload;
                         const seen = context.admin.lookUpComputerStart ? await context.admin.lookUpComputerStart(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), startKey }) : 'none';
                         if (seen !== 'none') {
                             looked = seen as unknown as StartAnswer;
@@ -576,10 +594,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                         }
                         // A key that holds no words cannot be sent: it is only looked up, on every ask
                         if (!held.payload) return { started: false, unknown: true, note: COULD_NOT_CHECK_NOTE };
-                        entry.payload = held.payload;
                         said = held.payload;
                     }
-                    sent = await sendIt();
+                    sent = await sendWith(said, startKey);
                 }
             } catch (error) {
                 // Thrown only when the start is known to have made nothing (Orbit's own no, or nothing was sent): this ask is over, and the key goes with it unless a start with it

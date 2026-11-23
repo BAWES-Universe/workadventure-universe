@@ -321,7 +321,8 @@ export class DmReplyService extends BaseBehavior {
         // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently.
         // Nor is a starter they tapped (#1995): its answer is fixed words, which would leave what they typed unanswered
         // Nor an App they just connected: each one gets its own steps line ("Connected Notion"), which one batch cannot show twice
-        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered && !hooks.connectedApp) {
+        // Nor a "Start a new job" they tapped: its title, its event and its fresh start belong to that one reply, and words typed beside it are answered on their own
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered && !hooks.connectedApp && !hooks.newJobAsked) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -332,7 +333,7 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered || !!hooks.connectedApp } as {
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered || !!hooks.connectedApp || !!hooks.newJobAsked } as {
             texts: string[];
             pointed: string[];
             note: boolean;
@@ -611,6 +612,8 @@ export class DmReplyService extends BaseBehavior {
             turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];
             turnMemory.pendingBricks = [];
+            // An offer of a failed turn (a stream that set it and threw) is not shown under a later reply
+            delete turnMemory.pendingNewJob;
             // They tapped "Start a new job" (finding 6): this turn starts that job afresh, so carrying one on is not offered in
             // it. Written here, after the memory exists and the person's saved memory is in place, and only for this turn.
             if (hooks.newJobAsked) turnMemory.newJobAsked = { title: hooks.newJobAsked.title };

@@ -310,7 +310,7 @@ async function setupMatrix(): Promise<void> {
     });
     // Every event is KEPT in the shared store before Matrix is answered (the durable inbox): an event Matrix sends again is handled once, and one whose server died is taken up here
     // instead of being lost behind a marker (GPT's sixth answer, finding 9)
-    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge, { inbox: createEventInbox(() => botRegistry.evidenceClient()) });
+    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge, { inbox: createEventInbox(() => botRegistry.evidenceClient(), { expected: () => botRegistry.sharedStoreExpected() }) });
     preRouters.push(matrixRouter);
     // Every half minute: the events whose server went away are taken up here, oldest first
     matrixRecoverInterval = setInterval(() => void matrixRouter?.recover(), RECOVER_EVERY_MS);
