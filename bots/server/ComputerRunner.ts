@@ -87,6 +87,8 @@ export interface RunnerJobState {
     finishPending?: FinishPending | null;
     /** The job was paused before (and resumed): the agent carries on in the same conversation, told it was paused. */
     resumed?: boolean;
+    /** The pause that resumed took the screen back from the person (they held it when the month or a limit was reached): the agent asks them for their step again before touching the page. */
+    askAgain?: boolean;
     /** What the person told the job that the agent has not been given yet, in order. */
     notes?: JobNote[];
 }
@@ -226,8 +228,12 @@ export const CONTINUE_PROMPT = 'Carry on with the job. If it is finished, end yo
 export const RESUMED_HEAD =
     'This job was paused for a while and is carrying on now, on the same computer. Look at the current page first: it may have changed, and a site may have signed you out (if so, ask the person to sign in with the handover line). Carry on from where the job stands, without doing again what is already done. If you were waiting for the person when it paused, ask them again. The job and its rules, as a reminder:';
 
-/** A resumed job's first turn: told it was paused, then the job as at its start. */
-export const resumedPrompt = (job: { jobId: string; title: string; brief: string | null; writes: boolean }): string => `${RESUMED_HEAD}\n\n${jobPrompt(job)}`;
+/** The first words after a pause that took the screen back from the person: their step was cut off halfway, so the agent asks them before it touches the page. */
+export const ASK_AGAIN_HEAD =
+    'This job was paused for a while and is carrying on now, on the same computer. When it paused, the person was using this computer themselves and it was taken back from them partway through what they were doing. Do not change anything on the page yet: look at it, then ask the person, with the handover line, what they were doing and whether they want to finish that step themselves. The job and its rules, as a reminder:';
+
+/** A resumed job's first turn: told it was paused (and, when the pause took the screen from the person, to ask them first), then the job as at its start. */
+export const resumedPrompt = (job: { jobId: string; title: string; brief: string | null; writes: boolean }, askAgain = false): string => `${askAgain ? ASK_AGAIN_HEAD : RESUMED_HEAD}\n\n${jobPrompt(job)}`;
 
 /** The turn after one that was cut short so the person's new words reach the agent at once. */
 export const NOTE_PROMPT =
@@ -1302,7 +1308,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (state.resumed && !resumedRead) {
                 resumedRead = true;
                 if (pending !== null) {
-                    pending = resumedPrompt(job);
+                    pending = resumedPrompt(job, state.askAgain === true);
                     if (input !== null) input = pending;
                 }
             }
@@ -1721,6 +1727,7 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
                       ...(job.ownerEpoch === undefined ? {} : { ownerEpoch: job.ownerEpoch }),
                       ...(job.finishPending ? { finishPending: job.finishPending } : {}),
                       ...(job.resumed ? { resumed: true } : {}),
+                      ...(job.askAgain ? { askAgain: true } : {}),
                       ...(job.notes && job.notes.length > 0 ? { notes: job.notes } : {}),
                   }
                 : null;

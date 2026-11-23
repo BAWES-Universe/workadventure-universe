@@ -9,6 +9,7 @@ import { RedisSharedCalls } from '../server/ComputerEvidenceStore';
 import { createRefusalNotes, type RefusalNotes } from '../server/ComputerRefusals';
 import {
     ANSWERED_PROMPT,
+    ASK_AGAIN_HEAD,
     CONTINUE_PROMPT,
     createComputerRunner,
     NOTE_PROMPT,
@@ -79,6 +80,8 @@ function controlsOrbit(options: { afterListing?: () => void; noEpochs?: boolean;
         ownerEpoch: 0,
         leaseVersion: 0,
         pauses: 0,
+        /** The last pause took the screen back from the person (Orbit piece 3's held-screen limit pause): GET job says `askAgain` once the job carries on. */
+        askAgain: false,
         responseId: null as string | null,
         noteSeq: 0,
         notes: [] as Array<{ seq: number; text: string; state: 'pending' | 'sent' }>,
@@ -145,6 +148,7 @@ function controlsOrbit(options: { afterListing?: () => void; noEpochs?: boolean;
                 ...(options.noEpochs ? {} : { ownerEpoch: options.laggingReads && claimed !== undefined ? claimed : state.ownerEpoch }),
                 finishPending: null,
                 ...(state.pauses > 0 ? { resumed: true } : {}),
+                ...(state.pauses > 0 && state.askAgain ? { askAgain: true } : {}),
                 ...(state.notes.some((note) => note.state === 'pending') ? { notes: state.notes.filter((note) => note.state === 'pending').map(({ seq, text }) => ({ seq, text })) } : {}),
             };
         },
@@ -491,6 +495,28 @@ describe.runIf(!!REAL_REDIS)('the runner and the computer job controls (piece 6)
             expect(state.ownerEpoch).toBeGreaterThan(oldEpoch + 1);
             expect(state.finishes).toEqual([expect.objectContaining({ outcome: 'done', epoch: state.ownerEpoch })]);
             expect(state.runnerCancels).toEqual([]);
+        });
+
+        it('a pause that took the screen back from the person (askAgain): the first turn after resume asks the person for their step before touching the page, on the new epoch', async () => {
+            const { orbit, state, scripts, person } = controlsOrbit();
+            scripts.push({ kind: 'hang', cut: 'completed' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.inputs.length === 1);
+            // Orbit's held-screen limit pause, as the runner sees it: the job paused like any other, and on carrying on GET job says askAgain
+            state.askAgain = true;
+            person.pause();
+            await idleWithin(runner);
+            expect(state.runnerCancels).toEqual([]);
+            person.resume();
+            scripts.push({ kind: 'handover', words: 'Were you in the middle of paying? [[handover answer | what you were doing | this computer]]' });
+            await runner.tick();
+            await until(() => state.inputs.length === 2);
+            expect(state.inputs[1].startsWith(ASK_AGAIN_HEAD)).toBe(true);
+            expect(state.inputs[1]).not.toContain(RESUMED_HEAD);
+            expect(state.inputs[1]).toContain('Job: Visa form');
+            const opened = state.requests.filter((one) => one.kind === 'turn' && one.answer === 'opened');
+            expect(opened[1].epoch).toBe(state.ownerEpoch);
         });
 
         it('a resumed job whose turn of this stretch is already going (a restart) is reconnected to, not sent the resumed words again', async () => {
@@ -868,13 +894,17 @@ describe.runIf(!!REAL_REDIS)('the runner and the computer job controls (piece 6)
                         generation: 3,
                         ownerEpoch: 2,
                         resumed: true,
+                        askAgain: true,
                         notes: [{ seq: 2, text: 'second' }, { seq: 1, text: 'first' }, { seq: 1, text: 'again' }, { seq: 0, text: 'bad' }, { seq: 3, text: '  ' }, { seq: 1.5, text: 'half' }, null],
                     },
                 },
             });
             const orbit = runnerOrbitFor(admin);
             const read = await orbit.job('brick-1', 'job-1');
-            expect(read).toEqual({ status: 'running', control: 'brick', generation: 3, ownerEpoch: 2, resumed: true, notes: [{ seq: 1, text: 'first' }, { seq: 2, text: 'second' }] });
+            expect(read).toEqual({ status: 'running', control: 'brick', generation: 3, ownerEpoch: 2, resumed: true, askAgain: true, notes: [{ seq: 1, text: 'first' }, { seq: 2, text: 'second' }] });
+            // Only a plain true asks again
+            (admin as unknown as { brickCall: unknown }).brickCall = vi.fn().mockResolvedValue({ data: { job: { id: 'job-1', status: 'running', control: 'brick', resumed: true, askAgain: 'yes' } } });
+            expect(await orbit.job('brick-1', 'job-1')).toEqual({ status: 'running', control: 'brick', resumed: true });
         });
 
         it('an Orbit without the controls gives neither, and the job reads as before', async () => {
