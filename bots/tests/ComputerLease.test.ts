@@ -340,6 +340,33 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         }
     });
 
+    // Orbit's second claim refusal: a resumed job whose browser is still being settled answers `not_ready` and writes nothing; the job is looked at again after a short wait, not held off for a lease
+    it('a claim answered `not_ready` writes and ends nothing, and the job is claimed again a little later, not held off for a lease', async () => {
+        let at = 1_000_000;
+        const fake = leasedOrbit({ epoch: 4, clock: () => at });
+        const original = fake.orbit.action;
+        let notReady = 2;
+        fake.orbit.action = async (botId, jobId, body) => {
+            if (String(body.action) === 'claim' && notReady > 0) {
+                notReady -= 1;
+                fake.state.asked.push({ action: 'claim', answer: 'not_ready', body });
+                return { ok: false, reason: 'not_ready', prep: 'restoring', job: { id: JOB.jobId } };
+            }
+            return original(botId, jobId, body);
+        };
+        const { instance, log } = runnerOn(fake, { now: () => at });
+        await instance.tick();
+        await instance.idle();
+        // Asked three times in one stretch (no lease wait in between), and the third claim took the job and ended it
+        expect(fake.of('claim').map((row) => row.answer)).toEqual(['not_ready', 'not_ready', 'claimed']);
+        expect(fake.state.status).toBe('done');
+        // Nothing was started, ended or given back before the claim that landed
+        const firstOwned = fake.actions().indexOf('claim', 2);
+        expect(fake.actions().slice(0, firstOwned).every((action) => action === 'claim')).toBe(true);
+        expect(fake.of('release')).toEqual([]);
+        expect(log.error).not.toHaveBeenCalled();
+    });
+
     it('two workers on one job: the second never claims while the first beats, and takes it up once the first has gone', async () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         let at = 1_000_000;
