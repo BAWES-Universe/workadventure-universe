@@ -624,6 +624,24 @@ describe('try_again with no job named for this turn', () => {
             expect(admin.startComputerJob).not.toHaveBeenCalled();
         });
 
+        it('a fresh start that began BEFORE the try_again reaches its paid send while the lookup is still pending: it waits, and is refused once the question was asked', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const gate = deferred<void>();
+            const store = { expected: () => true, delete: async () => undefined, claim: async (_scope: string, entry: { key: string; at: number; payload?: unknown }) => (await gate.promise, { ...entry, mine: true }) };
+            const over = { startKeys: new Map(), confirmations: new ConfirmationQueue(), startKeyStore: store as never };
+            const fresh = runComputerTool({ job: 'Something new' }, ctx(admin as never, over));
+            const asking = runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, over));
+            // the fresh call's own steps finish FIRST: it reaches the send while the ended jobs are still being read
+            gate.resolve();
+            await settleMicrotasks();
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            hold.resolve([VISA, TAXI]);
+            await asking;
+            expect(await fresh).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+        });
+
         it('two try_agains in one round, one of which asks: neither starts (the one naming an ended job exactly waits, then finds the question)', async () => {
             const hold = deferred<unknown>();
             const admin = heldWorld(hold.promise);
