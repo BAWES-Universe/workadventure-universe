@@ -528,6 +528,29 @@ describe("the calls on one computer job (computers plan, piece 7)", () => {
         ]);
     });
 
+    // GPT's seventh note, D2: Stop carries the jobs the person saw, so Orbit ends only those (never one that began since)
+    it("sends the shown jobs with Stop as `{ confirmedJobIds }`, with the tap's own id, and no body when there are none", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(() => Promise.resolve(json({ computer: {}, stopped: 2, left: [] })));
+        const api = service();
+        await api.brickComputerAction("b1", "stop", undefined, "cmd-00000005", ["j1", "j2"]);
+        await api.brickComputerAction("b1", "stop", undefined, "cmd-00000006", ["j3"]);
+        await api.brickComputerAction("b1", "give", undefined, undefined, ["j9"]);
+        const sent = fetchMock.mock.calls.map(([url, init]) => [
+            (url as string).replace(/^.*\/api\/bricks\//, ""),
+            init?.method,
+            init?.body ?? null,
+            (init?.headers as Record<string, string> | undefined)?.["X-Computer-Command"],
+        ]);
+        expect(sent).toEqual([
+            ["b1/computer/stop", "POST", JSON.stringify({ confirmedJobIds: ["j1", "j2"] }), "cmd-00000005"],
+            ["b1/computer/stop", "POST", JSON.stringify({ confirmedJobIds: ["j3"] }), "cmd-00000006"],
+            // Only Stop carries them
+            ["b1/computer", "POST", null, undefined],
+        ]);
+    });
+
     // GPT's sixth answer, finding 4: the control's own id travels in a header, so Orbit does that control once however often the request goes out.
     it("carries a control's own id in its header, on every kind of control, and leaves it off when there is none or it is not of Orbit's shape", async () => {
         const fetchMock = vi

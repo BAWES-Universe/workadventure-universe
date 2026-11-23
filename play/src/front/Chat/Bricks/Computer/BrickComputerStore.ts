@@ -75,20 +75,33 @@ export type ComputerAction = "give" | "turn-off" | "stop" | "take-over" | "hand-
 export async function brickComputerAction(
     brickId: string,
     action: ComputerAction,
-    shown?: { what: string; where: string }
+    shown?: { what: string; where: string },
+    /** With "stop": the jobs the person saw when they tapped. Orbit ends only those (GPT's seventh note D2); a stop that names none is never sent. */
+    confirmedJobIds?: string[]
 ): Promise<boolean> {
+    if (action === "stop" && !(confirmedJobIds && confirmedJobIds.length > 0)) {
+        // A bare stop would end whatever is live when it lands, a job that began after the tap included: nothing is sent, and the page is read again
+        console.warn("A Stop that named no jobs was not sent");
+        await loadBrickComputer(brickId);
+        return false;
+    }
     const sentAs = ticket(brickId);
     try {
         const answer = shown
             ? await botApiService.brickComputerAction(brickId, action, shown)
-            : // Stop ends every job, so the tap carries its own id: a request sent again under it (a renewed sign-in) ends them once (finding 4)
+            : // Stop ends the jobs the person saw, so the tap carries its own id: a request sent again under it (a renewed sign-in) ends them once (finding 4)
             action === "stop"
-            ? await botApiService.brickComputerAction(brickId, action, undefined, newCommandId())
+            ? await botApiService.brickComputerAction(brickId, action, undefined, newCommandId(), [
+                  ...(confirmedJobIds ?? []),
+              ])
             : await botApiService.brickComputerAction(brickId, action);
         const view = parseBrickComputer(answer);
         if (view) put(brickId, view, sentAs);
         else if (parseJobAnswer(answer)) await loadBrickComputer(brickId);
         else return false;
+        // Jobs Orbit LEFT (they began after the tap) are still running: the computer is read again so they show as they are
+        const left = (answer as { left?: unknown } | null)?.left;
+        if (action === "stop" && Array.isArray(left) && left.length > 0) await loadBrickComputer(brickId);
         return true;
     } catch (error) {
         console.warn(`Could not ${action} a Brick's computer`, error);

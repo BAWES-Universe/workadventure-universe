@@ -54,8 +54,12 @@
 
     function end() {
         if (!asked) return;
-        if (stopping) run(() => brickComputerAction(brick.id, "stop"), true);
-        else if (asked.kind === "one") {
+        if (stopping) {
+            if (asked.kind !== "all") return;
+            // The jobs this question named go with the Stop: Orbit ends those, never one that began since (GPT's seventh note D2)
+            const confirmed = asked.jobs.map((job) => job.id);
+            run(() => brickComputerAction(brick.id, "stop", undefined, confirmed), true);
+        } else if (asked.kind === "one") {
             const jobId = asked.job.id;
             run(() => cancel(jobId), true);
         }

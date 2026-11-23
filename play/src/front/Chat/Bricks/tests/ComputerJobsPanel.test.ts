@@ -289,7 +289,11 @@ describe("the job controls on a Brick's computer", () => {
         expect(words(inSheet("computerEndAskEnd"))).toBe("Stop all 3");
         inSheet("computerEndAskEnd")?.click();
         await settle();
-        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String));
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String), [
+            "taxi",
+            "hotel",
+            "visa",
+        ]);
         expect(sheet()).toBeNull();
     });
 
@@ -299,7 +303,7 @@ describe("the job controls on a Brick's computer", () => {
         one("brickComputerBarStop")?.click();
         await settle();
         expect(sheet()).toBeNull();
-        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String));
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String), ["taxi"]);
         expect(one("brickComputerBar")).toBeNull();
     });
 

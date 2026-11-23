@@ -1409,7 +1409,12 @@ export class BotApiService {
         /** With "fill-details": what the screen showed Brick is ready to put in, and where. Orbit refuses the tap if Brick named something else since. */
         shown?: { what: string; where: string },
         /** With "stop": this tap's own id, so the same tap sent again (a renewed sign-in resends it) ends the jobs once. */
-        commandId?: string
+        commandId?: string,
+        /**
+         * With "stop": the jobs the screen showed when the person tapped (GPT's seventh note D2). Orbit ends only those still live, never a job that began since,
+         * and answers which it stopped and which it left (`{ computer, stopped, left }`).
+         */
+        confirmedJobIds?: string[]
     ): Promise<unknown> {
         const base = `/api/bricks/${encodeURIComponent(brickId)}/computer`;
         // Every call has a deadline, so a stalled one fails and the controls and the poll carry on
@@ -1421,6 +1426,12 @@ export class BotApiService {
             ? await this.brickWrite(`${base}/${action}`, {
                   method: "POST",
                   body: JSON.stringify({ what: shown.what, where: shown.where }),
+              })
+            : action === "stop" && confirmedJobIds && confirmedJobIds.length > 0
+            ? await this.brickWrite(`${base}/${action}`, {
+                  method: "POST",
+                  body: JSON.stringify({ confirmedJobIds }),
+                  ...commandHeader(commandId),
               })
             : await this.brickWrite(`${base}/${action}`, { method: "POST", ...commandHeader(commandId) });
     }
