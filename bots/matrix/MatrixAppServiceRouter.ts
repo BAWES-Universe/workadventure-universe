@@ -21,6 +21,11 @@ export interface MatrixEventHandler {
      * turn, a computer start): before that, an event whose handling throws is given back for another try; after it, it is never handled again.
      */
     onEvent(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void>;
+    /**
+     * An event nothing will handle any more: it ran out of tries (`tries`), or work had begun when its owner went away and it is never handed out again (`paid`). Told so it is not silent: the
+     * handler reports it and, for `tries`, lets the person know. Never throws.
+     */
+    onGaveUp?(event: MatrixEvent, why: 'tries' | 'paid'): Promise<void>;
     /** Synapse asks whether a Matrix ID in our namespace exists before someone can invite it. */
     userExists(userId: string): Promise<boolean>;
 }
@@ -156,6 +161,16 @@ export function createMatrixAppServiceRouter(
         return true;
     };
 
+    /** An event that will not be handled: logged loudly and handed to the handler to report and to tell the person. */
+    const gaveUp = async (event: MatrixEvent, why: 'tries' | 'paid'): Promise<void> => {
+        console.error(`[MatrixAppService] An event will not be handled again (${why === 'tries' ? 'it ran out of tries' : 'work had begun when its server went away'}): ${event?.event_id ?? 'unknown'} in ${event?.room_id ?? 'unknown'}`);
+        try {
+            await handler.onGaveUp?.(event, why);
+        } catch (error) {
+            console.error('[MatrixAppService] Could not report an event that will not be handled:', error instanceof Error ? error.message : error);
+        }
+    };
+
     /** Handles one event (its own room in order), and ends its inbox entry: done, or back for another try when nothing of it was paid for. */
     const work = (event: MatrixEvent, entry?: InboxEntry): void => {
         // Events in one room run in order; different rooms run side by side, so one slow reply holds up no one else.
@@ -176,7 +191,9 @@ export function createMatrixAppServiceRouter(
                 console.error('[MatrixAppService] Event handling failed:', error);
                 // Nothing of it was paid for: it goes back, and another try (here or at another server) answers the person. Once something was paid for it is never handled again
                 if (!paid) {
-                    await entry?.release().catch(() => undefined);
+                    // The last try: nobody takes it again, so it is said (loudly) and the person is told, never silence. With no inbox nothing gives it back at all
+                    const result = entry ? await entry.release(() => void gaveUp(event, 'tries')).catch(() => 'unsure' as const) : ('closed' as const);
+                    if (result === 'closed') await gaveUp(event, 'tries');
                     return;
                 }
             }
@@ -202,6 +219,11 @@ export function createMatrixAppServiceRouter(
         };
         const ordered = left.map((one, index) => ({ one, index })).sort((a, b) => sentAt(a.one) - sentAt(b.one) || (a.one.arrived ?? Number.MAX_SAFE_INTEGER) - (b.one.arrived ?? Number.MAX_SAFE_INTEGER) || a.index - b.index);
         for (const { one } of ordered) work(one.event as MatrixEvent, one.entry);
+        // What the scan closed instead of handing out (work had begun, or no tries left) is said, not dropped in silence
+        for (const closed of left.closed ?? []) {
+            if (closed.event) void gaveUp(closed.event as MatrixEvent, closed.why);
+            else console.error(`[MatrixAppService] An event will not be handled again (${closed.why}), and the store no longer held it: ${closed.eventId}`);
+        }
         return left.length;
     };
     const recover = (): Promise<number> => {

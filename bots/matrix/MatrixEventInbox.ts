@@ -129,7 +129,7 @@ return 1
 `;
 /**
  * Takes over an entry whose owner went away (it has no owner, or its last beat is older than the stale time): the event itself comes back with it, so this server can handle it. `nil`
- * when it is not there to take (it is done, gone, or its owner is alive).
+ * when it is not there to take (it is done, gone, or its owner is alive). An entry it CLOSES instead (work had begun, or it had all its tries) answers `!paid|<event>` or `!tries|<event>`.
  */
 const TAKEOVER = `
 local held = redis.call('GET', KEYS[1])
@@ -148,18 +148,20 @@ local score = tonumber(redis.call('ZSCORE', KEYS[2], ARGV[4]) or 0)
 if owner ~= '-' and score > tonumber(ARGV[5]) then
   return nil
 end
--- Something was paid for before its owner went away: it is closed, never handed out again (no second charge, no second answer)
+-- Something was paid for before its owner went away: it is closed, never handed out again (no second charge, no second answer). The caller is told it was closed, and with what event, so the loss is not silent
 if paid then
+  local gone = redis.call('GET', KEYS[3])
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
   redis.call('DEL', KEYS[3])
-  return nil
+  return '!paid|' .. (gone or '')
 end
 if tries >= tonumber(ARGV[6]) then
+  local gone = redis.call('GET', KEYS[3])
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
   redis.call('DEL', KEYS[3])
-  return nil
+  return '!tries|' .. (gone or '')
 end
 local payload = redis.call('GET', KEYS[3])
 if not payload then
@@ -184,13 +186,25 @@ export class PaidFenceError extends Error {
 export interface InboxEntry {
     /** Handled (whatever came of the handling): no other server takes it, and a redelivery is not handled again. */
     done(): Promise<void>;
-    /** Nothing of it was paid for and it threw: it goes back for another try, at most a few times. */
-    release(): Promise<void>;
+    /**
+     * Nothing of it was paid for and it threw: it goes back for another try, at most a few times. Answers `closed` when that was its last try (nobody will take it again), `again` when it
+     * was given back (or is not this server's any more), and `unsure` when the store did not answer (the give-back is tried again; `onClosed` runs if that later finds it was the last try).
+     */
+    release(onClosed?: () => void): Promise<'again' | 'closed' | 'unsure'>;
     /** The transaction this event came in was refused, so it is taken back out as if never taken and the resend takes it in afresh (a failed step leaves it to be recovered instead). */
     undo(): Promise<void>;
     /** Something the person pays for is about to begin: written down BEFORE it does, so a server that dies in the middle never has it handled again by another. Throws `PaidFenceError` when it could not be written down (the event is another server's now, or the store did not answer): nothing paid for may begin then. */
     paid(): Promise<void>;
 }
+
+export interface ClosedEvent {
+    /** `paid`: work had begun when its owner went away, so it is never handed out again. `tries`: it had all its tries. */
+    why: 'paid' | 'tries';
+    eventId: string;
+    /** The event, when the store still held it. */
+    event?: unknown;
+}
+export type Recovered = Array<{ event: unknown; entry: InboxEntry; arrived?: number }> & { readonly closed?: ClosedEvent[] };
 
 /** What the inbox answers when an event arrives: an entry when this server is to handle it, `false` when it is already held or was handled. */
 export type Taken = false | InboxEntry;
@@ -198,8 +212,12 @@ export type Taken = false | InboxEntry;
 export interface EventInbox {
     /** Takes the event in before Matrix is answered. Throws only when the store could not be reached (the router then answers Matrix that it must send it again). */
     take(eventId: string, event: unknown): Promise<Taken>;
-    /** The entries whose owner went away, with the event each one holds and where it came in (`arrived`: kept with the event when it was taken, so events that share a time come back in the order they arrived): this server now holds them. Never throws. */
-    recover(): Promise<Array<{ event: unknown; entry: InboxEntry; arrived?: number }>>;
+    /**
+     * The entries whose owner went away, with the event each one holds and where it came in (`arrived`: kept with the event when it was taken, so events that share a time come back in the
+     * order they arrived): this server now holds them. The entries this scan CLOSED instead (work had begun when the owner went away, or it had all its tries) are in `closed`, which is
+     * not part of the list itself. Never throws.
+     */
+    recover(): Promise<Recovered>;
     /** The name this server holds its entries under (for the tests). */
     readonly owner: string;
 }
@@ -227,7 +245,7 @@ export function createEventInbox(
     const batch = options.batch ?? RECOVER_BATCH;
     const say = options.log ?? ((message: string, detail?: unknown) => console.warn(`[MatrixInbox] ${message}`, detail instanceof Error ? detail.message : detail));
     /** An entry that holds nothing: the store is not connected, so the event is handled and nothing is remembered. */
-    const nothing: InboxEntry = { done: async () => undefined, release: async () => undefined, undo: async () => undefined, paid: async () => undefined };
+    const nothing: InboxEntry = { done: async () => undefined, release: async () => 'closed', undo: async () => undefined, paid: async () => undefined };
 
     const keysOf = (eventId: string) => [`${EVENT_SEEN_PREFIX}${eventId}`, INBOX_KEY, `${INBOX_EVENT_PREFIX}${eventId}`];
     /** Any single call to the store against the same deadline. */
@@ -275,20 +293,21 @@ export function createEventInbox(
          * that the store wrote but never confirmed to this server stands on an entry whose work never began, and an entry that went quiet with that mark on it would be closed by another server
          * as paid work, and the person's message lost. Only a server that dies before the store takes it back leaves that mark standing.
          */
-        const giveBack = async (): Promise<void> => {
-            if (over) return;
+        const giveBack = async (onClosed?: () => void): Promise<'again' | 'closed' | 'unsure'> => {
+            if (over) return 'unsure';
             over = true;
-            const attempt = (): Promise<boolean> =>
+            const attempt = (): Promise<'again' | 'closed' | undefined> =>
                 step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(maxTries), eventId]).then(
-                    () => true,
+                    (answer) => (answer === 2 || answer === '2' ? ('closed' as const) : ('again' as const)),
                     (error) => {
                         say('Could not give an event back for another try:', error);
-                        return false;
+                        return undefined;
                     }
                 );
-            if (await attempt()) {
+            const first = await attempt();
+            if (first) {
                 clearInterval(beat);
-                return;
+                return first;
             }
             let tried = 1;
             let running = false;
@@ -301,6 +320,7 @@ export function createEventInbox(
                         if (given || tried >= GIVE_BACK_TRIES) {
                             clearInterval(again);
                             clearInterval(beat);
+                            if (given === 'closed') onClosed?.();
                             if (!given) say('Gave up giving an event back; it is taken up again by another server (or closed, if it carries a paid mark):', eventId);
                         }
                     })
@@ -309,10 +329,11 @@ export function createEventInbox(
                     });
             }, beatEveryMs);
             again.unref?.();
+            return 'unsure';
         };
         return {
             done: () => end(DONE, [token, String(ttlSeconds), eventId], 'handled'),
-            release: giveBack,
+            release: (onClosed) => giveBack(onClosed),
             undo: () => end(UNDO, [token, eventId], 'taken back'),
             // Awaited before the first paid call, and it must SUCCEED: when it does not (another server holds the event now, or the store did not answer) it throws, and nothing paid for
             // begins. The event then goes back for another try, as one that nothing was paid for
@@ -350,8 +371,8 @@ export function createEventInbox(
         },
         recover: async () => {
             const redis = client();
-            if (!redis || !redis.zRangeByScore) return [];
-            const found: Array<{ event: unknown; entry: InboxEntry; arrived?: number }> = [];
+            if (!redis || !redis.zRangeByScore) return recovered();
+            const found = recovered();
             try {
                 const cutoff = Date.now() - staleMs;
                 // The oldest beats first. The scan is bounded by the same deadline as every step: a store that accepts the call and never answers ends it, and the next look is a new one
@@ -364,6 +385,19 @@ export function createEventInbox(
                         return null;
                     });
                     if (typeof payload !== 'string') continue;
+                    // An entry the script closed (rather than handed out): told to the caller, with the event it held
+                    const closure = /^!(paid|tries)\|/.exec(payload);
+                    if (closure) {
+                        const body = payload.slice(closure[0].length);
+                        let event: unknown;
+                        try {
+                            event = body ? unwrap(JSON.parse(body)) : undefined;
+                        } catch {
+                            event = undefined;
+                        }
+                        found.closed!.push({ why: closure[1] as 'paid' | 'tries', eventId, ...(event === undefined ? {} : { event }) });
+                        continue;
+                    }
                     try {
                         const read = JSON.parse(payload) as { arrived?: unknown; event?: unknown };
                         // Entries are kept as `{ arrived, event }`; one kept bare (before that) is the event itself
@@ -382,4 +416,16 @@ export function createEventInbox(
             return found;
         },
     };
+}
+
+/** The event of an entry as it was kept: `{ arrived, event }`, or the event itself when it was kept bare. */
+function unwrap(read: unknown): unknown {
+    return typeof read === 'object' && read !== null && 'event' in read ? (read as { event: unknown }).event : read;
+}
+
+/** An empty result of a scan, with the list of what it closed beside it (not an element of it, so a list compares as a list). */
+function recovered(): Recovered {
+    const list: Array<{ event: unknown; entry: InboxEntry; arrived?: number }> = [];
+    Object.defineProperty(list, 'closed', { value: [] as ClosedEvent[], enumerable: false });
+    return list as Recovered;
 }

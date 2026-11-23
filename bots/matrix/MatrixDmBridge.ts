@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import axios from 'axios';
+import * as Sentry from '@sentry/node';
 import { randomUUID } from 'node:crypto';
 import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
 import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
@@ -278,6 +279,8 @@ const WAITING_MAX_ATTEMPTS = 3;
 /** A message whose chat could not be looked up (the store was down) is tried again after this long, then twice as long, up to the cap. */
 const UNPLACED_RETRY_MS = 2000;
 const UNPLACED_RETRY_MAX_MS = 60_000;
+/** How long an event the inbox holds waits for a store that is down (the chat lookup, the App connection) before it is given back as a try: the entry keeps beating meanwhile. */
+const LOOKUP_HOLD_MS = 60 * 60 * 1000;
 /**
  * Orbit must say "no such bot" this many times, each at least BOT_GONE_SPACING_MS after the last, before a chat is
  * closed as deleted: its proxy can answer "not found" for a while when Orbit restarts. The bot server's other "gone"
@@ -411,6 +414,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /** Drains running now, per bot: on shutdown the message each is answering gets time to land. */
     private drains = new Map<string, Promise<void>>();
     private stopping = false;
+    /** Waits of an event held while a store is down: ended at once when the bridge stops, so a shutdown never waits for them. */
+    private lookupWakers = new Set<() => void>();
     private waitingTimer: NodeJS.Timeout | undefined;
     /** The newest message of a chat whose bot could not be looked up because the store was unreachable: tried again, never lost. */
     /** `at`: when the message was sent, not when it was last kept, so a message kept again and again still ages out like a waiting one. */
@@ -491,6 +496,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
      */
     async stop(timeoutMs = 0): Promise<boolean> {
         this.stopping = true;
+        for (const wake of [...this.lookupWakers]) wake();
         clearInterval(this.waitingTimer);
         this.waitingTimer = undefined;
         clearTimeout(this.unplacedTimer);
@@ -1839,13 +1845,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const content = event.content ?? {};
         let botId: string | null;
         try {
-            botId = await this.botForRoom(event.room_id, true);
+            // An event the router hands out with hooks is held here while the store is down (see `holdWhileDown`); one with none is kept in this process and tried again (`keepUnplaced`)
+            botId = hooks ? await this.holdWhileDown('look up the bot of the chat', event.room_id, () => this.botForRoom(event.room_id, true)) : await this.botForRoom(event.room_id, true);
         } catch (error: any) {
             // The store that says which bot is in this chat is unreachable (a reconnect, say). That is not a chat without a
             // bot, so the message is kept here and tried again, never dropped.
             console.warn(`[MatrixDmBridge] Could not look up the bot for ${event.room_id}, will try again:`, error?.message ?? error);
-            // An event the durable inbox holds (it gave us `hooks`) is the inbox's to keep: the failure goes back to the router, which gives the entry back and has it taken again with a fresh
-            // acquisition (and its own paid hook). Kept only in this process's memory it would be lost with a restart, and its local retry would run without that hook
+            // Held for an hour already (see above) and still down: it goes back to the router, which gives the entry back as a try (never kept only in this process's memory: its local retry would
+            // run without the hook)
             if (hooks) throw error;
             this.keepUnplaced(event);
             return;
@@ -1997,11 +2004,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // confirms the person has that App connected for this Brick; otherwise it is dropped (a lost answer costs nothing)
         let connectedApp = this.connectedNotes.get(event) ?? null;
         if (connectedApp) {
-            // A lookup that FAILS is not an answer that the App is not connected: for an event the inbox holds it goes back (the entry is given back and taken again); only an answer of "no" stops
-            const confirmed = await this.deps.appConnected?.(botId, user.uuid, connectedApp.app).catch((error) => {
-                if (hooks) throw error;
-                return false;
-            });
+            // A lookup that FAILS is not an answer that the App is not connected: an event with hooks is held while it is down (see `holdWhileDown`); only an answer of "no" stops
+            const appId = connectedApp.app;
+            const confirmed = hooks
+                ? await this.holdWhileDown('look up the App connection', event.room_id, async () => this.deps.appConnected?.(botId, user.uuid, appId))
+                : await this.deps.appConnected?.(botId, user.uuid, appId).catch(() => false);
             if (confirmed !== true) {
                 console.info(`[MatrixDmBridge] Not carrying on after an App was connected in ${event.room_id}: not confirmed as connected`);
                 return;
@@ -2328,6 +2335,57 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (!sent) this.lastRestingLine.delete(roomId);
         }
         await this.sendNoteNowAndThen(botId, roomId, 'resting', language, config);
+    }
+
+    /**
+     * A lookup (which bot is in this chat, whether an App is connected) for an event the router hands out with its hooks. A lookup that FAILS is a store that is down, not a failure of the event:
+     * the event is held here, under the same acquisition and the same paid hook (its inbox entry keeps beating, so no other server takes it), and the lookup is tried again, 2 s rising to
+     * 60 s, for up to an hour. Only after that, or when the bridge is stopping, does the failure go back so the event is given back as a try. If this process dies meanwhile its entry goes
+     * quiet and another server takes it with a fresh acquisition. The answer of a lookup that worked is never second-guessed here.
+     */
+    private async holdWhileDown<T>(what: string, roomId: string, lookup: () => Promise<T>): Promise<T> {
+        const began = Date.now();
+        let delay = UNPLACED_RETRY_MS;
+        for (;;) {
+            try {
+                return await lookup();
+            } catch (error: any) {
+                if (this.stopping || Date.now() - began >= LOOKUP_HOLD_MS) throw error;
+                console.warn(`[MatrixDmBridge] Could not ${what} for ${roomId}, holding the event and trying again in ${Math.round(delay / 1000)} s:`, error?.message ?? error);
+                // eslint-disable-next-line no-await-in-loop
+                await new Promise<void>((resolve) => {
+                    const wake = () => {
+                        clearTimeout(timer);
+                        this.lookupWakers.delete(wake);
+                        resolve();
+                    };
+                    const timer = setTimeout(wake, delay);
+                    this.lookupWakers.add(wake);
+                });
+                delay = Math.min(delay * 2, UNPLACED_RETRY_MAX_MS);
+            }
+        }
+    }
+
+    /**
+     * An event that will not be handled again (see `MatrixEventHandler.onGaveUp`): reported to Sentry as a warning (nothing of what the person wrote is in it), and when it was a message of a
+     * person and the chat can be resolved, the person gets the same "couldn't answer" line as for any failed answer, never silence. Work that had begun is only reported: they may have been answered.
+     */
+    async onGaveUp(event: MatrixEvent, why: 'tries' | 'paid'): Promise<void> {
+        try {
+            Sentry.captureMessage('A Matrix event will not be handled again', { level: 'warning', tags: { area: 'matrix-inbox', why } });
+        } catch {
+            /* a report is never in the way */
+        }
+        if (why !== 'tries' || event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return;
+        try {
+            const botId = await this.botForRoom(event.room_id, true);
+            if (!botId || this.purgedBots.has(botId)) return;
+            const config = await this.deps.getBotConfig(botId).catch(() => null);
+            await this.sendNote(botId, event.room_id, 'trouble', detectLanguage(String(event.content?.body ?? '')), config);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not tell the person in ${event.room_id} that their message was not answered:`, error?.message ?? error);
+        }
     }
 
     /** Keep a message whose chat could not be looked up, and try again soon. Only the newest of a chat is kept, as for waiting messages. */

@@ -4,7 +4,8 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
+import { createMatrixAppServiceRouter, type MatrixEvent, type MatrixEventHandler } from '../matrix/MatrixAppServiceRouter';
+import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { createEventInbox, INBOX_KEY, PaidFenceError, type EventInbox, type InboxEntry } from '../matrix/MatrixEventInbox';
 import { KEY_REDACTED_FIELD, withoutKeys } from '../matrix/KeyInChat';
 import { takeTurnOnInbox } from './helpers/sharedInboxLock';
@@ -43,8 +44,8 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
     };
     const message = (id: string, body = 'Hi', at?: number): MatrixEvent => ({ type: 'm.room.message', room_id: `!room-${id}:matrix.test`, sender: '@alice:matrix.test', event_id: id, ...(at === undefined ? {} : { origin_server_ts: at }), content: { msgtype: 'm.text', body } });
     const inboxOn = (extra: Parameters<typeof createEventInbox>[1] = {}) => createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, ...extra });
-    const serve = async (inbox: EventInbox, onEvent: (event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }) => Promise<void> = async () => undefined) => {
-        const router = createMatrixAppServiceRouter(config, { onEvent, userExists: async () => true }, { inbox });
+    const serve = async (inbox: EventInbox, onEvent: (event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }) => Promise<void> = async () => undefined, extra: Partial<MatrixEventHandler> = {}) => {
+        const router = createMatrixAppServiceRouter(config, { onEvent, userExists: async () => true, ...extra }, { inbox });
         const app = express();
         app.use(router);
         const server = await new Promise<Server>((resolve) => {
@@ -418,6 +419,122 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             await vi.waitFor(() => expect(handled).toEqual([first]));
             await new Promise((resolve) => setTimeout(resolve, 100));
             expect(handled).toEqual([first]);
+        });
+
+        describe('an event that will not be handled again is said, never dropped in silence (Opus on cfcac71a)', () => {
+            it('its last try failed before anything was paid for: the handler is told it ran out of tries, once', async () => {
+                const id = fresh('lasttry');
+                vi.spyOn(console, 'error').mockImplementation(() => undefined);
+                const told: Array<[string, string]> = [];
+                const inbox = inboxOn({ maxTries: 3, staleMs: 60 });
+                const { router, put } = await serve(
+                    inbox,
+                    async () => {
+                        throw new Error('handler error');
+                    },
+                    { onGaveUp: async (event, why) => void told.push([event.event_id, why]) }
+                );
+                expect((await put('t1', message(id))).status).toBe(200);
+                await vi.waitFor(async () => expect(await stateOf(id)).toBe('p|-|1'));
+                for (const tries of [2, 3]) {
+                    expect(told).toEqual([]);
+                    expect(await router.recover()).toBe(1);
+                    await vi.waitFor(async () => expect(await stateOf(id)).toBe(tries === 3 ? 'd' : `p|-|${tries}`));
+                }
+                await vi.waitFor(() => expect(told).toEqual([[id, 'tries']]));
+            });
+
+            it('a scan that closes an entry whose server went away after work had begun reports it as paid; one that had all its tries reports tries; neither is handed out', async () => {
+                const [paidId, triesId] = [fresh('closed-paid'), fresh('closed-tries')];
+                vi.spyOn(console, 'error').mockImplementation(() => undefined);
+                const dead = inboxOn({ staleMs: 60, maxTries: 1 });
+                const gone = (await dead.take(paidId, message(paidId))) as InboxEntry;
+                await gone.paid();
+                await dead.take(triesId, message(triesId));
+                await new Promise((resolve) => setTimeout(resolve, 150));
+                const told: Array<[string, string]> = [];
+                const handled: string[] = [];
+                const { router } = await serve(
+                    inboxOn({ staleMs: 60, maxTries: 1 }),
+                    async (event) => void handled.push(event.event_id),
+                    { onGaveUp: async (event, why) => void told.push([event.event_id, why]) }
+                );
+                expect(await router.recover()).toBe(0);
+                await vi.waitFor(() => expect(told.sort()).toEqual([[paidId, 'paid'], [triesId, 'tries']].sort()));
+                expect(handled).toEqual([]);
+                expect(await stateOf(paidId)).toBe('d');
+                expect(await stateOf(triesId)).toBe('d');
+            });
+
+            it('the closed list is not an element of what a scan returns, so a scan that took nothing is an empty list', async () => {
+                const id = fresh('plain-empty');
+                const dead = inboxOn({ staleMs: 60 });
+                await (await dead.take(id, message(id)) as InboxEntry).paid();
+                await new Promise((resolve) => setTimeout(resolve, 150));
+                const found = await inboxOn({ staleMs: 60 }).recover();
+                expect(found).toEqual([]);
+                expect(found.closed).toHaveLength(1);
+            });
+        });
+
+        it('a server that went away while an event was held for a store that was down: another server takes the entry over and the person is answered once', async () => {
+            const id = fresh('held-died');
+            const botId = '0b7c1d2e-1111-4222-8333-944455556666';
+            const botUser = `@bot_${botId}:matrix.test`;
+            const room = `!room-${id}:matrix.test`;
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const makeBridge = (storeDown: boolean) => {
+                const rooms = new Map<string, string>([[room, botId]]);
+                const deps: any = {
+                    getBotConfig: vi.fn(async () => ({ botId, name: 'Guide', enabled: true, aiProviderRef: 'p' })),
+                    checkAccess: vi.fn(async () => ({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } })),
+                    reply: vi.fn(async () => ({ text: 'Hello Alice!', media: [] })),
+                    rooms: {
+                        rememberDmRoom: vi.fn(async () => undefined),
+                        getDmRoomBot: vi.fn(async (r: string) => {
+                            if (storeDown) throw new Error('Redis is reconnecting');
+                            return rooms.get(r) ?? null;
+                        }),
+                        forgetDmRoom: vi.fn(async () => undefined),
+                    },
+                };
+                const client: any = {
+                    ensureRegistered: vi.fn(async () => undefined),
+                    setDisplayName: vi.fn(async () => undefined),
+                    getDisplayName: vi.fn(async () => 'Guide'),
+                    joinRoom: vi.fn(async () => undefined),
+                    leaveRoom: vi.fn(async () => undefined),
+                    sendText: vi.fn(async () => '$evt'),
+                    sendMessage: vi.fn(async () => '$evt'),
+                    setTyping: vi.fn(async () => undefined),
+                    getJoinedMembers: vi.fn(async () => ['@alice:matrix.test', botUser]),
+                    getRecentMessages: vi.fn(async () => []),
+                };
+                return { bridge: new MatrixDmBridge(config, client as never, deps), deps };
+            };
+            const first = makeBridge(true);
+            // the first server never beats (it is as good as gone once its beat is stale) and its lookup stays down
+            const aliveFirst = inboxOn({ staleMs: 60, beatEveryMs: 60_000 });
+            const one = await serve(aliveFirst, (event, hooks) => first.bridge.onEvent(event, hooks));
+            expect((await one.put('t1', message(id, 'Hello?'))).status).toBe(200);
+            await vi.waitFor(() => expect(first.deps.rooms.getDmRoomBot).toHaveBeenCalled());
+            expect(await stateOf(id)).toMatch(/^p\|/);
+            expect(first.deps.reply).not.toHaveBeenCalled();
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            // the event is still HELD by its first acquisition: a store that is down did not count as a try and did not give the entry back
+            expect(await stateOf(id)).toMatch(/^p\|(?!-\|).*\|1$/);
+            // another server takes the stale entry over (a new acquisition) and answers
+            const second = makeBridge(false);
+            const two = await serve(inboxOn({ staleMs: 60, beatEveryMs: 60_000 }), (event, hooks) => second.bridge.onEvent(event, hooks));
+            expect(await two.router.recover()).toBe(1);
+            await vi.waitFor(async () => expect(await stateOf(id)).toBe('d'));
+            expect(second.deps.reply).toHaveBeenCalledTimes(1);
+            // the first server stops: its held event is given back under the old acquisition, which changes nothing and answers nothing
+            await first.bridge.stop();
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            expect(first.deps.reply).not.toHaveBeenCalled();
+            expect(await stateOf(id)).toBe('d');
+            expect(second.deps.reply).toHaveBeenCalledTimes(1);
         });
     });
 });
