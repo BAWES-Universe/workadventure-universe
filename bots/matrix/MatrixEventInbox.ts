@@ -311,10 +311,11 @@ export function createEventInbox(
             if (over) return 'unsure';
             over = true;
             let attempts = 0;
-            const attempt = (): Promise<'again' | 'closed' | undefined> =>
-                step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(maxTries), eventId]).then(
+            const attempt = (): Promise<'again' | 'closed' | undefined> => {
+                // Every call counts, whether the store answered or not: a retry after a failed first call is a retry
+                attempts += 1;
+                return step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(maxTries), eventId]).then(
                     (answer) => {
-                        attempts += 1;
                         if (answer === 2 || answer === '2') return 'closed' as const;
                         // Not this server's any more (taken by another, or finished): nothing is left to give back, and nothing of it is reported from here
                         if ((answer === 0 || answer === '0') && attempts > 1) say('A give-back that was tried again found the entry no longer this server\'s:', eventId);
@@ -325,6 +326,7 @@ export function createEventInbox(
                         return undefined;
                     }
                 );
+            };
             const first = await attempt();
             if (first) {
                 clearInterval(beat);

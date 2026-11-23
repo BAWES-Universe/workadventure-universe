@@ -391,8 +391,9 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             await vi.waitFor(() => expect(closed).toHaveBeenCalledTimes(1), { timeout: 4000 });
         });
 
-        it('a give-back that finds the entry another server\'s (not its own earlier closure) reports nothing as closed', async () => {
+        it('a give-back that finds the entry another server\'s (not its own earlier closure) reports nothing as closed, and logs that outcome even when its first call failed', async () => {
             const id = fresh('not-mine');
+            const said: string[] = [];
             let lost = 0;
             const flaky = createEventInbox(
                 () =>
@@ -408,13 +409,14 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
                             return realEval(script, o);
                         },
                     }) as never,
-                { ttlSeconds: 60, beatEveryMs: 40, maxTries: 1, log: () => undefined }
+                { ttlSeconds: 60, beatEveryMs: 40, maxTries: 1, log: (line: string) => void said.push(line) }
             );
             const entry = (await flaky.take(id, message(id))) as InboxEntry;
             const closed = vi.fn();
             vi.spyOn(console, 'error').mockImplementation(() => undefined);
             expect(await entry.release(closed)).toBe('unsure');
-            await new Promise((resolve) => setTimeout(resolve, 400));
+            // the first call failed (the store did not answer) and the retry found the entry not this server's: that outcome is logged, though only one call ever got an answer
+            await vi.waitFor(() => expect(said.some((line) => line.includes("no longer this server's"))).toBe(true), { timeout: 4000 });
             expect(closed).not.toHaveBeenCalled();
         });
 
