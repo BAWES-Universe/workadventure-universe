@@ -463,7 +463,8 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             expect(lines).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form')]);
         });
         it('a plain yes after that line confirms nothing: the left job is asked about on its own, with its own ids, and a yes to THAT question stops only it', async () => {
-            const view = viewOf(working(), [inLine('job-taxi', 'Taxi booking')]);
+            // Taxi is NOT in the list the Stop was confirmed from: it arrives after the last list read, and only Orbit's answer knows it (CodeRabbit on ea88b4c1, 10)
+            const view = viewOf(working());
             const orbit = door(view, { stop: { ...viewOf(null), stopped: ['job-visa'], left: [{ id: 'job-taxi', title: 'Taxi booking' }] } });
             const c = chat(orbit.admin);
             await c.run(STOP_COMPUTER_TOOL);
@@ -472,6 +473,7 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             await c.run(STOP_COMPUTER_TOOL);
             await c.deliver();
             expect(orbit.acted().filter((ask) => ask.action === 'stop')).toHaveLength(1);
+            expect(orbit.acted().find((ask) => ask.action === 'stop')).toMatchObject({ confirmedJobIds: ['job-visa'] });
             // what Orbit holds now: only the left job
             Object.assign(view, viewOf(inLine('job-taxi', 'Taxi booking', { status: 'running', queuedFor: null })));
             c.nextMessage('Yes');
@@ -533,6 +535,11 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             expect(await stopWith([], [working({ title: '' })])).toEqual(['That job had already ended.']);
             expect(await stopWith(undefined, three())).toEqual(['The jobs I asked you about have all ended now. Their files are kept.']);
             expect(await stopWith(undefined, [working()])).toEqual(['The job I asked you about has ended now. Its files are kept.']);
+        });
+        it('more stopped than were asked about (an Orbit that counts differently): its number alone, never "all" and never "the rest"', async () => {
+            const lines = await stopWith(['a', 'b', 'c'], [working(), inLine('job-taxi', 'Taxi booking')]);
+            expect(lines).toEqual(["I've stopped 3 jobs on my computer. Their files are kept."]);
+            expect(await stopWith(['a', 'b'], [working(), inLine('job-taxi', 'Taxi booking')])).toEqual(["I've stopped all 2 jobs on my computer. Their files are kept."]);
         });
         it('a number Orbit did not send is never said: the number of jobs asked about is not a count', async () => {
             for (const lines of [await stopWith(undefined, three()), await stopWith('many', three())]) expect(lines[0]).not.toMatch(/\d/);

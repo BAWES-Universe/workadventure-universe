@@ -314,6 +314,12 @@ export const TRY_AGAIN_ASKED_SLOT = '\u0000tryagain';
 export const TRY_AGAIN_PENDING_SLOT = '\u0000tryagain-pending';
 /** The `try_again` of this turn that is still reading the ended jobs, as a promise that settles when it is over (none: undefined, so a call with nothing to wait for does not yield). A call that begins beside it decides only after it has settled. */
 const tryAgainSettling = (starts: Map<string, StartKeyEntry> | undefined): Promise<void> | undefined => starts?.get(TRY_AGAIN_PENDING_SLOT)?.settling;
+/**
+ * The chats (their start maps) in which a paid start was sent in this turn, set the moment before it goes out whatever its outcome is: a `try_again` that begins after it asks nothing and never says
+ * that nothing was started. Kept beside the map, not in it (the map holds only starts), and cleared by the person's next message (`forgetSettledStarts`).
+ */
+const dispatchedTurns = new WeakSet<Map<string, StartKeyEntry>>();
+const START_DISPATCHED_NOTE = 'A start for this person was already sent in this same turn, so this call sent nothing more and asked them nothing. Do not call use_computer again in this turn. Say nothing more about starting: what that start did is told to them separately.';
 const TRY_AGAIN_ASKED_NOTE = 'They have not chosen yet, so NOTHING was started. A fixed line under your reply already asked them: do not ask it again and do not call use_computer again in this turn. Only their next message can start anything.';
 const COULD_NOT_CHECK_NOTE = 'It is not known whether this job started. Say in one short sentence, in the person\'s language and in these words: "I couldn\'t check whether this job has started. I\'ll use the same request when you check again." They can also look at the bar above this chat. Do not say it failed or that it started.';
 
@@ -323,6 +329,7 @@ const askedOf = (job: string, origin: { kind: 'dm'; ref: string } | undefined): 
 /** At a new message from the person: the keys of asks that are settled are forgotten; the open start stays until its outcome is known (or its safety life is over). */
 export function forgetSettledStarts(starts: Map<string, StartKeyEntry> | undefined, now = Date.now()): void {
     if (!starts) return;
+    dispatchedTurns.delete(starts);
     for (const [asked, entry] of starts) if (!entry.open || now - entry.at >= OPEN_START_KEEP_MS) starts.delete(asked);
 }
 
@@ -336,6 +343,8 @@ const OPEN_REASONS = ['starting', 'unknown'];
 
 /** The longest title Orbit keeps for a job: what an ended job's title is compared with. */
 const ENDED_TITLE_MAX = 200;
+/** What is read of the words the model gave for the title before they are compared (not cut at 200: a title written with combining accents is longer than the same title as Orbit keeps it, and a cut would take its last accent). */
+const ENDED_TITLE_READ_MAX = 2000;
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 
 const day = (iso: string): string => {
@@ -462,7 +471,7 @@ const sameTitle = (one: string, other: string): boolean => titleKey(one) === tit
  */
 async function tryAgainWithoutJob(args: Record<string, unknown>, context: ComputerToolContext): Promise<{ carryOn: { id: string; title: string } } | { answer: Record<string, unknown>; asked: boolean }> {
     // The title is compared as the person's words gave it, up to what Orbit keeps (200), NEVER cut to the 120 a start carries first: a longer title would never match itself (CodeRabbit on the round 8 head, 2)
-    const named = text(args.job, ENDED_TITLE_MAX);
+    const named = typeof args.job === 'string' ? args.job.replace(/\s+/g, ' ').trim().slice(0, ENDED_TITLE_READ_MAX) : '';
     let ended: Array<{ id: string; title: string }> | null = null;
     try {
         ended = (await context.admin.computerEndedJobs?.(context.botId, context.userId)) ?? null;
@@ -504,6 +513,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     for (let wait = tryAgainSettling(context.startKeys); wait; wait = tryAgainSettling(context.startKeys)) await wait;
     if (context.startKeys?.has(TRY_AGAIN_ASKED_SLOT)) return { started: false, success: false, note: TRY_AGAIN_ASKED_NOTE };
     if (args.try_again === true && !carryOn) {
+        // A start already sent in this turn (a fresh call beside this one went first): nothing is asked, and nothing says that nothing was started
+        if (context.startKeys && dispatchedTurns.has(context.startKeys)) return { started: false, success: false, note: START_DISPATCHED_NOTE };
         // Visible BEFORE the first await: a call that begins beside this one finds the mark and waits for it
         let settle!: () => void;
         const pending: StartKeyEntry = { key: '', at: Date.now(), open: false, settling: new Promise<void>((done) => (settle = done)) };
@@ -511,8 +522,12 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         let settled: Awaited<ReturnType<typeof tryAgainWithoutJob>>;
         try {
             settled = await tryAgainWithoutJob(args, context);
+            // The person may have written again while the ended jobs were being read (their message cleared this turn's marks, this one included): this turn is over, and its question is
+            // never written into the newer turn, where it would stop that turn's own start
+            const overtaken = context.startKeys !== undefined && context.startKeys.get(TRY_AGAIN_PENDING_SLOT) !== pending;
             // A question put to the person ends every start of this turn (set in the same step that lets the mark go); a lookup that could not be answered, or a job carried on, asks nothing and blocks nothing
-            if ('answer' in settled && settled.asked) context.startKeys?.set(TRY_AGAIN_ASKED_SLOT, { key: '', at: Date.now(), open: false });
+            if ('answer' in settled && settled.asked && !overtaken) context.startKeys?.set(TRY_AGAIN_ASKED_SLOT, { key: '', at: Date.now(), open: false });
+            if (overtaken && 'carryOn' in settled) return { started: false, success: false, note: 'They wrote again while this was being checked, so nothing was started by this call.' };
         } finally {
             if (context.startKeys?.get(TRY_AGAIN_PENDING_SLOT) === pending) context.startKeys.delete(TRY_AGAIN_PENDING_SLOT);
             settle();
@@ -688,6 +703,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                 if (!priorSend) await dropKey();
                 return { started: false, success: false, note: TRY_AGAIN_ASKED_NOTE };
             }
+            // From here a start is on its way, whatever comes back: a `try_again` of this turn that begins now must not say that nothing was started
+            if (context.startKeys) dispatchedTurns.add(context.startKeys);
             entry.sent = true;
             try {
                 // The words of the ask that FIRST sent this key, never the words of this call (when they differ the answer is told as that earlier ask's). They are a parameter, so what is
