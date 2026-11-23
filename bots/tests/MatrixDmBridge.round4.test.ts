@@ -373,6 +373,29 @@ describe('a message that arrives while the store that knows the chat is down', (
             expect(paid).not.toHaveBeenCalled();
         });
 
+        // CodeRabbit on a767269a: the FIRST lookup, with no failure before it, is no different once the bridge is stopping
+        it('the first lookup, in flight when the bridge stops, and that then succeeds is not taken: no reply, no paid start, and the event goes back', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            stores.rooms.set(ROOM, BOT);
+            let finish: (bot: string | null) => void = () => undefined;
+            stores.deps.rooms.getDmRoomBot = vi.fn(() => new Promise<string | null>((resolve) => (finish = resolve)));
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            const outcome = bridge.onEvent(message('hello?'), { paid }).then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(100);
+            void bridge.stop();
+            finish(BOT);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(await outcome).toMatch(/stopping/i);
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            expect(paid).not.toHaveBeenCalled();
+        });
+
         it('a retry already in flight when the bridge stops, and that then succeeds, is not taken: the event goes back', async () => {
             vi.useFakeTimers();
             vi.spyOn(console, 'warn').mockImplementation(() => undefined);

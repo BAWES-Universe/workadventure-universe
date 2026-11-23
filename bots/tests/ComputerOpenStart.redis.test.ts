@@ -16,7 +16,7 @@ import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/Matrix
 import { createEventInbox, INBOX_KEY, PaidFenceError, type EventInbox, type InboxEntry } from '../matrix/MatrixEventInbox';
 import { takeTurnOnInbox } from './helpers/sharedInboxLock';
 import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, jobLine, runComputerTool, startKeyFor, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
-import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
+import { RedisStartKeys, startKeyNameOf, startKeyPeerNameOf } from '../server/ComputerStartKeys';
 
 /**
  * GPT round 4, R1: ONE identity until an uncertain start is resolved. The real tool (`runComputerTool`), the real client (`AdminApiService`, its Orbit transport replaced by an Orbit that
@@ -151,7 +151,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
     });
     afterAll(async () => {
         if (!opened || !client.isOpen) return;
-        if (scopes.length > 0) await client.del(scopes.map(startKeyNameOf));
+        if (scopes.length > 0) await client.del([...scopes.map(startKeyNameOf), ...scopes.map(startKeyPeerNameOf)]);
         await client.quit();
     });
     afterEach(() => vi.useRealTimers());
@@ -1555,6 +1555,83 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(deleted).not.toContain(fresh);
             const kept = JSON.parse((await client.get(startKeyNameOf(`${who.botId}|${who.userId}`))) ?? 'null') as { key: string } | null;
             expect(kept?.key).toBe(fresh);
+        });
+
+        // CodeRabbit on a767269a: a record this call did not store is another attempt's even when it holds the very key worked out here: look it up, and send only ITS words
+        it('S2 `expired`, another server holds the SAME new key with its own words: that key is looked up first and only the other server\'s words are sent under it (never this ask\'s)', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            const server = process_(orbit, who);
+            const real = new RedisStartKeys(() => client as never);
+            const fresh = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, `${startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0)}.1`);
+            const looked: string[] = [];
+            const inner = (server.context.admin as unknown as { lookUpComputerStart: (...args: unknown[]) => Promise<unknown> }).lookUpComputerStart.bind(server.context.admin);
+            (server.context.admin as unknown as { lookUpComputerStart: unknown }).lookUpComputerStart = async (...args: unknown[]) => {
+                looked.push((args[2] as { startKey: string }).startKey);
+                return inner(...args);
+            };
+            let claims = 0;
+            const store = {
+                expected: () => true,
+                delete: (scope: string, key: string, options?: { unlessRead?: boolean }) => real.delete(scope, key, options),
+                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
+                    claims += 1;
+                    // the other server got there first with the same key and the words of ITS ask
+                    if (claims === 2) await real.claim(scope, { key: fresh, at: Date.now(), payload: { title: 'The other server ask', writes: true } } as never, keep, life);
+                    return real.claim(scope, entry as never, keep, life);
+                },
+            };
+            await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
+            expect(looked).toContain(fresh);
+            expect(orbit.posts.map((one) => one.key)).toEqual([startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0), fresh]);
+            expect(orbit.posts[1].title).toBe('The other server ask');
+        });
+
+        it('the first key held by another server for the very key proposed: looked up, sent with the stored words only; and a record with no words is only looked up', async () => {
+            for (const [name, stored] of [['words', { title: 'The other server ask', writes: true }], ['none', undefined]] as const) {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const server = process_(orbit, who);
+                const real = new RedisStartKeys(() => client as never);
+                const key = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0);
+                await real.claim(`${who.botId}|${who.userId}`, { key, at: Date.now(), ...(stored ? { payload: stored } : {}) } as never, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS);
+                const answer = await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: new ConfirmationQueue(), inbound: EVENT });
+                if (stored) {
+                    expect(orbit.posts.map((one) => [one.key, one.title]), name).toEqual([[key, 'The other server ask']]);
+                } else {
+                    expect(orbit.posts, name).toEqual([]);
+                    expect(answer, name).toMatchObject({ started: false });
+                }
+            }
+        });
+
+        // CodeRabbit on a767269a: this call stored the record, but another server may have been given it and be sending the key
+        it('a failed send keeps the record this call stored when another server has been given it meanwhile; with none, it is taken back', async () => {
+            for (const [name, peer, kept] of [['a peer read it', true, true], ['nobody else read it', false, false]] as const) {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const inner = (orbit as unknown as { call: (...args: unknown[]) => Promise<unknown> }).call;
+                (orbit as unknown as { call: unknown }).call = async (...args: unknown[]) => {
+                    const [method, , body] = args as [string, string, { action?: string } | undefined];
+                    if (method === 'post' && !body?.action) throw new Error('Orbit did not answer');
+                    return inner(...args);
+                };
+                const server = process_(orbit, who);
+                const real = new RedisStartKeys(() => client as never);
+                const store = {
+                    expected: () => true,
+                    delete: (scope: string, key: string, options?: { unlessRead?: boolean }) => real.delete(scope, key, options),
+                    claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
+                        const mine = await real.claim(scope, entry as never, keep, life);
+                        // another server handling the same event gets the record back, and sends the same key
+                        if (peer) expect((await real.claim(scope, entry as never, keep, life))?.mine).toBe(false);
+                        return mine;
+                    },
+                };
+                await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
+                expect(Boolean(await held(who)), name).toBe(kept);
+            }
         });
 
         it('S2 `expired`, the shared store expected but it did not confirm the new key: nothing is sent under it (another server may hold a key of this ask), and the next ask checks it again', async () => {

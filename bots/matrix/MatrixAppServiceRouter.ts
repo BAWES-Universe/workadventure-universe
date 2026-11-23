@@ -213,6 +213,13 @@ export function createMatrixAppServiceRouter(
                     // The last try: nobody takes it again, so it is said (loudly) and the person is told, never silence. With no inbox nothing gives it back at all
                     const result = entry ? await entry.release(() => void gaveUp(event, 'tries')).catch(() => 'unsure' as const) : ('closed' as const);
                     if (result === 'closed') await gaveUp(event, 'tries');
+                    // The store did not answer: the give-back goes on after this chain has ended, and may turn out to be the last try (which is then said). A shutdown waits for it, as for any report
+                    const retrying = result === 'unsure' ? entry?.givingBack?.() : undefined;
+                    if (retrying) {
+                        const wait = retrying.catch(() => undefined);
+                        reporting.add(wait);
+                        void wait.finally(() => reporting.delete(wait));
+                    }
                     return;
                 }
             }

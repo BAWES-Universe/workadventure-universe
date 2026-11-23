@@ -3,7 +3,7 @@ import { createClient } from 'redis';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { OPEN_START_KEEP_MS } from '../ai/ComputerTools';
 import { runDelivered } from './helpers/deliveredComputerTool';
-import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
+import { RedisStartKeys, startKeyNameOf, startKeyPeerNameOf } from '../server/ComputerStartKeys';
 
 /**
  * The two scripts of the start key store (claim and delete) against a real Redis (the unit tests run their meaning in JavaScript, so a change to the Lua would not show there). Runs
@@ -34,7 +34,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
     });
     afterAll(async () => {
         if (!opened || !client.isOpen) return;
-        if (scopes.length > 0) await client.del(scopes.map(startKeyNameOf));
+        if (scopes.length > 0) await client.del([...scopes.map(startKeyNameOf), ...scopes.map(startKeyPeerNameOf)]);
         await client.quit();
     });
 
@@ -112,7 +112,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         const raw = scope('bad-raw');
         await client.set(startKeyNameOf(raw), JSON.stringify({ key: 'has a space-01', at }), { PX: 60_000 });
         const { CLAIM_START_KEY } = await import('../server/ComputerStartKeys');
-        const answer = await client.eval(CLAIM_START_KEY, { keys: [startKeyNameOf(raw)], arguments: [JSON.stringify({ key: 'caller-key-00002', at }), '60000', String(at - LIFE)] });
+        const answer = await client.eval(CLAIM_START_KEY, { keys: [startKeyNameOf(raw), startKeyPeerNameOf(raw)], arguments: [JSON.stringify({ key: 'caller-key-00002', at }), '60000', String(at - LIFE)] });
         // the script answers the entry and whether this call stored it
         expect(answer).toEqual([JSON.stringify({ key: 'caller-key-00002', at }), 1]);
     });
@@ -127,6 +127,41 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
             expect(await store.claim(s, { key: 'caller-key-00001', at }, LIFE, LIFE), name).toEqual({ key, at: at - 1000, mine: false });
             expect(JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null'), name).toEqual({ key, at: at - 1000 });
         }
+    });
+
+    // CodeRabbit on a767269a
+    it('a record whose storer failed is kept once another call was given it (`unlessRead`), and taken back when none was; a plain delete (a confirmed end) always takes it', async () => {
+        const store = new RedisStartKeys(() => client as never);
+        const at = Date.now();
+        const alone = scope('unread-alone');
+        await store.claim(alone, { key: 'only-me-0000001', at }, LIFE, LIFE);
+        await store.delete(alone, 'only-me-0000001', { unlessRead: true });
+        expect(await client.get(startKeyNameOf(alone))).toBeNull();
+
+        const shared = scope('unread-shared');
+        expect((await store.claim(shared, { key: 'both-of-us-0001', at }, LIFE, LIFE))?.mine).toBe(true);
+        expect((await store.claim(shared, { key: 'both-of-us-0001', at }, LIFE, LIFE))?.mine).toBe(false);
+        await store.delete(shared, 'both-of-us-0001', { unlessRead: true });
+        expect(JSON.parse((await client.get(startKeyNameOf(shared))) ?? 'null')).toEqual({ key: 'both-of-us-0001', at });
+        // the mark lives no longer than the record
+        expect(await client.pTTL(startKeyPeerNameOf(shared))).toBeLessThanOrEqual(LIFE);
+        expect(await client.pTTL(startKeyPeerNameOf(shared))).toBeGreaterThan(0);
+        // a confirmed end takes it, and the mark with it, so the next record of the scope starts clean
+        await store.delete(shared, 'both-of-us-0001');
+        expect(await client.get(startKeyNameOf(shared))).toBeNull();
+        expect(await client.get(startKeyPeerNameOf(shared))).toBeNull();
+        expect((await store.claim(shared, { key: 'next-key-000001', at: Date.now() }, LIFE, LIFE))?.mine).toBe(true);
+        await store.delete(shared, 'next-key-000001', { unlessRead: true });
+        expect(await client.get(startKeyNameOf(shared))).toBeNull();
+    });
+
+    it('a mark that names another key never keeps a record', async () => {
+        const store = new RedisStartKeys(() => client as never);
+        const s = scope('unread-stale');
+        await store.claim(s, { key: 'the-new-key-0001', at: Date.now() }, LIFE, LIFE);
+        await client.set(startKeyPeerNameOf(s), 'an-older-key-0001', { PX: 60_000 });
+        await store.delete(s, 'the-new-key-0001', { unlessRead: true });
+        expect(await client.get(startKeyNameOf(s))).toBeNull();
     });
 
     it('two servers asking at the same moment with nothing held agree on ONE key (many at once, each with a key of its own)', async () => {

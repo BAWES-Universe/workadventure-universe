@@ -140,7 +140,10 @@ const TAKEOVER = `
 local held = redis.call('GET', KEYS[1])
 if not held or held == 'd' then
   redis.call('ZREM', KEYS[2], ARGV[4])
-  redis.call('DEL', KEYS[3])
+  -- A closed entry keeps what is in the event's slot: it is the mark of the acquisition whose give-back closed it, which a retry of that give-back (its first answer was lost) still has to find
+  if not held then
+    redis.call('DEL', KEYS[3])
+  end
   return nil
 end
 local paid = string.sub(held, -2) == '|$'
@@ -196,6 +199,8 @@ export interface InboxEntry {
      * was given back (or is not this server's any more), and `unsure` when the store did not answer (the give-back is tried again; `onClosed` runs if that later finds it was the last try).
      */
     release(onClosed?: () => void): Promise<'again' | 'closed' | 'unsure'>;
+    /** After `release` answered `unsure`: settles when the retries of that give-back are over (the store took it, or the tries ran out), after `onClosed` ran. Otherwise nothing is pending. */
+    givingBack?(): Promise<void> | undefined;
     /** False for the entry that holds nothing (the store is not connected): there is no durable copy and no other try. Absent: durable. */
     readonly durable?: boolean;
     /** The transaction this event came in was refused, so it is taken back out as if never taken and the resend takes it in afresh (a failed step leaves it to be recovered instead). */
@@ -300,6 +305,8 @@ export function createEventInbox(
          * that the store wrote but never confirmed to this server stands on an entry whose work never began, and an entry that went quiet with that mark on it would be closed by another server
          * as paid work, and the person's message lost. Only a server that dies before the store takes it back leaves that mark standing.
          */
+        let retrying: Promise<void> | undefined;
+        let retried: () => void = () => undefined;
         const giveBack = async (onClosed?: () => void): Promise<'again' | 'closed' | 'unsure'> => {
             if (over) return 'unsure';
             over = true;
@@ -325,6 +332,8 @@ export function createEventInbox(
             }
             let tried = 1;
             let running = false;
+            // Whoever must wait for this server's work to be over (a shutdown) can wait for the retries too: they end when the store took the give-back, or the tries ran out, after `onClosed` ran
+            retrying = new Promise<void>((resolve) => (retried = resolve));
             const again = setInterval(() => {
                 if (running) return;
                 running = true;
@@ -336,6 +345,7 @@ export function createEventInbox(
                             clearInterval(beat);
                             if (given === 'closed') onClosed?.();
                             if (!given) say('Gave up giving an event back; it is taken up again by another server (or closed, if it carries a paid mark):', eventId);
+                            retried();
                         }
                     })
                     .finally(() => {
@@ -348,6 +358,7 @@ export function createEventInbox(
         return {
             done: () => end(DONE, [token, String(ttlSeconds), eventId], 'handled'),
             release: (onClosed) => giveBack(onClosed),
+            givingBack: () => retrying,
             undo: () => end(UNDO, [token, eventId], 'taken back'),
             // Awaited before the first paid call, and it must SUCCEED: when it does not (another server holds the event now, or the store did not answer) it throws, and nothing paid for
             // begins. The event then goes back for another try, as one that nothing was paid for

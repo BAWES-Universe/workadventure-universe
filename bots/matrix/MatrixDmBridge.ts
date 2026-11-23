@@ -2355,9 +2355,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
         for (;;) {
             try {
                 const answer = await lookup();
-                // The bridge began to stop while this event was held (the wait ended because of it, or the lookup was in flight): the answer is not taken. Nothing paid for starts during shutdown;
-                // the failure goes back, so the event is given back and another server takes it up
-                if (failure !== undefined && this.stopping) throw failure;
+                // The bridge began to stop while this event was held or its lookup was in flight (this one, the first, or a retry): the answer is not taken, so nothing paid for starts during shutdown.
+                // The failure of an earlier try, or the stop itself, goes back, so the event is given back (nothing of it was paid for) and another server takes it up
+                if (this.stopping) throw failure ?? new Error('The bridge is stopping');
                 return answer;
             } catch (error: any) {
                 failure ??= error;

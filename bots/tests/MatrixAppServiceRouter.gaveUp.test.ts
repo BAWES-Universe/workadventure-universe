@@ -99,3 +99,72 @@ describe('the router tells the handler whether the event has a durable inbox ent
         expect(seen[0]?.durable).toBe(false);
     });
 });
+
+// CodeRabbit on a767269a: a give-back the store did not answer goes on after the room chain has ended, and may turn out to be the last try; shutdown waits for it
+describe('a give-back that is still being retried is part of the shutdown drain', () => {
+    const withRetry = () => {
+        let finish: (closed: boolean) => void = () => undefined;
+        let retrying: Promise<void> | undefined;
+        const onGaveUp = vi.fn(async () => undefined);
+        const entry = {
+            paid: async () => undefined,
+            done: async () => undefined,
+            undo: async () => undefined,
+            // the store did not answer: the retries go on after this
+            release: async (onClosed?: () => void) => {
+                retrying = new Promise<void>((resolve) => {
+                    finish = (closed) => {
+                        if (closed) onClosed?.();
+                        resolve();
+                    };
+                });
+                return 'unsure' as const;
+            },
+            givingBack: () => retrying,
+        } as unknown as InboxEntry;
+        const inbox: EventInbox = {
+            owner: 'one',
+            take: async () => false,
+            recover: async () => {
+                const list = [{ event: event('$a'), entry }];
+                Object.defineProperty(list, 'closed', { value: [], enumerable: false });
+                return list as unknown as Recovered;
+            },
+        };
+        const router = createMatrixAppServiceRouter(
+            config,
+            {
+                onEvent: async () => {
+                    throw new Error('lookup failed');
+                },
+                userExists: async () => true,
+                onGaveUp,
+            },
+            { inbox }
+        );
+        return { router, onGaveUp, finish: (closed: boolean) => finish(closed) };
+    };
+
+    it('settle waits until the retry has ended, and the failure notice it ends with is made before settle answers', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const { router, onGaveUp, finish } = withRetry();
+        await router.recover();
+        let settled: boolean | undefined;
+        const waiting = router.settle(5000).then((value) => (settled = value));
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        // the chain is over, the give-back is not
+        expect(settled).toBeUndefined();
+        finish(true);
+        await waiting;
+        expect(settled).toBe(true);
+        expect(onGaveUp).toHaveBeenCalledTimes(1);
+        expect(onGaveUp).toHaveBeenCalledWith(expect.objectContaining({ event_id: '$a' }), 'tries');
+    });
+
+    it('a retry that never ends cannot hold shutdown beyond its timeout', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const { router } = withRetry();
+        await router.recover();
+        expect(await router.settle(100)).toBe(false);
+    });
+});

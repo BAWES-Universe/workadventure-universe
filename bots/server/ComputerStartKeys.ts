@@ -14,6 +14,10 @@ import type { EvidenceRedis } from './ComputerEvidenceStore';
  * Whose record it is: a call deletes only a record it STORED (the answer of `claim` says so: `mine`), for a key nothing was sent under before. A record it did not store is never deleted by it, even when
  * its own send of that key fails and even when the key is the very one it proposed (two servers working out the same replacement key for the same event: the second finds the first's record):
  * the first may have its send open, and the next ask, here or elsewhere, finds the record and looks the key up.
+ *
+ * A record that THIS call stored is not always this call's alone: another server may have claimed the very same key afterwards (it got the record back, `mine: false`) and be sending it. Every
+ * claim that gets a held record back leaves a mark beside it, naming the key (`startKeyPeerNameOf`), and a failed send deletes its own record only while NO such mark names the key (`delete` with
+ * `unlessRead`): once another server has read the record, only a CONFIRMED end (the ack after the job was told, the answer `expired` for a key that made nothing) deletes it, or its own life.
  */
 export const START_KEY_PREFIX = 'computer:startkey:';
 
@@ -84,8 +88,11 @@ export interface StartKeyStore {
      * the entry the store holds after this (the one already there, or `entry`): the caller sends THAT key. Undefined when the store did not answer: the caller's own key goes on.
      */
     claim(scope: string, entry: StoredStartKey, keepMs: number, lifeMs: number): Promise<StoredStartKey | undefined>;
-    /** Takes the key back only while the store still holds exactly this key. */
-    delete(scope: string, key: string): Promise<void>;
+    /**
+     * Takes the key back only while the store still holds exactly this key. With `unlessRead` only while no other call has been given that record (see `claim`): a send that failed may
+     * not take back a reservation another server may be using.
+     */
+    delete(scope: string, key: string, options?: { unlessRead?: boolean }): Promise<void>;
     /**
      * Whether a shared store is expected to hold the keys of this server's asks (one is set up). A store that is expected and did not answer a claim means a key of this ask may
      * be held there that this process cannot see: nothing new is sent then. A server with no shared store at all (one machine, no Redis) has only its own memory. Taken as true when absent.
@@ -103,19 +110,31 @@ if held then
   local ok, entry = pcall(cjson.decode, held)
   -- Only an entry of the shape the caller reads (the key Orbit takes: 8 to 64 of letters, digits, _ and -, and a number moment): anything else is replaced, never returned
   if ok and type(entry) == 'table' and type(entry.key) == 'string' and #entry.key >= 8 and #entry.key <= 64 and string.find(entry.key, '^[A-Za-z0-9_%-]+$') and type(entry.at) == 'number' and entry.at >= tonumber(ARGV[3]) then
+    -- Another call is given this record: it may send the key, so the record is no longer its storer's alone. The mark names the key and lives no longer than the record
+    local left = redis.call('PTTL', KEYS[1])
+    if left < 1 then left = tonumber(ARGV[2]) end
+    redis.call('SET', KEYS[2], entry.key, 'PX', left)
     return {held, 0}
   end
 end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', tonumber(ARGV[2]))
+redis.call('DEL', KEYS[2])
 return {ARGV[1], 1}
 `;
-/** Deletes the key KEYS[1] only while the entry it holds is the key ARGV[1]: an ask that has started again since (another key) stays. */
+/**
+ * Deletes the key KEYS[1] only while the entry it holds is the key ARGV[1]: an ask that has started again since (another key) stays. With ARGV[2] = '1' it also stays while the mark KEYS[2]
+ * names that key (another call was given the record and may be sending the key). Answers 1 when it deleted, 0 when there was nothing to delete, 2 when the mark kept it.
+ */
 export const DELETE_START_KEY = `
 local held = redis.call('GET', KEYS[1])
 if not held then return 0 end
 local ok, entry = pcall(cjson.decode, held)
 if ok and type(entry) == 'table' and entry.key == ARGV[1] then
+  if ARGV[2] == '1' and redis.call('GET', KEYS[2]) == ARGV[1] then
+    return 2
+  end
   redis.call('DEL', KEYS[1])
+  redis.call('DEL', KEYS[2])
   return 1
 end
 return 0
@@ -123,6 +142,9 @@ return 0
 
 /** The key of a scope in the store: a hash, so no title or chat id is a part of a key name. */
 export const startKeyNameOf = (scope: string): string => START_KEY_PREFIX + createHash('sha256').update(scope).digest('hex').slice(0, 40);
+
+/** The mark that another call was given the record of a scope (see `CLAIM_START_KEY`). */
+export const startKeyPeerNameOf = (scope: string): string => `${startKeyNameOf(scope)}:read`;
 
 const SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -162,7 +184,7 @@ export class RedisStartKeys implements StartKeyStore {
             const oldestGood = Date.now() - lifeMs;
             const held = await this.within(
                 this.client().eval(CLAIM_START_KEY, {
-                    keys: [startKeyNameOf(scope)],
+                    keys: [startKeyNameOf(scope), startKeyPeerNameOf(scope)],
                     arguments: [JSON.stringify({ key: entry.key, at: entry.at, ...(entry.payload ? { payload: entry.payload } : {}) }), String(Math.max(1000, Math.round(keepMs))), String(oldestGood)],
                 })
             );
@@ -183,9 +205,9 @@ export class RedisStartKeys implements StartKeyStore {
         }
     }
 
-    async delete(scope: string, key: string): Promise<void> {
+    async delete(scope: string, key: string, options?: { unlessRead?: boolean }): Promise<void> {
         try {
-            await this.within(this.client().eval(DELETE_START_KEY, { keys: [startKeyNameOf(scope)], arguments: [key] }));
+            await this.within(this.client().eval(DELETE_START_KEY, { keys: [startKeyNameOf(scope), startKeyPeerNameOf(scope)], arguments: [key, options?.unlessRead ? '1' : '0'] }));
         } catch {
             /* the key lives out its ten minutes */
         }

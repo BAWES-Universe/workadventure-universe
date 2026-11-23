@@ -1444,4 +1444,25 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
             expect(orbit.acted(), said).toEqual(cancels ? [{ action: 'cancel', jobId: 'job-visa' }] : []);
         }
     });
+
+    // CodeRabbit on a767269a
+    it('a job called just "Pause" does not turn "Yes, pause it" into a confirmation: its title counts only right after a verb that ends a job', async () => {
+        for (const [said, cancels] of [
+            ['Yes, cancel Pause', true],
+            ['yes, end the pause job', true],
+            ['Yes, stop Pause please', true],
+            ['Yes, pause it', false],
+            ['yes pause', false],
+            ['Yes, Pause', false],
+            ['yes pause Pause', false],
+        ] as const) {
+            const orbit = door(viewOf(working({ title: 'Pause' })), { cancel: viewOf(null) });
+            const c = chat(orbit.admin);
+            await c.run(CANCEL_JOB_TOOL, { job: 'pause' });
+            await c.deliver();
+            c.nextMessage(said);
+            await c.run(CANCEL_JOB_TOOL, { job: 'pause' });
+            expect(orbit.acted(), said).toEqual(cancels ? [{ action: 'cancel', jobId: 'job-visa' }] : []);
+        }
+    });
 });

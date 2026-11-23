@@ -503,7 +503,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             const held = await store.claim(scope, { key: entry.key, at: entry.at, ...(entry.payload ? { payload: entry.payload } : {}) }, OPEN_START_KEEP_MS - (now - entry.at), OPEN_START_KEEP_MS).catch(() => undefined);
             // A record that was already there, even for the same key, is not this call's to delete
             if (held && held.mine === false) ownsRecord = false;
-            if (held && held.key !== entry.key) {
+            // A record this call did not store is another attempt's, whatever key it holds (the very key proposed too): that attempt may well have gone out, so its key is looked up first and
+            // only its own words are ever sent, never the words of this call. Only a key this call stored itself is sent straight away
+            if (held && (held.key !== entry.key || held.mine === false)) {
                 // Another attempt holds the key: this is that start, which may well have gone out, and its outcome is open until the answer says otherwise
                 entry.key = held.key;
                 entry.at = held.at;
@@ -535,8 +537,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // The record goes (only the record of THIS key: a record of another is never deleted) while the entry still stands where the next call finds it, so an overlapping call waits for
         // this one and sees how it ended; the entry leaves its place after
         const dropKey = async () => {
-            // Only a record this call stored: the one another server stored for the same key is that server's (its send may be open)
-            if (ownsRecord) await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
+            // Only a record this call stored (the one another server stored for the same key is that server's: its send may be open), and then only while no other server has been given it since:
+            // one that was may be sending the same key right now, and the record is what lets the next ask find that start
+            if (ownsRecord) await context.startKeyStore?.delete(scope, startKey, { unlessRead: true }).catch(() => undefined);
             leave();
         };
         let looked: StartAnswer | undefined;
@@ -590,8 +593,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                         entry.unchecked = true;
                         return { started: false, unconfirmed: true, note: COULD_NOT_CHECK_NOTE };
                     }
-                    // Another server already holds a key of this ask: that is the one to send (the store's contract), so it is looked up first, and what it said is what goes with it. Two keys must never reach Orbit
-                    if (held && held.key !== startKey) {
+                    // Another server already holds a key of this ask: that is the one to send (the store's contract), so it is looked up first, and what it said is what goes with it. Two keys must never reach Orbit.
+                    // The same goes for a record this call did not store when it holds the very key worked out here (two servers derive the same replacement key for one event): it is that server's start
+                    if (held && (held.key !== startKey || held.mine === false)) {
                         // The key (and its record in the shared store) is ANOTHER server's: it may have gone out, and this call never deletes a record it did not make
                         priorSend = true;
                         startKey = held.key;

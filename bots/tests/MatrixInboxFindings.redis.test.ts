@@ -341,6 +341,9 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             const closed = vi.fn();
             vi.spyOn(console, 'error').mockImplementation(() => undefined);
             expect(await entry.release(closed)).toBe('unsure');
+            // the retries can be waited for, and they have reported the closure when they are over
+            await entry.givingBack?.();
+            expect(closed).toHaveBeenCalledTimes(1);
             await vi.waitFor(() => expect(closed).toHaveBeenCalledTimes(1), { timeout: 4000 });
             expect(lost).toBe(1);
             expect(await stateOf(id)).toBe('d');
@@ -348,6 +351,44 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             // not reported twice
             await new Promise((resolve) => setTimeout(resolve, 200));
             expect(closed).toHaveBeenCalledTimes(1);
+        });
+
+        // CodeRabbit on a767269a: a scan that read the entry before the closing release looks at a `d` entry; it removes the index only, and the mark of the closing acquisition stays
+        it('a scan that finds the entry already closed removes its index but keeps the mark of the closing give-back, so the retry of that give-back still reports it', async () => {
+            const id = fresh('closed-then-scanned');
+            let lost = 0;
+            let open!: () => void;
+            const gate = new Promise<void>((resolve) => (open = resolve));
+            const flaky = createEventInbox(
+                () =>
+                    ({
+                        eval: async (script: string, o: unknown) => {
+                            if (isRelease(script)) {
+                                if (lost === 0) {
+                                    lost += 1;
+                                    await realEval(script, o);
+                                    throw new Error('answer lost');
+                                }
+                                // the retries wait for the scan of the other server
+                                await gate;
+                            }
+                            return realEval(script, o);
+                        },
+                    }) as never,
+                { ttlSeconds: 60, beatEveryMs: 40, maxTries: 1, log: () => undefined }
+            );
+            const entry = (await flaky.take(id, message(id))) as InboxEntry;
+            const closed = vi.fn();
+            vi.spyOn(console, 'error').mockImplementation(() => undefined);
+            expect(await entry.release(closed)).toBe('unsure');
+            expect(await stateOf(id)).toBe('d');
+            // the other server's scan had read the index before the entry was closed: it is still listed when its takeover runs
+            await client.zAdd(INBOX_KEY, { score: 0, value: id });
+            expect(await inboxOn({ staleMs: 0 }).recover()).toEqual([]);
+            expect(await client.zScore(INBOX_KEY, id)).toBeNull();
+            expect(await stateOf(id)).toBe('d');
+            open();
+            await vi.waitFor(() => expect(closed).toHaveBeenCalledTimes(1), { timeout: 4000 });
         });
 
         it('a give-back that finds the entry another server\'s (not its own earlier closure) reports nothing as closed', async () => {
