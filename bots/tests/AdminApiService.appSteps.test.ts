@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AdminApiService, COMPUTER_START_ATTEMPT_HEADER, COMPUTER_START_TIMEOUT_MS, isSlowAnswer } from '../server/AdminApiService';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const UUID = /^t[0-9a-z]+-[0-9a-f]{32}$/;
 /** The key a start sent: in its header (Orbit's contract), never in its body. */
 /** Orbit echoes the attempt it was asked for in the job it answers (`started.attempt`): the reads of the tests say the job, and this adds the echo. */
 const echoing = (answer: unknown, params: unknown): unknown => {
@@ -556,15 +556,35 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
 // GPT seventh note, D: a Stop all goes to Orbit WITH the jobs the person confirmed
 describe('the control door sends the confirmed jobs with a stop', () => {
     const view = { ok: true, jobs: [], paused: false };
-    it('a stop carries `jobIds` in its body (only a stop does, and only when there are some)', async () => {
+    it('a stop carries `confirmedJobIds` in its body (only a stop does, and only when there are some)', async () => {
         const stop = service(async () => ({ data: view }));
-        await stop.orbit.controlComputerJobs('brick 1', 'u1', { action: 'stop', jobIds: ['job-a', 'job-b'], commandId: 'a-command-id-0001' });
-        expect((stop.call.mock.calls[0] as unknown[])[2]).toEqual({ personId: 'u1', action: 'stop', jobIds: ['job-a', 'job-b'] });
+        await stop.orbit.controlComputerJobs('brick 1', 'u1', { action: 'stop', confirmedJobIds: ['job-a', 'job-b'], commandId: 'a-command-id-0001' });
+        expect((stop.call.mock.calls[0] as unknown[])[2]).toEqual({ personId: 'u1', action: 'stop', confirmedJobIds: ['job-a', 'job-b'] });
         const cancel = service(async () => ({ data: view }));
-        await cancel.orbit.controlComputerJobs('brick 1', 'u1', { action: 'cancel', jobId: 'job-a', jobIds: ['job-b'] });
+        await cancel.orbit.controlComputerJobs('brick 1', 'u1', { action: 'cancel', jobId: 'job-a', confirmedJobIds: ['job-b'] });
         expect((cancel.call.mock.calls[0] as unknown[])[2]).toEqual({ personId: 'u1', action: 'cancel', jobId: 'job-a' });
         const bare = service(async () => ({ data: view }));
         await bare.orbit.controlComputerJobs('brick 1', 'u1', { action: 'stop' });
         expect((bare.call.mock.calls[0] as unknown[])[2]).toEqual({ personId: 'u1', action: 'stop' });
+    });
+});
+
+// CodeRabbit item 4: `start-retire` goes through the same door as `start-ack`
+describe('retiring a start that Orbit never saw', () => {
+    it('posts `start-retire` with the key (and the guest flag only when known), and reads Orbit\'s answer exactly', async () => {
+        const gone = service(async () => ({ data: { ok: true, retired: true } }));
+        expect(await gone.orbit.retireComputerStart('brick 1', 'u1', { attempt: 'tabc-123', isGuest: false })).toEqual({ retired: true });
+        expect(gone.call.mock.calls[0].slice(0, 3)).toEqual(['post', 'api/bots/brick%201/computer-jobs', { action: 'start-retire', userId: 'u1', isGuest: false, attempt: 'tabc-123' }]);
+        const happened = service(async () => ({ data: { ok: true, retired: false } }));
+        expect(await happened.orbit.retireComputerStart('b', 'u1', { attempt: 'k' })).toEqual({ retired: false });
+        expect((happened.call.mock.calls[0] as unknown[])[2]).toEqual({ action: 'start-retire', userId: 'u1', attempt: 'k' });
+    });
+    it('an answer that is not exactly `{ ok: true, retired: boolean }`, or a failed call, says nothing (undefined), and never throws', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        for (const data of [{ ok: false, reason: 'unknown_action' }, { ok: true }, { ok: true, retired: 'yes' }, null]) {
+            expect(await service(async () => ({ data })).orbit.retireComputerStart('b', 'u', { attempt: 'k' }), JSON.stringify(data)).toBeUndefined();
+        }
+        expect(await service(async () => { throw new Error('down'); }).orbit.retireComputerStart('b', 'u', { attempt: 'k' })).toBeUndefined();
+        warn.mockRestore();
     });
 });

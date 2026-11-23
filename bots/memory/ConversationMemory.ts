@@ -156,6 +156,8 @@ export interface BotPlayerMemory {
     dmRoomId?: string;
     /** The Matrix event of the message this turn answers (the start of a computer job is keyed by it). Runtime only. */
     dmEventId?: string;
+    /** When that message was written (its `origin_server_ts`). Runtime only. */
+    dmEventTs?: number;
     /** What a direct-message turn did about Bricks (game #1996): one it made, a suggestion to show. Goes out with the reply. Runtime only. */
     pendingBricks?: import('../ai/BrickTools').BrickNote[];
     /**

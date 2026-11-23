@@ -812,7 +812,7 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
                 return admin;
             };
             const keyOfPost = (index: number) => {
-                const posts = request.mock.calls.filter((one) => (one[0] as { method: string }).method === 'post');
+                const posts = request.mock.calls.filter((one) => (one[0] as { method: string; headers?: Record<string, string> }).method === 'post' && (one[0] as { headers?: Record<string, string> }).headers?.['X-Computer-Start-Attempt']);
                 return ((posts[index][0] as { headers: Record<string, string> }).headers['X-Computer-Start-Attempt']);
             };
             const timeout = () => Object.assign(new Error('timeout of 480000ms exceeded'), { isAxiosError: true, code: 'ECONNABORTED' });
@@ -828,6 +828,8 @@ describe('the key of an ask survives a restart of the server (Opus ruling on GPT
             // reworded: Orbit makes one job of one key), and Orbit answers with the job
             const key = [...held.values()][0].key;
             request.mockImplementationOnce(async () => ({ data: { started: null } }));
+            // the title is worded another way, so the game asks Orbit to retire the old key: an Orbit that cannot say (`start-retire` unknown to it) changes nothing, the old words go again
+            request.mockImplementationOnce(async () => ({ data: { ok: false, reason: 'unknown_action' } }));
             request.mockImplementationOnce(async () => ({ data: { ok: true, job: { id: 'j-made', status: 'running', queuedFor: null }, restoredFrom: null } }));
             const second = await runDelivered({ job: 'Visa application, worded another way' }, { admin: orbit(), botId: BRICK, userId: 'uuid-alice', startKeys: new Map(), startKeyStore: store });
             warn.mockRestore();

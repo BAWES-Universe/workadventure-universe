@@ -1476,6 +1476,7 @@ export class PersistentMemory extends ConversationMemory {
             newJobAsked: undefined,
             dmRoomId: undefined,
             dmEventId: undefined,
+            dmEventTs: undefined,
             pointedArtifacts: undefined,
             artifactCalls: undefined,
             instantCalls: undefined,

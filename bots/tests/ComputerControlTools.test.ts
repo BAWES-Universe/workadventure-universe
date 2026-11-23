@@ -384,7 +384,7 @@ describe('cancel one job: Brick always asks first, and only the person\'s next m
         d.nextMessage('yes, stop everything');
         await d.run(CANCEL_JOB_TOOL, { job: 'hotel' });
         await d.run(STOP_COMPUTER_TOOL);
-        expect(again.acted()).toEqual([{ action: 'stop', jobIds: ['job-visa', 'job-hotel'] }]);
+        expect(again.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-hotel'] }]);
     });
 
     it('says it is already ending, or over, when Orbit says so, and never that it was cancelled', async () => {
@@ -413,7 +413,7 @@ describe('stop everything: always asks, naming every job, and ends exactly those
         expect(await c.deliver()).toEqual([CONTROL_WORDS.askStop(quotedTitles(['Visa form', 'Taxi booking', 'Hotel booking']))]);
         c.nextMessage();
         await c.run(STOP_COMPUTER_TOOL);
-        expect(orbit.acted()).toEqual([{ action: 'stop', jobIds: ['job-visa', 'job-taxi', 'job-hotel'] }]);
+        expect(orbit.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-taxi', 'job-hotel'] }]);
         expect(await c.deliver()).toEqual([CONTROL_WORDS.stoppedAll(3)]);
     });
 
@@ -1477,6 +1477,47 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
         await one.run(CANCEL_JOB_TOOL, { job: 'hotel' });
         expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-cafe' }]);
         expect(askNamedBy('cancel the cafe one', { kind: 'cancel', titles: ['Café receipts'] })).toBe(1);
+    });
+
+    // CodeRabbit on 24dea75c (item 5) and D1: "the job called Pause menu audit" names the job; "pause it" is still another action, even when the job is itself called "Pause it"
+    it('"Yes, the job called Pause menu audit" answers the Pause menu audit question among two open ones; "Yes, pause it" answers none, even for a job called "Pause it"', async () => {
+        const orbit = door(viewOf(working({ id: 'job-pma', title: 'Pause menu audit' }), [inLine('job-hotel', 'Hotel tickets', { stepDone: 1 })]), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'Pause menu audit' }, '$q1');
+        await c.run(CANCEL_JOB_TOOL, { job: 'Hotel tickets' }, '$q1');
+        await c.deliver();
+        c.nextMessage('Yes, the job called Pause menu audit');
+        await c.run(CANCEL_JOB_TOOL, { job: 'Pause menu audit' }, '$q2');
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-pma' }]);
+        // the same message does not answer the other question
+        const other = door(viewOf(working({ id: 'job-pma', title: 'Pause menu audit' }), [inLine('job-hotel', 'Hotel tickets', { stepDone: 1 })]), { cancel: viewOf(null) });
+        const d = chat(other.admin);
+        await d.run(CANCEL_JOB_TOOL, { job: 'Pause menu audit' }, '$q1');
+        await d.run(CANCEL_JOB_TOOL, { job: 'Hotel tickets' }, '$q1');
+        await d.deliver();
+        d.nextMessage('Yes, the job called Pause menu audit');
+        await d.run(CANCEL_JOB_TOOL, { job: 'Hotel tickets' }, '$q2');
+        expect(other.acted()).toEqual([]);
+        // "pause it" is another action, for a job whose title is "Pause it" too
+        const titled = door(viewOf(working({ id: 'job-pi', title: 'Pause it' })), { cancel: viewOf(null) });
+        const e = chat(titled.admin);
+        await e.run(CANCEL_JOB_TOOL, { job: 'Pause it' }, '$q1');
+        await e.deliver();
+        e.nextMessage('Yes, pause it');
+        await e.run(CANCEL_JOB_TOOL, { job: 'Pause it' }, '$q2');
+        expect(titled.acted()).toEqual([]);
+    });
+
+    it('the tool call must match the question: "yes" to the Visa question never cancels Taxi', async () => {
+        const orbit = door(viewOf(working({ id: 'job-visa', title: 'Visa form' }), [inLine('job-taxi', 'Taxi booking', { stepDone: 1 })]), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' }, '$q1');
+        await c.deliver();
+        c.nextMessage('Yes');
+        await c.run(CANCEL_JOB_TOOL, { job: 'Taxi booking' }, '$q2');
+        expect(orbit.acted()).toEqual([]);
+        await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' }, '$q2');
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
     });
 
     it('a job whose own TITLE says "pause" is not a different action: "Yes, cancel Pause menu audit" confirms the cancel; "Yes, pause it" still cannot', async () => {

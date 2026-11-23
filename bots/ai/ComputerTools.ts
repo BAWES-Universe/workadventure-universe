@@ -202,12 +202,21 @@ export type { JobNote } from './JobStatusLine';
  * may send a transaction again; a bot server restarts and finds the event again) makes the SAME key, so Orbit answers the job the first one made, and never a second reservation, with
  * Redis empty or not. A new message is a new event, so it is a new key. The shape is Orbit's (`[A-Za-z0-9_-]{8,64}`): `mx_` and 32 letters and digits.
  */
-export function startKeyFor(botId: string, roomId: string, eventId: string, ordinal: number | string): string {
-    return `mx_${createHash('sha256').update(`${botId}|${roomId}|${eventId}|${ordinal}`).digest('hex').slice(0, 32)}`;
+export function startKeyFor(botId: string, roomId: string, eventId: string, ordinal: number | string, issued = 0): string {
+    return timedKey(issued, `mx_${createHash('sha256').update(`${botId}|${roomId}|${eventId}|${ordinal}`).digest('hex').slice(0, 32)}`);
+}
+
+/**
+ * A key carries the moment of consent (GPT seventh note, A2): `t<issued, base36>-<rest>`. For a start that came from a person's message `issued` is the Matrix event's own `origin_server_ts`,
+ * the same for every redelivery of that event, so a key made again from the same event is the same key. Orbit reads it: a key older than its consent window needs fresh consent, and a start
+ * that carries no time is refused. The whole key stays inside Orbit's shape (`[A-Za-z0-9_-]{8,64}`).
+ */
+export function timedKey(issued: number, rest: string): string {
+    return `t${Math.max(0, Math.floor(Number.isFinite(issued) ? issued : 0)).toString(36)}-${rest}`;
 }
 
 export interface ComputerToolContext {
-    admin: Pick<AdminApiService, 'startComputerJob'> & Partial<Pick<AdminApiService, 'lookUpComputerStart' | 'ackComputerStart' | 'computerEndedJobs'>>;
+    admin: Pick<AdminApiService, 'startComputerJob'> & Partial<Pick<AdminApiService, 'lookUpComputerStart' | 'ackComputerStart' | 'computerEndedJobs' | 'retireComputerStart'>>;
     /** The apps this person has connected to this Brick in this reply (their names), so a job an app can do is not started on the computer. */
     apps?: string[];
     botId: string;
@@ -217,7 +226,7 @@ export interface ComputerToolContext {
     /** The direct chat this reply is in: the job is started from it, and its result goes back to it and nowhere else. */
     origin?: { kind: 'dm'; ref: string };
     /** The inbound Matrix event this reply answers: a start made for it has a key made from it (`startKeyFor`), so the same event delivered again makes no second job. Without it a start has a random key. */
-    inbound?: { roomId: string; eventId: string };
+    inbound?: { roomId: string; eventId: string; /** The event's own `origin_server_ts`: the moment the person gave their consent, which a key made from the event carries. */ ts?: number };
     /** The apps a review in this reply said the computer could do better: a call that names one with how many steps are left is for Orbit to weigh, not sent back to the app. */
     reviewed?: ReadonlySet<string>;
     /** Called once a job is running, so a development server can pretend to do it. */
@@ -297,6 +306,9 @@ export const OPEN_START_SLOT = '\u0000open';
  * The person's next message clears it (it is not an open start).
  */
 export const FOUND_EARLIER_SLOT = '\u0000found';
+/** A `try_again` that ended without a start in this turn (it asked which job, or offered a new one): until the person's next message, no start of any kind goes out, whatever the model calls next (GPT seventh note, E). */
+export const TRY_AGAIN_ASKED_SLOT = '\u0000tryagain';
+const TRY_AGAIN_ASKED_NOTE = 'They have not chosen yet, so NOTHING was started. A fixed line under your reply already asked them: do not ask it again and do not call use_computer again in this turn. Only their next message can start anything.';
 const COULD_NOT_CHECK_NOTE = 'It is not known whether this job started. Say in one short sentence, in the person\'s language and in these words: "I couldn\'t check whether this job has started. I\'ll use the same request when you check again." They can also look at the bar above this chat. Do not say it failed or that it started.';
 
 /** What was asked, as one string: the same title in the same chat is the same ask (the details a model words differently when it asks again do not make a second job). */
@@ -308,9 +320,10 @@ export function forgetSettledStarts(starts: Map<string, StartKeyEntry> | undefin
     for (const [asked, entry] of starts) if (!entry.open || now - entry.at >= OPEN_START_KEEP_MS) starts.delete(asked);
 }
 
-/** The reasons a start was refused before any job was made: the ask went nowhere, so the next ask in the turn is a new one with a key of its own. */
 /** Orbit's answers to a start that are final for the turn: nothing was made, and nothing is started in their place. */
-const TERMINAL_REASONS = ['expired', 'retired', 'stale_consent'];
+// `retired_by_game`: a late copy of a key this game itself retired (Orbit round 8): nothing was made, and it is told in the words of `expired` (no new text)
+const TERMINAL_REASONS = ['expired', 'retired', 'stale_consent', 'retired_by_game'];
+/** The reasons a start was refused before any job was made are the ones NOT in these: the ask went nowhere, so the next ask in the turn is a new one with a key of its own. */
 const UNCERTAIN_REASONS = ['starting', 'unknown', 'ended', 'done'];
 /** Of those, the ones whose outcome is still open: the key stays for the next ask of the same title, whichever turn it is in. */
 const OPEN_REASONS = ['starting', 'unknown'];
@@ -422,7 +435,7 @@ export async function reviewAppSteps(
 
 /** The final answer of a start that Orbit ended with `expired`, `retired` or `stale_consent`: the same wherever it is asked again in the turn. */
 function terminalAnswer(reason: string, title: string | undefined, context: ComputerToolContext): Record<string, unknown> {
-    if (reason === 'expired') return answerOf({ ok: false, reason: 'expired' } as StartAnswer, context);
+    if (reason === 'expired' || reason === 'retired_by_game') return answerOf({ ok: false, reason: 'expired' } as StartAnswer, context);
     const kind = reason === 'retired' ? 'retired' : 'stale_consent';
     const line = kind === 'retired' ? START_REFUSAL_WORDS.retired : title ? START_REFUSAL_WORDS.staleConsent.titled(quotedTitle(title)) : START_REFUSAL_WORDS.staleConsent.plain;
     const answer = { started: false, success: false, reason: kind };
@@ -439,7 +452,7 @@ const sameTitle = (one: string, other: string): boolean => titleKey(one) === tit
  * `try_again` with no job to carry on for this turn. Reads the person's ended jobs on this Brick (Orbit's own list, never the model's word): one that the words name exactly carries on;
  * ended jobs otherwise are asked about ("which job do you mean?"); none is offered a new job. Nothing here sends a start.
  */
-async function tryAgainWithoutJob(args: Record<string, unknown>, context: ComputerToolContext): Promise<{ carryOn: { id: string; title: string } } | { answer: Record<string, unknown> }> {
+async function tryAgainWithoutJob(args: Record<string, unknown>, context: ComputerToolContext): Promise<{ carryOn: { id: string; title: string } } | { answer: Record<string, unknown>; asked: boolean }> {
     const named = text(args.job, TITLE_MAX);
     let ended: Array<{ id: string; title: string }> | null = null;
     try {
@@ -447,7 +460,7 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
     } catch {
         ended = null;
     }
-    if (!ended) return { answer: { started: false, success: false, note: 'The computer could not be reached just now, so nothing was started. Say so in one plain sentence; they can ask again in a moment.' } };
+    if (!ended) return { asked: false, answer: { started: false, success: false, note: 'The computer could not be reached just now, so nothing was started. Say so in one plain sentence; they can ask again in a moment.' } };
     // A title that appears twice stands for its newest job; at most three are shown
     const titles: Array<{ id: string; title: string }> = [];
     for (const one of ended) if (!titles.some((seen) => sameTitle(seen.title, one.title))) titles.push(one);
@@ -457,16 +470,16 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
     const answer = { started: false, success: false } as const;
     if (shown.length > 0) {
         const line = TRY_AGAIN_WORDS.whichEarlierJob(quotedTitles(shown.map((one) => one.title)));
-        if (!context.confirmations) return { answer: { ...answer, asked: 'which', note: whichEarlierJobSaid(line) } };
+        if (!context.confirmations) return { asked: true, answer: { ...answer, asked: 'which', note: whichEarlierJobSaid(line) } };
         context.confirmations.say(line);
-        return { answer: { ...answer, asked: 'which', note: WHICH_EARLIER_JOB_NOTE } };
+        return { asked: true, answer: { ...answer, asked: 'which', note: WHICH_EARLIER_JOB_NOTE } };
     }
     // No earlier job to list: the offer to start it as a new job (the card is the existing one), or, with no title for the work, the plain line
     const line = named ? TRY_AGAIN_WORDS.newJobOffer.titled(quotedTitle(named)) : TRY_AGAIN_WORDS.newJobOffer.plain;
     if (named) context.offerNewJob?.(named);
-    if (!context.confirmations) return { answer: { ...answer, note: newJobOfferSaid(line) } };
+    if (!context.confirmations) return { asked: true, answer: { ...answer, note: newJobOfferSaid(line) } };
     context.confirmations.say(line);
-    return { answer: { ...answer, note: NEW_JOB_OFFER_NOTE } };
+    return { asked: true, answer: { ...answer, note: NEW_JOB_OFFER_NOTE } };
 }
 
 /** Runs use_computer. Never throws: the model is told in plain words what happened. */
@@ -475,9 +488,15 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     let carryOn = args.try_again === true && context.retry ? context.retry : undefined;
     // "Try again" with no job named for this turn (GPT seventh note, E): NEVER a fresh paid start. The words name exactly one ended job of theirs: that one carries on (Orbit decides). Otherwise they
     // are asked which, or offered a new job: nothing is sent, and a fresh start comes only from their own tap or yes
+    // After such a call in this turn, nothing is started in this turn, however the model words its next call: only the person's next message clears it
+    if (context.startKeys?.has(TRY_AGAIN_ASKED_SLOT)) return { started: false, success: false, note: TRY_AGAIN_ASKED_NOTE };
     if (args.try_again === true && !carryOn) {
         const settled = await tryAgainWithoutJob(args, context);
-        if ('answer' in settled) return settled.answer;
+        if ('answer' in settled) {
+            // The ones that could not be answered by Orbit (nothing known) are not a question put to the person: they may ask again in this turn
+            if (settled.asked) context.startKeys?.set(TRY_AGAIN_ASKED_SLOT, { key: '', at: Date.now(), open: false });
+            return settled.answer;
+        }
         carryOn = settled.carryOn;
     }
     const job = carryOn ? text(carryOn.title, TITLE_MAX) : text(args.job, TITLE_MAX);
@@ -533,12 +552,13 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     const current: StoredStartPayload = { title: job, ...(brief ? { brief } : {}), ...(args.reads_only === true ? { writes: false } : {}), ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}), ...(carryOn ? { continues: carryOn.id } : {}) };
     // A new start of THIS inbound event has the key its event, chat and ordinal make (the same event again, the same key); a start the chat did not come from has a random one
     const newKey = (): string => {
-        if (!context.inbound || !context.confirmations) return randomUUID();
+        if (!context.inbound || !context.confirmations) return timedKey(Date.now(), randomUUID().replace(/-/g, ''));
         // A reply written again has a new queue that counts from 0, but the starts the first one made are kept (their entries stay for the turn): a new start never takes the key of a kept one
         const kept = new Set<string>();
         for (const one of context.startKeys?.values() ?? []) if (one.key) kept.add(one.key);
-        let key = startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart());
-        while (kept.has(key)) key = startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart());
+        const issued = context.inbound.ts ?? Date.now();
+        let key = startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart(), issued);
+        while (kept.has(key)) key = startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart(), issued);
         return key;
     };
     const entry: StartKeyEntry = earlier ?? { key: newKey(), at: now, open: true, unchecked: true, payload: current };
@@ -588,7 +608,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // Where this start is kept once it is settled: under the ask that SENT it (the words it holds), not under whatever is asked now, so the same ask in this turn finds it
         const keptAsked = entry.payload ? askedOf(entry.payload.title, entry.payload.origin) : asked;
         // A start with this key may have gone out BEFORE this call (an earlier ask of this person, here or at another server): whatever this call's own answer is, it says nothing of that one
-        let priorSend = entry.sent === true;
+        const priorSend = entry.sent === true;
         const leave = () => {
             if (context.startKeys?.get(OPEN_START_SLOT) === entry) context.startKeys.delete(OPEN_START_SLOT);
             if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
@@ -619,6 +639,20 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             const seen = await context.admin.lookUpComputerStart(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), startKey });
             if (seen !== 'none') {
                 looked = seen as unknown as StartAnswer;
+            } else if (entry.payload && !samePayload(entry.payload, current) && context.admin.retireComputerStart) {
+                // The person asks for something ELSE while an older start is open that Orbit never saw: that start is retired at Orbit (it is never made behind their back), and THIS ask goes on as a new
+                // start. When Orbit says that start DID happen, it is looked up as before. When Orbit cannot say, nothing changes (the old words go again, as before)
+                const gone = await context.admin.retireComputerStart(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), attempt: startKey }).catch(() => undefined);
+                if (gone?.retired === true) {
+                    // Orbit will answer `retired` to that key, so no peer can make a job with it: the record goes, whoever has read it
+                    await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
+                    leave();
+                    return runComputerTool(args, context);
+                }
+                if (gone?.retired === false) {
+                    const again = await context.admin.lookUpComputerStart(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), startKey });
+                    if (again !== 'none') looked = again as unknown as StartAnswer;
+                }
             }
         }
         let sent: StartAnswer | undefined;

@@ -2092,6 +2092,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
                 ...(event.event_id ? { eventId: event.event_id } : {}),
+                ...(typeof event.origin_server_ts === 'number' ? { eventTs: event.origin_server_ts } : {}),
                 pointedArtifactIds,
                 // A starter tapped under a Brick's hello (#1995); a message that waited for a resting Brick is answered as typed
                 ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),

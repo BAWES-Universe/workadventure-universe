@@ -147,7 +147,7 @@ function tokensOf(text: string): string[] {
  */
 const YES_FILLER = new Set([
     'please', 'pls', 'now', 'right', 'away', 'thanks', 'thank', 'thx', 'ty', 'you', 'go', 'ahead', 'do', 'it', 'that', 'this', 'them', 'both', 'all', 'everything', 'everyone', 'job', 'jobs', 'task', 'tasks', 'computer', 'computers', 'one',
-    'the', 'my', 'and', 'of', 'course', 'i', 'want', 'to', 'is', 'its', 'thats',
+    'the', 'my', 'and', 'of', 'course', 'i', 'want', 'to', 'is', 'its', 'thats', 'called', 'named',
 ]);
 
 /**
@@ -177,6 +177,8 @@ const ENDING_VERB = new Set(['cancel', 'cancels', 'cancelled', 'canceled', 'canc
 const BETWEEN = new Set(['the', 'my', 'that', 'this', 'job', 'task', 'one', 'called', 'named']);
 
 function endsJobBefore(tokens: string[], at: number): boolean {
+    // "the job CALLED Pause menu audit": naming the job by "called" or "named" is a reference to it, whatever comes before (CodeRabbit on 24dea75c, item 5)
+    if (at > 0 && (tokens[at - 1] === 'called' || tokens[at - 1] === 'named')) return true;
     let back = at - 1;
     while (back >= 0 && BETWEEN.has(tokens[back])) back--;
     return back >= 0 && ENDING_VERB.has(tokens[back]);
@@ -661,7 +663,7 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
     return once(context, `stop|${ids.join('|')}`, async () => {
         // Stop names no one job: its id is made from the jobs it was asked about, so a stop asked again over the same jobs is one stop (finding 4)
         // The jobs the person was asked about go WITH the command: Orbit ends those (that are still live), never whatever is live by the time the request lands
-        const answer = await door({ action: 'stop', jobIds: [...ids], commandId: commandIdOf(context.state, context.inbound?.eventId, 'stop', '', [...ids].sort().join('|')) });
+        const answer = await door({ action: 'stop', confirmedJobIds: [...ids], commandId: commandIdOf(context.state, context.inbound?.eventId, 'stop', '', [...ids].sort().join('|')) });
         if (!answer.ok) return refused(reasonOf(answer), jobs[0], view);
         // Jobs that were live but not in the set the person confirmed (they began after the question): never stopped, and said so in Brick's own words (a statement, so a plain yes after it confirms nothing)
         if (answer.ok && answer.left && answer.left.length > 0) {

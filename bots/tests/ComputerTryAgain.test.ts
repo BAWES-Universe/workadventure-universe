@@ -13,7 +13,7 @@ import axios from 'axios';
 import { AdminApiService, COMPUTER_CONTINUES_HEADER, cannotContinueOf } from '../server/AdminApiService';
 import { CANNOT_CONTINUE_NOTE, START_NEW_JOB_LABEL, START_REFUSAL_WORDS, TRY_AGAIN_WORDS, cannotContinue } from '../ai/ComputerTryAgainWords';
 import { AIService } from '../ai/AIService';
-import { ConfirmationQueue, computerToolDefinitions, runComputerTool, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
+import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, runComputerTool, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
 import { asksToTryAgain, offersTryAgain, retryJobOf, tryAgainNote, type RetryJob } from '../ai/ComputerTryAgain';
 import { jobLine, quotedTitle } from '../ai/JobStatusLine';
 import { CONTROL_WORDS } from '../ai/ComputerControlWords';
@@ -128,7 +128,7 @@ describe('use_computer with try_again', () => {
     });
 
     it('a "yes" delivered again (the same inbound event) sends the same continuation under the same event key: one job', async () => {
-        const inbound = { roomId: '!room:example.test', eventId: '$yes-1' };
+        const inbound = { roomId: '!room:example.test', eventId: '$yes-1', ts: 1_700_000_000_000 };
         const keys: string[] = [];
         for (let delivery = 0; delivery < 2; delivery++) {
             const admin = asking({ ok: true, job: { id: 'new-1', status: 'running', queuedFor: null }, restoredFrom: null, continued: true });
@@ -137,7 +137,7 @@ describe('use_computer with try_again', () => {
             expect(sent.continuesJobId).toBe(OLD);
             keys.push(sent.startKey);
         }
-        expect(keys[0]).toBe(startKeyFor(BRICK, inbound.roomId, inbound.eventId, 0));
+        expect(keys[0]).toBe(startKeyFor(BRICK, inbound.roomId, inbound.eventId, 0, inbound.ts));
         expect(keys[1]).toBe(keys[0]);
     });
 
@@ -554,14 +554,48 @@ describe('try_again with no job named for this turn', () => {
         expect(admin.computerEndedJobs).not.toHaveBeenCalled();
     });
 
-    it('Orbit\'s list: `ended` and the one `retry` job, read together, nothing else', async () => {
-        const call = vi.fn().mockResolvedValue({ data: { available: true, on: true, ended: [{ id: OLD, title: 'Visa form' }, { id: 'bad id', title: 'x' }, 'junk'], retry: { id: TAXI.id, title: 'Taxi booking', how: 'error' } } });
+    it('after the question, nothing is started in the same turn, however the model words its next call; the person\'s next message clears it (the guard)', async () => {
+        const admin = world([VISA, TAXI]);
+        const memory = new Map();
+        const over = { startKeys: memory, confirmations: new ConfirmationQueue() };
+        await runComputerTool({ job: 'x', try_again: true }, ctx(admin, over));
+        // the model turns it into a fresh job by itself, or picks one for the person: both refused
+        for (const args of [{ job: 'Visa form' }, { job: 'Visa form', try_again: true }, { job: 'Something new', try_again: false }]) {
+            const refused = await runComputerTool(args, ctx(admin, over));
+            expect(refused).toMatchObject({ started: false });
+            expect(String(refused.note)).toMatch(/NOTHING was started/);
+        }
+        expect(admin.startComputerJob).not.toHaveBeenCalled();
+        // their next message ("start a new one") clears it: an ordinary fresh start goes out
+        forgetSettledStarts(memory);
+        const fresh = await runDelivered({ job: 'Something new' }, ctx(admin, { startKeys: memory }));
+        expect(fresh).toMatchObject({ started: true });
+        expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+        expect(admin.startComputerJob.mock.calls[0][2]).not.toHaveProperty('continuesJobId');
+    });
+
+    it('a try_again that could not ask Orbit puts no guard up (they may simply ask again)', async () => {
+        const memory = new Map();
+        const down = world(null);
+        await runComputerTool({ job: 'Visa form', try_again: true }, ctx(down, { startKeys: memory }));
+        expect(memory.size).toBe(0);
+    });
+
+    it('Orbit\'s list: only `continuable` ended jobs are offered; an Orbit with no `ended` list gives the one `retry` job', async () => {
         const service = new AdminApiService('http://orbit.test');
         vi.spyOn(service, 'isConfigured').mockReturnValue(true);
-        (service as unknown as { brickCall: unknown }).brickCall = call;
-        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toEqual([{ id: OLD, title: 'Visa form' }, { id: TAXI.id, title: 'Taxi booking' }]);
-        expect(call.mock.calls[0][3]).toEqual({ userId: 'uuid-alice', retry: '1', ended: '3' });
-        (service as unknown as { brickCall: unknown }).brickCall = vi.fn().mockResolvedValue({ data: { available: true, on: false } });
+        const answer = (data: Record<string, unknown>) => ((service as unknown as { brickCall: unknown }).brickCall = vi.fn().mockResolvedValue({ data }));
+        const call = answer({ available: true, on: true, ended: [{ id: OLD, title: 'Visa form', continuable: true }, { id: TAXI.id, title: 'Taxi booking', continuable: false }, { id: 'bad id', title: 'x', continuable: true }, 'junk', { id: FLIGHT.id, title: 'Flight search' }], retry: { id: TAXI.id, title: 'Taxi booking', how: 'error' } });
+        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toEqual([{ id: OLD, title: 'Visa form' }]);
+        expect(call.mock.calls[0][3]).toEqual({ userId: 'uuid-alice', retry: '1', ended: '5' });
+        // nothing continuable: nothing to pick (the single retry job is only the fallback of an Orbit that sends no list)
+        answer({ available: true, on: true, ended: [{ id: TAXI.id, title: 'Taxi booking', continuable: false }], retry: { id: OLD, title: 'Visa form', how: 'error' } });
+        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toEqual([]);
+        answer({ available: true, on: true, retry: { id: OLD, title: 'Visa form', how: 'error' } });
+        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toEqual([{ id: OLD, title: 'Visa form' }]);
+        answer({ available: true, on: true });
+        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toEqual([]);
+        answer({ available: true, on: false });
         expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toBeNull();
         (service as unknown as { brickCall: unknown }).brickCall = vi.fn().mockRejectedValue(new Error('down'));
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
