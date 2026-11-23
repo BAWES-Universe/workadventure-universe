@@ -435,6 +435,12 @@ describe('finding 6: a continuation Orbit refuses never becomes a fresh paid job
         expect(cannotContinue('not_found', 'Visa form').line).toBe(cannotContinue('not_theirs', 'Visa form').line);
     });
 
+    // Fable's final line for a refusal Orbit gives no reason for (23 Nov, brick-four-job-lines), checked against the exact text and never against the constant
+    it('says the approved words, word for word, when Orbit names no reason', () => {
+        expect(TRY_AGAIN_WORDS.cannotCarryOn.titled('\u201cVisa form\u201d')).toBe('\u201cVisa form\u201d has ended and can\'t carry on. I can start it again as a new job, from the beginning.');
+        expect(TRY_AGAIN_WORDS.cannotCarryOn.plain).toBe('That job has ended and can\'t carry on. I can start it again as a new job, from the beginning.');
+    });
+
     it('the button label is the approved one', () => {
         expect(START_NEW_JOB_LABEL).toBe('Start a new job');
     });

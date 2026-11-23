@@ -528,6 +528,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * gracefully the lease is given back at once, so a replacement takes the job up without waiting for it to lapse.
      */
     const owned = new Map<string, { run: string; epoch: number; over?: true }>();
+    /** What ends the reading of the turn a worker has open for a job, cancelling nothing (the provider turn is the replacement's): set by the worker while it works, called when a beat finds its run replaced. */
+    const turnStoppers = new Map<string, () => void>();
     const beats = new Map<string, ReturnType<typeof setInterval>>();
     const stopBeating = (jobId: string): void => {
         const beat = beats.get(jobId);
@@ -543,11 +545,14 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (answer.ok === false && runStaleOf(answer)) {
                 superseded.add(mine.run);
                 stopBeating(job.jobId);
+                // The turn this run has open stops too, as it does for a superseded answer to the notes: nothing is cancelled and nothing is ended
+                turnStoppers.get(job.jobId)?.();
             }
         } catch (error) {
             if (staleForOrbit(error) && runStaleOf(error)) {
                 superseded.add(mine.run);
                 stopBeating(job.jobId);
+                turnStoppers.get(job.jobId)?.();
             } else if (statusOf(error) === 404) mine.over = true;
             else say('Could not renew the lease of a job:', error);
         }
@@ -1359,6 +1364,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         };
         const renewing: Renewing = { nextAt: 0 };
         const accepted: Accepted = { turn: false };
+        turnStoppers.set(job.jobId, () => accepted.stop?.());
         let turns = 0;
         let bad = 0;
         // The generation the last turn started on: a job that was taken and given back between two turns is read on a later one
@@ -1834,7 +1840,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 .catch((error) => say('A job stopped on an error:', error))
                 // A worker that stops while it still owns a job gives its lease back at once, so a replacement takes the job up without waiting for the lease to lapse
                 .finally(() => giveLeaseBack(job))
-                .finally(() => workers.delete(job.jobId));
+                .finally(() => {
+                    turnStoppers.delete(job.jobId);
+                    workers.delete(job.jobId);
+                });
             workers.set(job.jobId, { controller, done });
         }
     }

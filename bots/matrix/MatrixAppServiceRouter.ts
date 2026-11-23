@@ -20,7 +20,7 @@ export interface MatrixEventHandler {
      * Called once per pushed event, after Synapse already got its 200. Must not throw. `paid` is called by the handler as soon as it has begun something the person pays for (a model
      * turn, a computer start): before that, an event whose handling throws is given back for another try; after it, it is never handled again.
      */
-    onEvent(event: MatrixEvent, hooks?: { paid: () => void }): Promise<void>;
+    onEvent(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void>;
     /** Synapse asks whether a Matrix ID in our namespace exists before someone can invite it. */
     userExists(userId: string): Promise<boolean>;
 }
@@ -93,7 +93,14 @@ export function createMatrixAppServiceRouter(
             recentTxnSet.delete(recentTxnIds.shift()!);
         }
         const events: MatrixEvent[] = Array.isArray(req.body?.events) ? req.body.events : [];
-        void takeIn(events, res);
+        void takeIn(events, res, txnId);
+    };
+
+    /** Forgets a transaction that was refused, so the transaction Synapse sends again is taken in and not answered as one already seen (Opus G6R-1). */
+    const forgetTxn = (txnId: string): void => {
+        recentTxnSet.delete(txnId);
+        const at = recentTxnIds.indexOf(txnId);
+        if (at >= 0) recentTxnIds.splice(at, 1);
     };
 
     /**
@@ -101,7 +108,7 @@ export function createMatrixAppServiceRouter(
      * An event the inbox already holds, or that was handled, is not handled again. A store that is connected but fails leaves Matrix unanswered with a 500, so it sends the transaction
      * again and nothing is lost; a store that is not connected at all is the fallback of before (handle it, remember nothing).
      */
-    const takeIn = async (events: MatrixEvent[], res: Response): Promise<void> => {
+    const takeIn = async (events: MatrixEvent[], res: Response, txnId: string): Promise<void> => {
         const mine: Array<{ event: MatrixEvent; entry?: InboxEntry }> = [];
         try {
             for (const event of events) {
@@ -116,8 +123,10 @@ export function createMatrixAppServiceRouter(
             }
         } catch (error) {
             console.error('[MatrixAppService] Could not keep a transaction in the shared store; Synapse is asked to send it again:', error instanceof Error ? error.message : error);
-            // What was already kept goes back at once: the transaction that comes again holds those events too
-            await Promise.all(mine.map((one) => one.entry?.release().catch(() => undefined)));
+            // What was already kept is taken back out as if never taken: the transaction that comes again holds those events too, and takes them in afresh in their order
+            await Promise.all(mine.map((one) => one.entry?.undo().catch(() => undefined)));
+            // Before Matrix is told: its resend of the same transaction must be taken in, not answered 200 as a duplicate that took nothing
+            forgetTxn(txnId);
             if (!res.headersSent) res.status(500).json({ errcode: 'M_UNKNOWN', error: 'Could not take the transaction in' });
             return;
         }
@@ -133,7 +142,13 @@ export function createMatrixAppServiceRouter(
         const next = previous.then(async () => {
             let paid = false;
             try {
-                await handler.onEvent(event, { paid: () => (paid = true) });
+                await handler.onEvent(event, {
+                    // Written down in the shared store BEFORE the paid work begins: a server that dies after this leaves an entry no other server hands out again
+                    paid: async () => {
+                        paid = true;
+                        await entry?.paid();
+                    },
+                });
             } catch (error) {
                 console.error('[MatrixAppService] Event handling failed:', error);
                 // Nothing of it was paid for: it goes back, and another try (here or at another server) answers the person. Once something was paid for it is never handled again
@@ -157,7 +172,13 @@ export function createMatrixAppServiceRouter(
     const recover = async (): Promise<number> => {
         if (closing || !options.inbox) return 0;
         const left = await options.inbox.recover();
-        for (const one of left) work(one.event as MatrixEvent, one.entry);
+        // In the order the events arrived: every taken entry beat from the moment it was taken, so their scores are near each other and a tie sorts by event id, not by arrival
+        const arrived = (one: { event: unknown }): number => {
+            const at = (one.event as { origin_server_ts?: unknown } | null)?.origin_server_ts;
+            return typeof at === 'number' && Number.isFinite(at) ? at : Number.MAX_SAFE_INTEGER;
+        };
+        const ordered = left.map((one, index) => ({ one, index })).sort((a, b) => arrived(a.one) - arrived(b.one) || a.index - b.index);
+        for (const { one } of ordered) work(one.event as MatrixEvent, one.entry);
         return left.length;
     };
 

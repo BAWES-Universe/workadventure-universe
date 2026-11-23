@@ -196,6 +196,50 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         expect(fake.of('release')).toEqual([]);
     });
 
+    // Opus's note on finding 3: a beat answered superseded ends the run's open turn too, as a superseded answer to the notes does, and cancels nothing
+    it('a beat answered superseded stops the turn this run has open: the worker ends by itself, with nothing cancelled, ended or given back', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+        let at = 1_000_000;
+        const fake = leasedOrbit({ epoch: 2, clock: () => at, holdTurn: true });
+        const cancel = vi.fn(fake.orbit.cancel);
+        fake.orbit.cancel = cancel;
+        const { instance } = runnerOn(fake, { now: () => at });
+        await instance.tick();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(instance.active()).toEqual([JOB.jobId]);
+        // another worker takes the job over while this one holds a turn open, and the next beat tells this worker so
+        fake.state.ownerEpoch = 9;
+        at += 30_000;
+        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(0);
+        // the worker is over WITHOUT the runner being stopped: the open turn was read to its end
+        expect(instance.active()).toEqual([]);
+        expect(cancel).not.toHaveBeenCalled();
+        expect(fake.of('finish')).toEqual([]);
+        expect(fake.of('release')).toEqual([]);
+        expect(fake.state.status).toBe('running');
+    });
+
+    it('a beat Orbit refuses with a 409 that says the run is superseded stops the open turn the same way', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+        let at = 1_000_000;
+        const fake = leasedOrbit({ epoch: 2, clock: () => at, holdTurn: true });
+        const original = fake.orbit.action;
+        fake.orbit.action = async (botId, jobId, body) => {
+            if (String(body.action) === 'beat') throw Object.assign(new Error('conflict'), { response: { status: 409, data: { ok: false, reason: 'stale', run: 'superseded' } } });
+            return original(botId, jobId, body);
+        };
+        const { instance } = runnerOn(fake, { now: () => at });
+        await instance.tick();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(instance.active()).toEqual([JOB.jobId]);
+        at += 30_000;
+        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(instance.active()).toEqual([]);
+        expect(fake.of('finish')).toEqual([]);
+    });
+
     it('does not give the lease back for a job it ended itself', async () => {
         const fake = leasedOrbit({ epoch: 2 });
         const { instance } = runnerOn(fake);

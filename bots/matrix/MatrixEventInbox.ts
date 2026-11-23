@@ -53,6 +53,21 @@ redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))
 redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[4])
 return 1
 `;
+/**
+ * Something the person pays for has BEGUN (Opus G6R-2): the entry is marked `p|<owner>|<tries>|$`, only while it is still this server's. A server that dies after this point leaves an entry
+ * no other server hands out again (the turn may have charged them already): it is closed as done, so the person is never charged twice for one message.
+ */
+const PAID = `
+local held = redis.call('GET', KEYS[1])
+if not held or string.sub(held, 1, 2 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] then
+  return 0
+end
+if string.sub(held, -2) == '|$' then
+  return 1
+end
+redis.call('SET', KEYS[1], held .. '|$', 'EX', tonumber(ARGV[2]))
+return 1
+`;
 /** Handled: the entry becomes `d` for a day and leaves the inbox, only while it is still this server's. */
 const DONE = `
 local held = redis.call('GET', KEYS[1])
@@ -85,6 +100,20 @@ redis.call('ZADD', KEYS[2], 0, ARGV[4])
 return 1
 `;
 /**
+ * Taken back out of the inbox as if it had never been taken (Opus G6R-1): the transaction it came with was refused (a later event could not be kept), so the transaction Synapse sends
+ * again takes every event in afresh, in order. Only while the entry is still this server's and nothing of it was paid for.
+ */
+const UNDO = `
+local held = redis.call('GET', KEYS[1])
+if not held or string.sub(held, 1, 2 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] or string.sub(held, -2) == '|$' then
+  return 0
+end
+redis.call('DEL', KEYS[1])
+redis.call('ZREM', KEYS[2], ARGV[2])
+redis.call('DEL', KEYS[3])
+return 1
+`;
+/**
  * Takes over an entry whose owner went away (it has no owner, or its last beat is older than the stale time): the event itself comes back with it, so this server can handle it. `nil`
  * when it is not there to take (it is done, gone, or its owner is alive).
  */
@@ -95,10 +124,21 @@ if not held or held == 'd' then
   redis.call('DEL', KEYS[3])
   return nil
 end
+local paid = string.sub(held, -2) == '|$'
 local owner = string.match(held, '^p|(.-)|%d+$')
-local tries = tonumber(string.match(held, '|(%d+)$')) or 1
+if paid then
+  owner = string.match(held, '^p|(.-)|%d+|%$$')
+end
+local tries = tonumber(string.match(held, '|(%d+)$')) or tonumber(string.match(held, '|(%d+)|%$$')) or 1
 local score = tonumber(redis.call('ZSCORE', KEYS[2], ARGV[4]) or 0)
 if owner ~= '-' and score > tonumber(ARGV[5]) then
+  return nil
+end
+-- Something was paid for before its owner went away: it is closed, never handed out again (no second charge, no second answer)
+if paid then
+  redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
+  redis.call('ZREM', KEYS[2], ARGV[4])
+  redis.call('DEL', KEYS[3])
   return nil
 end
 if tries >= tonumber(ARGV[6]) then
@@ -124,6 +164,10 @@ export interface InboxEntry {
     done(): Promise<void>;
     /** Nothing of it was paid for and it threw: it goes back for another try, at most a few times. */
     release(): Promise<void>;
+    /** The transaction this event came in was refused, so it is taken back out as if never taken and the resend takes it in afresh (a failed step leaves it to be recovered instead). */
+    undo(): Promise<void>;
+    /** Something the person pays for is about to begin: written down BEFORE it does, so a server that dies in the middle never has it handled again by another. Never throws. */
+    paid(): Promise<void>;
 }
 
 /** What the inbox answers when an event arrives: an entry when this server is to handle it, `false` when it is already held or was handled. */
@@ -157,7 +201,7 @@ export function createEventInbox(
     const batch = options.batch ?? RECOVER_BATCH;
     const say = options.log ?? ((message: string, detail?: unknown) => console.warn(`[MatrixInbox] ${message}`, detail instanceof Error ? detail.message : detail));
     /** An entry that holds nothing: the store is not connected, so the event is handled and nothing is remembered. */
-    const nothing: InboxEntry = { done: async () => undefined, release: async () => undefined };
+    const nothing: InboxEntry = { done: async () => undefined, release: async () => undefined, undo: async () => undefined, paid: async () => undefined };
 
     const keysOf = (eventId: string) => [`${EVENT_SEEN_PREFIX}${eventId}`, INBOX_KEY, `${INBOX_EVENT_PREFIX}${eventId}`];
     /** One step in the store against a deadline that rejects: a store that never answers must not hold the room. */
@@ -190,6 +234,12 @@ export function createEventInbox(
         return {
             done: () => end(DONE, [owner, String(ttlSeconds), eventId], 'handled'),
             release: () => end(RELEASE, [owner, String(ttlSeconds), String(maxTries), eventId], 'to be tried again'),
+            undo: () => end(UNDO, [owner, eventId], 'taken back'),
+            // Awaited before the first paid call. A store that fails here is logged and the turn goes on: recovery will most likely fail on the same store too
+            paid: async () => {
+                if (over) return;
+                await step(redis, PAID, eventId, [owner, String(ttlSeconds)]).catch((error) => say('Could not write down that an event began paid work:', error));
+            },
         };
     };
 

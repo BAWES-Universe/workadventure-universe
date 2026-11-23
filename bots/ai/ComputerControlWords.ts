@@ -7,6 +7,7 @@
  * WORDING STATUS
  *  - MOCK: section 10 of the steering mock ("Steering a computer job while it works", artifact QpheiJANyQuSQKZNCwbAxp), APPROVED by Khalid on 23 Nov ("Steering mock looks good"), word for word.
  *  - FINAL: every other line, word for word from Fable's final strings of 23 Nov (computers-full-plan-23-nov/brick-control-words-final-23-nov.md), APPROVED by Khalid on 23 Nov.
+ *  - FINAL: `toldAccepted` and `resumeAsked`, word for word from Fable's strings of 23 Nov (/mnt/project-files/brick-four-job-lines/strings.txt, mock https://claude.ai/artifact/E2TrF8Euu3AF5PP7rJck2b).
  * House rules: plain words, "Apps", never a price or how much of the month is left, no legal wording, the job's title in curly quotes (`quotedTitle`).
  */
 import { quotedTitle } from './JobStatusLine';
@@ -43,15 +44,15 @@ export const CONTROL_WORDS = {
         titled: (title) => `I've added that to ${title}. It uses it when it carries on.`,
         plain: "I've added that to your job. It uses it when it carries on.",
     } as ControlLine,
-    /** DRAFT (not in the approved set, to be confirmed): Orbit took the words in a way of delivering this server does not know; nothing is said of when the job uses them. */
+    /** FINAL (Fable, 23 Nov, brick-four-job-lines): Orbit took the words in a way of delivering this server does not know; nothing is said of when the job uses them. */
     toldAccepted: {
-        titled: (title) => `I've passed that on to ${title}.`,
-        plain: "I've passed that on to your job.",
+        titled: (title) => `I've added that to ${title}.`,
+        plain: "I've added that to your job.",
     } as ControlLine,
-    /** DRAFT (not in the approved set, to be confirmed): Orbit took the carry on but gave no view of where the job is, so nothing is claimed of it. */
+    /** FINAL (Fable, 23 Nov, brick-four-job-lines): Orbit took the carry on but gave no view of where the job is, so nothing is claimed of it beyond where to look. */
     resumeAsked: {
-        titled: (title) => `I've asked ${title} to carry on.`,
-        plain: "I've asked your job to carry on.",
+        titled: (title) => `I've asked ${title} to carry on. The bar above this chat shows where it is.`,
+        plain: "I've asked your job to carry on. The bar above this chat shows where it is.",
     } as ControlLine,
     /** MOCK "Paused". */
     paused: {

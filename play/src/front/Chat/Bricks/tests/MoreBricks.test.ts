@@ -220,9 +220,9 @@ describe("more Bricks (#1996): what Orbit and a Brick say, as the game reads it"
         const LL = i18nObject("en-US");
         const shown = brickNewJobCard({ title: "Visa form" }, LL);
         expect(shown.id).toBe(BRICK_NEW_JOB_CARD);
-        expect(shown.title).toBe("“Visa form” as a new job?");
+        expect(shown.title).toBe("Start “Visa form” as a new job?");
         expect(shown.question?.choices).toEqual([
-            { id: NEW_JOB_START, label: "Start a new job", line: "Starts it again from the beginning" },
+            { id: NEW_JOB_START, label: "Start a new job", line: "From the beginning" },
         ]);
         expect(shown.question?.multiple).toBe(false);
         expect(shown.expiresAt).toBe(Number.MAX_SAFE_INTEGER);

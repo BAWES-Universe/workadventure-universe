@@ -1101,6 +1101,15 @@ describe('finding 4: each control goes to Orbit under its own id', () => {
         expect(orbit.commands()[2]).toBe(uuidv5('$msg:three:stop::0', COMPUTER_COMMAND_NAMESPACE));
     });
 
+    // Fable's final lines for the two answers the game cannot say more about (23 Nov, brick-four-job-lines), checked against the exact text and never against the constants
+    it('says the approved words, word for word, for a note Orbit took in a way the game does not know and a carry on with no view of the job', () => {
+        const title = '\u201cVisa form\u201d';
+        expect(CONTROL_WORDS.toldAccepted.titled(title)).toBe('I\'ve added that to \u201cVisa form\u201d.');
+        expect(CONTROL_WORDS.toldAccepted.plain).toBe('I\'ve added that to your job.');
+        expect(CONTROL_WORDS.resumeAsked.titled(title)).toBe('I\'ve asked \u201cVisa form\u201d to carry on. The bar above this chat shows where it is.');
+        expect(CONTROL_WORDS.resumeAsked.plain).toBe('I\'ve asked your job to carry on. The bar above this chat shows where it is.');
+    });
+
     it('reading the jobs carries no id at all: it changes nothing', async () => {
         const orbit = door(viewOf(working()));
         const c = chat(orbit.admin);

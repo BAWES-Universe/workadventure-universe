@@ -514,7 +514,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * One event of Matrix. `hooks.paid` is called as soon as this event has begun something the person pays for (the turn that answers them, which is also where a computer job is
      * started): an event that fails before that may be handled again (the durable inbox), and one that fails after it never is.
      */
-    async onEvent(event: MatrixEvent, hooks?: { paid: () => void }): Promise<void> {
+    async onEvent(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
         if (event.type === 'm.room.member' && typeof event.state_key === 'string') {
             await this.onMembership(event);
             return;
@@ -567,7 +567,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * A tap on a card (#1657): only the card's id and the revision it saw come in. It counts only from a person Orbit says
      * may chat with this bot, in a chat the bot is in; what it does is the cards' to say, not the tap's.
      */
-    private async onTap(event: MatrixEvent, hooks?: { paid: () => void }): Promise<void> {
+    private async onTap(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
         if (!this.deps.approvals || botIdFromMatrixId(this.config.domain, event.sender)) return;
         const tap = parseTap(event.content);
         if (!tap || !this.firstSighting(event.event_id)) return;
@@ -582,7 +582,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!config || config.enabled === false) return;
         const user = access.user!;
         // The tap is about to run what it approves (the card says what that is, and it can cost): this event is never handled a second time
-        hooks?.paid();
+        await hooks?.paid();
         await this.deps.approvals.handleTap(botId, event.room_id, { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest }, tap);
     }
 
@@ -1775,7 +1775,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return true;
     }
 
-    private async onMessage(event: MatrixEvent, batch?: { troubleSent: boolean }, hooks?: { paid: () => void }): Promise<void> {
+    private async onMessage(event: MatrixEvent, batch?: { troubleSent: boolean }, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
         // Ignore other bots (ours included), edits and notices.
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const content = event.content ?? {};
@@ -1792,7 +1792,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
      */
     /** `recovered`: a message kept while the store was down, tried again. A newer message may have been answered, or have started to be, while this one waited on Orbit. */
     /** `hooks.paid` is given only for a live message off the Matrix transaction: it says when this event has begun something the person pays for, so the durable inbox never hands it out again. */
-    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }, recovered = false, hooks?: { paid: () => void }): Promise<void> {
+    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }, recovered = false, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
         const content = event.content ?? {};
         let botId: string | null;
         try {
@@ -2010,7 +2010,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         try {
             const pointedArtifactIds = await this.repliedArtifactIds(botUserId, event);
             // From here the person pays for this event: the turn is being asked for (and a computer job may be started inside it), so it is never handled a second time
-            hooks?.paid();
+            await hooks?.paid();
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
                 ...(event.event_id ? { eventId: event.event_id } : {}),

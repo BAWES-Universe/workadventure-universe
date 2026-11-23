@@ -1574,9 +1574,9 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 await Promise.all(servers.map((one) => new Promise<void>((resolve) => one.close(() => resolve()))));
                 if (client.isOpen && ids_.length > 0) await client.del([...ids_.map((id) => `matrix:event:${id}`), ...ids_.map((id) => `matrix:inbox:${id}`), INBOX_KEY]);
             });
-            const event = (id: string, body = 'Hi') => {
+            const event = (id: string, body = 'Hi', at?: number) => {
                 ids_.push(id);
-                return { type: 'm.room.message', room_id: '!dm:matrix.test', sender: '@alice:matrix.test', event_id: id, content: { msgtype: 'm.text', body } };
+                return { type: 'm.room.message', room_id: '!dm:matrix.test', sender: '@alice:matrix.test', event_id: id, ...(at === undefined ? {} : { origin_server_ts: at }), content: { msgtype: 'm.text', body } };
             };
             const fresh = (what = 'ev') => `$${what}-${randomUUID()}`;
             const quiet = () => new Promise((resolve) => setTimeout(resolve, 150));
@@ -1588,20 +1588,28 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             const instance = async (
                 orbit: FakeOrbit,
                 who: { botId: string; userId: string },
-                over: { inbox?: EventInbox | false; fail?: number; paidFirst?: boolean; answers?: string[] } = {}
+                over: { inbox?: EventInbox | false; fail?: number; paidFirst?: boolean; answers?: string[]; diesAfterPaid?: boolean } = {}
             ) => {
                 const answers: string[] = over.answers ?? [];
                 const handled: string[] = [];
+                /** What the shared store says about each event at the moment the handler's paid step returned: the paid work begins from there. */
+                const statesAtPaid: Array<string | null> = [];
                 let fails = over.fail ?? 0;
                 const handler = {
-                    onEvent: async (one: MatrixEvent, hooks?: { paid: () => void }) => {
+                    onEvent: async (one: MatrixEvent, hooks?: { paid: () => void | Promise<void> }) => {
                         handled.push(one.event_id);
-                        if (over.paidFirst) hooks?.paid();
+                        // A server that dies in the middle of the paid turn: it wrote down that paid work began, and never comes back
+                        if (over.diesAfterPaid) {
+                            await hooks?.paid();
+                            await new Promise<never>(() => undefined);
+                        }
+                        if (over.paidFirst) await hooks?.paid();
                         if (fails > 0) {
                             fails -= 1;
                             throw new Error('the server died while it was answering');
                         }
-                        hooks?.paid();
+                        await hooks?.paid();
+                        statesAtPaid.push(await client.get(`matrix:event:${one.event_id}`));
                         await process_(orbit, who).ask('Fill in my visa form', { inbound: { roomId: one.room_id, eventId: one.event_id } });
                         answers.push(one.event_id);
                     },
@@ -1618,7 +1626,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
                 const put = (txn: string, ...events: Array<Record<string, unknown>>) =>
                     fetch(`${base}/_matrix/app/v1/transactions/${txn}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' }, body: JSON.stringify({ events }) });
-                return { handled, answers, put, inbox, recover: () => router.recover(), settle: () => router.settle(5000) };
+                return { handled, answers, statesAtPaid, put, inbox, recover: () => router.recover(), settle: () => router.settle(5000) };
             };
             const stateOf = (id: string) => client.get(`matrix:event:${id}`);
             const inInbox = async (id: string) => (await client.zScore(INBOX_KEY, id)) !== null;
@@ -1668,6 +1676,192 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 expect(await two.recover()).toBe(2);
                 await vi.waitFor(() => expect(answers).toHaveLength(2));
                 expect(answers).toEqual([a, b]);
+            });
+
+            it('the events of one room come back in the order they ARRIVED, not the order of their ids (a tie in the inbox sorts by id)', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                // The id that sorts first arrived LAST
+                const [late, early] = [fresh('a-late'), fresh('z-early')];
+                const answers: string[] = [];
+                const one = await instance(orbit, who, { fail: 2, answers });
+                const two = await instance(orbit, who, { answers });
+                await one.put('t1', event(early, 'first', 1_000), event(late, 'second', 2_000));
+                await vi.waitFor(() => expect(one.handled).toEqual([early, late]));
+                await quiet();
+                expect(await two.recover()).toBe(2);
+                await vi.waitFor(() => expect(answers).toHaveLength(2));
+                expect(answers).toEqual([early, late]);
+            });
+
+            // Opus G6R-1: the 500 path must forget the transaction, or Synapse's resend of it is answered 200 as a duplicate and takes nothing
+            it('G6R-1: a transaction whose second event could not be kept is refused, and its resend to the SAME server is taken in whole: both events answered once', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const real = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000 });
+                let takes = 0;
+                const flaky: EventInbox = {
+                    owner: real.owner,
+                    recover: () => real.recover(),
+                    take: async (id, one) => {
+                        takes += 1;
+                        // the second take of the first try fails, as a store that blinks does
+                        if (takes === 2) throw new Error('the store blinked');
+                        return real.take(id, one);
+                    },
+                };
+                vi.spyOn(console, 'error').mockImplementation(() => undefined);
+                const answers: string[] = [];
+                const one = await instance(orbit, who, { inbox: flaky, answers });
+                const [a, b] = [fresh('blink-a'), fresh('blink-b')];
+                expect((await one.put('t1', event(a, 'one', 1), event(b, 'two', 2))).status).toBe(500);
+                await quiet();
+                // nothing is answered yet: the first event was taken back out as if never taken, the second never kept
+                expect(one.handled).toEqual([]);
+                expect(await stateOf(a)).toBeNull();
+                expect(await inInbox(a)).toBe(false);
+                // Synapse sends the SAME transaction again to the same server
+                expect((await one.put('t1', event(a, 'one', 1), event(b, 'two', 2))).status).toBe(200);
+                await vi.waitFor(() => expect(answers).toHaveLength(2));
+                expect(answers).toEqual([a, b]);
+                expect(one.handled).toEqual([a, b]);
+                // and a THIRD copy, now that it was taken, is the duplicate it is: nothing more is handled
+                await one.put('t1', event(a, 'one', 1), event(b, 'two', 2));
+                await quiet();
+                expect(one.handled).toEqual([a, b]);
+            });
+
+            it('G6R-1: a single-event transaction whose take throws is not lost either: the resend is taken in', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const real = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000 });
+                let takes = 0;
+                const flaky: EventInbox = { owner: real.owner, recover: () => real.recover(), take: async (id, one) => (++takes === 1 ? Promise.reject(new Error('down')) : real.take(id, one)) };
+                vi.spyOn(console, 'error').mockImplementation(() => undefined);
+                const answers: string[] = [];
+                const one = await instance(orbit, who, { inbox: flaky, answers });
+                const id = fresh('single');
+                expect((await one.put('t9', event(id))).status).toBe(500);
+                expect((await one.put('t9', event(id))).status).toBe(200);
+                await vi.waitFor(() => expect(answers).toEqual([id]));
+            });
+
+            // Opus G6R-2: `paid` is written to the shared store BEFORE the paid work, so a server that dies in the middle never has it run again by another
+            it('G6R-2: a server that dies after paid work began leaves an entry no other server hands out: no second paid turn, no second answer, and the entry ends as done', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const id = fresh('died-paid');
+                const answers: string[] = [];
+                const one = await instance(orbit, who, { diesAfterPaid: true, answers });
+                const two = await instance(orbit, who, { answers });
+                await one.put('t1', event(id));
+                await vi.waitFor(() => expect(one.handled).toEqual([id]));
+                await quiet();
+                // The owner never beats again: its score is old, as after two minutes
+                expect(await stateOf(id)).toMatch(/^p\|.+\|1\|\$$/);
+                await client.zAdd(INBOX_KEY, { score: 1, value: id });
+                expect(await two.recover()).toBe(0);
+                expect(two.handled).toEqual([]);
+                expect(await stateOf(id)).toBe('d');
+                expect(await inInbox(id)).toBe(false);
+                expect(answers).toEqual([]);
+                expect(orbit.jobs.size).toBe(0);
+                // a copy of it is not handled either
+                await two.put('t2', event(id));
+                await quiet();
+                expect(two.handled).toEqual([]);
+            });
+
+            it('G6R-2: a server that dies BEFORE paid work began leaves an entry another server takes up and answers once (GPT\'s case still holds)', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const id = fresh('died-unpaid');
+                const answers: string[] = [];
+                const one = await instance(orbit, who, { fail: 1, answers });
+                const two = await instance(orbit, who, { answers });
+                await one.put('t1', event(id));
+                await vi.waitFor(() => expect(one.handled).toEqual([id]));
+                await quiet();
+                expect(await two.recover()).toBe(1);
+                await vi.waitFor(() => expect(answers).toEqual([id]));
+            });
+
+            it('G6R-2: a paid entry whose owner is still beating is left alone, and a store that fails the paid step does not stop the turn', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const id = fresh('alive');
+                const one = await instance(orbit, who, { diesAfterPaid: true });
+                const two = await instance(orbit, who);
+                await one.put('t1', event(id));
+                await vi.waitFor(() => expect(one.handled).toEqual([id]));
+                await quiet();
+                // fresh score: its owner is alive, so another server takes nothing
+                expect(await two.recover()).toBe(0);
+                expect(await stateOf(id)).toMatch(/\|\$$/);
+                // the paid step failing is logged and the turn goes on
+                const real = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000 });
+                const broken = createEventInbox(() => ({ eval: async (script: string, options: unknown) => (/\$/.test(script) && /'\|\$'/.test(script) ? Promise.reject(new Error('down')) : (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, options)) }), { ttlSeconds: 60, beatEveryMs: 60_000, log: () => undefined });
+                const ok = fresh('paidfail');
+                const answers: string[] = [];
+                const three = await instance(orbit, who, { inbox: broken, answers });
+                await three.put('t3', event(ok));
+                await vi.waitFor(() => expect(answers).toEqual([ok]));
+                expect(real.owner).not.toBe(broken.owner);
+            });
+
+            it('G6R-2: the paid step is AWAITED: with a slow store the paid work begins only after it was written down', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const slow = createEventInbox(
+                    () => ({
+                        eval: async (script: string, options: unknown) => {
+                            if (script.includes("'|$'")) await new Promise((resolve) => setTimeout(resolve, 200));
+                            return (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, options);
+                        },
+                    }),
+                    { ttlSeconds: 60, beatEveryMs: 60_000 }
+                );
+                const id = fresh('slowpaid');
+                const seen: Array<string | null> = [];
+                const server = await instance(orbit, who, { inbox: slow });
+                await server.put('t1', event(id));
+                await vi.waitFor(() => expect(server.statesAtPaid).toHaveLength(1));
+                seen.push(await stateOf(id));
+                expect(seen[0]).not.toBeNull();
+                // the handler began (it is recorded as handled) only once the store had the mark: at no point was it handled with a plain `p|owner|n` entry
+                expect(server.handled).toEqual([id]);
+                expect(server.statesAtPaid).toEqual([expect.stringMatching(/\|\$$/)]);
+            });
+
+            it('G6R-2: only the owner of an entry can mark it paid: a server whose entry was taken over writes nothing', async () => {
+                const id = fresh('foreign');
+                ids_.push(id);
+                const mine = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, owner: 'server-one' });
+                const taken = await mine.take(id, event(id));
+                expect(taken).not.toBe(false);
+                // another server took it over meanwhile
+                await client.set(`matrix:event:${id}`, 'p|server-two|2');
+                await (taken as { paid(): Promise<void> }).paid();
+                expect(await stateOf(id)).toBe('p|server-two|2');
+                await (taken as { done(): Promise<void> }).done();
+                // nothing of this test is left in the inbox for the next one to find
+                await client.del([`matrix:event:${id}`, `matrix:inbox:${id}`]);
+                await client.zRem(INBOX_KEY, id);
+            });
+
+            it('G6R-2: the takeover itself leaves a paid entry whose owner has beaten since the scan (the scan and the takeover are two steps)', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const id = fresh('beat-after-scan');
+                const one = await instance(orbit, who, { diesAfterPaid: true });
+                await one.put('t1', event(id));
+                await vi.waitFor(() => expect(one.handled).toEqual([id]));
+                await quiet();
+                // a scan that names the entry although its owner beats just now: only the takeover's own check can leave it alone
+                const stale = createEventInbox(() => ({ eval: (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval.bind(client), zRangeByScore: async () => [id] }) as never, { ttlSeconds: 60, beatEveryMs: 60_000 });
+                expect(await stale.recover()).toEqual([]);
+                expect(await stateOf(id)).toMatch(/\|\$$/);
+                expect(await inInbox(id)).toBe(true);
             });
 
             it('a handler that died AFTER something was paid for is never handled again (a second paid turn would be run)', async () => {

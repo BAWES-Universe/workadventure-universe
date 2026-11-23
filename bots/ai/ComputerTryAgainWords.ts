@@ -7,8 +7,8 @@
  * WORDING STATUS
  *  - FINAL: every line below, word for word from Fable's approved strings of 23 Nov (`/mnt/project-files/brick-try-again-ineligible/strings.txt`, mock
  *    https://claude.ai/artifact/MejYUBSJcRYw5VENisiHar). They are never reworded here and never handed to the model to word.
- *  - DRAFT: `cannotCarryOn` only, for a `not_continuable` that Orbit sends with neither `endedBy` nor `status`: the approved set has no line for a reason nobody named. It is
- *    flagged to the release desk for Fable, and nothing of it is guessed (it names no reason at all).
+ *  - FINAL: `cannotCarryOn` too, for a `not_continuable` that Orbit sends with neither `endedBy` nor `status`: Fable's line of 23 Nov (/mnt/project-files/brick-four-job-lines/strings.txt). It names no
+ *    reason, because Orbit named none; the Start a new job card goes with it when the job has a title.
  */
 import { quotedTitle } from './JobStatusLine';
 import type { ControlLine } from './ComputerControlWords';
@@ -52,10 +52,10 @@ export const TRY_AGAIN_WORDS = {
         titled: () => "I can't find a job of yours to carry on. Tell me what you'd like done, and I'll start it as a new job.",
         plain: "I can't find a job of yours to carry on. Tell me what you'd like done, and I'll start it as a new job.",
     } as ControlLine,
-    /** DRAFT (not in the approved set, to be confirmed): `not_continuable` with no reason named by Orbit. It names none either. */
+    /** FINAL (Fable, 23 Nov, brick-four-job-lines): `not_continuable` with no reason named by Orbit. It names none either. */
     cannotCarryOn: {
-        titled: (title) => `${title} can't carry on, so there's nothing to continue. I can start it again as a new job, from the beginning.`,
-        plain: "That job can't carry on, so there's nothing to continue. I can start it again as a new job, from the beginning.",
+        titled: (title) => `${title} has ended and can't carry on. I can start it again as a new job, from the beginning.`,
+        plain: "That job has ended and can't carry on. I can start it again as a new job, from the beginning.",
     } as ControlLine,
 } as const;
 

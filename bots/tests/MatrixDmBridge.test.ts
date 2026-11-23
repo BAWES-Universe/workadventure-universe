@@ -160,7 +160,7 @@ describe('MatrixDmBridge', () => {
     it('says the person is paying as the turn is asked for, and not before (finding 9)', async () => {
         await bridge.onEvent(invite());
         const order: string[] = [];
-        const paid = vi.fn(() => order.push('paid'));
+        const paid = vi.fn(() => void order.push('paid'));
         deps.reply.mockImplementation(async () => {
             order.push('reply');
             return { text: 'hello back', media: [] } as never;
@@ -3163,7 +3163,7 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
     // GPT's sixth answer, finding 9: a tap that has begun what the person pays for is never handed out again by the durable inbox; one that is ignored may be.
     it('says the person is paying before a tap is acted on, and not for a tap that is ignored (finding 9)', async () => {
         const order: string[] = [];
-        const paid = vi.fn(() => order.push('paid'));
+        const paid = vi.fn(() => void order.push('paid'));
         approvals.handleTap.mockImplementation(async () => {
             order.push('tap');
         });
