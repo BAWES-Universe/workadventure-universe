@@ -506,12 +506,18 @@ describe('a message that arrives while the store that knows the chat is down', (
             await bridge.onGaveUp(message('hello?'), 'tries');
             const notes = client.sendMessage.mock.calls.map((call: any[]) => call[2]);
             expect(notes).toHaveLength(1);
+            // nothing paid ran: sending again is safe, so the old note stands
+            expect(notes[0]['universe.bot_status']).toMatchObject({ state: 'trouble' });
             expect(JSON.stringify(notes[0])).toMatch(/trouble|couldn|answer/i);
             client.sendMessage.mockClear();
-            // work that had begun when its server went away: the person is told too (they may have been answered; the line asks them to send it again), once
+            // work that had begun when its server went away (GPT seventh note, G): the person is told it was cut off, that some of the work may be done and that nothing is sent again by itself
+            // (Fable's FINAL "Cut off" note), never the "send it again in a minute" line, which could make them do paid work twice
             await bridge.onGaveUp(message('hello?'), 'paid');
             expect(client.sendMessage).toHaveBeenCalledTimes(1);
-            expect(JSON.stringify(client.sendMessage.mock.calls[0][2])).toMatch(/trouble|couldn|answer/i);
+            const cut = client.sendMessage.mock.calls[0][2];
+            expect(cut['universe.bot_status']).toMatchObject({ state: 'unsure', title: 'Cut off' });
+            expect(JSON.stringify(cut)).toContain('so some of the work may already be done. Nothing is sent again by itself.');
+            expect(JSON.stringify(cut)).not.toMatch(/again in a minute/);
             // something that is not a person's message is only reported
             client.sendMessage.mockClear();
             await bridge.onGaveUp({ ...message('hello?'), type: 'm.room.member' }, 'paid');

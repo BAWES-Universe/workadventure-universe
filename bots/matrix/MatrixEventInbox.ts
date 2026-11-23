@@ -18,6 +18,13 @@ import { withoutKeys } from './KeyInChat';
 
 /** How long a done event is remembered: Matrix sends a transaction again for far less, and a restart finds its events again within minutes. */
 export const EVENT_SEEN_SECONDS = 24 * 60 * 60;
+/**
+ * How long an event that is NOT finished is kept (GPT seventh note, G): its state while it is being handled or waits to be taken up again, and its payload a day longer. Work that is not done must not
+ * expire like work that is: with every server away for a day the entry would vanish and the person's message with it. A scan finds one that outlived even this and closes it as work that may have begun
+ * (never handed out again, the person told), so nothing is dropped in silence.
+ */
+export const EVENT_PENDING_SECONDS = 7 * 24 * 60 * 60;
+export const EVENT_PAYLOAD_EXTRA_SECONDS = 24 * 60 * 60;
 export const EVENT_SEEN_PREFIX = 'matrix:event:';
 export const INBOX_KEY = 'matrix:inbox';
 export const INBOX_EVENT_PREFIX = 'matrix:inbox:';
@@ -40,6 +47,8 @@ const arrivalOf = (): number => {
 };
 /** After how many calls that the store did not answer a give-back says (once) that it is still trying: it never stops while the process lives. */
 export const GIVE_BACK_TRIES = 8;
+/** The tries limit a DEFERRAL passes to the give-back: an event put back untried (an earlier event of its room is still unresolved) must never be closed for it. */
+const NEVER_CLOSES = 1_000_000;
 /** How many stale entries one scan takes. */
 export const RECOVER_BATCH = 50;
 
@@ -60,7 +69,7 @@ if redis.call('EXISTS', KEYS[1]) == 1 then
   return 0
 end
 redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|1', 'EX', tonumber(ARGV[2]))
-redis.call('SET', KEYS[3], ARGV[4], 'EX', tonumber(ARGV[2]))
+redis.call('SET', KEYS[3], ARGV[4], 'EX', tonumber(ARGV[7]))
 redis.call('SET', KEYS[4], '1', 'EX', tonumber(ARGV[6]))
 redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[5])
 return 1
@@ -81,7 +90,7 @@ if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .
   return 0
 end
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
-redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))
+redis.call('EXPIRE', KEYS[3], tonumber(ARGV[6]))
 redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[4])
 -- an intake that is still going keeps its open mark
 if redis.call('EXISTS', KEYS[4]) == 1 then
@@ -132,6 +141,10 @@ if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .
 end
 local tries = tonumber(string.match(held, '|(%d+)$')) or tonumber(string.match(held, '|(%d+)|%$$')) or 1
 redis.call('DEL', KEYS[4])
+-- Put back UNTRIED (ARGV[7] is 1): the pick-up it came from is not counted, so waiting behind an earlier event never uses up its tries
+if ARGV[7] == '1' then
+  tries = math.max(tries - 1, 0)
+end
 if tries >= tonumber(ARGV[3]) then
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
@@ -139,7 +152,9 @@ if tries >= tonumber(ARGV[3]) then
   redis.call('SET', KEYS[3], '!closed|' .. ARGV[1], 'EX', tonumber(ARGV[2]))
   return 2
 end
-redis.call('SET', KEYS[1], 'p|-|' .. tostring(tries), 'EX', tonumber(ARGV[2]))
+-- unfinished work keeps its (longer) life, and its payload a day more (ARGV[5], ARGV[6])
+redis.call('SET', KEYS[1], 'p|-|' .. tostring(tries), 'EX', tonumber(ARGV[5]))
+redis.call('EXPIRE', KEYS[3], tonumber(ARGV[6]))
 redis.call('ZADD', KEYS[2], 0, ARGV[4])
 return 1
 `;
@@ -164,6 +179,19 @@ return 1
  */
 const TAKEOVER = `
 local held = redis.call('GET', KEYS[1])
+if not held and redis.call('EXISTS', KEYS[3]) == 1 then
+  -- The state outlived its life but the event is still here (it lives a day longer): unfinished work that nobody took up in all that time. It may have begun, so it is closed like paid work (never handed out
+  -- again, the person told), not dropped in silence
+  local left = redis.call('GET', KEYS[3])
+  redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
+  redis.call('ZREM', KEYS[2], ARGV[4])
+  redis.call('DEL', KEYS[3])
+  redis.call('DEL', KEYS[4])
+  if string.sub(left, 1, 8) == '!closed|' then
+    return nil
+  end
+  return '!paid|' .. left
+end
 if not held or held == 'd' then
   redis.call('ZREM', KEYS[2], ARGV[4])
   -- A closed entry keeps what is in the event's slot: it is the mark of the acquisition whose give-back closed it, which a retry of that give-back (its first answer was lost) still has to find
@@ -204,9 +232,19 @@ if not payload then
   redis.call('ZREM', KEYS[2], ARGV[4])
   return nil
 end
-redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|' .. tostring(tries + 1), 'EX', tonumber(ARGV[2]))
+redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|' .. tostring(tries + 1), 'EX', tonumber(ARGV[7]))
+redis.call('EXPIRE', KEYS[3], tonumber(ARGV[8]))
 redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[4])
 return payload
+`;
+
+/** Whether an event is unresolved: it has a state that is not `d`. */
+const IS_OPEN = `
+local held = redis.call('GET', KEYS[1])
+if held and held ~= 'd' then
+  return 1
+end
+return 0
 `;
 
 /** The fence before paid work was not confirmed: the event is not this server's to answer (or the store could not say), so nothing paid for begins. Not an answer failed, and no note is sent. */
@@ -236,6 +274,11 @@ export interface InboxEntry {
     undo(): Promise<void>;
     /** Something the person pays for is about to begin: written down BEFORE it does, so a server that dies in the middle never has it handled again by another. Throws `PaidFenceError` when it could not be written down (the event is another server's now, or the store did not answer): nothing paid for may begin then. */
     paid(): Promise<void>;
+    /**
+     * Put back UNTRIED (GPT seventh note, G): an earlier event of the same room was given back and is not resolved, so this one waits behind it. Like `release`, but it never counts as a try and is
+     * never closed for tries. Answers `again` (back in the inbox, or no longer this server's) or `unsure` (the store did not answer: it keeps trying while the process lives).
+     */
+    defer?(): Promise<'again' | 'unsure'>;
 }
 
 export interface ClosedEvent {
@@ -259,6 +302,11 @@ export interface EventInbox {
      * not part of the list itself. Never throws.
      */
     recover(): Promise<Recovered>;
+    /**
+     * Whether an event is still unresolved in the inbox (held, or waiting to be taken up): `false` once it is done or gone, `undefined` when the store could not say. Never throws. A later event of its room
+     * waits for it (see the router).
+     */
+    isOpen?(eventId: string): Promise<boolean | undefined>;
     /** The name this server holds its entries under (for the tests). */
     readonly owner: string;
 }
@@ -271,14 +319,17 @@ type Client = Pick<EvidenceRedis, 'eval'> & { zRangeByScore?: (key: string, min:
  */
 export function createEventInbox(
     client: () => Client | null,
-    options: { owner?: string; expected?: () => boolean; ttlSeconds?: number; beatEveryMs?: number; staleMs?: number; deadlineMs?: number; maxTries?: number; batch?: number; log?: (message: string, detail?: unknown) => void } = {}
+    options: { owner?: string; expected?: () => boolean; ttlSeconds?: number; pendingSeconds?: number; beatEveryMs?: number; staleMs?: number; deadlineMs?: number; maxTries?: number; batch?: number; log?: (message: string, detail?: unknown) => void } = {}
 ): EventInbox {
     const owner = options.owner ?? randomUUID();
     /** Whether a shared store is expected for this server (it was set up): then a store that is not connected means events cannot be kept, and the transaction is refused. */
     const expected = options.expected ?? (() => false);
     /** A new token for each time this server holds an event: it names the acquisition, not the server. */
     const tokenOf = (): string => `${owner}:${randomUUID()}`;
+    /** How long a FINISHED event is remembered; an unfinished one lives `pendingSeconds`, its payload a day more (see `EVENT_PENDING_SECONDS`). */
     const ttlSeconds = options.ttlSeconds ?? EVENT_SEEN_SECONDS;
+    const pendingSeconds = options.pendingSeconds ?? Math.max(EVENT_PENDING_SECONDS, ttlSeconds);
+    const payloadSeconds = pendingSeconds + EVENT_PAYLOAD_EXTRA_SECONDS;
     const beatEveryMs = options.beatEveryMs ?? BEAT_EVERY_MS;
     const staleMs = options.staleMs ?? BEAT_STALE_MS;
     /** How long the open mark of an intake lives without a beat: as long as an entry may be quiet before another server takes it over. */
@@ -321,7 +372,7 @@ export function createEventInbox(
     /** An entry this server holds: it beats while it is held, and the beat stops when it ends. */
     const entryOf = (redis: Client, eventId: string, token: string): InboxEntry => {
         const beat = setInterval(() => {
-            void step(redis, BEAT, eventId, [token, String(ttlSeconds), String(Date.now()), eventId, String(openSeconds)]).catch((error) => say('Could not say an event is still being handled:', error));
+            void step(redis, BEAT, eventId, [token, String(pendingSeconds), String(Date.now()), eventId, String(openSeconds), String(payloadSeconds)]).catch((error) => say('Could not say an event is still being handled:', error));
         }, beatEveryMs);
         beat.unref?.();
         let over = false;
@@ -338,14 +389,14 @@ export function createEventInbox(
          */
         let retrying: Promise<void> | undefined;
         let retried: () => void = () => undefined;
-        const giveBack = async (onClosed?: () => void): Promise<'again' | 'closed' | 'unsure'> => {
+        const giveBack = async (onClosed?: () => void, never = false): Promise<'again' | 'closed' | 'unsure'> => {
             if (over) return 'unsure';
             over = true;
             let attempts = 0;
             const attempt = (): Promise<'again' | 'closed' | undefined> => {
                 // Every call counts, whether the store answered or not: a retry after a failed first call is a retry
                 attempts += 1;
-                return step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(maxTries), eventId]).then(
+                return step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(never ? NEVER_CLOSES : maxTries), eventId, String(pendingSeconds), String(payloadSeconds), never ? '1' : '0']).then(
                     (answer) => {
                         if (answer === 2 || answer === '2') return 'closed' as const;
                         // Not this server's any more (taken by another, or finished): nothing is left to give back, and nothing of it is reported from here
@@ -392,6 +443,7 @@ export function createEventInbox(
         return {
             done: () => end(DONE, [token, String(ttlSeconds), eventId], 'handled'),
             release: (onClosed) => giveBack(onClosed),
+            defer: async () => ((await giveBack(undefined, true)) === 'unsure' ? 'unsure' : 'again'),
             givingBack: () => retrying,
             undo: () => end(UNDO, [token, eventId], 'taken back'),
             // The transaction this event came in kept all its events: duplicates of it are skipped from now on. Throws when the store did not confirm it (the router then takes the transaction back)
@@ -406,7 +458,7 @@ export function createEventInbox(
                 if (over) throw new PaidFenceError('The event had already ended here');
                 let answer: unknown;
                 try {
-                    answer = await step(redis, PAID, eventId, [token, String(ttlSeconds)]);
+                    answer = await step(redis, PAID, eventId, [token, String(pendingSeconds)]);
                 } catch (error) {
                     say('Could not write down that an event began paid work; it is not started:', error);
                     throw new PaidFenceError('The shared store did not confirm that paid work began');
@@ -418,6 +470,17 @@ export function createEventInbox(
 
     return {
         owner,
+        isOpen: async (eventId) => {
+            const redis = client();
+            if (!redis) return undefined;
+            try {
+                const state = await within(redis.eval(IS_OPEN, { keys: keysOf(eventId), arguments: [] }));
+                return state === 1 || state === '1';
+            } catch (error) {
+                say('Could not look at an event of the inbox:', error);
+                return undefined;
+            }
+        },
         take: async (eventId, event) => {
             if (!eventId) return nothing;
             const redis = client();
@@ -430,7 +493,7 @@ export function createEventInbox(
             const token = tokenOf();
             // What is written to the store holds no key: a key typed into the chat never reaches Redis, and the entry says only that one was there (the Brick refuses it as it would live)
             const kept = JSON.stringify({ arrived: arrivalOf(), event: withoutKeys(event) });
-            const took = await step(redis, TAKE, eventId, [token, String(ttlSeconds), String(Date.now()), kept, eventId, String(openSeconds)]);
+            const took = await step(redis, TAKE, eventId, [token, String(pendingSeconds), String(Date.now()), kept, eventId, String(openSeconds), String(payloadSeconds)]);
             if (took === 0 || took === '0') return false;
             if (took === 2 || took === '2') return 'busy';
             return entryOf(redis, eventId, token);
@@ -446,7 +509,7 @@ export function createEventInbox(
                 for (const eventId of stale) {
                     const token = tokenOf();
                     // eslint-disable-next-line no-await-in-loop
-                    const payload = await step(redis, TAKEOVER, eventId, [token, String(ttlSeconds), String(Date.now()), eventId, String(cutoff), String(maxTries)]).catch((error) => {
+                    const payload = await step(redis, TAKEOVER, eventId, [token, String(ttlSeconds), String(Date.now()), eventId, String(cutoff), String(maxTries), String(pendingSeconds), String(payloadSeconds)]).catch((error) => {
                         say('Could not take over an event left by another server:', error);
                         return null;
                     });

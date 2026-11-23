@@ -29,6 +29,11 @@ describe("readBotStatusNote", () => {
         );
     });
 
+    it("reads the \"cut off\" note (a bot server died mid-answer after paid work began)", () => {
+        const cutOff = { state: "unsure", title: "Cut off", text: "It was cut off while answering." };
+        expect(readBotStatusNote(BOT_CHAT_ID, { msgtype: "m.notice", "universe.bot_status": cutOff })).toEqual(cutOff);
+    });
+
     it("ignores the same content from a person, as text, or with an unknown state", () => {
         expect(
             readBotStatusNote("@alice:matrix.bawes.net", { msgtype: "m.notice", "universe.bot_status": note })
@@ -47,6 +52,7 @@ describe("availabilityFromNote", () => {
         expect(availabilityFromNote("unready")).toBe("unready");
         expect(availabilityFromNote("gone")).toBe("gone");
         expect(availabilityFromNote("trouble")).toBeUndefined();
+        expect(availabilityFromNote("unsure")).toBeUndefined();
         expect(availabilityFromNote("no_access")).toBeUndefined();
     });
 });

@@ -2391,14 +2391,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         } catch {
             /* a report is never in the way */
         }
-        // Both ways the person is told, never left in silence: an event that ran out of tries was not answered; one whose server went away after paid work had begun MAY have been (the inbox
-        // cannot tell a turn that never started from one that ran and was cut off), so the same line, which asks them to send it again, is the safe one
+        // Both ways the person is told, never left in silence. An event that ran out of tries was not answered and nothing paid ran: "send it again" is safe. One whose server went away after paid work
+        // had begun MAY have run (a computer job started, an App action sent): the note says it was cut off and that some of the work may be done, that nothing is sent again by itself, and that sending
+        // it again is theirs to decide after they check (GPT seventh note, G; Fable's FINAL words)
         if (event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return;
         try {
             const botId = await this.botForRoom(event.room_id, true);
             if (!botId || this.purgedBots.has(botId)) return;
             const config = await this.deps.getBotConfig(botId).catch(() => null);
-            await this.sendNote(botId, event.room_id, 'trouble', detectLanguage(String(event.content?.body ?? '')), config);
+            await this.sendNote(botId, event.room_id, why === 'paid' ? 'unsure' : 'trouble', detectLanguage(String(event.content?.body ?? '')), config);
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not tell the person in ${event.room_id} that their message was not answered:`, error?.message ?? error);
         }

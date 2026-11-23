@@ -11,7 +11,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import axios from 'axios';
 import { AdminApiService, COMPUTER_CONTINUES_HEADER, cannotContinueOf } from '../server/AdminApiService';
-import { CANNOT_CONTINUE_NOTE, START_NEW_JOB_LABEL, TRY_AGAIN_WORDS, cannotContinue } from '../ai/ComputerTryAgainWords';
+import { CANNOT_CONTINUE_NOTE, START_NEW_JOB_LABEL, START_REFUSAL_WORDS, TRY_AGAIN_WORDS, cannotContinue } from '../ai/ComputerTryAgainWords';
 import { AIService } from '../ai/AIService';
 import { ConfirmationQueue, computerToolDefinitions, runComputerTool, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
 import { asksToTryAgain, offersTryAgain, retryJobOf, tryAgainNote, type RetryJob } from '../ai/ComputerTryAgain';
@@ -112,9 +112,10 @@ describe('use_computer with try_again', () => {
         const fresh = asking({ ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null });
         await runDelivered({ job: 'Visa form' }, context(fresh, { retry: { id: OLD, title: 'Visa form' } }));
         expect(fresh.startComputerJob.mock.calls[0][2]).not.toHaveProperty('continuesJobId');
-        const unnamed = asking({ ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null });
+        // GPT seventh note, E: `try_again` with nothing named for this turn is NEVER a fresh paid start (it used to be one)
+        const unnamed = { ...asking({ ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null }), computerEndedJobs: vi.fn().mockResolvedValue([]) };
         await runDelivered({ job: 'Visa form', try_again: true }, context(unnamed));
-        expect(unnamed.startComputerJob.mock.calls[0][2]).not.toHaveProperty('continuesJobId');
+        expect(unnamed.startComputerJob).not.toHaveBeenCalled();
     });
 
     it('a job carried on is never turned to a connected app: it goes on where it stopped, on the computer (a fresh ask of the same words still is)', async () => {
@@ -262,7 +263,8 @@ describe('Brick is told about "try again" only when the person asks for it', () 
         expect(await ai.tryAgainNoteFor(BRICK, 1)).toBe('');
         expect(memory.computerRetry).toBeUndefined();
         await ai.runComputerToolCall({ job: 'Taxi', try_again: true }, { botId: BRICK, playerId: 1 });
-        expect(startComputerJob.mock.calls[0][2]).not.toHaveProperty('continuesJobId');
+        // GPT seventh note, E: `try_again` with no job named for this turn starts nothing (it used to start a fresh paid job)
+        expect(startComputerJob).not.toHaveBeenCalled();
         const none = service({ computerState: vi.fn().mockResolvedValue({ on: true, retry: null }) }, [{ message: 'try again', at: TOLD }]);
         none.ai.noteBrick(BRICK, { isDefault: false });
         await none.ai.computerOnFor(BRICK, 1);
@@ -445,5 +447,173 @@ describe('finding 6: a continuation Orbit refuses never becomes a fresh paid job
 
     it('the button label is the approved one', () => {
         expect(START_NEW_JOB_LABEL).toBe('Start a new job');
+    });
+});
+
+// GPT seventh note, E (Fable's final words, /mnt/project-files/brick-which-job/strings.txt): `try_again` with no job to carry on for the turn asks which job, or offers a new one. Nothing is started.
+describe('try_again with no job named for this turn', () => {
+    const VISA = { id: OLD, title: 'Visa form' };
+    const TAXI = { id: '8d0f7780-8536-51ef-955c-f18gd2g01bf8', title: 'Taxi booking' };
+    const FLIGHT = { id: '9e1f8891-9647-62fg-a66d-g29he3h12cg9', title: 'Flight search' };
+    const started = { ok: true, job: { id: 'new-1', status: 'running', queuedFor: null }, restoredFrom: null, continued: true };
+    const world = (ended: unknown, answer: unknown = started) => ({ startComputerJob: vi.fn().mockResolvedValue(answer), computerEndedJobs: vi.fn().mockResolvedValue(ended) });
+    const ctx = (admin: ReturnType<typeof world>, over: Partial<ComputerToolContext> = {}): ComputerToolContext => ({ admin: admin as never, botId: BRICK, userId: 'uuid-alice', ...over });
+
+    it('two or more ended jobs: asks which, newest first, a repeated title once, at most three; nothing is started', async () => {
+        const admin = world([TAXI, { ...TAXI, id: 'dup-dup-dup-dup' }, VISA, FLIGHT, { id: 'zzzz-zzzz-zzzz', title: 'Fourth one' }]);
+        const queue = new ConfirmationQueue();
+        const answer = await runComputerTool({ job: 'try again', try_again: true }, ctx(admin, { confirmations: queue }));
+        expect(queue.tell()).toEqual(['Which job do you mean: “Taxi booking”, “Visa form” or “Flight search”?']);
+        expect(admin.startComputerJob).not.toHaveBeenCalled();
+        expect(answer).toMatchObject({ started: false, asked: 'which' });
+        expect(String(answer.note)).toMatch(/NOTHING was started/);
+    });
+
+    it('one ended job the words do not name: "Do you mean “Visa form”?"', async () => {
+        const admin = world([VISA]);
+        const queue = new ConfirmationQueue();
+        await runComputerTool({ job: 'the thing from before', try_again: true }, ctx(admin, { confirmations: queue }));
+        expect(queue.tell()).toEqual(['Do you mean “Visa form”?']);
+        expect(admin.startComputerJob).not.toHaveBeenCalled();
+    });
+
+    it('the words name exactly one ended job: that job carries on (Orbit decides), under its own id', async () => {
+        const admin = world([TAXI, VISA]);
+        const queue = new ConfirmationQueue();
+        await runDelivered({ job: 'visa  FORM', try_again: true }, ctx(admin, { confirmations: queue }));
+        expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+        expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ title: 'Visa form', continuesJobId: OLD }));
+    });
+
+    it('two ended jobs of one title: the newest stands for both, and it carries on', async () => {
+        const admin = world([{ id: 'newest-newest-1', title: 'Visa form' }, { id: 'older-older-123', title: 'visa form' }]);
+        await runDelivered({ job: 'Visa form', try_again: true }, ctx(admin));
+        expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: 'newest-newest-1' }));
+    });
+
+    it('titles in Arabic are told apart (a different title is a different job)', async () => {
+        const admin = world([{ id: 'job-visa-0000', title: 'طلب التأشيرة' }, { id: 'job-taxi-0000', title: 'حجز التاكسي' }]);
+        await runDelivered({ job: 'حجز التاكسي', try_again: true }, ctx(admin));
+        expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: 'job-taxi-0000' }));
+        const other = world([{ id: 'job-visa-0000', title: 'طلب التأشيرة' }, { id: 'job-taxi-0000', title: 'حجز التاكسي' }]);
+        const queue = new ConfirmationQueue();
+        await runComputerTool({ job: 'حجز الفندق', try_again: true }, ctx(other, { confirmations: queue }));
+        expect(other.startComputerJob).not.toHaveBeenCalled();
+        expect(queue.tell()[0]).toContain('Which job do you mean');
+    });
+
+    it('no ended job at all, and the Brick has a title: the offer to start it as a new job, with the existing card; nothing is started', async () => {
+        const admin = world([]);
+        const queue = new ConfirmationQueue();
+        const offered: string[] = [];
+        const answer = await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: queue, offerNewJob: (title) => void offered.push(title) }));
+        expect(queue.tell()).toEqual(["I can't find a job of yours to carry on. I can start “Visa form” as a new job, from the beginning."]);
+        expect(offered).toEqual(['Visa form']);
+        expect(admin.startComputerJob).not.toHaveBeenCalled();
+        expect(String(answer.note)).toMatch(/NOTHING was started/);
+    });
+
+    it('no ended job and no title: the approved noSuchJob line, no card', async () => {
+        const admin = world([]);
+        const queue = new ConfirmationQueue();
+        const offered: string[] = [];
+        await runComputerTool({ try_again: true }, ctx(admin, { confirmations: queue, offerNewJob: (title) => void offered.push(title) }));
+        expect(queue.tell()).toEqual([TRY_AGAIN_WORDS.noSuchJob.plain]);
+        expect(offered).toEqual([]);
+        expect(admin.startComputerJob).not.toHaveBeenCalled();
+    });
+
+    it('Orbit cannot be asked (or the computer is off): nothing is started and nothing is offered', async () => {
+        for (const ended of [null, undefined]) {
+            const admin = world(ended);
+            const queue = new ConfirmationQueue();
+            const answer = await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: queue }));
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(queue.tell()).toEqual([]);
+            expect(answer).toMatchObject({ started: false });
+        }
+        const throws = { startComputerJob: vi.fn(), computerEndedJobs: vi.fn().mockRejectedValue(new Error('down')) };
+        expect(await runComputerTool({ job: 'Visa form', try_again: true }, ctx(throws as never))).toMatchObject({ started: false });
+        expect(throws.startComputerJob).not.toHaveBeenCalled();
+    });
+
+    it('in a chat with no fixed line the model is given the exact words to say, and the same call again says nothing twice', async () => {
+        const admin = world([VISA, TAXI]);
+        const answer = await runComputerTool({ job: 'x', try_again: true }, ctx(admin));
+        expect(String(answer.note)).toContain('Which job do you mean: “Visa form” or “Taxi booking”?');
+        const queue = new ConfirmationQueue();
+        await runComputerTool({ job: 'x', try_again: true }, ctx(admin, { confirmations: queue }));
+        await runComputerTool({ job: 'x', try_again: true }, ctx(admin, { confirmations: queue }));
+        expect(queue.tell()).toHaveLength(1);
+    });
+
+    it('the person\'s yes after the offer is an ordinary new start: no continuation, a key of its own', async () => {
+        const admin = world([], { ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null });
+        await runDelivered({ job: 'Visa form' }, ctx(admin));
+        expect(admin.startComputerJob.mock.calls[0][2]).not.toHaveProperty('continuesJobId');
+        expect(admin.computerEndedJobs).not.toHaveBeenCalled();
+    });
+
+    it('Orbit\'s list: `ended` and the one `retry` job, read together, nothing else', async () => {
+        const call = vi.fn().mockResolvedValue({ data: { available: true, on: true, ended: [{ id: OLD, title: 'Visa form' }, { id: 'bad id', title: 'x' }, 'junk'], retry: { id: TAXI.id, title: 'Taxi booking', how: 'error' } } });
+        const service = new AdminApiService('http://orbit.test');
+        vi.spyOn(service, 'isConfigured').mockReturnValue(true);
+        (service as unknown as { brickCall: unknown }).brickCall = call;
+        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toEqual([{ id: OLD, title: 'Visa form' }, { id: TAXI.id, title: 'Taxi booking' }]);
+        expect(call.mock.calls[0][3]).toEqual({ userId: 'uuid-alice', retry: '1', ended: '3' });
+        (service as unknown as { brickCall: unknown }).brickCall = vi.fn().mockResolvedValue({ data: { available: true, on: false } });
+        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toBeNull();
+        (service as unknown as { brickCall: unknown }).brickCall = vi.fn().mockRejectedValue(new Error('down'));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toBeNull();
+        warn.mockRestore();
+    });
+});
+
+// GPT seventh note, A2 (Fable's final lines, /mnt/project-files/brick-three-job-lines/strings.txt): Orbit's `retired` and `stale_consent` answers to a start
+describe('a start Orbit answers with retired or stale_consent', () => {
+    const run = (reason: string) => ({ startComputerJob: vi.fn().mockResolvedValue({ ok: false, reason }) });
+    const ctx = (admin: ReturnType<typeof run>, over: Partial<ComputerToolContext> = {}): ComputerToolContext => ({ admin: admin as never, botId: BRICK, userId: 'uuid-alice', ...over });
+
+    it('retired: the fixed line (no title, no card), nothing started, and every later ask of the turn gets the same answer without sending', async () => {
+        const admin = run('retired');
+        const queue = new ConfirmationQueue();
+        const offered: string[] = [];
+        const memory = new Map();
+        const over = { confirmations: queue, startKeys: memory, offerNewJob: (title: string) => void offered.push(title), inbound: { roomId: '!r:test', eventId: '$e1' } };
+        const first = await runComputerTool({ job: 'Visa form' }, ctx(admin, over));
+        const again = await runComputerTool({ job: 'Visa form' }, ctx(admin, over));
+        const other = await runComputerTool({ job: 'Book a taxi' }, ctx(admin, over));
+        expect(queue.tell()).toEqual(["I already started a job for that request earlier, so I haven't started another. Tell me if you'd like it done again, and I'll start it as a new job, from the beginning."]);
+        expect([first.reason, again.reason, other.reason]).toEqual(['retired', 'retired', 'retired']);
+        expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+        expect(offered).toEqual([]);
+        expect(String(first.note)).toMatch(/NOTHING was started/);
+    });
+
+    it('stale_consent: asks whether they still want it (the title when there is one), nothing started', async () => {
+        const admin = run('stale_consent');
+        const queue = new ConfirmationQueue();
+        const answer = await runComputerTool({ job: 'Visa form' }, ctx(admin, { confirmations: queue, startKeys: new Map() }));
+        expect(queue.tell()).toEqual(["You asked for this a while ago, so I'm checking before I start anything. Do you still want “Visa form” done? Say yes, and I'll start it."]);
+        expect(answer).toMatchObject({ started: false, reason: 'stale_consent' });
+        expect(START_REFUSAL_WORDS.staleConsent.plain).toBe("You asked for this a while ago, so I'm checking before I start anything. Do you still want it done? Say yes, and I'll start it.");
+    });
+
+    it('no fixed line (a chat without one): the model is given the exact words', async () => {
+        const answer = await runComputerTool({ job: 'Visa form' }, ctx(run('retired'), { startKeys: new Map() }));
+        expect(String(answer.note)).toContain("I already started a job for that request earlier");
+    });
+
+    it('the next message (a new turn, a new key) is an ordinary new start', async () => {
+        const memory = new Map();
+        const admin = run('stale_consent');
+        await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: memory, confirmations: new ConfirmationQueue(), inbound: { roomId: '!r:test', eventId: '$e1' } }));
+        admin.startComputerJob.mockResolvedValue({ ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null });
+        const next = new Map();
+        const later = await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: next, confirmations: new ConfirmationQueue(), inbound: { roomId: '!r:test', eventId: '$e2' } }));
+        expect(later).toMatchObject({ started: true });
+        const keys = admin.startComputerJob.mock.calls.map((call) => (call[2] as { startKey: string }).startKey);
+        expect(keys[0]).not.toBe(keys[1]);
     });
 });

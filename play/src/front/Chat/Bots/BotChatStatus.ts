@@ -5,7 +5,7 @@
 export type BotAvailability = "online" | "resting" | "unready" | "gone";
 
 /** Why a bot left a note instead of an answer (the `universe.bot_status` field of its notice). */
-export type BotNoteState = "resting" | "unready" | "trouble" | "gone" | "no_access" | "limited";
+export type BotNoteState = "resting" | "unready" | "trouble" | "unsure" | "gone" | "no_access" | "limited";
 
 export interface BotStatusNote {
     state: BotNoteState;
@@ -14,7 +14,7 @@ export interface BotStatusNote {
 }
 
 const BOT_CHAT_ID = /^@bot_([a-z0-9._=\-/]+):/;
-const NOTE_STATES: BotNoteState[] = ["resting", "unready", "trouble", "gone", "no_access", "limited"];
+const NOTE_STATES: BotNoteState[] = ["resting", "unready", "trouble", "unsure", "gone", "no_access", "limited"];
 
 /** The Orbit bot id behind a bot's chat ID, or undefined for people. Only the bot server can own these IDs. */
 export function botIdFromChatId(chatId: string | null | undefined): string | undefined {
@@ -34,7 +34,7 @@ export function readBotStatusNote(
 }
 
 /**
- * The availability a note tells about, or undefined for notes about one message (trouble) or one person (no_access,
+ * The availability a note tells about, or undefined for notes about one message (trouble, unsure) or one person (no_access,
  * limited).
  */
 export function availabilityFromNote(state: BotNoteState): BotAvailability | undefined {
@@ -74,6 +74,7 @@ export function botHeaderState(
 const COLOURS: Record<BotAvailability | BotNoteState, string> = {
     online: "#68e97a",
     trouble: "#68e97a",
+    unsure: "#68e97a",
     resting: "#e9c84e",
     unready: "#ffffff",
     no_access: "#ffffff",

@@ -203,11 +203,62 @@ export function createMatrixAppServiceRouter(
         return run;
     };
 
+    /**
+     * The events of each room that this process gave back (nothing of them was paid for) and that are not resolved yet (GPT seventh note, G): a later event of the room waits behind them, so a
+     * give-back never lets "Resume" run before the "Pause" that was asked first.
+     */
+    const heldBack = new Map<string, Set<string>>();
+    const holdBehind = (event: MatrixEvent): void => {
+        const set = heldBack.get(event.room_id) ?? new Set<string>();
+        set.add(event.event_id);
+        heldBack.set(event.room_id, set);
+    };
+    const forgetHeld = (roomId: string, eventId: string): void => {
+        const set = heldBack.get(roomId);
+        if (!set) return;
+        set.delete(eventId);
+        if (set.size === 0) heldBack.delete(roomId);
+    };
+    /**
+     * Whether an EARLIER event of this room is still unresolved: the ones given back from here, in the order they were put back (which is the order they arrived), that the inbox still holds
+     * open (a store that cannot say counts as open). An event waits only for those before it: the first of them, taken up again, is never held by the ones after it.
+     */
+    const mustWait = async (event: MatrixEvent): Promise<boolean> => {
+        const ahead = heldBack.get(event.room_id);
+        if (!ahead) return false;
+        const earlier: string[] = [];
+        for (const id of ahead) {
+            if (id === event.event_id) break;
+            earlier.push(id);
+        }
+        for (const id of earlier) {
+            // eslint-disable-next-line no-await-in-loop
+            const open = await options.inbox?.isOpen?.(id).catch(() => undefined);
+            if (open === false) forgetHeld(event.room_id, id);
+        }
+        return earlier.some((id) => heldBack.get(event.room_id)?.has(id));
+    };
+    /** Follows a give-back the store did not answer: a shutdown waits for it, as for any report. */
+    const follow = (entry: InboxEntry): void => {
+        const retrying = entry.givingBack?.();
+        if (!retrying) return;
+        const wait = retrying.catch(() => undefined);
+        reporting.add(wait);
+        void wait.finally(() => reporting.delete(wait));
+    };
+
     /** Handles one event (its own room in order), and ends its inbox entry: done, or back for another try when nothing of it was paid for. */
     const work = (event: MatrixEvent, entry?: InboxEntry): void => {
         // Events in one room run in order; different rooms run side by side, so one slow reply holds up no one else.
         const previous = roomChains.get(event.room_id) ?? Promise.resolve();
         const next = previous.then(async () => {
+            // An earlier event of this room was given back and is not resolved: this one goes back UNTRIED, in the inbox, and is taken up after it (in the order they arrived)
+            if (entry && entry.durable !== false && entry.defer && (await mustWait(event))) {
+                const answer = await entry.defer().catch(() => 'unsure' as const);
+                if (answer === 'unsure') follow(entry);
+                holdBehind(event);
+                return;
+            }
             let paid = false;
             try {
                 await handler.onEvent(event, {
@@ -226,18 +277,19 @@ export function createMatrixAppServiceRouter(
                 if (!paid) {
                     // The last try: nobody takes it again, so it is said (loudly) and the person is told, never silence. With no inbox nothing gives it back at all
                     const result = entry ? await entry.release(() => void gaveUp(event, 'tries')).catch(() => 'unsure' as const) : ('closed' as const);
-                    if (result === 'closed') await gaveUp(event, 'tries');
-                    // The store did not answer: the give-back goes on after this chain has ended, and may turn out to be the last try (which is then said). A shutdown waits for it, as for any report
-                    const retrying = result === 'unsure' ? entry?.givingBack?.() : undefined;
-                    if (retrying) {
-                        const wait = retrying.catch(() => undefined);
-                        reporting.add(wait);
-                        void wait.finally(() => reporting.delete(wait));
+                    if (result === 'closed') {
+                        forgetHeld(event.room_id, event.event_id);
+                        await gaveUp(event, 'tries');
                     }
+                    // Given back (or not known to be): the later events of this room wait behind it until it is resolved. A last try (closed) is resolved: the person was told
+                    if (entry && entry.durable !== false && result !== 'closed') holdBehind(event);
+                    // The store did not answer: the give-back goes on after this chain has ended, and may turn out to be the last try (which is then said). A shutdown waits for it, as for any report
+                    if (result === 'unsure' && entry) follow(entry);
                     return;
                 }
             }
             await entry?.done().catch(() => undefined);
+            forgetHeld(event.room_id, event.event_id);
         });
         roomChains.set(event.room_id, next);
         void next.then(() => {
