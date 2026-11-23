@@ -29,6 +29,7 @@ const base: ComputerReport = {
     holdReleased: false,
     through: null,
     pausedWhy: null,
+    heldScreen: false,
 };
 const report = (over: Partial<ComputerReport>): ComputerReport => ({ ...base, ...over });
 
@@ -689,7 +690,7 @@ describe('the late follow-up: an App step the provider confirmed after all', () 
         expect(got.map((one) => [one.jobId, one.kind])).toEqual([['job-1', 'late']]);
         // Asking with accepts=late is what lets Orbit offer it: an older game never asks and never meets the kind
         expect(calls[0].slice(0, 2)).toEqual(['get', 'api/computer/jobs/reports']);
-        expect(calls[0][3]).toEqual({ accepts: 'late,paused' });
+        expect(calls[0][3]).toEqual({ accepts: 'late,paused,carried_on,can_carry_on' });
         expect(await admin.keepComputerReportTold(got[0])).toBe(true);
         expect(calls[1]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'late', seq: 1, outcome: 'delivered', through: T1 }]);
         expect(await admin.keepComputerReportUndeliverable(got[0], 'origin_gone')).toBe(true);
@@ -1046,10 +1047,10 @@ describe('a job Orbit paused by itself (the month or the person`s own limit), an
         expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'person' })).toBeNull();
         expect(computerReportOf({ ...raw, kind: 'paused' })).toBeNull();
         expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', seq: null })).toBeNull();
-        expect(computerReportOf({ ...raw, kind: 'carrying_on' })).toMatchObject({ kind: 'carrying_on', seq: 1, pausedWhy: null });
-        expect(computerReportOf({ ...raw, kind: 'carrying_on', seq: undefined })).toBeNull();
+        expect(computerReportOf({ ...raw, kind: 'carried_on' })).toMatchObject({ kind: 'carried_on', seq: 1, pausedWhy: null });
+        expect(computerReportOf({ ...raw, kind: 'carried_on', seq: undefined })).toBeNull();
         // Why goes only with a pause
-        expect(computerReportOf({ ...raw, kind: 'carrying_on', pausedWhy: 'rule' })?.pausedWhy).toBeNull();
+        expect(computerReportOf({ ...raw, kind: 'carried_on', pausedWhy: 'rule' })?.pausedWhy).toBeNull();
     });
 
     it('says the decided words: no number, no price, and nothing lost', () => {
@@ -1057,9 +1058,31 @@ describe('a job Orbit paused by itself (the month or the person`s own limit), an
         expect(reportText(paused)).toBe("I paused “Visa form”: this month's computer time is used up. Nothing is lost. Tap Ask for more in [Usage](#usage) and it carries on by itself.");
         const limit = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'rule' }) as ComputerReport;
         expect(reportText(limit)).toBe('I paused “Visa form”: it reached the spending limit you set. Nothing is lost. Raise the limit or say resume.');
-        const on = computerReportOf({ ...raw, kind: 'carrying_on' }) as ComputerReport;
+        const on = computerReportOf({ ...raw, kind: 'carried_on' }) as ComputerReport;
         expect(reportText(on)).toBe('I’m carrying on with “Visa form”.'.replace('’', "'"));
         for (const one of [paused, limit, on]) expect(reportText(one)).not.toMatch(/\$|\d/);
+    });
+
+    it('names the kinds exactly as Orbit does (carried_on, can_carry_on), and asks Orbit for all of them', () => {
+        expect(computerReportOf({ ...raw, kind: 'can_carry_on' })).toMatchObject({ kind: 'can_carry_on', seq: 1, pausedWhy: null, heldScreen: false });
+        expect(computerReportOf({ ...raw, kind: 'can_carry_on', seq: undefined })).toBeNull();
+        // The old name was never Orbit's: a report under it is not one this game reads
+        expect(computerReportOf({ ...raw, kind: 'carrying_on' })).toBeNull();
+        expect(reportText(computerReportOf({ ...raw, kind: 'can_carry_on' }) as ComputerReport)).toBe('“Visa form” can carry on now. Want me to?');
+    });
+
+    it('a limit reached while the person held the screen: Brick took the screen back, and says the two section 7 lines once, in place of the usual pause line', () => {
+        const month = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', heldScreen: true }) as ComputerReport;
+        expect(month.heldScreen).toBe(true);
+        expect(reportText(month)).toBe("I had to take the screen back and pause “Visa form”: this month's computer time is used up. The job and its files are kept. Tap Ask for more in [Usage](#usage), and I'll ask you before I carry on.");
+        const limit = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'rule', heldScreen: true }) as ComputerReport;
+        expect(reportText(limit)).toBe('I had to take the screen back and pause “Visa form”: it reached the spending limit you set. The job and its files are kept. Raise the limit or say resume.');
+        for (const one of [month, limit]) expect(reportText(one)).not.toMatch(/\$|\d/);
+        // Only true says it: anything else, or the marker on another kind, is the usual line
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', heldScreen: 'yes' })?.heldScreen).toBe(false);
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance' })?.heldScreen).toBe(false);
+        expect(computerReportOf({ ...raw, kind: 'carried_on', heldScreen: true })?.heldScreen).toBe(false);
+        expect(reportText(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', heldScreen: false }) as ComputerReport)).toMatch(/^I paused “Visa form”/);
     });
 });
 

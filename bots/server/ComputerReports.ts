@@ -24,7 +24,7 @@
 
 import type { StepsField } from '../ai/ToolSteps';
 
-export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule' | 'late' | 'paused' | 'carrying_on';
+export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule' | 'late' | 'paused' | 'carried_on' | 'can_carry_on';
 /** Why Orbit paused a job by itself (computers plan, piece 3): the person's month of computer time is used up, or a spending limit they set was reached. */
 export type PausedWhy = 'allowance' | 'rule';
 export type Waiting = 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer';
@@ -80,9 +80,11 @@ export interface ComputerReport {
     holdReleased: boolean;
     /** Only for `paused`: why Orbit paused the job (never the person's own Pause: they just did it). Null for every other kind. */
     pausedWhy: PausedWhy | null;
+    /** Only for `paused`: the person held the job's screen when the limit was reached, so Brick took the screen back to pause it (decisions 23 Nov, section 7). False for every other kind. */
+    heldScreen: boolean;
 }
 
-const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late', 'paused', 'carrying_on'];
+const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late', 'paused', 'carried_on', 'can_carry_on'];
 
 /** The longest an App's name is said, and how many are named before "and N more": a follow-up is one short message. */
 const APP_NAME_MAX = 40;
@@ -165,7 +167,8 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     // A pause Orbit made (the month or the person's own limit) and its carrying on are told once each, by the pause's number: without one they could not be marked for that pause only
     const pausedWhy = kind === 'paused' && (report.pausedWhy === 'allowance' || report.pausedWhy === 'rule') ? (report.pausedWhy as PausedWhy) : null;
     if (kind === 'paused' && (seq === null || pausedWhy === null)) return null;
-    if (kind === 'carrying_on' && seq === null) return null;
+    // Carrying on by itself, and "it can carry on now" (something changed while it waited, so it asks): each told once, by its number, the way Orbit names them
+    if ((kind === 'carried_on' || kind === 'can_carry_on') && seq === null) return null;
     return {
         key: report.key,
         jobId: report.jobId,
@@ -192,6 +195,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         holdReleased: kind === 'late' && report.holdReleased === true,
         through,
         pausedWhy,
+        heldScreen: kind === 'paused' && report.heldScreen === true,
     };
 }
 
@@ -317,12 +321,21 @@ export function reportText(report: ComputerReport): string {
         }
         // A job Orbit paused by itself mid-job (decisions 23 Nov, section 1): said once, with no number and no price; nothing of it is lost and it carries on by itself
         case 'paused':
+            // The person held the screen when the limit was reached: Brick took it back to pause the job, and it never carries on by itself (it asks first), so these two lines are said in place of the usual ones (section 7)
+            if (report.heldScreen) {
+                return report.pausedWhy === 'rule'
+                    ? `I had to take the screen back and pause “${name}”: it reached the spending limit you set. The job and its files are kept. Raise the limit or say resume.`
+                    : `I had to take the screen back and pause “${name}”: this month's computer time is used up. The job and its files are kept. Tap Ask for more in [Usage](#usage), and I'll ask you before I carry on.`;
+            }
             return report.pausedWhy === 'rule'
                 ? `I paused “${name}”: it reached the spending limit you set. Nothing is lost. Raise the limit or say resume.`
                 : `I paused “${name}”: this month's computer time is used up. Nothing is lost. Tap Ask for more in [Usage](#usage) and it carries on by itself.`;
         // And once when it carries on by itself
-        case 'carrying_on':
+        case 'carried_on':
             return `I'm carrying on with “${name}”.`;
+        // More time arrived, but something about the job changed while it waited (or the person held its screen), so it asks: a yes is the person's own resume
+        case 'can_carry_on':
+            return `“${name}” can carry on now. Want me to?`;
         case 'late': {
             // Only what Orbit's record proves: the provider's log confirmed it later, nothing was ever charged for it. Said once, as one message, whatever the number of Apps
             // The count of ALL the distinct Apps Orbit named (the names kept are only the first few): "and N more" is how many were left out, whatever the limit of names kept
