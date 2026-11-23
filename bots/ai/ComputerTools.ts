@@ -514,11 +514,10 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
 }
 
 /** Runs use_computer. Never throws: the model is told in plain words what happened. */
-export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext): Promise<Record<string, unknown>> {
+export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext, turn: number = epochOf(context.startKeys)): Promise<Record<string, unknown>> {
     // "Try again" of the job Orbit named for this turn: that job, under its own title (the bar shows the same job), carried on from where it stopped. Orbit decides again
     let carryOn = args.try_again === true && context.retry ? context.retry : undefined;
-    // The turn this call began under (before anything is awaited): the person writing again ends it
-    const turn = epochOf(context.startKeys);
+    // `turn`: the turn this call began under (taken before anything is awaited). A call that runs itself again carries it along: the person writing again ends it for the whole chain
     // "Try again" with no job named for this turn (GPT seventh note, E): NEVER a fresh paid start. The words name exactly one ended job of theirs: that one carries on (Orbit decides). Otherwise they
     // are asked which, or offered a new job: nothing is sent, and a fresh start comes only from their own tap or yes
     // After such a call in this turn, nothing is started in this turn, however the model words its next call: only the person's next message clears it
@@ -596,7 +595,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     // An ask that is in flight is finished first: the next one then sees how it ended (a start that worked, a start whose outcome is open) and never goes out beside it
     if (earlier?.inflight) {
         await earlier.inflight.catch(() => undefined);
-        return runComputerTool(args, context);
+        // They wrote again while that start was in flight: this call is of the turn that is over and goes nowhere in the newer one
+        if (epochOf(context.startKeys) !== turn) return { started: false, success: false, note: OVERTAKEN_NOTE };
+        return runComputerTool(args, context, turn);
     }
     // Open until the answer says otherwise: a start in flight that a new message of the person cleared would be sent again under another key (a second job)
     const current: StoredStartPayload = { title: job, ...(brief ? { brief } : {}), ...(args.reads_only === true ? { writes: false } : {}), ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}), ...(carryOn ? { continues: carryOn.id } : {}) };
@@ -699,7 +700,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                     leave();
                     // They wrote again while that start was being retired: this ask is over with the turn it was made in (nothing is sent in the newer one)
                     if (epochOf(context.startKeys) !== turn) return { started: false, success: false, note: OVERTAKEN_NOTE };
-                    return runComputerTool(args, context);
+                    return runComputerTool(args, context, turn);
                 }
                 if (gone?.retired === false) {
                     const again = await context.admin.lookUpComputerStart(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), startKey });
@@ -715,9 +716,12 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             // Right before the paid send, after the last await: a `try_again` beside this call may have asked the person (or be about to) since this call began. Nothing goes out in this turn after it
             // (no yield when nothing is pending: the check and the send below follow with no await between them)
             for (let wait = tryAgainSettling(context.startKeys); wait; wait = tryAgainSettling(context.startKeys)) await wait;
-            // The person wrote again during any wait above (the store, the lookup, a pending question): the start belongs to the turn it was asked in and goes nowhere in the newer one. Its open record
-            // STAYS (an open start is kept until its outcome is known); one already sent keeps its reconciliation
-            if (epochOf(context.startKeys) !== turn) return { started: false, success: false, note: OVERTAKEN_NOTE };
+            // The person wrote again during any wait above (the store, the lookup, a pending question): the start belongs to the turn it was asked in and goes nowhere in the newer one. Its record
+            // goes only when this call made it and nothing was sent (an unsent record would otherwise send ITS words for the newer turn's next ask); a key that may have gone out before stays, is looked up, and keeps its reconciliation
+            if (epochOf(context.startKeys) !== turn) {
+                if (!priorSend) await dropKey();
+                return { started: false, success: false, note: OVERTAKEN_NOTE };
+            }
             if (context.startKeys?.has(TRY_AGAIN_ASKED_SLOT)) {
                 if (!priorSend) await dropKey();
                 return { started: false, success: false, note: TRY_AGAIN_ASKED_NOTE };

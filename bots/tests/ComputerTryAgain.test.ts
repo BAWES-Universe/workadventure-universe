@@ -13,7 +13,7 @@ import axios from 'axios';
 import { AdminApiService, COMPUTER_CONTINUES_HEADER, cannotContinueOf } from '../server/AdminApiService';
 import { CANNOT_CONTINUE_NOTE, START_NEW_JOB_LABEL, START_REFUSAL_WORDS, TRY_AGAIN_WORDS, cannotContinue } from '../ai/ComputerTryAgainWords';
 import { AIService } from '../ai/AIService';
-import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, runComputerTool, TRY_AGAIN_ASKED_SLOT, TRY_AGAIN_PENDING_SLOT, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
+import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, OPEN_START_SLOT, runComputerTool, TRY_AGAIN_ASKED_SLOT, TRY_AGAIN_PENDING_SLOT, startKeyFor, type ComputerToolContext, type StartKeyEntry } from '../ai/ComputerTools';
 import { asksToTryAgain, offersTryAgain, retryJobOf, tryAgainNote, type RetryJob } from '../ai/ComputerTryAgain';
 import { jobLine, quotedTitle } from '../ai/JobStatusLine';
 import { CONTROL_WORDS } from '../ai/ComputerControlWords';
@@ -744,7 +744,7 @@ describe('try_again with no job named for this turn', () => {
         // CodeRabbit on 543f5b35, R2-2: a start waiting on the shared store when the person writes again is sent nowhere in the newer turn
         const slowStore = (gate: { promise: Promise<void> }) => ({ expected: () => true, delete: async () => undefined, claim: async (_scope: string, entry: { key: string; at: number; payload?: unknown }) => (await gate.promise, { ...entry, mine: true }) });
 
-        it('a carried-on continuation waiting on the store while the person writes again: nothing is sent, the open record stays, and the newer turn is not marked as dispatched', async () => {
+        it('a carried-on continuation waiting on the store while the person writes again: nothing is sent, and the record that was never sent goes with it (the newer turn is not marked as dispatched)', async () => {
             const admin = heldWorld(Promise.resolve([VISA, TAXI]));
             const gate = deferred<void>();
             const memory = new Map();
@@ -756,11 +756,56 @@ describe('try_again with no job named for this turn', () => {
             const answer = await going;
             expect(answer).toMatchObject({ started: false });
             expect(admin.startComputerJob).not.toHaveBeenCalled();
-            // open starts stay until the outcome is known
-            expect([...memory.values()].some((entry) => entry.open)).toBe(true);
+            expect([...memory.values()].some((entry) => entry.open)).toBe(false);
             // the newer turn's own try_again is not told that a start was dispatched
             const retry = await runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, { startKeys: memory, confirmations: new ConfirmationQueue() }));
             expect(String(retry.note)).not.toMatch(/already sent/);
+        });
+
+        // Opus on c11cf820, 1: an overtaken start that was never sent leaves nothing for the next ask to send
+        it('an overtaken fresh start that was never sent leaves nothing behind: the newer turn\'s DIFFERENT ask sends its own words, never the old ones', async () => {
+            const admin = heldWorld(Promise.resolve([]));
+            const gate = deferred<void>();
+            const memory = new Map();
+            const going = runComputerTool({ job: 'Book a taxi' }, ctx(admin as never, { startKeys: memory, startKeyStore: slowStore(gate) as never }));
+            await settleMicrotasks();
+            forgetSettledStarts(memory);
+            gate.resolve();
+            expect(await going).toMatchObject({ started: false });
+            const quickStore = { expected: () => true, delete: async () => undefined, claim: async (_s: string, entry: { key: string; at: number; payload?: unknown }) => ({ ...entry, mine: true }) };
+            await runComputerTool({ job: 'Book a hotel' }, ctx(admin as never, { startKeys: memory, startKeyStore: quickStore as never }));
+            const titles = admin.startComputerJob.mock.calls.map((call: unknown[]) => (call[2] as { title: string }).title);
+            expect(titles).toEqual(['Book a hotel']);
+        });
+
+        it('a key that MAY have gone out before stays when its ask is overtaken (it is looked up, never dropped), and nothing is sent in the newer turn', async () => {
+            const lookup = deferred<unknown>();
+            const admin = { ...heldWorld(Promise.resolve([])), lookUpComputerStart: vi.fn().mockReturnValue(lookup.promise) };
+            const memory = new Map<string, StartKeyEntry>([[OPEN_START_SLOT, { key: 'my-own-key-0001', at: Date.now() - 1000, open: true, sent: true, payload: { title: 'Book a taxi', writes: false } }]]);
+            const going = runComputerTool({ job: 'Book a taxi' }, ctx(admin as never, { startKeys: memory }));
+            await settleMicrotasks();
+            forgetSettledStarts(memory);
+            lookup.resolve('none');
+            expect(await going).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(memory.get(OPEN_START_SLOT)).toMatchObject({ key: 'my-own-key-0001', open: true });
+        });
+
+        // Opus on c11cf820, 2: a call that waited on an in-flight start keeps the turn it began under
+        it('a call that waited on an in-flight start of the turn that is over sends nothing in the newer turn', async () => {
+            const admin = heldWorld(Promise.resolve([]));
+            const memory = new Map();
+            const hold = deferred<unknown>();
+            (admin as any).startComputerJob = vi.fn().mockReturnValue(hold.promise);
+            const first = runComputerTool({ job: 'Book a taxi' }, ctx(admin as never, { startKeys: memory }));
+            await settleMicrotasks();
+            const second = runComputerTool({ job: 'Book a taxi' }, ctx(admin as never, { startKeys: memory }));
+            await settleMicrotasks();
+            forgetSettledStarts(memory);
+            hold.reject(new Error('down'));
+            await first;
+            expect(await second).toMatchObject({ started: false });
+            expect((admin as any).startComputerJob).toHaveBeenCalledTimes(1);
         });
 
         it('the same for a fresh start; with NO newer message the start goes out as before', async () => {
