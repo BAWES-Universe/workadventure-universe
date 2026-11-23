@@ -484,6 +484,19 @@ describe('stop everything: always asks, naming every job, and ends exactly those
         expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form')]);
     });
 
+    it('every confirmed job ended before the yes: nothing is sent (never a bare stop), and the person hears there is nothing to stop', async () => {
+        const view = viewOf(working(), [inLine('job-taxi', 'Taxi booking')]);
+        const orbit = door(view, { stop: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(STOP_COMPUTER_TOOL);
+        await c.deliver();
+        Object.assign(view, viewOf(null));
+        c.nextMessage();
+        await c.run(STOP_COMPUTER_TOOL);
+        expect(orbit.acted()).toEqual([]);
+        expect(await c.deliver()).toEqual([CONTROL_REFUSALS.noJobs]);
+    });
+
     it('nothing to stop', async () => {
         const c = chat(door(viewOf(null)).admin);
         await c.run(STOP_COMPUTER_TOOL);

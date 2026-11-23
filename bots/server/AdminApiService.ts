@@ -2203,6 +2203,12 @@ export class AdminApiService {
      * yet (a bare 404 or 405).
      */
     async controlComputerJobs(viaBotId: string, userId: string, ask: ComputerControlAsk): Promise<ComputerControlAnswer> {
+        // A stop always names the jobs the person confirmed (GPT's seventh note D2): a bare one would let Orbit end whatever is live when it lands, a job that began after the
+        // question included. With none it is never sent: nothing is stopped, and the person is asked again over the jobs there are now
+        if (ask.action === 'stop' && !(Array.isArray(ask.confirmedJobIds) && ask.confirmedJobIds.length > 0)) {
+            console.warn('[AdminApiService] A stop with no confirmed jobs was not sent');
+            return { ok: false, reason: 'no_confirmed_jobs' };
+        }
         // Orbit's own "could not look the person up" (503 with `retry: true`) did nothing: asked again after one second, then after two, and then it could not be done
         for (let attempt = 0; ; attempt++) {
             const answer = await this.controlOnce(viaBotId, userId, ask);
