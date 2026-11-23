@@ -4,6 +4,7 @@
  * always sees how a turn ended. Only the fields the runner uses are read; anything else is left out.
  */
 import type { RunnerEvent } from './ComputerRunner';
+import { redactSecrets, safeStepLabel } from './redactSecrets';
 
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.slice(0, max) : '');
 /** The end of what was said: for a reply the end is what counts (the marker that says how it ended is the last thing in it). */
@@ -31,9 +32,10 @@ export function runnerEventOf(data: string): RunnerEvent | null {
                 type: 'tool',
                 state,
                 tool: text(body.tool, 80),
-                ...(typeof body.label === 'string' ? { label: text(body.label, 200) } : {}),
+                // A step's label may be a raw command with the job's own key in it: only a description, with nothing secret in it, goes on
+                ...(typeof body.label === 'string' ? { label: text(safeStepLabel(body.label.slice(0, 2000), text(body.tool, 80)), 200) } : {}),
                 ...(count(body.durationMs) !== null ? { durationMs: count(body.durationMs) as number } : {}),
-                ...(typeof body.error === 'string' ? { error: text(body.error, 300) } : {}),
+                ...(typeof body.error === 'string' ? { error: text(redactSecrets(body.error.slice(0, 2000)), 300) } : {}),
             };
         }
         case 'completed': {
@@ -41,7 +43,7 @@ export function runnerEventOf(data: string): RunnerEvent | null {
             return { type: 'completed', outputText: lastOf(body.outputText, 200_000), usage: usage ? { inputTokens: count(usage.inputTokens), outputTokens: count(usage.outputTokens) } : null };
         }
         case 'failed':
-            return { type: 'failed', code: text(body.code, 60) || 'failed', message: text(body.message, 300) };
+            return { type: 'failed', code: text(body.code, 60) || 'failed', message: text(redactSecrets(typeof body.message === 'string' ? body.message.slice(0, 2000) : ''), 300) };
         default:
             return null;
     }

@@ -1,4 +1,8 @@
 import { AdminApiService } from '../server/AdminApiService';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
+import { createComputerModelRelay, RELAY_GUARDS } from '../server/ComputerModelRelay';
 import { describe, expect, it, vi } from 'vitest';
 import {
     RESUME_PROMPT,
@@ -7,9 +11,14 @@ import {
     createComputerRunner,
     endingOf,
     whyOf,
+    continuePrompt,
     jobPrompt,
     outputFolderOf,
+    probeRelay,
+    POOL_BUSY_WHY,
+    RELAY_UNREACHABLE_WHY,
     relayUrlFromEnv,
+    type RelayProbeResult,
     runnerOrbitFor,
     type RunnableJob,
     type RunnerEvent,
@@ -17,6 +26,8 @@ import {
     type TurnOpened,
 } from '../server/ComputerRunner';
 import { readRunnerEvents, runnerEventOf, streamLimits } from '../server/ComputerTurnStream';
+import { createRefusalNotes, SHARED_CALL_SKEW_MS, type CallRow, type SharedCalls } from '../server/ComputerRefusals';
+import { FENCE_LIFE_MS } from '../server/ComputerEvidenceStore';
 
 const JOB: RunnableJob = { jobId: 'job-1', botId: 'brick-1', title: 'Visa form', brief: 'Two people, Kuwait', writes: true, hasTurn: false };
 const RELAY = 'https://bot-server.example.test';
@@ -28,7 +39,7 @@ const stream = (events: RunnerEvent[]): TurnOpened => ({ ok: true, events: (asyn
 
 /** A scripted Orbit: each turn answers with the next script, and `look` says how the job stands each time the runner asks. */
 function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number } | null = () => ({ status: 'running', control: 'brick' })) {
-    const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
+    const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], prepareFacts: [] as Array<{ run?: string } | undefined>, actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
     let renewAnswer: (n: number) => Record<string, unknown> = () => ({ ok: true, renewInSeconds: 240 });
     let handoverFails = 0;
     let prepareAnswer: () => { ok: true } | { ok: false; reason: string } = () => ({ ok: true });
@@ -52,8 +63,9 @@ function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) 
             }
             return body.action === 'renew' ? renewAnswer(seen.actions.filter((a) => a.action === 'renew').length) : { ok: true };
         },
-        prepare: async (_jobId, relay) => {
+        prepare: async (_jobId, relay, extra) => {
             seen.prepares.push(relay);
+            seen.prepareFacts.push(extra);
             return prepareAnswer();
         },
         turn: async (_jobId, input) => {
@@ -71,14 +83,16 @@ function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) 
     return { orbit, seen, setRenew: (fn: typeof renewAnswer) => (renewAnswer = fn), setPrepare: (fn: typeof prepareAnswer) => (prepareAnswer = fn), failHandovers: (n: number) => (handoverFails = n) };
 }
 
-const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY) => {
-    const runner = createComputerRunner({ orbit, relayUrl, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY, refusals?: Parameters<typeof createComputerRunner>[0]['refusals'], runId?: () => string) => {
+    const runner = createComputerRunner({ orbit, relayUrl, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, ...(refusals ? { refusals } : {}), ...(runId ? { runId } : {}) });
     orbit.running = async () => [job];
     await runner.tick();
     await runner.idle();
     return runner;
 };
-const finished = (seen: { actions: Array<Record<string, unknown>> }) => seen.actions.filter((a) => a.action === 'finish');
+/** The finishes sent, as before: the run they were numbered in is read on its own (see `finishedWithRun`) */
+const finished = (seen: { actions: Array<Record<string, unknown>> }) => finishedWithRun(seen).map(({ run: _run, ...rest }) => rest);
+const finishedWithRun = (seen: { actions: Array<Record<string, unknown>> }) => seen.actions.filter((a) => a.action === 'finish');
 
 describe('how the agent says its turn ended', () => {
     it('reads done, failed, and the last word when it says more than one', () => {
@@ -131,13 +145,13 @@ describe('a job that runs', () => {
     it('ends failed when the agent says it cannot go on', async () => {
         const { orbit, seen } = fakeOrbit([done('The site is down. [[failed]]')]);
         await runJob(orbit);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', why: 'The site is down.' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', why: 'The site is down.' }]);
     });
 
     it('says nothing about why when the agent gave no sentence before its marker, and never on a job that finished', async () => {
         const { orbit, seen } = fakeOrbit([done('[[failed]]')]);
         await runJob(orbit);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
     });
 
     it('reports a step for each tool that finished, with its label, and no more than what the agent gave', async () => {
@@ -174,12 +188,259 @@ describe('a job that runs', () => {
         const a = fakeOrbit([failing, failing, failing]);
         await runJob(a.orbit);
         expect(a.seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
-        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
 
         const b = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxTurns + 5 }, () => done('still on it')));
         await runJob(b.orbit);
         expect(b.seen.turns).toHaveLength(RUNNER_GUARDS.maxTurns);
-        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+    });
+
+    it('ends as failed with the agent’s cause when its turns come back with no words, which is what a job can ask for', async () => {
+        // e.g. a brief that says never to reply in text: every turn completes, with nothing said
+        const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => done('')));
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+    });
+
+    it('is ours only when every bad turn really failed: one silent turn among failed ones makes it the agent’s', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        const mixed = fakeOrbit([failing(), done(''), failing()]);
+        await runJob(mixed.orbit);
+        expect(finished(mixed.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+
+        // a good turn in between starts the count again, and the streak that follows is judged on its own
+        const again = fakeOrbit([done(''), done('Working on it'), failing(), failing(), failing()]);
+        await runJob(again.orbit);
+        expect(finished(again.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [3, 4, 5] }]);
+    });
+
+    it('never calls a turn ours when the relay refused a call of the job for the person’s allowance or a rule during it', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'insufficient_quota', message: 'no' }];
+        // the turn failed (Hermes only sees an error), but the relay says why
+        const a = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(a.orbit, JOB, RELAY, { sawSince: () => true });
+        expect(a.seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+
+        // a turn that said something after a call was refused went on: it is no bad turn, so a job is not ended for refusals it got round
+        const b = fakeOrbit([done('One call was refused, so I used another way'), done('[[done]]')]);
+        await runJob(b.orbit, JOB, RELAY, { sawSince: () => true });
+        expect(b.seen.turns).toHaveLength(2);
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+
+        // a refusal noted before the turn began belongs to an earlier turn: it is asked from the turn's own start
+        const since: unknown[] = [];
+        const c = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(c.orbit, JOB, RELAY, { sawSince: (_job, at) => (since.push(at), false) });
+        expect(since).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(c.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+    });
+
+    it('keeps the refusal window of a turn across a reconnect that could not be made, with the real refusal notes', async () => {
+        let t = 0;
+        const clock = () => ++t;
+        const notes = createRefusalNotes(clock);
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        const { orbit, seen } = fakeOrbit([
+            // the turn is refused for the person's allowance, then its stream breaks
+            () => (notes.note(JOB.jobId), [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'stream_broke', message: 'broke' }]),
+            // the reconnect cannot be made, so the same turn is read again on the next look, and ends failed
+            { ok: false, reason: 'failed' },
+            () => (notes.called(JOB.jobId), failing()),
+            () => (notes.called(JOB.jobId), failing()),
+            () => (notes.called(JOB.jobId), failing()),
+        ]);
+        const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+        orbit.running = async () => [JOB];
+        await runner.tick();
+        await runner.idle();
+        expect(seen.turns).toHaveLength(3);
+        expect(seen.streams).toBe(2);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+    });
+
+    it('does not carry a refusal into the next turn: a turn that got round it is a good turn, and the failures after it are ours', async () => {
+        let t = 0;
+        const clock = () => ++t;
+        const notes = createRefusalNotes(clock);
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        const { orbit, seen } = fakeOrbit([() => (notes.note(JOB.jobId), done('One call was refused, trying another way')), failing(), failing(), failing()]);
+        const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+        orbit.running = async () => [JOB];
+        await runner.tick();
+        await runner.idle();
+        expect(seen.turns).toHaveLength(1 + RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2, 3, 4] }]);
+    });
+
+    describe('a call whose body the relay cannot read, through the real relay and the real notes', () => {
+        const turnWith = (call: () => Promise<unknown>): (() => TurnOpened) => () => ({
+            ok: true,
+            events: (async function* () {
+                await call();
+                yield { type: 'created', id: 'r', sessionId: 's' } as RunnerEvent;
+                yield { type: 'failed', code: 'model_error', message: 'The request is too large.' } as RunnerEvent;
+            })(),
+        });
+        /** The relay and the runner on one server, or (`remote`) the relay on ANOTHER server whose writes to the shared record work (`ok`) or all fail (`down`). */
+        const run = async (call: (base: string) => Promise<{ status: number } | undefined | void>, remote?: 'ok' | 'down') => {
+            const rows: CallRow[] = [];
+            const statuses: number[] = [];
+            const called = new Map<string, number>();
+            const storeFor = (id: string, down: boolean) => ({
+                noteCalled: async (_job: string, at: number) => {
+                    if (down) throw new Error('write lost');
+                    called.set(id, Math.max(at, called.get(id) ?? 0));
+                },
+                noteUnrecorded: async () => {
+                    if (down) throw new Error('write lost');
+                },
+                lastCalledByOthers: async () => {
+                    const others = [...called].filter(([server]) => server !== id).map(([, at]) => at);
+                    return others.length > 0 ? Math.max(...others) : null;
+                },
+            });
+            const sink = async (_bot: string, _job: string, batch: CallRow[]) => (rows.push(...batch), true);
+            const notes = createRefusalNotes(Date.now, remote ? { sink, shared: storeFor('A', false), runsHere: () => true, retryMs: [0] } : { sink, retryMs: [0] });
+            const relayNotes = remote ? createRefusalNotes(Date.now, { sink, shared: storeFor('B', remote === 'down'), runsHere: () => false, retryMs: [0] }) : notes;
+            const app = express();
+            app.use(createComputerModelRelay({ orbit: { identify: async () => ({ ok: true, jobId: JOB.jobId, botId: JOB.botId }), authorize: async () => ({ ok: true }), settle: async () => ({ ok: true }) } as never, routeFor: async () => null, refusals: relayNotes }));
+            const server: Server = await new Promise((resolve) => { const started = app.listen(0, () => resolve(started)); });
+            const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+            try {
+                const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => turnWith(async () => { const answered = await call(base); if (answered) statuses.push(answered.status); })));
+                const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+                orbit.running = async () => [JOB];
+                await runner.tick();
+                await runner.idle();
+                await notes.flush(JOB.jobId);
+                await relayNotes.flush(JOB.jobId);
+                return { rows, seen, statuses };
+            } finally {
+                server.closeAllConnections?.();
+                await new Promise<void>((resolve) => server.close(() => resolve()));
+            }
+        };
+        const post = (body: string) => (base: string) => fetch(`${base}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer cjt_${'a'.repeat(43)}` }, body });
+
+        it('writes no no_call marker for a turn whose only call was too large, nor for one that could not be read', async () => {
+            for (const body of [JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(RELAY_GUARDS.maxBodyBytes + 1024) }] }), '{"messages": [']) {
+                const { rows, seen } = await run(post(body));
+                expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+                expect(rows.filter((row) => row.callId.startsWith('no_call_'))).toEqual([]);
+                expect(rows.filter((row) => row.reason === 'relay_down')).toEqual([]);
+            }
+        }, 30_000);
+
+        it('with the relay on ANOTHER server: a call it answers 413 or 400 has its arrival in the shared record, so the runner writes no no_call; when the arrival cannot be recorded the call is refused (503) as a fault of ours, never answered 400 behind a missing note', async () => {
+            const body = '{"messages": [';
+            const recorded = await run(post(body), 'ok');
+            expect(recorded.statuses).toEqual([400, 400, 400]);
+            expect(recorded.rows.filter((row) => row.callId.startsWith('no_call_'))).toEqual([]);
+            const lost = await run(post(body), 'down');
+            // never a 400 or 413 whose arrival the runner cannot see: the relay refuses (ours), so a no_call of ours is no false statement
+            expect(lost.statuses.every((status) => status === 503)).toBe(true);
+            expect(lost.statuses).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+            expect(lost.rows.filter((row) => row.callId.startsWith('no_call_')).length).toBeGreaterThan(0);
+        }, 30_000);
+
+        it('still writes it for a turn in which no call reached the relay at all', async () => {
+            const { rows } = await run(async () => undefined);
+            expect(rows.filter((row) => row.callId.startsWith('no_call_') && row.kind === 'fault' && row.reason === 'relay_down')).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        });
+    });
+
+    describe('a fault of ours that Hermes hands back as a finished turn', () => {
+        const rig = (scripts: Array<(input: string) => RunnerEvent[]>) => {
+            let t = 0;
+            const clock = () => ++t;
+            const notes = createRefusalNotes(clock);
+            const { orbit, seen } = fakeOrbit(scripts.map((script) => (input: string) => script(input)));
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+            orbit.running = async () => [JOB];
+            return { notes, seen, run: async () => { await runner.tick(); await runner.idle(); } };
+        };
+
+        it('ends the job as failed and ours when every turn completed with the relay’s error as its words', async () => {
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.fault(JOB.jobId), done('Error: the service is busy (503)'))));
+            await run();
+            expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        });
+
+        it('ends the job as failed and ours when every turn completed with no words after a provider 500', async () => {
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.fault(JOB.jobId), done(''))));
+            await run();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        });
+
+        it('does not charge the person for a turn that did its work: a fault a later call made good is a good turn', async () => {
+            const { notes, seen, run } = rig([
+                () => (notes.fault(JOB.jobId), notes.answered(JOB.jobId), done('Filled the form after a retry')),
+                () => (notes.fault(JOB.jobId), notes.answered(JOB.jobId), done('[[done]]')),
+            ]);
+            await run();
+            expect(seen.turns).toHaveLength(2);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('keeps a silent turn the agent’s own when no fault of ours came in during it', async () => {
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.called(JOB.jobId), done(''))));
+            await run();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('does not read a fault from an earlier turn into the turn that followed it', async () => {
+            const { notes, seen, run } = rig([
+                () => (notes.fault(JOB.jobId), done('Error: busy')),
+                () => done('Carrying on with the form'),
+                () => done('[[done]]'),
+            ]);
+            await run();
+            expect(seen.turns).toHaveLength(3);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('leaves it to the person’s allowance when a refusal of theirs came in during the same turn', async () => {
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.note(JOB.jobId), notes.fault(JOB.jobId), done('Error'))));
+            await run();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('ends as the agent’s when each turn ended on a person’s own provider failing (their key out of credit, their endpoint failing): the relay notes nothing of ours', async () => {
+            const { notes, seen, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.called(JOB.jobId), done(''))));
+            await run();
+            expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('ends as the agent’s when turns failed on a person’s own provider (noted on their side), never as ours', async () => {
+            const failing = (notes: ReturnType<typeof createRefusalNotes>) => () => (notes.note(JOB.jobId), [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'upstream_error', message: 'The AI did not answer.' }] as RunnerEvent[]);
+            let t = 0;
+            const clock = () => ++t;
+            const notes = createRefusalNotes(clock);
+            const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => failing(notes)));
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await runner.idle();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('still takes the agent’s own ending from a turn, and a turn that completed ahead of a done marker is done', async () => {
+            const { notes, seen, run } = rig([() => (notes.fault(JOB.jobId), notes.answered(JOB.jobId), done('Finished [[done]]'))]);
+            await run();
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
+    it('reads a turn that is gone on its first open as a failed turn, not as the agent saying nothing', async () => {
+        const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => ({ ok: false as const, reason: 'no_turn' })));
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
     });
 
     it('does not count the time it waits for a machine as turns: a machine that is slow to come back never ends the job before it ran', async () => {
@@ -192,12 +453,14 @@ describe('a job that runs', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
-    it('ends as failed, and says why in the log, when there is no relay address to give the machine', async () => {
+    // GPT's sixth answer, finding 3: a server with no relay cannot run the job, and must not take it from a server that can, nor end it
+    it('leaves the job alone, and says why in the log, when there is no relay address to give the machine', async () => {
         const { orbit, seen } = fakeOrbit([]);
         await runJob(orbit, JOB, null);
         expect(seen.prepares).toEqual([]);
         expect(seen.turns).toEqual([]);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(seen)).toEqual([]);
+        expect(seen.actions).toEqual([]);
         expect(quiet.error).toHaveBeenCalledWith(expect.stringContaining('COMPUTER_RELAY_URL'));
     });
 
@@ -299,6 +562,16 @@ describe('a stop or a failed start that must not cost the job its words', () => 
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
+    it('a job that carries on an ended one ("try again") starts with the words of a new try, and sends those again when its first turn could not be taken', async () => {
+        const carried: RunnableJob = { ...JOB, jobId: 'job-2', continuesJobId: 'job-1' };
+        const { orbit, seen } = fakeOrbit([{ ok: false, reason: 'failed' }, done('[[done]]')]);
+        await runJob(orbit, carried);
+        const first = continuePrompt({ ...carried, continuesJobId: 'job-1' });
+        expect(seen.turns).toEqual([first, first]);
+        expect(first).not.toBe(jobPrompt(carried));
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
     it('does not send the job’s words again when the turn was taken and only the reconnection failed: it reconnects', async () => {
         const broke: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'text', text: 'Half ' }, { type: 'failed', code: 'stream_broke', message: 'broke' }];
         // the first turn is taken and breaks; the reconnect cannot be made (look); the next try must reconnect, not send the job again
@@ -330,6 +603,25 @@ describe('the person’s part', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
+    it('CodeRabbit: a worker stopped while it waits to ask for the handover again sends no handover after that (the retry is not sent, nothing is ended)', async () => {
+        const { orbit, seen, failHandovers } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
+        failHandovers(RUNNER_GUARDS.maxBadTurns - 1);
+        let runner!: ReturnType<typeof createComputerRunner>;
+        // the wait between the first try and the retry is where the worker is stopped
+        runner = createComputerRunner({
+            orbit,
+            relayUrl: RELAY,
+            sleep: async () => runner.stop(),
+            log: quiet,
+            timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] },
+        });
+        orbit.running = async () => [JOB];
+        await runner.tick();
+        await runner.idle();
+        expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(1);
+        expect(finished(seen)).toEqual([]);
+    });
+
     it('does not count a handover Orbit answered with a refusal as made', async () => {
         const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
         const original = orbit.action;
@@ -352,7 +644,35 @@ describe('the person’s part', () => {
         failHandovers(50);
         await runJob(orbit);
         expect(seen.turns).toHaveLength(1);
-        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+    });
+
+    it('ends the job as the agent’s when Orbit answered the handover with a no every time, and as ours only when it could not be reached', async () => {
+        const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+        const original = orbit.action;
+        orbit.action = async (botId, jobId, body) => (body.action === 'handover' ? (await original(botId, jobId, body), { ok: false, reason: 'not_running' }) : original(botId, jobId, body));
+        await runJob(orbit);
+        expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+    });
+
+    it('reads a handover for a job Orbit no longer has (404) as a no, but a request of ours that does not fit (400), a key it does not accept (401), its own failure (500) and an Orbit that is down as ours', async () => {
+        const run = async (error: Error) => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            const original = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'handover') throw error;
+                return original(botId, jobId, body);
+            };
+            await runJob(orbit);
+            return finished(seen);
+        };
+        const status = (code: number) => Object.assign(new Error(`status ${code}`), { response: { status: code } });
+        expect(await run(status(404))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        expect(await run(status(400))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(await run(status(401))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(await run(status(500))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
+        expect(await run(new Error('connect ECONNREFUSED'))).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
     });
 
     it('hands over with exactly what is ready to be put in, waits for the person, and carries on with a look at the page', async () => {
@@ -361,7 +681,8 @@ describe('the person’s part', () => {
         const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }, { status: 'running', control: 'brick' }];
         const { orbit, seen } = fakeOrbit([done('[[handover details | Your passport number | visa.example.com]]'), done('[[done]]')], () => states[Math.min(looks++, states.length - 1)]);
         await runJob(orbit);
-        expect(seen.actions).toContainEqual({ action: 'handover', waitingFor: 'details', ready: { what: 'Your passport number', where: 'visa.example.com' } });
+        // the handover names the provider turn it comes from (the one its stream opened with), so Orbit lands it only while the job is still on that turn
+        expect(seen.actions).toContainEqual({ action: 'handover', waitingFor: 'details', ready: { what: 'Your passport number', where: 'visa.example.com' }, responseId: 'r' });
         expect(seen.turns[1]).toBe(RESUME_PROMPT);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
@@ -401,6 +722,22 @@ describe('a turn that is lost, or room that is gone', () => {
         expect(seen.turns).toHaveLength(1);
         expect(seen.streams).toBe(1);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
+    it('ends as failed with our cause when the stream keeps breaking and cannot be read again, so the person is not charged for it', async () => {
+        const broke = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'stream_broke', message: 'broke' }];
+        // every turn breaks, and each of its two reconnects breaks too
+        const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns * 3 }, () => broke()));
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+    });
+
+    it('never sends a cause with a job that is done', async () => {
+        const { orbit, seen } = fakeOrbit([done('All set. [[done]]')]);
+        await runJob(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(finished(seen)[0]).not.toHaveProperty('cause');
     });
 
     it('reads the agent’s own turn when it says it is already working, instead of starting another', async () => {
@@ -571,6 +908,87 @@ describe('a turn that is lost, or room that is gone', () => {
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done', generation: 2 }]);
         });
 
+        describe('with the cause of a failure (#2101) and the generation of a turn (#2078) together', () => {
+            const status = (code: number) => Object.assign(new Error(`status ${code}`), { response: { status: code } });
+            const failing: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+
+            it('sends a failure with its cause AND the generation of the turn it ends: the agent’s own words, turns of ours, a handover Orbit said no to, and one it could not take; with no relay it ends nothing', async () => {
+                const at = () => ({ status: 'running', control: 'brick', generation: 4 });
+                const agent = fakeOrbit([done('The site is down. [[failed]]')], at);
+                await runJob(agent.orbit);
+                expect(finished(agent.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', why: 'The site is down.', generation: 4 }]);
+
+                const ours = fakeOrbit([failing, failing, failing], at);
+                await runJob(ours.orbit);
+                expect(finished(ours.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', generation: 4, turns: [1, 2, 3] }]);
+
+                for (const [error, cause] of [[status(404), 'agent'], [status(500), 'ours']] as const) {
+                    const handover = fakeOrbit([done('[[handover signin]]')], at);
+                    const original = handover.orbit.action;
+                    handover.orbit.action = async (botId, jobId, body) => {
+                        if (body.action === 'handover') throw error;
+                        return original(botId, jobId, body);
+                    };
+                    await runJob(handover.orbit);
+                    expect(finished(handover.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause, generation: 4 }]);
+                }
+
+                // no relay: the job is left for a server that can run it, so nothing is ended at all (finding 3)
+                const none = fakeOrbit([], at);
+                await runJob(none.orbit, JOB, null);
+                expect(finished(none.seen)).toEqual([]);
+            });
+
+            it('a failure refused as stale ends nothing, and the job is read again: the next failure names its cause with the generation it has now', async () => {
+                let generation = 1;
+                // The refusal says the job changed hands: the streak of the three failed turns is cleared, so three new failed turns are needed to end it
+                const { orbit, seen } = fakeOrbit([failing, failing, failing, failing, failing, failing], () => ({ status: 'running', control: 'brick', generation }));
+                const original = orbit.action;
+                let refused = false;
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish' && !refused) {
+                        refused = true;
+                        seen.actions.push(body);
+                        generation = 2;
+                        throw stale(2);
+                    }
+                    return original(botId, jobId, body);
+                };
+                await runJob(orbit);
+                expect(finished(seen)).toEqual([
+                    { action: 'finish', outcome: 'failed', cause: 'ours', generation: 1, turns: [1, 2, 3] },
+                    { action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [4, 5, 6] },
+                ]);
+            });
+
+            it('the agent’s own failure refused as stale is read again, and a new turn that says it is done ends done with the new generation and no cause', async () => {
+                let generation = 1;
+                const { orbit, seen } = fakeOrbit([done('Stuck. [[failed]]'), done('All fine. [[done]]')], () => ({ status: 'running', control: 'brick', generation }));
+                const original = orbit.action;
+                let refused = false;
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish' && !refused) {
+                        refused = true;
+                        seen.actions.push(body);
+                        generation = 2;
+                        throw stale(2);
+                    }
+                    return original(botId, jobId, body);
+                };
+                await runJob(orbit);
+                expect(finished(seen)).toEqual([
+                    { action: 'finish', outcome: 'failed', cause: 'agent', why: 'Stuck.', generation: 1 },
+                    { action: 'finish', outcome: 'done', generation: 2 },
+                ]);
+            });
+
+            it('a refusal the relay saw still makes a streak of failed turns the agent’s, on a job whose turns carry a generation', async () => {
+                const { orbit, seen } = fakeOrbit([failing, failing, failing], () => ({ status: 'running', control: 'brick', generation: 9 }));
+                await runJob(orbit, JOB, RELAY, { sawSince: () => true });
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', generation: 9, turns: [1, 2, 3] }]);
+            });
+        });
+
         it('a renewal refused as stale stops the old turn and reads the job again', async () => {
             let generation = 1;
             const { orbit, seen } = fakeOrbit([done('old'), done('Done. [[done]]')], () => ({ status: 'running', control: 'brick', generation }));
@@ -678,6 +1096,27 @@ describe('a turn that is lost, or room that is gone', () => {
                 expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
             }
         });
+
+        it('getComputerJob reads the finish Orbit holds (`finishPending`) and carries it to the runner; none (null, missing, or not an end) is no end at all', async () => {
+            const service = Object.create(AdminApiService.prototype) as { getComputerJob: AdminApiService['getComputerJob']; brickCall: unknown };
+            const answer = (job: Record<string, unknown>) => {
+                service.brickCall = vi.fn(async () => ({ data: { job: { id: 'j', status: 'running', control: 'brick', ...job } } }));
+            };
+            answer({ generation: 4, finishPending: { outcome: 'failed', cause: 'ours', why: 'Busy.', turns: [3, 'x', -1, 2.5, 4], run: 'run9', generation: 2, at: '2026-11-22T10:00:00Z' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed', cause: 'ours', why: 'Busy.', turns: [3, 4], run: 'run9', generation: 2 } });
+            answer({ finishPending: { outcome: 'done' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', finishPending: { outcome: 'done' } });
+            // the rest of it is read only when it is well formed
+            answer({ finishPending: { outcome: 'failed', cause: 'them', why: '', turns: 'x', run: 7, generation: -1 } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', finishPending: { outcome: 'failed' } });
+            for (const bad of [null, undefined, 'failed', 7, [], {}, { outcome: 'maybe' }, { outcome: null }]) {
+                answer({ finishPending: bad });
+                expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
+            }
+            // and the runner's own Orbit hands it on
+            const admin = { computerRunningJobs: vi.fn(), getComputerJob: vi.fn(async () => ({ id: 'j', status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed' as const, cause: 'ours' as const } })), computerJobAction: vi.fn() };
+            expect(await runnerOrbitFor(admin as never).job('b', 'j')).toEqual({ status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed', cause: 'ours' } });
+        });
     });
 
     it('stops the agent and ends nothing itself when Orbit says the room is gone', async () => {
@@ -697,7 +1136,7 @@ describe('a turn that is lost, or room that is gone', () => {
         await runJob(a.orbit);
         expect(a.seen.prepares).toHaveLength(3);
         expect(a.seen.turns).toEqual([]);
-        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours' }]);
 
         let looks = 0;
         const b = fakeOrbit([done('[[done]]')]);
@@ -849,7 +1288,7 @@ describe('the bot server’s calls to Orbit', () => {
             computerRunningJobs: vi.fn(async () => [JOB]),
             getComputerJob: vi.fn(async () => ({ id: 'job-1', status: 'running', control: 'brick' })),
             computerJobAction: vi.fn(async () => ({})),
-            computerBroker: vi.fn(async (_id: string, step: string) => (step === 'prepare' ? { status: 409, data: { ok: false, reason: 'person_has_it' } } : { status: 200, data: {} })),
+            computerBroker: vi.fn(async (_id: string, step: string, _body?: unknown) => (step === 'prepare' ? { status: 409, data: { ok: false, reason: 'person_has_it' } } : { status: 200, data: {} })),
             computerOpenTurn: vi.fn(async (_id: string, step: string) =>
                 step === 'turn'
                     ? { ok: false as const, status: 409, reason: 'busy', responseId: 'r9' }
@@ -868,6 +1307,14 @@ describe('the bot server’s calls to Orbit', () => {
         // a server error is "failed", never a reason of Orbit's own
         admin.computerBroker.mockResolvedValueOnce({ status: 502, data: { ok: false, reason: 'failed' } });
         expect(await orbit.prepare('j', RELAY)).toEqual({ ok: false, reason: 'failed' });
+        // the run goes with the address, and nothing else is added
+        admin.computerBroker.mockClear();
+        await orbit.prepare('j', RELAY);
+        await orbit.prepare('j', RELAY, { run: 'run1' });
+        expect(admin.computerBroker.mock.calls.map((call) => [call[1], call[2]])).toEqual([
+            ['prepare', { relay: RELAY }],
+            ['prepare', { relay: RELAY, run: 'run1' }],
+        ]);
     });
 
     it('reads every page of the running jobs, and stops when a page gives no way forward', async () => {
@@ -931,6 +1378,49 @@ describe('the bot server’s calls to Orbit', () => {
 });
 
 describe('whyOf: the one sentence the agent gave for why it could not go on', () => {
+    it('redacts the whole sentence before it is cut to its length: a cut through an assignment must not leave its value showing', () => {
+        const words = `PASSWORD=hunter2 ${'x '.repeat(144)}tail [[failed]]`;
+        const why = whyOf(words) ?? '';
+        expect(why).not.toContain('hunter2');
+        expect(why.length).toBeLessThanOrEqual(300);
+        expect(why.endsWith('tail')).toBe(true);
+        // the same when the value is a key by its shape, or a header
+        const key = `Authorization: Bearer ${'k'.repeat(24)}1 ${'y '.repeat(150)}end [[failed]]`;
+        expect(whyOf(key)).not.toMatch(/k{8}/);
+    });
+
+    it('redacts the text BEFORE it is split into sentences: a stop or a line break inside a quoted secret value is no end of a sentence, and no fragment of the value stands as the reason', () => {
+        for (const words of [
+            'The login failed with PASSWORD="hunter. Two3 secret" [[failed]]',
+            'The login failed with PASSWORD="hunter.\nTwo3 secret" [[failed]]',
+            "Tried it. The command export API_TOKEN='abc! Zed9 hidden' did not work [[failed]]",
+        ]) {
+            const why = whyOf(words) ?? '';
+            expect(why, words).not.toMatch(/Two3|secret|Zed9|hidden'/);
+            expect(why, words).toContain('[hidden]');
+        }
+        expect(whyOf('The login failed with PASSWORD="hunter. Two3 secret" [[failed]]')).toBe('The login failed with PASSWORD=[hidden]');
+        // the limit is on the redacted result
+        const long = whyOf(`${'word '.repeat(100)}PASSWORD="a. B ${'c '.repeat(200)}" ${'tail '.repeat(100)}[[failed]]`) ?? '';
+        expect(long.length).toBeLessThanOrEqual(300);
+        expect(long).not.toMatch(/PASSWORD="a/);
+    });
+
+    it('redacts a value that has a marker written inside it BEFORE the markers are taken out, so no half of the value is left standing', () => {
+        for (const words of [
+            'PASSWORD=[[note]]demo-value [[failed]]',
+            'The step used PASSWORD=[[note]]demo-value [[failed]]',
+            'Ran export API_TOKEN=[[x]]abc123def456 and then it stopped. [[failed]]',
+            'Tried. The header was Authorization: Bearer [[a]]zz9yy8xx7ww6 and it failed [[failed]]',
+        ]) {
+            const why = whyOf(words) ?? '';
+            expect(why, words).not.toMatch(/demo-value|abc123def456|zz9yy8xx7ww6|\*\*\*REDACTED/);
+            expect(why, words).toContain('[hidden]');
+        }
+        // markers that stand alone are still taken out
+        expect(whyOf('Tried. [[done]] Then the site is down [[note]] again. [[failed]]')).toBe('Then the site is down again.');
+    });
+
     it('is the last sentence before the failed marker', () => {
         expect(whyOf('I opened the form. The site stopped me at the passport upload and kept showing an error. [[failed]]')).toBe('The site stopped me at the passport upload and kept showing an error.');
         expect(whyOf('First line\nThe site is down [[failed]]')).toBe('The site is down');
@@ -951,5 +1441,2124 @@ describe('whyOf: the one sentence the agent gave for why it could not go on', ()
     it('is cut to the last 300 characters, so a runaway reply is not sent whole', () => {
         const long = whyOf(`${'word '.repeat(200)}[[failed]]`);
         expect(long && long.length).toBeLessThanOrEqual(300);
+    });
+});
+
+describe('which turns of a failed streak are named, and whose the ending is, from the relay’s call record', () => {
+    const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+
+    it('names the turns the streak was made of, and what the relay recorded for the job reaches Orbit before the finish does', async () => {
+        const order: string[] = [];
+        const { orbit, seen } = fakeOrbit([done('Working on it'), failing(), failing(), failing()]);
+        const original = orbit.action;
+        orbit.action = async (botId, jobId, body) => {
+            if (body.action === 'finish') order.push('finish');
+            return original(botId, jobId, body);
+        };
+        await runJob(orbit, JOB, RELAY, {
+            sawSince: () => false,
+            flush: async () => {
+                order.push('flush');
+                return true;
+            },
+        });
+        // the good turn started the count again: the streak is turns 2, 3 and 4
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2, 3, 4] }]);
+        expect(order).toEqual(['flush', 'finish']);
+    });
+
+    it('does not name turns for a failure that was no streak (the agent’s own words, no relay), and still sends the record first', async () => {
+        const flushed: string[] = [];
+        const a = fakeOrbit([done('Stuck. [[failed]]')]);
+        await runJob(a.orbit, JOB, RELAY, { sawSince: () => false, flush: async (jobId) => (flushed.push(jobId), true) });
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', why: 'Stuck.' }]);
+        expect(flushed).toEqual([JOB.jobId]);
+        // a job that finishes well has no use for the record
+        flushed.length = 0;
+        const b = fakeOrbit([done('All fine. [[done]]')]);
+        await runJob(b.orbit, JOB, RELAY, { sawSince: () => false, flush: async (jobId) => (flushed.push(jobId), true) });
+        expect(flushed).toEqual([]);
+    });
+
+    it('ends the job whatever happens to the record: a flush that throws or never says yes does not keep a job from ending', async () => {
+        const a = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(a.orbit, JOB, RELAY, { sawSince: () => false, flush: () => Promise.reject(new Error('orbit is down')) });
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        const b = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(b.orbit, JOB, RELAY, { sawSince: () => false, flush: async () => false });
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+    });
+
+    it('numbers a turn when it begins, tells the relay, and keeps the number while the same turn is read again after a reconnect', async () => {
+        const told: number[] = [];
+        const { orbit } = fakeOrbit([done('one'), done('two'), done('[[done]]')]);
+        await runJob(orbit, JOB, RELAY, { sawSince: () => false, turn: (_job, n) => void told.push(n) });
+        expect(Array.from(new Set(told))).toEqual([1, 2, 3]);
+    });
+
+    it('is ours when a bad turn of the streak had a confirmed fault, even after a silent one: silent first, then two documented failures on our key', async () => {
+        // a fake that answers by the turn the runner said it is on, so it gives the same answer however often it is asked
+        let turnNo = 0;
+        // turn 1 says nothing; turns 2 and 3 ended on a fault of ours that the relay recorded as confirmed (our key refused)
+        const refusals = {
+            sawSince: () => false,
+            turn: (_job: string, n: number) => void (turnNo = n),
+            endedOnFault: () => turnNo > 1,
+            confirmedSince: () => turnNo > 1,
+        };
+        const { orbit, seen } = fakeOrbit([done(''), done('The model said no'), done('The model said no')]);
+        await runJob(orbit, JOB, RELAY, refusals);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+    });
+
+    it('is the agent’s when a confirmed fault of the streak was recovered in its own turn (a call answered after it) and the turns then said nothing', async () => {
+        let t = 0;
+        const clock = () => ++t;
+        const confirmedFault = (notes: ReturnType<typeof createRefusalNotes>) =>
+            notes.record('bot', JOB.jobId, { callId: `c${t}`, kind: 'fault', reason: 'provider_key_ours', source: 'universe-ai', route: 'r', providerStatus: 401 });
+        const silentTurn = (notes: ReturnType<typeof createRefusalNotes>, recovered: boolean) => () => {
+            confirmedFault(notes);
+            if (recovered) notes.answered(JOB.jobId);
+            return [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'completed', outputText: '', usage: null }] as RunnerEvent[];
+        };
+        for (const [recovered, cause] of [[true, 'agent'], [false, 'ours']] as const) {
+            const notes = createRefusalNotes(clock);
+            const { orbit, seen } = fakeOrbit(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => silentTurn(notes, recovered)));
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await runner.idle();
+            expect(finished(seen), `recovered ${recovered}`).toEqual([{ action: 'finish', outcome: 'failed', cause, turns: [1, 2, 3] }]);
+        }
+    });
+
+    it('stays the agent’s for a silent turn and unresolved faults only (nothing confirmed), and for a streak the person’s allowance or a rule stopped', async () => {
+        let turnNo = 0;
+        const unresolved = { sawSince: () => false, turn: (_job: string, n: number) => void (turnNo = n), endedOnFault: () => turnNo > 1, confirmedSince: () => false };
+        const a = fakeOrbit([done(''), done('The model did not answer'), done('The model did not answer')]);
+        await runJob(a.orbit, JOB, RELAY, unresolved);
+        expect(finished(a.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+
+        // a spending rule or the allowance stops the job as the person's, even when a fault was confirmed in a turn of its own
+        const b = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(b.orbit, JOB, RELAY, { sawSince: () => true, confirmedSince: () => false });
+        expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+    });
+
+    it('names the run its turns were numbered in, so a restart that numbers turns from 1 again is never read as the same turns', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        const told: Array<[number, string | undefined]> = [];
+        const refusals = { sawSince: () => false, turn: (_jobId: string, turn: number, run?: string) => void told.push([turn, run]) };
+        // The first run of the bot server on the job...
+        const first = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(first.orbit, JOB, RELAY, refusals, () => 'run-first');
+        // ...and after a restart a second one takes the job up again: its turns are numbered from 1 again, in a run of its own
+        const second = fakeOrbit([failing(), failing(), failing()]);
+        await runJob(second.orbit, JOB, RELAY, refusals, () => 'run-second');
+        expect(finishedWithRun(first.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3], run: 'run-first' }]);
+        expect(finishedWithRun(second.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3], run: 'run-second' }]);
+        // The relay is told the run with each turn, so the rows of its calls carry it
+        expect(told).toEqual([[1, 'run-first'], [2, 'run-first'], [3, 'run-first'], [1, 'run-second'], [2, 'run-second'], [3, 'run-second']]);
+    });
+
+    it('gives each run of a job a run of its own when none is named: two runs never share one', async () => {
+        const runs = new Set<string | undefined>();
+        const refusals = { sawSince: () => false, turn: (_jobId: string, _turn: number, run?: string) => void runs.add(run) };
+        for (let i = 0; i < 5; i++) {
+            const { orbit } = fakeOrbit([done('All fine. [[done]]')]);
+            // eslint-disable-next-line no-await-in-loop
+            await runJob(orbit, JOB, RELAY, refusals);
+        }
+        expect(runs.size).toBe(5);
+        expect([...runs].every((run) => typeof run === 'string' && /^[0-9a-z]{9,}$/.test(run))).toBe(true);
+    });
+
+    it('does not carry a silent turn from before the person had the machine into the next streak: three turns that are ours end ours', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        let generation = 1;
+        const { orbit, seen } = fakeOrbit(
+            [
+                // two silent turns (the agent's own, never ours), then a turn during which the person took the machine and gave it back
+                done(''),
+                done(''),
+                () => ((generation = 2), done('')),
+                // a new streak: three turns that failed for no reason but ours
+                failing(),
+                failing(),
+                failing(),
+            ],
+            () => ({ status: 'running', control: 'brick', generation })
+        );
+        await runJob(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [4, 5, 6] }]);
+    });
+
+    // The real notes on a clock that never moves: every event lands in the same millisecond, so only the order of events can tell the turns apart
+    const sameMillisecond = () => {
+        const notes = createRefusalNotes(() => 1000);
+        const call = (callId: string, kind: 'fault' | 'not_ours' | 'answered', reason: 'provider_key_ours' | 'allowance' | 'provider_5xx') => notes.record('bot', JOB.jobId, { callId, kind, reason, source: 'universe-ai', route: 'universe-ai:p', providerStatus: null });
+        const run = async (orbit: RunnerOrbit) => {
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: () => 1000, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes });
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await runner.idle();
+        };
+        return { notes, call, run };
+    };
+
+    it('does not read a refusal of the turn before as one of this turn, even when both began in the same millisecond', async () => {
+        const { call, run } = sameMillisecond();
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        // turn 1 recovered after the person's allowance refused a call; turns 2 to 4 failed for no reason of the person's
+        const { orbit, seen } = fakeOrbit([() => (call('c1', 'not_ours', 'allowance'), done('Worked round it')), failing(), failing(), failing()]);
+        await run(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2, 3, 4] }]);
+    });
+
+    it('does not read a confirmed fault of the turn before as one of this turn, even when both began in the same millisecond', async () => {
+        const { call, run } = sameMillisecond();
+        // turn 1 had a confirmed fault and then a good answer; turns 2 to 4 are silent turns, the agent's own
+        const { orbit, seen } = fakeOrbit([() => (call('c1', 'fault', 'provider_key_ours'), call('c1b', 'answered', 'provider_5xx'), done('Worked round it')), () => (call('c2', 'answered', 'provider_5xx'), done('')), () => (call('c3', 'answered', 'provider_5xx'), done('')), () => (call('c4', 'answered', 'provider_5xx'), done(''))]);
+        await run(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [2, 3, 4] }]);
+    });
+
+    it('gives the turn that replaces a cancelled one its own number and window: a fault noted in the cancelled turn is not the new turn’s', async () => {
+        const { call, run } = sameMillisecond();
+        const stepped: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'tool', state: 'completed', tool: 'click' }, { type: 'text', text: 'Old words' }, { type: 'completed', outputText: 'Old words', usage: null }];
+        // the generation does not change: only the cancellation tells the runner this turn is over
+        const stale = Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true, response: { status: 409, data: { ok: false, reason: 'stale' } } });
+        const refused = (callId: string) => () => (call(callId, 'not_ours', 'allowance'), [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }] as RunnerEvent[]);
+        const { orbit, seen } = fakeOrbit([() => (call('c0', 'fault', 'provider_key_ours'), stepped), refused('c1'), refused('c2'), refused('c3')]);
+        const original = orbit.action;
+        let cancelled = false;
+        orbit.action = async (botId, jobId, body) => {
+            if (body.action === 'progress' && !cancelled) {
+                cancelled = true;
+                seen.actions.push(body);
+                throw stale;
+            }
+            return original(botId, jobId, body);
+        };
+        await run(orbit);
+        expect(seen.cancels).toBe(1);
+        // the replacement and the two after it are numbered 2, 3 and 4, and the person's allowance is what stopped them, not the fault of the cancelled turn
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [2, 3, 4] }]);
+    });
+
+    it('does not carry a streak across a time the person had the machine between two turns: the next failed turn is the first of a new streak', async () => {
+        let looks = 0;
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        // two silent turns (the agent's own); then the person has the machine when the next turn is to start, and gives it back
+        const { orbit, seen } = fakeOrbit([done(''), done(''), failing(), failing(), failing()], () => (looks++ === 4 ? { status: 'running', control: 'person' } : { status: 'running', control: 'brick' }));
+        await runJob(orbit);
+        // the first failed turn after the person came back does not end the job on the strength of the two before; three of them do, and they are ours
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [3, 4, 5] }]);
+    });
+
+    it('does not carry a streak across a generation that changed between two turns (taken and given back while no turn was being read)', async () => {
+        let looks = 0;
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'no' }];
+        // two silent turns on generation 1; the next turn finds the job on generation 2
+        const { orbit, seen } = fakeOrbit([done(''), done(''), failing(), failing(), failing()], () => ({ status: 'running', control: 'brick', generation: looks++ < 4 ? 1 : 2 }));
+        await runJob(orbit);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', generation: 2, turns: [3, 4, 5] }]);
+    });
+
+    it('does not carry a confirmed fault into the next streak: a good turn clears it', async () => {
+        let confirmedNow = true;
+        const refusals = { sawSince: () => false, confirmedSince: () => confirmedNow };
+        const { orbit, seen } = fakeOrbit([
+            failing(),
+            () => (confirmedNow = false, done('Working on it')),
+            done(''),
+            done(''),
+            done(''),
+        ]);
+        await runJob(orbit, JOB, RELAY, refusals);
+        // turn 1 had the confirmed fault; turns 3, 4 and 5 are a new streak of silent turns, the agent's
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [3, 4, 5] }]);
+    });
+});
+
+describe('a machine that cannot reach our own model service', () => {
+    const WHY = RELAY_UNREACHABLE_WHY;
+    /** A runner with real notes whose rows are caught on their way to Orbit. */
+    const rig = (scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, options: { probe?: (relay: string) => Promise<RelayProbeResult>; shared?: SharedCalls } = {}) => {
+        let t = 0;
+        const clock = () => ++t;
+        const rows: CallRow[] = [];
+        const notes = createRefusalNotes(clock, {
+            ...(options.shared ? { shared: options.shared } : {}),
+            sink: async (_botId, _jobId, sent) => {
+                rows.push(...sent);
+                return true;
+            },
+        });
+        const fake = fakeOrbit(scripts);
+        const runner = createComputerRunner({ orbit: fake.orbit, relayUrl: RELAY, sleep: instantly, log: quiet, now: clock, refusals: notes, runId: () => 'run1', ...(options.probe ? { relayProbe: options.probe } : {}), timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+        fake.orbit.running = async () => [JOB];
+        return { ...fake, notes, rows, clock, runner, advance: (ms: number) => (t += ms), run: async () => { await runner.tick(); await runner.idle(); } };
+    };
+    const unreachable = () => ({ ok: false as const, reason: 'relay_unreachable' });
+
+    it('does not end the job as relay_down when the address answers with a challenge: the machine side check (Orbit prepare) decides', async () => {
+        const { seen, rows, run } = rig([done('[[done]]')], { probe: (relay) => probeRelay(relay, (async () => new Response('<html>Checking your browser</html>', { status: 403 })) as never) });
+        await run();
+        // a probe that reads "unknown" asks Orbit to prepare the machine, and the job runs
+        expect(seen.prepares.length).toBeGreaterThan(0);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(rows).toEqual([]);
+    });
+
+    it('ends the job as a confirmed fault of ours, said in plain words, when Orbit says the machine could not reach the relay', async () => {
+        const { seen, setPrepare, rows, run } = rig([]);
+        setPrepare(unreachable);
+        await run();
+        // tried again like any failure to get ready (three tries), no turn sent, and ended once
+        expect(seen.prepares).toHaveLength(3);
+        expect(seen.prepareFacts).toEqual([{ run: 'run1' }, { run: 'run1' }, { run: 'run1' }]);
+        expect(seen.turns).toEqual([]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
+        expect(finishedWithRun(seen)[0].run).toBe('run1');
+        // the record Orbit judges by: one confirmed fault of ours on that turn of that run, sent before the finish
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ turn: 1, run: 'run1', kind: 'fault', reason: 'relay_down', source: 'universe-ai', providerStatus: null });
+    });
+
+    it('a turn that is begun after a finish refused as stale begins with its own number and window: not the number the relay-down row used, with the window of the turn before it (a turn that was only to be reconnected to)', async () => {
+        const { seen, setPrepare, rows, notes, orbit, run } = rig([{ ok: false, reason: 'not_now' }, done('[[done]]')]);
+        const numbers: number[] = [];
+        let windows = 0;
+        const turn = notes.turn.bind(notes);
+        notes.turn = (job, number, runId) => (numbers.push(number), turn(job, number, runId));
+        const mark = notes.mark.bind(notes);
+        notes.mark = () => (windows++, mark());
+        // turn 1 is not taken (the agent is not ready: a look, not cancelled, so the same turn would be reconnected to); then the machine cannot reach the relay on all
+        // three tries, and the finish is refused as stale with the generation unchanged; then the machine is ready and the next turn goes on
+        let prepares = 0;
+        setPrepare(() => (++prepares === 1 || prepares > 4 ? { ok: true } : unreachable()));
+        const original = orbit.action;
+        let refused = false;
+        orbit.action = async (botId, jobId, body) => {
+            if (body.action === 'finish' && !refused) {
+                refused = true;
+                seen.actions.push(body);
+                throw Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true, response: { status: 409, data: { ok: false, reason: 'stale' } } });
+            }
+            return original(botId, jobId, body);
+        };
+        await run();
+        // the relay-down row took number 2; the turn that went on after it is turn 3, and it has a window of its own (two windows were begun: turn 1's and turn 3's)
+        expect(rows.filter((row) => row.reason === 'relay_down').map((row) => row.turn)).toEqual([2]);
+        expect(numbers.filter((n, i) => numbers.indexOf(n) === i)).toEqual([1, 2, 3]);
+        expect(numbers[numbers.length - 1]).toBe(3);
+        expect(windows).toBe(2);
+        expect(finished(seen).filter((one) => one.outcome === 'done')).toHaveLength(1);
+    });
+
+    it('goes on when the relay came back between two tries', async () => {
+        const { seen, setPrepare, rows, run } = rig([done('[[done]]')]);
+        let asked = 0;
+        setPrepare(() => (++asked < 2 ? unreachable() : { ok: true }));
+        await run();
+        expect(seen.prepares).toHaveLength(2);
+        expect(seen.turns).toHaveLength(1);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(rows).toEqual([]);
+    });
+
+    it('ends it the same way, without asking Orbit to prepare, when the relay’s address answers as something else (an error page)', async () => {
+        const { seen, rows, run } = rig([], { probe: async () => ({ answer: 'wrong', status: 404 }) });
+        await run();
+        // The job ends on its own fault row: Orbit is not asked to prepare a machine for it
+        expect(seen.prepares).toEqual([]);
+        expect(seen.turns).toEqual([]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ kind: 'fault', reason: 'relay_down', turn: 1, run: 'run1' });
+    });
+
+    it('goes on when the address is the relay, and when it could not be asked from here (that proves nothing about the machine)', async () => {
+        for (const answer of ['relay', 'unknown'] as const) {
+            const { seen, rows, run } = rig([done('[[done]]')], { probe: async () => ({ answer, status: answer === 'relay' ? 401 : null }) });
+            await run();
+            expect(seen.prepares, answer).toHaveLength(1);
+            expect(finished(seen), answer).toEqual([{ action: 'finish', outcome: 'done' }]);
+            expect(rows, answer).toEqual([]);
+        }
+    });
+
+    it('asks the address afresh at every try to get ready, so a relay that was only down for a moment is not judged by what was kept', async () => {
+        // the clock of this rig moves one tick per call: the kept answer would still be fresh at every try
+        const answers: RelayProbeResult[] = [{ answer: 'wrong', status: 502 }, { answer: 'relay', status: 401 }];
+        const probe = vi.fn(async (): Promise<RelayProbeResult> => answers.shift() ?? { answer: 'relay', status: 401 });
+        const { seen, rows, run } = rig([done('[[done]]')], { probe });
+        await run();
+        expect(probe).toHaveBeenCalledTimes(2);
+        expect(seen.prepares).toHaveLength(1);
+        expect(seen.turns).toHaveLength(1);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(rows).toEqual([]);
+    });
+
+    it('ends the job as unreachable only when the address answered as something else at every one of the tries', async () => {
+        const probe = vi.fn(async (): Promise<RelayProbeResult> => ({ answer: 'wrong', status: 404 }));
+        const { seen, rows, run } = rig([], { probe });
+        await run();
+        // three tries, each asked of the address itself
+        expect(probe).toHaveBeenCalledTimes(3);
+        expect(seen.prepares).toEqual([]);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: WHY }]);
+        expect(rows).toHaveLength(1);
+    });
+
+    it('asks the address once in a while, not for every job and turn', async () => {
+        const probe = vi.fn(async (): Promise<RelayProbeResult> => ({ answer: 'relay', status: 401 }));
+        const { run } = rig([done('Carrying on'), done('[[done]]')], { probe });
+        await run();
+        expect(probe).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats turns that failed with no call ever reaching the relay as ours, even though Orbit’s prepare said yes', async () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'No route' }];
+        const { seen, rows, run } = rig([failing(), failing(), failing()]);
+        await run();
+        expect(seen.turns).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        // a confirmed fault for each turn, under ids of their own, so Orbit never counts it against the goodwill a month allows
+        expect(rows.map((row) => [row.turn, row.kind, row.reason])).toEqual([
+            [1, 'fault', 'relay_down'],
+            [2, 'fault', 'relay_down'],
+            [3, 'fault', 'relay_down'],
+        ]);
+        expect(new Set(rows.map((row) => row.callId)).size).toBe(3);
+        expect(rows.every((row) => row.run === 'run1')).toBe(true);
+    });
+
+    describe('a turn this process did not start (the bot server restarted while the agent was on it)', () => {
+        const failing = (): RunnerEvent[] => [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'failed', code: 'model_error', message: 'No route' }];
+        const taken = (rigged: ReturnType<typeof rig>) => (rigged.orbit.running = async () => [{ ...JOB, hasTurn: true }]);
+
+        it('writes no fault for a turn it only reconnected to that ends failed with no call noted: it may have made calls before the restart', async () => {
+            const r = rig([failing(), done('[[done]]')]);
+            taken(r);
+            await r.run();
+            // the first turn was taken up with orbit.stream (no input), and nothing was concluded from the absence of calls in it
+            expect(r.seen.turns).toHaveLength(1);
+            expect(r.seen.streams).toBe(1);
+            expect(r.rows).toEqual([]);
+            expect(finished(r.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('does not make the streak confirmed from it, but still judges the turns it started itself after it', async () => {
+            const r = rig([failing(), failing(), failing()]);
+            taken(r);
+            await r.run();
+            // turn 1 was taken up (no row); turns 2 and 3 were started here (the no-call rule stays in force for them)
+            expect(r.rows.map((row) => [row.turn, row.kind, row.reason])).toEqual([
+                [2, 'fault', 'relay_down'],
+                [3, 'fault', 'relay_down'],
+            ]);
+            expect(finished(r.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        });
+
+        it('says the same for a turn it asked for but that Orbit said the agent was already on (busy): that turn was not started here', async () => {
+            const r = rig([{ ok: false, reason: 'busy' }, failing(), done('[[done]]')]);
+            await r.run();
+            // the first turn was asked for (busy) and read with orbit.stream; the next one was started here and ended well
+            expect(r.seen.turns).toHaveLength(2);
+            expect(r.seen.streams).toBe(1);
+            expect(r.rows).toEqual([]);
+        });
+
+        it('keeps the rule for a turn it started, also when it reconnected to it after the stream broke in this same process', async () => {
+            const broken = (): TurnOpened => ({
+                ok: true,
+                events: (async function* (): AsyncGenerator<RunnerEvent> {
+                    yield { type: 'created', id: 'r', sessionId: 's' };
+                    throw new Error('terminated');
+                })(),
+            });
+            const r = rig([broken(), failing(), failing(), failing()]);
+            await r.run();
+            // the reconnect (orbit.stream) is to a turn this process started and saw from the beginning: turn 1 is counted like the others
+            expect(r.seen.streams).toBe(1);
+            expect(r.rows.map((row) => [row.turn, row.reason])).toEqual([[1, 'relay_down'], [2, 'relay_down'], [3, 'relay_down']]);
+        });
+
+        it('keeps the rule for a turn it started itself, for a job it took up with no turn yet', async () => {
+            const r = rig([failing(), failing(), failing()]);
+            await r.run();
+            expect(r.rows.map((row) => row.turn)).toEqual([1, 2, 3]);
+        });
+    });
+
+    it('does the same for silent turns with no call at all (a model answers even to say nothing)', async () => {
+        const { seen, rows, run } = rig([done(''), done(''), done('')]);
+        await run();
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        expect(rows).toHaveLength(3);
+    });
+
+    it('does not read a good turn as a fault when no call reached the relay (a job’s words and endings are what they are)', async () => {
+        const { seen, rows, run } = rig([done('[[done]]')]);
+        await run();
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        expect(rows).toEqual([]);
+    });
+
+
+/** What the bot servers share in the store, in memory: one latest call per job and server; a server reads the others' only. */
+    const sharedStore = () => {
+        const seen = new Map<string, Map<string, number>>();
+        const state = { down: false, failCalled: 0, failUnrecorded: false, told: [] as string[], unrecorded: [] as string[], hold: undefined as Promise<void> | undefined };
+        const put = (jobId: string, field: string, at: number) => {
+            const byServer = seen.get(jobId) ?? new Map<string, number>();
+            byServer.set(field, Math.max(at, byServer.get(field) ?? 0));
+            seen.set(jobId, byServer);
+        };
+        const forServer = (id: string): SharedCalls => ({
+            noteCalled: async (jobId, at) => {
+                if (state.hold) await state.hold;
+                if (state.down) throw new Error('shared store down');
+                if (state.failCalled > 0) {
+                    state.failCalled -= 1;
+                    throw new Error('write lost');
+                }
+                state.told.push(`${id}:${jobId}`);
+                put(jobId, id, at);
+            },
+            noteUnrecorded: async (jobId, at) => {
+                if (state.down || state.failUnrecorded) throw new Error('shared store down');
+                state.unrecorded.push(`${id}:${jobId}`);
+                put(jobId, `unsure:${id}`, at);
+            },
+            lastCalledByOthers: async (jobId) => {
+                if (state.down) throw new Error('shared store down');
+                let latest: number | null = null;
+                for (const [field, at] of seen.get(jobId) ?? []) {
+                    const server = field.startsWith('unsure:') ? field.slice('unsure:'.length) : field;
+                    if (server !== id && (latest === null || at > latest)) latest = at;
+                }
+                return latest;
+            },
+        });
+        return { forServer, state };
+    };
+
+    describe('two bot servers: the runner of the job is on one, the machine’s calls arrive at the other', () => {
+        const silent = () => done('');
+
+        it('writes no fault, and does not make the ending ours, when the other server saw the calls of every turn', async () => {
+            const store = sharedStore();
+            let other!: ReturnType<typeof createRefusalNotes>;
+            // each turn's call is made well apart from the others (more than the clocks of two servers can differ): only a call of its own turn can show for it
+            const { seen, rows, clock, advance, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (other.called(JOB.jobId), advance(SHARED_CALL_SKEW_MS + 1000), silent())),
+                { shared: store.forServer('A') }
+            );
+            other = createRefusalNotes(clock, { shared: store.forServer('B') });
+            await run();
+            // every turn's call was recorded by the other server
+            expect(store.state.told).toEqual(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => `B:${JOB.jobId}`));
+            // silent turns after calls are the agent's, as on one server; no_call is not written, so the streak is not ours
+            expect(rows).toEqual([]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('still writes the fault of ours when no server saw a call: the shared notes make it surer, not blind', async () => {
+            const store = sharedStore();
+            const { seen, rows, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => silent), { shared: store.forServer('A') });
+            await run();
+            expect(rows.map((row) => [row.turn, row.kind, row.reason])).toEqual([
+                [1, 'fault', 'relay_down'],
+                [2, 'fault', 'relay_down'],
+                [3, 'fault', 'relay_down'],
+            ]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1, 2, 3] }]);
+        });
+
+        it('writes no fault when the other server’s first write of its call was lost and its retry landed (the record has the call)', async () => {
+            const store = sharedStore();
+            let other!: ReturnType<typeof createRefusalNotes>;
+            const { seen, rows, clock, advance, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 1), void other.reached(JOB.jobId), advance(SHARED_CALL_SKEW_MS + 1000), silent())),
+                { shared: store.forServer('A') }
+            );
+            other = createRefusalNotes(clock, { shared: store.forServer('B') });
+            await run();
+            // each turn's first write was lost and its retry landed: one record for each turn
+            await vi.waitFor(() => expect(store.state.told).toEqual(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => `B:${JOB.jobId}`)));
+            expect(rows).toEqual([]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('writes no fault when the other server could not record its call at all, but said so apart', async () => {
+            const store = sharedStore();
+            let other!: ReturnType<typeof createRefusalNotes>;
+            const { seen, rows, clock, advance, run } = rig(
+                Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => ((store.state.failCalled = 2), void other.reached(JOB.jobId), advance(SHARED_CALL_SKEW_MS + 1000), silent())),
+                { shared: store.forServer('A') }
+            );
+            // the runner of the job is working on B too (a stale one, a job both servers think they run), so its call goes ahead and says apart that it was not recorded
+            other = createRefusalNotes(clock, { shared: store.forServer('B'), runsHere: () => true });
+            await run();
+            // each turn's call said apart that it was not recorded: one note for each turn, and none of the calls recorded as an arrival
+            await vi.waitFor(() => expect(store.state.unrecorded).toEqual(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => `B:${JOB.jobId}`)));
+            expect(store.state.told).toEqual([]);
+            expect(rows).toEqual([]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+
+        it('records nothing and sends no finish for a turn when the job was stopped while the other servers were being asked', async () => {
+            const store = sharedStore();
+            const reads = { n: 0 };
+            let stop = () => undefined as void;
+            const shared: SharedCalls = {
+                ...store.forServer('A'),
+                // the third turn's question to the other servers is the one the stop comes in the middle of
+                lastCalledByOthers: async () => {
+                    reads.n += 1;
+                    if (reads.n === 3) stop();
+                    return null;
+                },
+            };
+            const { seen, rows, runner, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => silent), { shared });
+            stop = () => runner.stop();
+            await run();
+            expect(reads.n).toBe(3);
+            // the two turns before it were judged as usual; the stopped one writes no no_call row and the job is not ended on it
+            expect(rows.map((row) => row.turn)).toEqual([1, 2]);
+            expect(finished(seen)).toEqual([]);
+        });
+
+        it('judges a turn by the notes as they are AFTER the other servers were asked: a fault recovered meanwhile is no bad turn, so it does not end the job', async () => {
+            let turnNo = 0;
+            let recovered = false;
+            // the relay answers a call of the third turn while the other servers are being asked about it
+            const refusals = {
+                sawSince: () => false,
+                mark: () => ({ order: 1, at: 1 }),
+                turn: (_job: string, n: number) => void ((turnNo = n), (recovered = false)),
+                calledAnywhereSince: async () => {
+                    if (turnNo === 3) recovered = true;
+                    return true;
+                },
+                endedOnFault: () => !recovered,
+                confirmedSince: () => !recovered,
+            };
+            const { orbit, seen } = fakeOrbit([done('Working on it'), done('Working on it'), done('Working on it'), done('All fine. [[done]]')]);
+            await runJob(orbit, JOB, RELAY, refusals);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            expect(seen.turns).toHaveLength(4);
+        });
+
+        it('writes no fault when the shared store cannot be read: a call may have arrived elsewhere, and nothing is concluded', async () => {
+            const store = sharedStore();
+            store.state.down = true;
+            const { seen, rows, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => silent), { shared: store.forServer('A') });
+            await run();
+            expect(rows).toEqual([]);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        });
+    });
+
+    it('leaves a turn alone when a call did reach the relay: a silent turn after a call is still the agent’s, and nothing is noted', async () => {
+        const { notes, seen, rows, run } = rig(Array.from({ length: RUNNER_GUARDS.maxBadTurns }, () => () => (notes.called(JOB.jobId), done(''))));
+        await run();
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', turns: [1, 2, 3] }]);
+        expect(rows).toEqual([]);
+    });
+});
+
+describe('a stop that comes while the relay’s address is being asked', () => {
+    it('sends no prepare for the job, and ends nothing', async () => {
+        let answer!: (result: RelayProbeResult) => void;
+        const probe = vi.fn(() => new Promise<RelayProbeResult>((resolve) => (answer = resolve)));
+        const warn = vi.fn();
+        const { orbit, seen } = fakeOrbit([done('[[done]]')]);
+        const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: { warn, error: vi.fn(), info: vi.fn() }, relayProbe: probe, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0], prepareMs: [0] } });
+        orbit.running = async () => [JOB];
+        await runner.tick();
+        await vi.waitFor(() => expect(probe).toHaveBeenCalled());
+        runner.stop();
+        // the address answers after the stop, as the relay or as nothing the bot server can tell
+        for (const result of [{ answer: 'relay', status: 401 }, { answer: 'unknown', status: null }] as const) {
+            answer(result);
+            await runner.idle();
+            expect(seen.prepares, result.answer).toEqual([]);
+            expect(finished(seen), result.answer).toEqual([]);
+        }
+    });
+});
+
+describe('asking an address whether it is the relay', () => {
+    const answer = (status: number, body: string): typeof fetch => (async () => new Response(body, { status })) as never;
+    it('reads the relay’s own answers (a JSON error without a key, the list, an Orbit that is away) as the relay', async () => {
+        expect(await probeRelay('https://x.test', answer(401, JSON.stringify({ error: { message: 'Invalid API key.', code: 'invalid_api_key' } })))).toEqual(expect.objectContaining({ answer: 'relay' }));
+        expect(await probeRelay('https://x.test', answer(503, JSON.stringify({ error: { message: 'The service is busy.', code: 'service_unavailable' } })))).toEqual(expect.objectContaining({ answer: 'relay' }));
+        expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ object: 'list', data: [] })))).toEqual(expect.objectContaining({ answer: 'relay' }));
+    });
+
+    it('reads an error page, a body that is not JSON and a JSON that is not an error or a list as something else', async () => {
+        expect(await probeRelay('https://x.test', answer(404, '<!DOCTYPE html><html><body>404 Not Found</body></html>'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+        expect(await probeRelay('https://x.test', answer(502, '<html>Bad gateway</html>'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+        expect(await probeRelay('https://x.test', answer(200, 'ok'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+        expect(await probeRelay('https://x.test', answer(200, JSON.stringify({ hello: 'world' })))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+        expect(await probeRelay('https://x.test', answer(200, 'null'))).toEqual(expect.objectContaining({ answer: 'wrong' }));
+    });
+
+    it('says "something else is there" only for a status that a service says it with: a 2xx, a 404 or a 5xx, whatever the body', async () => {
+        for (const status of [200, 404, 500, 502, 503, 504, 520]) {
+            expect(await probeRelay('https://x.test', answer(status, '<html>not the relay</html>')), `html ${status}`).toEqual({ answer: 'wrong', status });
+            expect(await probeRelay('https://x.test', answer(status, JSON.stringify({ hello: 'world' }))), `json ${status}`).toEqual({ answer: 'wrong', status });
+        }
+        // a 204 has no body at all (a real bodyless Response: the constructor does not take one for it)
+        expect(() => new Response('<html></html>', { status: 204 })).toThrow();
+        expect(await probeRelay('https://x.test', (async () => new Response(null, { status: 204 })) as never)).toEqual({ answer: 'wrong', status: 204 });
+    });
+
+    it('proves nothing either way for a redirect or a challenge in front of the relay (http to https, a WAF or proxy block, a rate limit): unknown, so Orbit’s own check from the machine decides', async () => {
+        for (const status of [301, 302, 307, 308, 401, 403, 429]) {
+            expect(await probeRelay('https://x.test', answer(status, '<html>Just a moment...</html>')), `html ${status}`).toEqual({ answer: 'unknown', status });
+            expect(await probeRelay('https://x.test', answer(status, '')), `empty ${status}`).toEqual({ answer: 'unknown', status });
+            expect(await probeRelay('https://x.test', answer(status, JSON.stringify({ blocked: true }))), `json ${status}`).toEqual({ answer: 'unknown', status });
+        }
+        // the relay's own 401 is still the relay, and so is its 429-free error shape
+        expect((await probeRelay('https://x.test', answer(401, JSON.stringify({ error: { code: 'invalid_api_key' } })))).answer).toBe('relay');
+    });
+
+    it('says it could not be asked when nothing answers, and asks the model list with no key', async () => {
+        const failing = (async () => {
+            throw new Error('connect ECONNREFUSED');
+        }) as never;
+        expect(await probeRelay('https://x.test', failing)).toEqual({ answer: 'unknown', status: null });
+        expect(await probeRelay('https://x.test', answer(404, '<html></html>'))).toEqual({ answer: 'wrong', status: 404 });
+        const seen: Array<[string, RequestInit | undefined]> = [];
+        await probeRelay('https://x.test', (async (url: string, init?: RequestInit) => (seen.push([url, init]), new Response('{}', { status: 200 }))) as never);
+        expect(seen[0][0]).toBe('https://x.test/v1/models');
+        expect(JSON.stringify(seen[0][1])).not.toMatch(/authorization/i);
+    });
+
+    it('reads no more than a fixed number of bytes of a long answer and lets the rest go (an address that streams on and on costs no more than that)', async () => {
+        let pulls = 0;
+        let cancelled = false;
+        const chunk = new TextEncoder().encode('x'.repeat(1024));
+        const endless = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                pulls += 1;
+                // far more than any limit: if the whole body were read this would run until the test times out
+                if (pulls <= 100_000) controller.enqueue(chunk);
+                else controller.close();
+            },
+            cancel() {
+                cancelled = true;
+            },
+        });
+        const result = await probeRelay('https://x.test', (async () => new Response(endless, { status: 200 })) as never);
+        // not JSON, from something that answers 2xx: it is something else
+        expect(result).toEqual({ answer: 'wrong', status: 200 });
+        expect(cancelled).toBe(true);
+        expect(pulls).toBeLessThan(100);
+    });
+
+    it('does not wait for the cancel of a stream that never settles, and handles one that fails: the bytes already read are parsed either way', async () => {
+        const chunk = new TextEncoder().encode('x'.repeat(1024));
+        const endlessWith = (cancel: () => Promise<void>) =>
+            new ReadableStream<Uint8Array>({
+                pull(controller) {
+                    controller.enqueue(chunk);
+                },
+                cancel,
+            });
+        const within = async (run: Promise<unknown>) => Promise.race([run, new Promise((resolve) => setTimeout(() => resolve('hung'), 1500))]);
+        // a cancel that never settles: the probe is answered, not held by it
+        const never = await within(probeRelay('https://x.test', (async () => new Response(endlessWith(() => new Promise<void>(() => undefined)), { status: 200 })) as never));
+        expect(never).toEqual({ answer: 'wrong', status: 200 });
+        // a cancel that fails is handled: no unhandled rejection, and the answer is the same
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown) => unhandled.push(reason);
+        process.on('unhandledRejection', onUnhandled);
+        try {
+            const failing = await within(probeRelay('https://x.test', (async () => new Response(endlessWith(() => Promise.reject(new Error('cancel failed'))), { status: 200 })) as never));
+            expect(failing).toEqual({ answer: 'wrong', status: 200 });
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off('unhandledRejection', onUnhandled);
+        }
+    });
+
+    it('still reads a small JSON answer in many pieces as the relay’s, and a bodyless 204 as before', async () => {
+        const text = JSON.stringify({ object: 'list', data: [{ id: 'a' }, { id: 'b' }] });
+        const bytes = new TextEncoder().encode(text);
+        const pieces = new ReadableStream<Uint8Array>({
+            start(controller) {
+                for (let at = 0; at < bytes.length; at += 7) controller.enqueue(bytes.slice(at, at + 7));
+                controller.close();
+            },
+        });
+        expect(await probeRelay('https://x.test', (async () => new Response(pieces, { status: 200 })) as never)).toEqual({ answer: 'relay', status: 200 });
+        expect(await probeRelay('https://x.test', (async () => new Response(null, { status: 204 })) as never)).toEqual({ answer: 'wrong', status: 204 });
+    });
+});
+
+describe('saying where the relay is assumed to be', () => {
+    it('says so once, with the host only, when the address is taken from the play address, and says nothing when it was chosen', () => {
+        const log = { error: vi.fn() };
+        expect(relayUrlFromEnv({ PUSHER_URL: 'https://play.dev.example.test' } as never, log)).toBe('https://bot-server.dev.example.test');
+        expect(log.error).toHaveBeenCalledTimes(1);
+        const line = String(log.error.mock.calls[0][0]);
+        expect(line).toContain('bot-server.dev.example.test');
+        expect(line).toContain('COMPUTER_RELAY_URL');
+        expect(line).not.toContain('https://');
+        const quietLog = { error: vi.fn() };
+        expect(relayUrlFromEnv({ COMPUTER_RELAY_URL: 'https://relay.example.test' } as never, quietLog)).toBe('https://relay.example.test');
+        expect(relayUrlFromEnv({ BOT_SERVER_URL: 'https://bot.example.test' } as never, quietLog)).toBe('https://bot.example.test');
+        expect(relayUrlFromEnv({ PUSHER_URL: 'http://pusher:8080' } as never, quietLog)).toBeNull();
+        expect(relayUrlFromEnv({} as never, quietLog)).toBeNull();
+        expect(quietLog.error).not.toHaveBeenCalled();
+    });
+});
+
+describe('a pool with no room: the machine is given up, not waited for', () => {
+    const poolRefusal = { callId: 'c1', kind: 'fault', reason: 'pool_busy', source: 'universe-ai', route: 'universe-ai:p', providerStatus: 503 } as const;
+
+    /**
+     * A turn that goes on until it is stopped or until `endsAfterMs`, like a machine whose model calls Hermes goes on retrying. What `during` does is done once
+     * the turn has begun (the calls its machine makes reach the relay, which notes them).
+     */
+    const retryingTurn = (orbit: RunnerOrbit, during: (at: (ms: number, what: () => void) => void) => void, endsAfterMs: number | null) => {
+        const state = { aborted: false, turns: 0 };
+        orbit.turn = async (_jobId, _input, signal) => {
+            state.turns += 1;
+            during((ms, what) => void setTimeout(what, ms));
+            const events = (async function* (): AsyncGenerator<RunnerEvent> {
+                yield { type: 'created', id: 'r', sessionId: 's' };
+                await new Promise<void>((resolve) => {
+                    signal?.addEventListener('abort', () => ((state.aborted = true), resolve()), { once: true });
+                    if (endsAfterMs !== null) setTimeout(resolve, endsAfterMs);
+                });
+                if (!state.aborted) yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null };
+            })();
+            return { ok: true, events };
+        };
+        return state;
+    };
+    const withFakeClock = async (test: () => Promise<void>) => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            await test();
+        } finally {
+            vi.useRealTimers();
+        }
+    };
+    const rigged = () => {
+        const sent: CallRow[] = [];
+        const notes = createRefusalNotes(Date.now, { sink: async (_botId, _jobId, rows) => (sent.push(...rows), true) });
+        return { notes, sent };
+    };
+
+    it('stops a turn whose calls were ALL refused for room within about two minutes, records the confirmed fault of ours, and ends the job as ours in plain words', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            // Hermes would go on for six minutes
+            const state = retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)); at(20_000, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'c2', kind: 'uncertain' })); }, 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            // not yet given up while the wait is short
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(finished(seen)).toEqual([]);
+            expect(seen.cancels).toBe(0);
+            await vi.advanceTimersByTimeAsync(60_000);
+            await running;
+            expect(state.aborted).toBe(true);
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            expect(finishedWithRun(seen)[0].run).toBe('run1');
+            expect(POOL_BUSY_WHY).toBe("Computers are busy right now, so we stopped this and you weren't charged.");
+            // the confirmed fault of ours, under this turn and run, reached Orbit's record
+            await notes.flush(JOB.jobId);
+            expect(sent.find((row) => row.callId === 'pool_busy_gave_up_run1_1')).toMatchObject({ kind: 'fault', reason: 'pool_busy', turn: 1, run: 'run1', providerStatus: 503 });
+            // no second turn was begun for the agent
+            expect(state.turns).toBe(1);
+        });
+    });
+
+    it('does not give up on a turn whose calls were all refused for their own size (unresolved, not confirmed), and writes no confirmed fault for it', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            // an older turn had a call taken up: these refusals are for the size of the call, which the relay sends as uncertain
+            const state = retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, kind: 'uncertain' })); at(20_000, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'c2', kind: 'uncertain' })); }, 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(state.turns).toBe(1);
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.some((row) => row.kind === 'fault')).toBe(false);
+            expect(sent.map((row) => row.kind)).toEqual(['uncertain', 'uncertain']);
+        });
+    });
+
+    it('gives up after one confirmed refusal and one for size in the same turn, as for confirmed ones alone', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, kind: 'uncertain' })); at(20_000, () => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'c2' })); }, 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.find((row) => row.callId === 'pool_busy_gave_up_run1_1')).toMatchObject({ kind: 'fault' });
+        });
+    });
+
+    /** The shared record of two bot servers, in memory: what each noted (a call arriving, a call taken up) and what the other reads of it. */
+    const sharedRecord = () => {
+        const called = new Map<string, number>();
+        /** Every call taken up, with the job and the turn (and run) it was taken up for: a call with no turn counts for every turn, as in the store. */
+        const accepted: Array<{ server: string; jobId: string; at: number; key: string }> = [];
+        /** The latest moment another server than `id` took up a call of the job that counts for the turn (and run) `turn` (any when it is not known), or null. */
+        const othersLatest = (id: string, jobId: string, turn?: unknown): number | null => {
+            const key = keyOf(turn);
+            const moments = accepted.filter((one) => one.server !== id && one.jobId === jobId && (key === '' || one.key === '' || one.key === key)).map((one) => one.at);
+            return moments.length > 0 ? Math.max(...moments) : null;
+        };
+        /**
+         * The fences written and not taken back, each under the identity the store gives it (the job, the turn and run it was written for, and its moment): two jobs that close in the same
+         * millisecond hold a fence each, and taking one back or committing one never touches the other's. A fence of one job never refuses a call of another, as the store keeps them under the job's own name.
+         */
+        const held: Array<{ at: number; job: string; key: string; committed: boolean }> = [];
+        const same = (one: { at: number; job: string; key: string }, job: string, key: string, at: number) => one.at === at && one.job === job && one.key === key;
+        const keyOf = (turn: unknown) => {
+            const one = turn as { turn: number; run?: string } | undefined;
+            return one ? `${one.turn}|${one.run ?? ''}` : '';
+        };
+        // The store takes its time to get a command (latency) and then does it as one step: `began` says a close of the turn was sent
+        const latency = { ms: 0, retractMs: 0, commitMs: 0, began: undefined as (() => void) | undefined, commitBegan: undefined as (() => void) | undefined };
+        /** How many closes were committed and how many fences were taken back. */
+        const counts = { commits: 0, retracts: 0, commitFences: 0, releases: 0 };
+        /** What the store was asked in order (close, commit, retract, release). */
+        const log: string[] = [];
+        /** Whether the next commit finds the fence gone (it was taken back or expired). */
+        const commitSays = { gone: false };
+        /**
+         * Whether a call at the moment `at` for that turn is refused, as the store's script does: a fence counts for FENCE_LIFE_MS from its moment (a fence of a close made with no turn
+         * for any call, one of a known turn for that turn and run, a call with no turn by any fence), and a fence COMMITTED for the call's own turn and run counts whenever the call comes.
+         */
+        const refuses = (jobId: string, at: number, turn?: unknown) => {
+            const key = keyOf(turn);
+            return held.some((one) => {
+                if (one.job !== jobId) return false;
+                if (!(key === '' || one.key === '' || one.key === key)) return false;
+                return one.at >= at - FENCE_LIFE_MS || (one.committed && key !== '' && one.key === key);
+            });
+        };
+        const forServer = (id: string) => ({
+            noteCalled: async (_jobId: string, at: number) => void called.set(id, Math.max(at, called.get(id) ?? 0)),
+            noteUnrecorded: async () => undefined,
+            lastCalledByOthers: async () => {
+                const others = [...called].filter(([server]) => server !== id).map(([, at]) => at);
+                return others.length > 0 ? Math.max(...others) : null;
+            },
+            // a turn that was given up (fenced) takes no acceptance while its fence counts (30 seconds, or for good once it is committed), and the fence is written only when no
+            // other server took one up: one step, as in the store
+            noteAccepted: async (jobId: string, at: number, turn?: unknown) => {
+                if (refuses(jobId, at, turn)) return false;
+                accepted.push({ server: id, jobId, at, key: keyOf(turn) });
+                return true;
+            },
+            closeTurn: async (jobId: string, turn: unknown, from: number, at?: number) => {
+                latency.began?.();
+                log.push('close');
+                if (latency.ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.ms));
+                const others = othersLatest(id, jobId, turn);
+                if (others !== null && others >= from - 2000) return false;
+                held.push({ at: at ?? 0, job: jobId, key: keyOf(turn), committed: false });
+                counts.commits += 1;
+                return true;
+            },
+            // as the store does it: only the fence that holds exactly that moment goes (a committed one only when asked, for a commit that was never confirmed)
+            retractFence: async (jobId: string, turn: unknown, at: number, committedToo = false) => {
+                log.push('retract');
+                if (latency.retractMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.retractMs));
+                const index = held.findIndex((one) => same(one, jobId, keyOf(turn), at));
+                if (index >= 0 && (!held[index].committed || committedToo)) held.splice(index, 1);
+                counts.retracts += 1;
+            },
+            // as the store does it, in one step: only the fence that holds exactly that moment (of that job and turn) becomes committed, and not over a call another server took up since the close counted from
+            commitFence: async (jobId: string, turn: unknown, at: number, from: number) => {
+                latency.commitBegan?.();
+                log.push('commit');
+                if (latency.commitMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.commitMs));
+                counts.commitFences += 1;
+                const mine = held.find((one) => same(one, jobId, keyOf(turn), at));
+                if (commitSays.gone || !mine) return false;
+                if (!mine.committed) {
+                    const others = othersLatest(id, jobId, turn);
+                    if (others !== null && others >= from - 2000) return false;
+                    mine.committed = true;
+                }
+                return true;
+            },
+            // as the store does it: only the COMMITTED fence of that moment (of that job and turn) goes
+            releaseFence: async (jobId: string, turn: unknown, at: number) => {
+                log.push('release');
+                counts.releases += 1;
+                const index = held.findIndex((one) => same(one, jobId, keyOf(turn), at) && one.committed);
+                if (index >= 0) held.splice(index, 1);
+            },
+            lastAcceptedByOthers: async (jobId: string, turn?: unknown) => othersLatest(id, jobId, turn),
+        });
+        return {
+            forServer,
+            accepted,
+            latency,
+            get fences() {
+                return held.map((one) => one.at);
+            },
+            counts,
+            get committed() {
+                return held.filter((one) => one.committed).map((one) => one.at);
+            },
+            log,
+            commitSays,
+        };
+    };
+
+    it('does not give up on a turn when the pool took up a call of the job on ANOTHER bot server: only a call taken up nowhere is a pool with no room', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const sent: CallRow[] = [];
+            const sink = async (_botId: string, _jobId: string, rows: CallRow[]) => (sent.push(...rows), true);
+            // this server's runner works the job; the machine's calls reach this server (refused for room) and another one (taken up)
+            const notes = createRefusalNotes(Date.now, { sink, shared: record.forServer('A') });
+            const other = createRefusalNotes(Date.now, { sink, shared: record.forServer('B') });
+            const { orbit, seen } = fakeOrbit([]);
+            const state = retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)); at(20_000, () => other.accepted(JOB.jobId)); }, 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            // the turn went on to its end: not stopped, the machine not cancelled, nothing written as a fault of ours
+            expect(state.turns).toBe(1);
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.some((row) => row.callId.startsWith('pool_busy_gave_up'))).toBe(false);
+        });
+    });
+
+    it('closes the turn on the shared store before it gives it up: a call another server takes up while the close is on its way is seen by the close, and the turn goes on', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const other = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('B') });
+            const { orbit, seen } = fakeOrbit([]);
+            // the close is sent, takes a second to get there, and is done as one step on arrival; the other server's relay takes a call up half a second after it was sent
+            record.latency.ms = 1000;
+            let accepting: Promise<unknown> | undefined;
+            record.latency.began = () => void setTimeout(() => (accepting = Promise.resolve(other.accepted(JOB.jobId)).then((answer) => (taken = answer))), 500);
+            let taken: unknown;
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            await accepting;
+            // the call was taken up before the close was done: the turn is not given up, nothing is cancelled, the call goes on
+            expect(taken).toBe(true);
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
+    it('closes the turn before it gives it up: a call another server tries to take up after the close is refused (nothing is forwarded), so the turn that is stopped never has a call running', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const other = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('B') });
+            const { orbit, seen } = fakeOrbit([]);
+            // Orbit takes the finish after the other server's call has come (the give-up is going on while the machine is cancelled and the job ended)
+            const action = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'finish') await new Promise<void>((resolve) => setTimeout(resolve, 5000));
+                return action(botId, jobId, body);
+            };
+            record.latency.ms = 1000;
+            let accepting: Promise<unknown> | undefined;
+            let taken: unknown = 'not asked';
+            // the call is taken up 1.5 s after the close was sent: after it was done
+            record.latency.began = () => void setTimeout(() => (accepting = Promise.resolve(other.accepted(JOB.jobId)).then((answer) => (taken = answer))), 1500);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            await accepting;
+            // refused: the other server's relay forwards nothing, and the turn is given up
+            expect(taken).toBe(false);
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            // the runner went on with the give-up (its fence was committed while the machine was cancelled and the job ended), and took the fence back when Orbit accepted the finish
+            expect(record.counts.commitFences).toBe(1);
+            expect(record.fences).toEqual([]);
+        });
+    });
+
+    describe('the give-up is COMMITTED before the machine is cancelled, and the fence is taken back once Orbit has accepted the finish (GPT round 3, finding 4)', () => {
+        const stale = () => Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true, response: { status: 409, data: { ok: false, reason: 'stale', generation: 2 } } });
+        const rigGiveUp = () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            // the store's own order of events, with what Orbit was asked in between
+            const cancel = orbit.cancel;
+            orbit.cancel = async (jobId) => {
+                record.log.push('cancel');
+                return cancel(jobId);
+            };
+            const action = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'finish') record.log.push('finish');
+                return action(botId, jobId, body);
+            };
+            return { record, notes, orbit, seen, action };
+        };
+
+        it('commits the fence of the close first, then cancels and finishes, then takes the committed fence back: the give-up never rests on a fence that clears itself', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen } = rigGiveUp();
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(130_000);
+                await running;
+                expect(record.log).toEqual(['close', 'commit', 'cancel', 'finish', 'release']);
+                expect(seen.cancels).toBe(1);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+                // the committed fence was taken back after Orbit accepted the finish
+                expect(record.counts.commitFences).toBe(1);
+                expect(record.committed).toEqual([]);
+                expect(record.fences).toEqual([]);
+            });
+        });
+
+        it('CodeRabbit #11: a live fence of one job refuses nothing of ANOTHER job, even for the same turn and run, and still refuses the job it was written for (before it expires; the expired case is covered below)', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit } = rigGiveUp();
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                let seenFence = false;
+                // what the other server's relay was told, captured here and asserted below (an expectation that fails inside the cancel would only be caught by the runner)
+                const accepted: boolean[] = [];
+                const cancel = orbit.cancel;
+                orbit.cancel = async (jobId) => {
+                    // the give-up of job-1 holds its fence now: a relay of another server asks for the same turn and run of ANOTHER job, and for job-1's own
+                    seenFence = record.fences.length > 0;
+                    accepted.push(await record.forServer('B').noteAccepted!('another-job', Date.now(), { turn: 1, run: 'run1' }));
+                    accepted.push(await record.forServer('B').noteAccepted!(jobId, Date.now(), { turn: 1, run: 'run1' }));
+                    return cancel(jobId);
+                };
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(130_000);
+                await running;
+                expect(seenFence).toBe(true);
+                expect(accepted).toEqual([true, false]);
+            });
+        });
+
+        it('CodeRabbit: two jobs that close a turn in the same millisecond each hold their own fence: each refuses its own calls, and taking one back leaves the other', async () => {
+            const record = sharedRecord();
+            const server = record.forServer('A');
+            const other = record.forServer('B');
+            const at = 1_000_000;
+            const turn = { turn: 1, run: 'run1' };
+            expect(await server.closeTurn!('job-a', turn, at - 1000, at)).toBe(true);
+            expect(await server.closeTurn!('job-b', turn, at - 1000, at)).toBe(true);
+            expect(record.fences).toEqual([at, at]);
+            expect(await server.commitFence!('job-a', turn, at, at - 1000)).toBe(true);
+            expect(await server.commitFence!('job-b', turn, at, at - 1000)).toBe(true);
+            expect(record.committed).toEqual([at, at]);
+            // both refuse their own calls, long after the fence's own life (committed)
+            const later = at + FENCE_LIFE_MS * 3;
+            expect(await other.noteAccepted!('job-a', later, turn)).toBe(false);
+            expect(await other.noteAccepted!('job-b', later, turn)).toBe(false);
+            // job-a's fence is released: job-b's stays, and job-a takes calls again
+            await server.releaseFence!('job-a', turn, at);
+            expect(record.fences).toEqual([at]);
+            expect(await other.noteAccepted!('job-a', later, turn)).toBe(true);
+            expect(await other.noteAccepted!('job-b', later, turn)).toBe(false);
+        });
+
+        it('holds the committed fence for as long as the cancel and the finish take (well beyond a fence\'s own life): while Orbit is slow ANOTHER server\'s relay still refuses the exact turn after FENCE_LIFE_MS, and after the release it takes it up', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen, action } = rigGiveUp();
+                let answered = false;
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish') {
+                        record.log.push('finish');
+                        // Orbit takes two minutes to take the finish
+                        await new Promise<void>((resolve) => setTimeout(resolve, 120_000));
+                        answered = true;
+                    }
+                    return action(botId, jobId, body);
+                };
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(130_000);
+                // the finish is on its way: the fence is committed, and well past its life of 30 seconds it is still the fence of the turn
+                expect(answered).toBe(false);
+                expect(record.committed).toHaveLength(1);
+                expect(record.counts.releases).toBe(0);
+                const [moment] = record.fences;
+                const other = record.forServer('B');
+                const turn = { turn: 1, run: 'run1' };
+                // the store's fixture counts a fence for its life (a call whose moment is later than the fence's by more than FENCE_LIFE_MS is taken up), except a committed one
+                for (const after of [1, FENCE_LIFE_MS, FENCE_LIFE_MS + 1, FENCE_LIFE_MS * 4]) expect(await other.noteAccepted!(JOB.jobId, moment + after, turn), String(after)).toBe(false);
+                await vi.advanceTimersByTimeAsync(130_000);
+                await running;
+                expect(answered).toBe(true);
+                expect(record.counts.releases).toBe(1);
+                expect(record.committed).toEqual([]);
+                // released: the exact turn takes calls again (whatever the moment), and nothing was ever written for it in between
+                expect(await other.noteAccepted!(JOB.jobId, moment + FENCE_LIFE_MS * 4, turn)).toBe(true);
+                expect(seen.cancels).toBe(1);
+            });
+        });
+
+        it('lets a fence that was NOT committed clear itself after FENCE_LIFE_MS in the same fixture (so the committed one above is what holds, not the fixture)', async () => {
+            const record = sharedRecord();
+            const shared = record.forServer('A');
+            const other = record.forServer('B');
+            const turn = { turn: 1, run: 'run1' };
+            expect(await shared.closeTurn!(JOB.jobId, turn, 0, 50_000)).toBe(true);
+            expect(await other.noteAccepted!(JOB.jobId, 50_000 + FENCE_LIFE_MS, turn)).toBe(false);
+            expect(await other.noteAccepted!(JOB.jobId, 50_000 + FENCE_LIFE_MS + 1, turn)).toBe(true);
+            // and a commit that comes after such a call is refused, as the store does it
+            expect(await shared.commitFence!(JOB.jobId, turn, 50_000, 0)).toBe(false);
+            const fresh = sharedRecord();
+            expect(await fresh.forServer('A').closeTurn!(JOB.jobId, turn, 0, 90_000)).toBe(true);
+            expect(await fresh.forServer('B').noteAccepted!(JOB.jobId, 90_000 + FENCE_LIFE_MS + 1, turn)).toBe(true);
+            expect(await fresh.forServer('A').commitFence!(JOB.jobId, turn, 90_000, 0)).toBe(false);
+            const alone = sharedRecord();
+            expect(await alone.forServer('A').closeTurn!(JOB.jobId, turn, 0, 90_000)).toBe(true);
+            expect(await alone.forServer('A').commitFence!(JOB.jobId, turn, 90_000, 0)).toBe(true);
+        });
+
+        it('the fixture reads an acceptance by its job, turn and run, as the store does: an unrelated acceptance (another turn, run or job) permits the commit, a matching one or one with no turn blocks it, and the closing server\'s own does not', async () => {
+            const turn = { turn: 6, run: 'run1' };
+            const later = 50_000 + FENCE_LIFE_MS + 1;
+            const fenced = async () => {
+                const record = sharedRecord();
+                expect(await record.forServer('A').closeTurn!(JOB.jobId, turn, 0, 50_000)).toBe(true);
+                return record;
+            };
+            // another turn, another run, another job: the fence of turn 6 expired and server B took a call up for something else
+            for (const [name, jobId, other] of [['turn', JOB.jobId, { turn: 7, run: 'run1' }], ['run', JOB.jobId, { turn: 6, run: 'run2' }], ['job', 'job-2', turn]] as const) {
+                const record = await fenced();
+                expect(await record.forServer('B').noteAccepted!(jobId, later, other), name).toBe(true);
+                expect(await record.forServer('A').commitFence!(JOB.jobId, turn, 50_000, 0), name).toBe(true);
+            }
+            // the same turn and run, and a call whose turn is not known (it may be of any turn): the commit is refused
+            for (const [name, other] of [['matching', turn], ['unknown turn', undefined]] as const) {
+                const record = await fenced();
+                expect(await record.forServer('B').noteAccepted!(JOB.jobId, later, other), name).toBe(true);
+                expect(await record.forServer('A').commitFence!(JOB.jobId, turn, 50_000, 0), name).toBe(false);
+            }
+            // the closing server's own acceptance (it is in its own notes) does not block its commit
+            const own = await fenced();
+            expect(await own.forServer('A').noteAccepted!(JOB.jobId, later, turn)).toBe(true);
+            expect(await own.forServer('A').commitFence!(JOB.jobId, turn, 50_000, 0)).toBe(true);
+            // and the close itself reads them the same way: another turn's call does not stop a close, a matching one does
+            const closing = sharedRecord();
+            expect(await closing.forServer('B').noteAccepted!(JOB.jobId, 60_000, { turn: 7, run: 'run1' })).toBe(true);
+            expect(await closing.forServer('A').closeTurn!(JOB.jobId, turn, 0, 70_000)).toBe(true);
+            const stopped = sharedRecord();
+            expect(await stopped.forServer('B').noteAccepted!(JOB.jobId, 60_000, turn)).toBe(true);
+            expect(await stopped.forServer('A').closeTurn!(JOB.jobId, turn, 0, 70_000)).toBe(false);
+        });
+
+        it('leaves the committed fence where it is when the finish was refused as stale: only an accepted finish takes it back (the next turn has a number of its own)', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, action } = rigGiveUp();
+                let finishes = 0;
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish' && ++finishes === 1) {
+                        record.log.push('finish');
+                        throw stale();
+                    }
+                    return action(botId, jobId, body);
+                };
+                let first = true;
+                retryingTurn(orbit, (at) => {
+                    if (!first) return;
+                    first = false;
+                    at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal));
+                }, 200_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(400_000);
+                await running;
+                expect(record.counts.releases).toBe(0);
+                expect(record.committed).toHaveLength(1);
+            });
+        });
+
+        it('keeps the give-up PENDING when Orbit cannot be reached: the finish is sent again until Orbit accepts it, no new turn begins meanwhile, the committed fence stays until then and is taken back once, after the acceptance', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen, action } = rigGiveUp();
+                let attempts = 0;
+                let reachedSecond!: () => void;
+                const secondTry = new Promise<void>((resolve) => (reachedSecond = resolve));
+                let letSecondGo!: () => void;
+                const hold = new Promise<void>((resolve) => (letSecondGo = resolve));
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish') {
+                        attempts += 1;
+                        record.log.push('finish');
+                        if (attempts === 2) {
+                            reachedSecond();
+                            await hold;
+                        }
+                        if (attempts <= 3) throw new Error('Orbit could not be reached');
+                    }
+                    return action(botId, jobId, body);
+                };
+                const turns = retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(130_000);
+                await secondTry;
+                // pending: Orbit has taken nothing yet, the fence of the give-up still stands (past its own life too), and the machine was cancelled once
+                const [moment] = record.fences;
+                expect(attempts).toBe(2);
+                expect(record.counts.releases).toBe(0);
+                expect(record.committed).toEqual([moment]);
+                expect(await record.forServer('B').noteAccepted!(JOB.jobId, moment + FENCE_LIFE_MS * 4, { turn: 1, run: 'run1' })).toBe(false);
+                letSecondGo();
+                await vi.advanceTimersByTimeAsync(10_000);
+                await running;
+                // the same finish was sent again until it was taken (a third refused, a fourth accepted), and the fence went after that, once
+                expect(attempts).toBe(4);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+                expect(record.counts.releases).toBe(1);
+                expect(record.committed).toEqual([]);
+                expect(record.log).toEqual(['close', 'commit', 'cancel', 'finish', 'finish', 'finish', 'finish', 'release']);
+                // no turn was begun while the give-up was pending
+                expect(turns.turns).toBe(1);
+                expect(seen.cancels).toBe(1);
+            });
+        });
+
+        it('keeps the give-up owed across a stop and a start of the runner: the replacement worker for the same job sends the pending finish BEFORE any new turn, and the fence goes only after Orbit accepts it', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen, action } = rigGiveUp();
+                let attempts = 0;
+                const holder: { stop?: () => void } = {};
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish') {
+                        attempts += 1;
+                        record.log.push('finish');
+                        // the first try stops the runner while Orbit cannot be reached, and the replacement's first try fails too
+                        if (attempts === 1) holder.stop?.();
+                        if (attempts <= 2) throw new Error('Orbit could not be reached');
+                    }
+                    if (body.action === 'prepare') record.log.push('prepare');
+                    return action(botId, jobId, body);
+                };
+                const turns = retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const instance = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+                holder.stop = () => instance.stop();
+                orbit.running = async () => [JOB];
+                const first = instance.tick().then(() => instance.idle());
+                await vi.advanceTimersByTimeAsync(130_000);
+                await first;
+                // the first worker is gone with its finish untaken: the give-up is still owed, the fence still stands, and no second turn was opened
+                expect(attempts).toBe(1);
+                expect(record.committed).toHaveLength(1);
+                expect(record.counts.releases).toBe(0);
+                expect(turns.turns).toBe(1);
+                // the runner is started again: its worker for the same running job finishes the give-up first (a second try that fails, a third that is taken)
+                instance.start(1_000_000_000);
+                await vi.advanceTimersByTimeAsync(10_000);
+                await instance.idle();
+                instance.stop();
+                expect(attempts).toBe(3);
+                expect(turns.turns).toBe(1);
+                expect(seen.cancels).toBe(1);
+                expect(record.counts.releases).toBe(1);
+                expect(record.committed).toEqual([]);
+                // the same finish each time (the turn and run it was given up on), and the fence went after the accepted one, with no other turn between
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+                expect(finishedWithRun(seen).map((one) => one.run)).toEqual(['run1']);
+                expect(record.log.slice(-4)).toEqual(['finish', 'finish', 'finish', 'release']);
+                // settled is settled: a later worker for the job does not send the give-up again
+                instance.start(1_000_000_000);
+                await vi.advanceTimersByTimeAsync(10_000);
+                instance.stop();
+                await instance.idle();
+                expect(attempts).toBe(3);
+                expect(record.counts.releases).toBe(1);
+            });
+        });
+
+        it('a give-up Orbit says is stale is no longer owed: the replacement worker reads the job again and goes on, and the fence stays where it is', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, action } = rigGiveUp();
+                let attempts = 0;
+                const holder: { stop?: () => void } = {};
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish') {
+                        attempts += 1;
+                        if (attempts === 1) {
+                            holder.stop?.();
+                            throw new Error('Orbit could not be reached');
+                        }
+                        if (attempts === 2) throw stale();
+                    }
+                    return action(botId, jobId, body);
+                };
+                const turns = retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const instance = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+                holder.stop = () => instance.stop();
+                orbit.running = async () => [JOB];
+                const first = instance.tick().then(() => instance.idle());
+                await vi.advanceTimersByTimeAsync(130_000);
+                await first;
+                instance.start(1_000_000_000);
+                await vi.advanceTimersByTimeAsync(10_000);
+                // the job goes on (a new turn may begin now: the debt is over); it is stopped here
+                instance.stop();
+                await instance.idle();
+                // two finishes (the stale one ended the debt), and the fence of that turn stays
+                expect(attempts).toBe(2);
+                expect(record.counts.releases).toBe(0);
+                expect(record.committed).toHaveLength(1);
+                // and the replacement worker went on with the job: it read it again and opened a turn of its own
+                expect(turns.turns).toBe(2);
+            });
+        });
+
+        it('settles the pending give-up when Orbit no longer has the job going (a finish whose answer was lost got there, or the job ended otherwise): the fence is taken back, nothing is sent again', async () => {
+            await withFakeClock(async () => {
+                for (const gone of [null, { status: 'failed', control: 'brick' }, { status: 'done', control: 'brick' }, { status: 'stopped', control: 'brick' }]) {
+                    const { record, notes, orbit, seen } = rigGiveUp();
+                    let attempts = 0;
+                    const action = orbit.action;
+                    orbit.action = async (botId, jobId, body) => {
+                        if (body.action === 'finish') {
+                            attempts += 1;
+                            throw new Error('the answer was lost');
+                        }
+                        return action(botId, jobId, body);
+                    };
+                    // Orbit says the job is over as soon as the give-up asks
+                    let over = false;
+                    orbit.job = async () => (over ? (gone as never) : ({ status: 'running', control: 'brick' } as never));
+                    retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                    // the machine is cancelled at the give-up: from then on Orbit has it over
+                    const cancel = orbit.cancel;
+                    orbit.cancel = async (jobId) => {
+                        over = true;
+                        return cancel(jobId);
+                    };
+                    const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                    await vi.advanceTimersByTimeAsync(130_000);
+                    await running;
+                    expect(attempts, JSON.stringify(gone)).toBe(1);
+                    expect(record.counts.releases, JSON.stringify(gone)).toBe(1);
+                    expect(record.committed).toEqual([]);
+                    expect(seen.cancels).toBe(1);
+                }
+            });
+        });
+
+        it('stops sending the pending give-up when the worker is stopped (the job was taken over or the server is stopping): it is not ended for whoever has it now, and its fence stays where it is', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit } = rigGiveUp();
+                let attempts = 0;
+                const action = orbit.action;
+                let runner: Awaited<ReturnType<typeof runJob>> | undefined;
+                const holder: { stop?: () => void } = {};
+                orbit.action = async (botId, jobId, body) => {
+                    if (body.action === 'finish') {
+                        attempts += 1;
+                        // the worker is stopped while the finish is being tried
+                        if (attempts === 1) holder.stop?.();
+                        throw new Error('Orbit could not be reached');
+                    }
+                    return action(botId, jobId, body);
+                };
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+                const instance = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+                holder.stop = () => instance.stop();
+                orbit.running = async () => [JOB];
+                const running = instance.tick().then(() => instance.idle());
+                await vi.advanceTimersByTimeAsync(130_000);
+                await running;
+                runner = instance;
+                expect(runner).toBeDefined();
+                expect(attempts).toBe(1);
+                expect(record.counts.releases).toBe(0);
+                expect(record.committed).toHaveLength(1);
+            });
+        });
+
+        it('a refusal of another kind arriving while the fence is being committed (Orbit already holds the intent) does not stop the give-up: the end is Orbit\'s now, and the committed fence is taken back once Orbit took the finish', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen } = rigGiveUp();
+                record.latency.commitMs = 1000;
+                // 500 ms after the commit was sent, a call of the turn fails some other way of ours
+                record.latency.commitBegan = () => void setTimeout(() => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'other-kind', reason: 'provider_5xx', providerStatus: 502 }), 500);
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(210_000);
+                await running;
+                expect(record.log).toEqual(['close', 'commit', 'cancel', 'finish', 'release']);
+                expect(seen.cancels).toBe(1);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+                expect(record.committed).toEqual([]);
+                expect(record.fences).toEqual([]);
+            });
+        });
+
+        it('asking to commit the fence throws AFTER Orbit kept the intent (nothing is known of the fence): the give-up still goes on (the intent bars new work), the close is NOT taken back (no relay forwards a call of the turn meanwhile), and the fence goes once Orbit has accepted the finish', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen } = rigGiveUp();
+                const reopened: Array<{ unconfirmed?: true; committed?: true }> = [];
+                const refusals = {
+                    ...notes,
+                    commitTurn: async () => {
+                        throw new Error('the store broke');
+                    },
+                    reopenTurn: async (jobId: string, attempt: Parameters<typeof notes.reopenTurn>[1]) => {
+                        reopened.push({ ...(attempt.unconfirmed ? { unconfirmed: true as const } : {}), ...(attempt.committed ? { committed: true as const } : {}) });
+                        return notes.reopenTurn(jobId, attempt);
+                    },
+                };
+                // another server's relay asks, at the moment the machine is cancelled, whether a call of the turn (one Orbit took up before the intent) may be forwarded
+                const forwarded: boolean[] = [];
+                const cancel = orbit.cancel;
+                orbit.cancel = async (jobId) => {
+                    forwarded.push(await record.forServer('B').noteAccepted!(jobId, Date.now(), { turn: 1, run: 'run1' }));
+                    return cancel(jobId);
+                };
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+                const running = runJob(orbit, JOB, RELAY, refusals, () => 'run1');
+                await vi.advanceTimersByTimeAsync(210_000);
+                await running;
+                // the close was never taken back: no relay forwards a call of the given-up turn while Orbit holds the end
+                expect(reopened).toEqual([]);
+                expect(forwarded).toEqual([false]);
+                expect(seen.cancels).toBe(1);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+                // and the fence is taken back once Orbit accepted the finish
+                expect(record.counts.releases).toBe(1);
+                // (a fence that was never committed is not in `committed`: it clears itself after its own life)
+                expect(record.committed).toEqual([]);
+            });
+        });
+
+        it('a fence the store says is no longer the one the close wrote, AFTER Orbit kept the intent: the give-up still goes on (the intent bars new work) and the close is not taken back by the runner', async () => {
+            await withFakeClock(async () => {
+                const { record, notes, orbit, seen } = rigGiveUp();
+                record.commitSays.gone = true;
+                retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(210_000);
+                await running;
+                expect(record.log.slice(0, 3)).toEqual(['close', 'commit', 'cancel']);
+                expect(record.log).not.toContain('retract');
+                expect(seen.cancels).toBe(1);
+                expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            });
+        });
+    });
+
+    it('does not give the turn up when a refusal of another kind (a provider error of ours) arrives while the close is being written: the close is taken back, the fence leaves the store, and the turn goes on', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            record.latency.ms = 1000;
+            // 500 ms after the close was sent, a call of the turn fails some other way of ours: the turn is no pool-only turn any more
+            record.latency.began = () => void setTimeout(() => notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'other-kind', reason: 'provider_5xx', providerStatus: 502 }), 500);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            // the fence of that close is out of the store: another server's call of the turn is taken up
+            expect(record.fences).toEqual([]);
+            expect(await record.forServer('B').noteAccepted!(JOB.jobId, Date.now(), { turn: 1, run: 'run1' })).toBe(true);
+        });
+    });
+
+    it('still gives the turn up when the only refusal that arrived while the close was being written is a call that the close itself had refused: it is no evidence of its own', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            record.latency.ms = 1000;
+            // 500 ms after the close was sent a call reaches this server's relay: the turn is closed here, so it is refused, and its row is a fault of ours (relay_down)
+            let refused: unknown = 'not asked';
+            record.latency.began = () =>
+                void setTimeout(() => {
+                    refused = notes.accepted(JOB.jobId, undefined, 'refused-by-close');
+                    notes.record(JOB.botId, JOB.jobId, { ...poolRefusal, callId: 'refused-by-close', reason: 'relay_down', providerStatus: 503 });
+                }, 500);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            expect(refused).toBe(false);
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+            // the give-up went on: its fence was committed, and taken back when Orbit accepted the finish
+            expect(record.counts.commitFences).toBe(1);
+            expect(record.fences).toEqual([]);
+        });
+    });
+
+    it('takes back the fence of THAT close when the worker stops while it is being written, even though the close commits afterwards: nothing is cancelled, and a later close is never touched', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            record.latency.ms = 1000;
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+            // the worker stops 300 ms after the close was sent; the store commits it at 1000 ms
+            record.latency.began = () => void setTimeout(() => runner.stop(), 300);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await vi.advanceTimersByTimeAsync(130_000);
+            await runner.idle();
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([]);
+            expect(record.fences).toEqual([]);
+            // the turn takes calls again on this server too
+            expect(notes.accepted(JOB.jobId, { turn: 1, run: 'run1' })).not.toBe(false);
+        });
+    });
+
+    it('does not report the worker idle while the give-up is still taking a close back: the fence is out of the store by the time idle() resolves', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            // the close takes a second to commit, taking it back another two
+            record.latency.ms = 1000;
+            record.latency.retractMs = 2000;
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] }, refusals: notes, runId: () => 'run1' });
+            // the worker stops 300 ms after the close was sent: before the store committed it
+            record.latency.began = () => void setTimeout(() => runner.stop(), 300);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            const idle = runner.idle().then(() => ({ fences: [...record.fences], ...record.counts }));
+            await vi.advanceTimersByTimeAsync(130_000);
+            // at the moment the worker said it was idle, the close had committed AND been taken back
+            const atIdle = await idle;
+            expect(atIdle.fences).toEqual([]);
+            expect(atIdle.commits).toBe(1);
+            expect(atIdle.retracts).toBeGreaterThanOrEqual(1);
+            expect(seen.cancels).toBe(0);
+        });
+    });
+
+    it('keeps one give-up at a time: while the first close is still being written the timers arm no other, and the end of the turn waits for THAT close to be taken back', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const real = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            const closes: number[] = [];
+            const events: string[] = [];
+            let runner!: ReturnType<typeof createComputerRunner>;
+            // the first close is slow (it commits at 6 s and then answers); a second one, if it were ever asked, answers at once
+            const closeTurn = (_job: string): Promise<boolean> => {
+                closes.push(Date.now());
+                if (closes.length === 1) {
+                    // the worker stops while the first close is on its way
+                    setTimeout(() => runner.stop(), 3000);
+                    return new Promise<boolean>((resolve) => setTimeout(() => (events.push('first close answered'), resolve(true)), 6000));
+                }
+                return Promise.resolve(false);
+            };
+            const reopenTurn = async () => void events.push('close taken back');
+            // the give-up timer fires at 1 s and the pool is looked at every 0.5 s: the timers fire again while the first close is pending
+            runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0], poolGiveUpMs: 1000, poolCheckMs: 500 }, refusals: { ...real, closeTurn, reopenTurn }, runId: () => 'run1' });
+            retryingTurn(orbit, (at) => at(0, () => real.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            void runner.idle().then(() => events.push('worker idle'));
+            await vi.advanceTimersByTimeAsync(5000);
+            // no second give-up was started while the first was pending
+            expect(closes).toHaveLength(1);
+            await vi.advanceTimersByTimeAsync(20_000);
+            // the first close answered at 6 s, the turn was over: it was taken back, and the worker was idle only after that
+            expect(closes).toHaveLength(1);
+            expect(events).toEqual(['first close answered', 'close taken back', 'worker idle']);
+            expect(seen.cancels).toBe(0);
+        });
+    });
+
+    it('waits for that clean-up only for a bounded time: a close that never answers does not hold the worker', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const real = createRefusalNotes(Date.now, { sink: async () => true, shared: record.forServer('A') });
+            const { orbit } = fakeOrbit([]);
+            const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0], cleanupMs: 500 }, refusals: { ...real, closeTurn: () => { setTimeout(() => runner.stop(), 300); return new Promise<boolean>(() => undefined); } }, runId: () => 'run1' });
+            retryingTurn(orbit, (at) => at(0, () => real.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            let idle = false;
+            void runner.idle().then(() => (idle = true));
+            // the stop came 300 ms into a close that never answers; the clean-up is allowed 500 ms more
+            await vi.advanceTimersByTimeAsync(95_000 + 2000);
+            expect(idle).toBe(true);
+        });
+    });
+
+    it('does not give the turn up when the close cannot be made (the store cannot be read or does not answer): no call is known to be taken up or not, so nothing is stopped', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const shared = { ...record.forServer('A'), closeTurn: async () => Promise.reject(new Error('shared store down')) };
+            const notes = createRefusalNotes(Date.now, { sink: async () => true, shared });
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
+    it('still gives up when no server took up a call, though the other servers have shared notes', async () => {
+        await withFakeClock(async () => {
+            const record = sharedRecord();
+            const sent: CallRow[] = [];
+            const notes = createRefusalNotes(Date.now, { sink: async (_botId, _jobId, rows) => (sent.push(...rows), true), shared: record.forServer('A') });
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)); }, 6 * 60_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            expect(seen.cancels).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+        });
+    });
+
+    it('does not give up on a turn it only reconnected to after a restart: a call taken up before the restart is unknown to it, so the refusals seen since are no proof', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            // the bot server restarted: the job has a turn already going, taken up with orbit.stream, and the notes begin empty
+            orbit.running = async () => [{ ...JOB, hasTurn: true }];
+            const events = (): AsyncGenerator<RunnerEvent> => (async function* () {
+                yield { type: 'created', id: 'r', sessionId: 's' };
+                notes.record(JOB.botId, JOB.jobId, poolRefusal);
+                await new Promise<void>((resolve) => setTimeout(resolve, 200_000));
+                yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null };
+            })();
+            orbit.stream = async () => ({ ok: true, events: events() });
+            const running = runJob(orbit, { ...JOB, hasTurn: true }, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.some((row) => row.callId.startsWith('pool_busy_gave_up'))).toBe(false);
+        });
+    });
+
+    it('still gives up on a turn it started itself in a job it took up after a restart', async () => {
+        await withFakeClock(async () => {
+            const { notes, sent } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            // the first turn is only reconnected to (and ends well); the next one is started here and met a pool with no room
+            let turns = 0;
+            orbit.stream = async () => ({ ok: true, events: (async function* (): AsyncGenerator<RunnerEvent> { yield { type: 'completed', outputText: 'Still on it.', usage: null }; })() });
+            retryingTurn(orbit, (at) => { at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)); turns += 1; }, 6 * 60_000);
+            const running = runJob(orbit, { ...JOB, hasTurn: true }, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            expect(turns).toBe(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [2], why: POOL_BUSY_WHY }]);
+            await notes.flush(JOB.jobId);
+            expect(sent.find((row) => row.callId === 'pool_busy_gave_up_run1_2')).toMatchObject({ kind: 'fault', turn: 2 });
+        });
+    });
+
+    it('does not give up on a turn in which the person’s allowance or a rule of theirs also refused a call: a spending limit stopped it too', async () => {
+        await withFakeClock(async () => {
+            const { notes } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, (at) => {
+                at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal));
+                at(10_000, () => notes.record(JOB.botId, JOB.jobId, { callId: 'c-allowance', kind: 'not_ours', reason: 'allowance', source: 'universe-ai', route: 'universe-ai:p', providerStatus: 429 }));
+            }, 200_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(210_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen).every((one) => one.action === 'finish' && one.why !== POOL_BUSY_WHY)).toBe(true);
+        });
+    });
+
+    it('leaves a turn alone when one of its calls was taken up, whether before or after the refusals', async () => {
+        for (const order of ['before', 'after'] as const) {
+            await withFakeClock(async () => {
+                const { notes } = rigged();
+                const { orbit, seen } = fakeOrbit([]);
+                retryingTurn(
+                    orbit,
+                    (at) => {
+                        if (order === 'before') at(0, () => notes.accepted(JOB.jobId));
+                        at(1_000, () => notes.record(JOB.botId, JOB.jobId, poolRefusal));
+                        if (order === 'after') at(30_000, () => notes.accepted(JOB.jobId));
+                    },
+                    200_000
+                );
+                const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+                await vi.advanceTimersByTimeAsync(210_000);
+                await running;
+                expect(seen.cancels, order).toBe(0);
+                expect(finished(seen), order).toEqual([{ action: 'finish', outcome: 'done' }]);
+            });
+        }
+    });
+
+    it('does not give up on a turn with no refusal for room at all, however long it goes on', async () => {
+        await withFakeClock(async () => {
+            const { notes } = rigged();
+            const { orbit, seen } = fakeOrbit([]);
+            retryingTurn(orbit, () => undefined, 300_000);
+            const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
+            await vi.advanceTimersByTimeAsync(310_000);
+            await running;
+            expect(seen.cancels).toBe(0);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+});
+
+describe('a turn stopped while its stream is being opened', () => {
+    const poolRefusal = { callId: 'c1', kind: 'fault', reason: 'pool_busy', source: 'universe-ai', route: 'universe-ai:p', providerStatus: 503 } as const;
+    const aborted = () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' });
+    /** A sleep that ends when its signal does, as the real one does. */
+    const sleeping = (ms: number, signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+            if (signal.aborted) return resolve();
+            const timer = setTimeout(resolve, ms);
+            signal.addEventListener('abort', () => (clearTimeout(timer), resolve()), { once: true });
+        });
+    /** Opening with a signal that has already ended fails with the abort itself, as `fetch` does. */
+    const opening = (events: () => AsyncGenerator<RunnerEvent>) => async (_jobId: string, ...rest: unknown[]): Promise<TurnOpened> => {
+        // (the epoch the runner holds the job under may come after the signal)
+        const signal = rest.find((one): one is AbortSignal => one instanceof AbortSignal) as AbortSignal;
+        if (signal.aborted) throw aborted();
+        return { ok: true, events: events() };
+    };
+    const rigged = (reconnectMs: number[] = [200_000]) => {
+        const rows: CallRow[] = [];
+        const notes = createRefusalNotes(Date.now, { sink: async (_botId, _jobId, sent) => (rows.push(...sent), true) });
+        const warn = vi.fn();
+        const { orbit, seen } = fakeOrbit([]);
+        const runner = createComputerRunner({ orbit, relayUrl: RELAY, sleep: sleeping, log: { warn, error: vi.fn(), info: vi.fn() }, refusals: notes, runId: () => 'run1', timing: { waitMs: 0, progressMs: 0, reconnectMs, prepareMs: [0] } });
+        orbit.running = async () => [JOB];
+        return { orbit, seen, notes, rows, warn, runner };
+    };
+    const withFakeClock = async (test: () => Promise<void>) => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            await test();
+        } finally {
+            vi.useRealTimers();
+        }
+    };
+    /** A turn that opens, then its stream breaks after a second: the runner waits to reconnect. */
+    const breaking = async function* (): AsyncGenerator<RunnerEvent> {
+        yield { type: 'created', id: 'r', sessionId: 's' };
+        await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+        throw new Error('terminated');
+    };
+    /** What the runner logs when an error left a turn and ended the worker: the job is then picked up again on the next look. */
+    const escaped = (rig: ReturnType<typeof rigged>) => rig.warn.mock.calls.filter((call) => String(call[0]).includes('stopped on an error'));
+    const poolBusyEnd = (rig: ReturnType<typeof rigged>) => {
+        expect(finished(rig.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', turns: [1], why: POOL_BUSY_WHY }]);
+        expect(rig.seen.cancels).toBe(1);
+        expect(rig.rows.filter((row) => row.callId === 'pool_busy_gave_up_run1_1')).toHaveLength(1);
+        // nothing left the turn as an error to be picked up again
+        expect(escaped(rig)).toEqual([]);
+    };
+
+    it('ends the job as pool_busy, once, when the give-up comes while the runner waits to reconnect', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            rig.orbit.turn = async (_jobId, _input, signal) => (rig.notes.record(JOB.botId, JOB.jobId, poolRefusal), opening(breaking)('', signal));
+            rig.orbit.stream = opening(breaking);
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            poolBusyEnd(rig);
+        });
+    });
+
+    it('ends the job as pool_busy, once, when the give-up comes before the first stream has opened', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            rig.orbit.turn = (_jobId, _input, signal) =>
+                new Promise((_resolve, reject) => {
+                    rig.notes.record(JOB.botId, JOB.jobId, poolRefusal);
+                    // opening is slow, and fails with the abort when the turn is stopped
+                    signal.addEventListener('abort', () => reject(aborted()), { once: true });
+                });
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            poolBusyEnd(rig);
+        });
+    });
+
+    /** A turn whose stream gives no event for `after` ms and then ends with its own terminal event; its last report to Orbit is slow. */
+    const endingAt = (rig: ReturnType<typeof rigged>, after: number) => {
+        rig.orbit.turn = async (_jobId, _input, signal) => {
+            rig.notes.record(JOB.botId, JOB.jobId, poolRefusal);
+            return opening(async function* (): AsyncGenerator<RunnerEvent> {
+                yield { type: 'created', id: 'r', sessionId: 's' };
+                await new Promise<void>((resolve) => setTimeout(resolve, after));
+                yield { type: 'completed', outputText: 'Done. [[done]]', usage: null };
+            })('', signal);
+        };
+        const original = rig.orbit.action;
+        // the report that follows the end of the turn takes a long time to be answered
+        rig.orbit.action = async (botId, jobId, body) => (body.action === 'progress' ? new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 200_000)) : original(botId, jobId, body));
+    };
+
+    it('gives up nothing on a turn that has ended by its own terminal event, even when the report that follows it is slow and the pool is still full: the give-up timer is put down at the event', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            endingAt(rig, 40_000);
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            // well past the give-up (95 s after the first check)
+            await vi.advanceTimersByTimeAsync(260_000);
+            await running;
+            expect(rig.seen.cancels).toBe(0);
+            expect(finished(rig.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
+    it('ends the job as pool_busy, once, when the pool watchdog gives the turn up while the report after a broken stream on the LAST reconnect is still pending: no ordinary failed turn, no new turn', async () => {
+        await withFakeClock(async () => {
+            // no reconnect is left: the stream that breaks is the last one
+            const rig = rigged([]);
+            let turnsStarted = 0;
+            rig.orbit.turn = async (_jobId, _input, signal) => {
+                turnsStarted += 1;
+                rig.notes.record(JOB.botId, JOB.jobId, poolRefusal);
+                return opening(async function* (): AsyncGenerator<RunnerEvent> {
+                    yield { type: 'created', id: 'r', sessionId: 's' };
+                    await new Promise<void>((resolve) => setTimeout(resolve, 90_000));
+                    throw new Error('terminated');
+                })('', signal);
+            };
+            const original = rig.orbit.action;
+            // the report that follows the break takes 20 s: the pool gives the turn up (95 s) while it is pending
+            rig.orbit.action = async (botId, jobId, body) => (body.action === 'progress' ? new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 20_000)) : original(botId, jobId, body));
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            poolBusyEnd(rig);
+            // and the turn was not started again
+            expect(turnsStarted).toBe(1);
+        });
+    });
+
+    it('gives up nothing when the turn ends by its terminal event while the shared pool read is pending: it is looked at again after the read, before the job is cancelled', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            endingAt(rig, 100_000);
+            // the read of what the other servers took up begins at the give-up (95 s) and answers "none" at 115 s: the turn ended at 100 s
+            const runner = createComputerRunner({
+                orbit: rig.orbit,
+                relayUrl: RELAY,
+                sleep: sleeping,
+                log: { warn: rig.warn, error: vi.fn(), info: vi.fn() },
+                refusals: { ...rig.notes, closeTurn: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 20_000)) },
+                runId: () => 'run1',
+                timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
+            });
+            const running = runner.tick().then(() => runner.idle());
+            await vi.advanceTimersByTimeAsync(320_000);
+            await running;
+            expect(rig.seen.cancels).toBe(0);
+            expect(finished(rig.seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+    });
+
+    it('still gives the turn up when it is still going and the pool is busy: a turn that never ends is cancelled as before', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged();
+            rig.orbit.turn = async (_jobId, _input, signal) => (rig.notes.record(JOB.botId, JOB.jobId, poolRefusal), opening(breaking)('', signal));
+            rig.orbit.stream = opening(breaking);
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(130_000);
+            await running;
+            poolBusyEnd(rig);
+        });
+    });
+
+    /** The agent gives up in its own words; the refusal flush that comes before the failure is sent is the part under test. */
+    const failingTurn = (rig: ReturnType<typeof rigged>) => {
+        rig.orbit.turn = opening(async function* (): AsyncGenerator<RunnerEvent> {
+            yield { type: 'completed', outputText: 'The site is down. [[failed]]', usage: null };
+        });
+    };
+    const withFlush = (rig: ReturnType<typeof rigged>, flush: () => Promise<boolean>) =>
+        createComputerRunner({
+            orbit: rig.orbit,
+            relayUrl: RELAY,
+            sleep: sleeping,
+            log: { warn: rig.warn, error: vi.fn(), info: vi.fn() },
+            refusals: { ...rig.notes, flush },
+            runId: () => 'run1',
+            timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
+        });
+
+    it('sends no finish for a worker that was stopped while the refusal flush was going: the job is not ended for whoever has it now', async () => {
+        const rig = rigged();
+        failingTurn(rig);
+        let release!: () => void;
+        let entered!: () => void;
+        const inFlush = new Promise<void>((resolve) => (entered = resolve));
+        const runner = withFlush(rig, () => new Promise<boolean>((resolve) => ((entered(), (release = () => resolve(true))))));
+        const running = runner.tick().then(() => runner.idle());
+        await inFlush;
+        runner.stop();
+        release();
+        await running;
+        expect(finished(rig.seen)).toEqual([]);
+        expect(escaped(rig)).toEqual([]);
+    });
+
+    it('still sends the failure when the flush failed (it did not send its rows) and the worker is active: the cause stays Orbit’s only hint', async () => {
+        const rig = rigged();
+        failingTurn(rig);
+        const runner = withFlush(rig, async () => false);
+        await runner.tick().then(() => runner.idle());
+        expect(finished(rig.seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent', why: 'The site is down.' }]);
+        // and one whose flush throws
+        const again = rigged();
+        failingTurn(again);
+        const second = withFlush(again, () => Promise.reject(new Error('Orbit away')));
+        await second.tick().then(() => second.idle());
+        expect(finished(again.seen)).toHaveLength(1);
+    });
+
+    it('does not begin a turn before it is told to the other bot servers: the turn is sent to the machine only after the publication has settled, and a stop during it begins nothing', async () => {
+        const rig = rigged();
+        failingTurn(rig);
+        let sent = 0;
+        const original = rig.orbit.turn;
+        rig.orbit.turn = async (...args) => (sent++, original(...args));
+        let publish!: () => void;
+        const told: number[] = [];
+        const runner = createComputerRunner({
+            orbit: rig.orbit,
+            relayUrl: RELAY,
+            sleep: sleeping,
+            log: { warn: rig.warn, error: vi.fn(), info: vi.fn() },
+            refusals: {
+                ...rig.notes,
+                turn: (jobId, turn, run) => (told.push(turn), rig.notes.turn(jobId, turn, run)),
+                turnPublished: () => new Promise<void>((resolve) => (publish = resolve)),
+            },
+            runId: () => 'run1',
+            timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
+        });
+        const running = runner.tick().then(() => runner.idle());
+        await vi.waitFor(() => expect(told).toEqual([1]));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        // the publication is still going: no turn was sent
+        expect(sent).toBe(0);
+        publish();
+        await running;
+        expect(sent).toBe(1);
+        // a stop while the publication is going: nothing is begun
+        const stoppedRig = rigged();
+        failingTurn(stoppedRig);
+        let began = 0;
+        const first = stoppedRig.orbit.turn;
+        stoppedRig.orbit.turn = async (...args) => (began++, first(...args));
+        let late!: () => void;
+        const stopping = createComputerRunner({
+            orbit: stoppedRig.orbit,
+            relayUrl: RELAY,
+            sleep: sleeping,
+            log: { warn: stoppedRig.warn, error: vi.fn(), info: vi.fn() },
+            refusals: { ...stoppedRig.notes, turnPublished: () => new Promise<void>((resolve) => (late = resolve)) },
+            runId: () => 'run1',
+            timing: { waitMs: 0, progressMs: 0, reconnectMs: [200_000], prepareMs: [0] },
+        });
+        const stoppedRun = stopping.tick().then(() => stopping.idle());
+        await vi.waitFor(() => expect(late).toBeTypeOf('function'));
+        stopping.stop();
+        late();
+        await stoppedRun;
+        expect(began).toBe(0);
+        expect(finished(stoppedRig.seen)).toEqual([]);
+    });
+
+    it('ends as stopped, with no finish and no error, when the runner is stopped in the same window (waiting to reconnect, or opening)', async () => {
+        for (const window of ['reconnect', 'opening'] as const) {
+            await withFakeClock(async () => {
+                const rig = rigged();
+                if (window === 'reconnect') {
+                    rig.orbit.turn = opening(breaking);
+                    rig.orbit.stream = opening(breaking);
+                } else {
+                    rig.orbit.turn = (_jobId, _input, signal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(aborted()), { once: true }));
+                }
+                const running = rig.runner.tick().then(() => rig.runner.idle());
+                await vi.advanceTimersByTimeAsync(10_000);
+                rig.runner.stop();
+                await vi.advanceTimersByTimeAsync(10_000);
+                await running;
+                expect(finished(rig.seen), window).toEqual([]);
+                expect(escaped(rig), window).toEqual([]);
+            });
+        }
+    });
+
+    it('ends as a turn that was stopped (told to look again), with no error, when Orbit refuses a renewal while the stream is being reopened', async () => {
+        await withFakeClock(async () => {
+            const rig = rigged([200_000]);
+            let renewals = 0;
+            const original = rig.orbit.action;
+            rig.orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'renew') {
+                    // the first renewal is granted for five seconds; the next is refused while the runner waits to reconnect
+                    if (renewals++ === 0) return { ok: true, renewInSeconds: 5 };
+                    throw Object.assign(new Error('Request failed with status code 404'), { response: { status: 404 } });
+                }
+                return original(botId, jobId, body);
+            };
+            let streams = 0;
+            rig.orbit.turn = opening(breaking);
+            rig.orbit.stream = async (_jobId, signal) => {
+                if (signal.aborted) throw aborted();
+                return streams++ === 0 ? { ok: true, events: (async function* (): AsyncGenerator<RunnerEvent> { yield { type: 'completed', outputText: 'All fine. [[done]]', usage: null }; })() } : { ok: true, events: (async function* () {})() };
+            };
+            const running = rig.runner.tick().then(() => rig.runner.idle());
+            await vi.advanceTimersByTimeAsync(20_000);
+            // the job is read again (it is over for Orbit then), and no error left the turn
+            rig.runner.stop();
+            await vi.advanceTimersByTimeAsync(10_000);
+            await running;
+            expect(escaped(rig)).toEqual([]);
+            expect(rig.seen.cancels).toBeGreaterThanOrEqual(1);
+        });
     });
 });

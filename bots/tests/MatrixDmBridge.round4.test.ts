@@ -86,6 +86,47 @@ describe('MatrixDmBridge after the full review', () => {
             expect(stores.deps.reply.mock.calls[0][4]).toMatchObject({ note: true, connectedApp: { app: 'notion', name: 'Notion' } });
         });
 
+        // CodeRabbit on #2114: the continuation goes with the ORIGINAL event's hook and has an identity made from it
+        it('carries the original event\'s paid hook, and the same continuation has the same identity wherever it is handled', async () => {
+            const original: MatrixEvent = { type: APP_CONNECTED_EVENT, room_id: ROOM, sender: ALICE, event_id: '$c9', content: { app: 'notion', name: 'Notion' } };
+            await bridge.onEvent(invite());
+            const paid = vi.fn(async () => undefined);
+            await bridge.onEvent(original, { paid });
+            expect(paid).toHaveBeenCalledTimes(1);
+            const first = stores.deps.reply.mock.calls[0][4].eventId as string;
+            expect(first).toMatch(/^\$app-[0-9a-f]{32}$/);
+            // another server (a fresh bridge) handles the same event: the same continuation, so a start it makes carries the same key
+            const other = new MatrixDmBridge(config, client as never, stores.deps);
+            await other.onEvent(invite());
+            await other.onEvent(original, { paid });
+            expect(stores.deps.reply.mock.calls[1][4].eventId).toBe(first);
+        });
+
+        it('a failure before anything was paid for goes back to the inbox (it throws); after that, and with no inbox, it is a lost line that costs nothing', async () => {
+            const original: MatrixEvent = { type: APP_CONNECTED_EVENT, room_id: ROOM, sender: ALICE, event_id: '$c10', content: { app: 'notion', name: 'Notion' } };
+            await bridge.onEvent(invite());
+            stores.deps.checkAccess.mockClear();
+            vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5 * 60_000 });
+            try {
+                stores.deps.checkAccess.mockRejectedValueOnce(new Error('Orbit unreachable'));
+                await expect(bridge.onEvent(original, { paid: async () => undefined })).rejects.toThrow('Orbit unreachable');
+                // handed out again: carried on now
+                await bridge.onEvent(original, { paid: async () => undefined });
+                expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+                // with no inbox hooks the same failure is only a line that is lost. The access answer is cached for a while, so the clock goes past that: the bare event does ask Orbit afresh
+                const bare: MatrixEvent = { ...original, event_id: '$c11' };
+                vi.setSystemTime(Date.now() + 5 * 60_000);
+                stores.deps.checkAccess.mockClear();
+                stores.deps.checkAccess.mockRejectedValueOnce(new Error('Orbit unreachable'));
+                await expect(bridge.onEvent(bare)).resolves.toBeUndefined();
+                // it did ask (and was refused), and nothing was answered again
+                expect(stores.deps.checkAccess).toHaveBeenCalledTimes(1);
+                expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         it('is not carried on when the App is not connected, or Orbit cannot say', async () => {
             await bridge.onEvent(invite());
             stores.deps.appConnected.mockResolvedValueOnce(false);
@@ -229,6 +270,279 @@ describe('a message that arrives while the store that knows the chat is down', (
         await vi.advanceTimersByTimeAsync(2000);
         expect(stores.deps.reply).toHaveBeenCalledTimes(1);
         bridge.stop();
+    });
+
+    // CodeRabbit on #2114 (review of d098522a), and Opus's design for a store that is down: the event is HELD here, under its own acquisition and paid hook, never counted as a try
+    describe('an event the inbox holds while the chat store or the App lookup is down', () => {
+        const down = (minutes: number) => minutes * 60_000;
+        const storeDown = (stores: ReturnType<typeof makeStores>, isDown: { now: boolean }) => {
+            stores.rooms.set(ROOM, BOT);
+            stores.deps.rooms.getDmRoomBot = vi.fn(async (room: string) => {
+                if (isDown.now) throw new Error('Redis is reconnecting');
+                return stores.rooms.get(room) ?? null;
+            });
+        };
+
+        it('a lookup that fails for three minutes and then recovers is answered once, with one paid start, and nothing was given back', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const client = makeClient();
+            const stores = makeStores();
+            const isDown = { now: true };
+            storeDown(stores, isDown);
+            const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            let outcome: 'pending' | 'returned' | 'threw' = 'pending';
+            const held = bridge.onEvent(message('are you there?'), { paid }).then(
+                () => (outcome = 'returned'),
+                () => (outcome = 'threw')
+            );
+            await vi.advanceTimersByTimeAsync(down(3));
+            // still held: not answered, not given back, nothing paid, nothing kept in this process
+            expect(outcome).toBe('pending');
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            expect(paid).not.toHaveBeenCalled();
+            expect((bridge as any).unplaced.size).toBe(0);
+            isDown.now = false;
+            await vi.advanceTimersByTimeAsync(down(1));
+            await held;
+            expect(outcome).toBe('returned');
+            expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+            expect(paid).toHaveBeenCalledTimes(1);
+            bridge.stop();
+        });
+
+        it('still down after an hour: the failure goes back (the entry is given back as a try); nothing is kept in this process', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const client = makeClient();
+            const stores = makeStores();
+            storeDown(stores, { now: true });
+            const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            const held = bridge.onEvent(message('are you there?'), { paid });
+            const outcome = held.then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(down(59));
+            await vi.advanceTimersByTimeAsync(down(3));
+            expect(await outcome).toBe('Redis is reconnecting');
+            expect((bridge as any).unplaced.size).toBe(0);
+            expect(paid).not.toHaveBeenCalled();
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            bridge.stop();
+        });
+
+        it('a bridge that stops ends the wait at once and gives the event back', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            storeDown(stores, { now: true });
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const held = bridge.onEvent(message('hello?'), { paid: async () => undefined });
+            const outcome = held.then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(5000);
+            void bridge.stop();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(await outcome).toBe('Redis is reconnecting');
+        });
+
+        // CodeRabbit on 27ab3385: the wait ends on stop(), and a lookup that happens to succeed on the way out must not start a paid reply during shutdown
+        it('a bridge that stops while the lookup has just recovered still gives the event back, with no reply and no paid start', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            const isDown = { now: true };
+            storeDown(stores, isDown);
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            const outcome = bridge.onEvent(message('hello?'), { paid }).then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(5000);
+            isDown.now = false;
+            void bridge.stop();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(await outcome).toBe('Redis is reconnecting');
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            expect(paid).not.toHaveBeenCalled();
+        });
+
+        // CodeRabbit on a767269a: the FIRST lookup, with no failure before it, is no different once the bridge is stopping
+        it('the first lookup, in flight when the bridge stops, and that then succeeds is not taken: no reply, no paid start, and the event goes back', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            stores.rooms.set(ROOM, BOT);
+            let finish: (bot: string | null) => void = () => undefined;
+            stores.deps.rooms.getDmRoomBot = vi.fn(() => new Promise<string | null>((resolve) => (finish = resolve)));
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            const outcome = bridge.onEvent(message('hello?'), { paid }).then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(100);
+            void bridge.stop();
+            finish(BOT);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(await outcome).toMatch(/stopping/i);
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            expect(paid).not.toHaveBeenCalled();
+        });
+
+        it('a retry already in flight when the bridge stops, and that then succeeds, is not taken: the event goes back', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            stores.rooms.set(ROOM, BOT);
+            let calls = 0;
+            let finish: (bot: string | null) => void = () => undefined;
+            stores.deps.rooms.getDmRoomBot = vi.fn(async () => {
+                calls += 1;
+                if (calls === 1) throw new Error('Redis is reconnecting');
+                return new Promise<string | null>((resolve) => (finish = resolve));
+            });
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            const outcome = bridge.onEvent(message('hello?'), { paid }).then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(2500);
+            expect(calls).toBe(2);
+            void bridge.stop();
+            finish(BOT);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(await outcome).toBe('Redis is reconnecting');
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            expect(paid).not.toHaveBeenCalled();
+        });
+
+        // CodeRabbit on 27ab3385: the router gives EVERY event the hook; only an event the inbox holds may be held (the room waits behind it)
+        it('an event with no durable inbox entry is never held: it goes to the local list at once, so the room is not blocked', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            const isDown = { now: true };
+            storeDown(stores, isDown);
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            await bridge.onEvent(message('hello?'), { paid, durable: false });
+            expect((bridge as any).unplaced.size).toBe(1);
+            expect(paid).not.toHaveBeenCalled();
+            isDown.now = false;
+            await vi.advanceTimersByTimeAsync(2500);
+            expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+            bridge.stop();
+        });
+
+        it('an event with no hooks is kept here and tried again, as it always was', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            const isDown = { now: true };
+            storeDown(stores, isDown);
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            await bridge.onEvent(message('hello?'));
+            expect((bridge as any).unplaced.size).toBe(1);
+            isDown.now = false;
+            await vi.advanceTimersByTimeAsync(2500);
+            expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+            bridge.stop();
+        });
+
+        it('a lookup of an App connection that fails for three minutes is held and then carried on once; an explicit "no" still stops, and one that stays down an hour goes back', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            vi.spyOn(console, 'info').mockImplementation(() => undefined);
+            const stores = makeStores();
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            await bridge.onEvent(invite());
+            const original: MatrixEvent = { type: APP_CONNECTED_EVENT, room_id: ROOM, sender: ALICE, event_id: '$c20', content: { app: 'notion', name: 'Notion' } };
+            let orbitDown = true;
+            stores.deps.appConnected.mockImplementation(async () => {
+                if (orbitDown) throw new Error('Orbit down');
+                return true;
+            });
+            const paid = vi.fn(async () => undefined);
+            const held = bridge.onEvent(original, { paid });
+            await vi.advanceTimersByTimeAsync(down(3));
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            orbitDown = false;
+            await vi.advanceTimersByTimeAsync(down(1));
+            await held;
+            expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+            expect(paid).toHaveBeenCalledTimes(1);
+            // an explicit "no" from Orbit stops without a turn and without a failure
+            stores.deps.appConnected.mockImplementation(async () => false);
+            await expect(bridge.onEvent({ ...original, event_id: '$c21' }, { paid: async () => undefined })).resolves.toBeUndefined();
+            expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+            // down for good: after the hour it goes back
+            orbitDown = true;
+            stores.deps.appConnected.mockImplementation(async () => {
+                throw new Error('Orbit down');
+            });
+            const forever = bridge.onEvent({ ...original, event_id: '$c22' }, { paid: async () => undefined });
+            const outcome = forever.then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(down(62));
+            expect(await outcome).toBe('Orbit down');
+            bridge.stop();
+        });
+
+        it('an event that ran out of tries tells the person it was not answered (never silence) and reports it to Sentry; work that had begun (its server went away) is told the same way, once', async () => {
+            const client = makeClient();
+            const stores = makeStores();
+            const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+            await bridge.onEvent(invite());
+            await bridge.onGaveUp(message('hello?'), 'tries');
+            const notes = client.sendMessage.mock.calls.map((call: any[]) => call[2]);
+            expect(notes).toHaveLength(1);
+            // nothing paid ran: sending again is safe, so the old note stands
+            expect(notes[0]['universe.bot_status']).toMatchObject({ state: 'trouble' });
+            expect(JSON.stringify(notes[0])).toMatch(/trouble|couldn|answer/i);
+            client.sendMessage.mockClear();
+            // work that had begun when its server went away (GPT seventh note, G): the person is told it was cut off, that some of the work may be done and that nothing is sent again by itself
+            // (Fable's FINAL "Cut off" note), never the "send it again in a minute" line, which could make them do paid work twice
+            await bridge.onGaveUp(message('hello?'), 'paid');
+            expect(client.sendMessage).toHaveBeenCalledTimes(1);
+            const cut = client.sendMessage.mock.calls[0][2];
+            expect(cut['universe.bot_status']).toMatchObject({ state: 'unsure', title: 'Cut off' });
+            expect(JSON.stringify(cut)).toContain('so some of the work may already be done. Nothing is sent again by itself.');
+            expect(JSON.stringify(cut)).not.toMatch(/again in a minute/);
+            // something that is not a person's message is only reported
+            client.sendMessage.mockClear();
+            await bridge.onGaveUp({ ...message('hello?'), type: 'm.room.member' }, 'paid');
+            expect(client.sendMessage).not.toHaveBeenCalled();
+            // a chat that cannot be resolved is only reported, and never throws
+            await expect(bridge.onGaveUp({ ...message('hi'), room_id: '!unknown:matrix.test' }, 'tries')).resolves.toBeUndefined();
+        });
+    });
+
+    it('the reply is kept as something the person was told only when Matrix gave the id of its text: a send that was suppressed keeps nothing', async () => {
+        const client = makeClient();
+        const stores = makeStores();
+        const keep = vi.fn();
+        stores.deps.reply = vi.fn(async () => ({ text: 'Your job is running.', media: [], keep }));
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        await bridge.onEvent(invite());
+        // the text did not go out (no event id comes back: the chat was cleared meanwhile)
+        client.sendText.mockResolvedValueOnce(undefined);
+        await bridge.onEvent(message('hello'));
+        expect(keep).not.toHaveBeenCalled();
+        // the text went out: kept with the id Matrix gave
+        client.sendText.mockResolvedValueOnce('$text-event');
+        await bridge.onEvent(message('hello again'));
+        expect(keep).toHaveBeenCalledTimes(1);
+        expect(keep).toHaveBeenCalledWith('$text-event');
     });
 
     it('keeps a bot\'s leave whose room could not be looked up, and clears the room once the store answers', async () => {

@@ -527,11 +527,13 @@ describe("the Usage page (#1999)", () => {
         );
         await open();
         expect(text()).toContain("Less than $0.01 of $5 available");
-        expect(text()).toMatch(/Today, .+ · Less than \$0\.01 · Apps/);
+        // the amount taken is said as Orbit says it: thousandths under a cent, not "less than $0.01"
+        expect(text()).toMatch(/Today, .+ · \$0\.004 · Apps/);
+        expect(text()).not.toMatch(/Today, .+ · Less than \$0\.01 · Apps/);
         target.querySelector<HTMLElement>('[data-activity="act_tiny"]')?.click();
         await settle();
         const receipt = byId("usageReceipt")?.textContent?.replace(/\s+/g, " ") ?? "";
-        expect(receipt).toContain("Search flightsless than $0.01");
+        expect(receipt).toContain("Search flights$0.004");
         expect(receipt).toContain("Read one page$0");
     });
 
@@ -637,11 +639,11 @@ describe("the Usage page (#1999)", () => {
         await settle();
     };
 
-    it("draws the amount of each worked step (Orbit's amountMicros), under a cent as less than $0.01, and zero as $0", async () => {
+    it("draws the amount of each worked step (Orbit's amountMicros), under a cent in thousandths as Orbit says it, and zero as $0", async () => {
         await openPartly({ actions: [worked(20_000), worked(4_000), worked(0), failedStep] });
         expect(stepRows()).toEqual([
             "Gmail · worked $0.02",
-            "Gmail · worked less than $0.01",
+            "Gmail · worked $0.004",
             "Gmail · worked $0",
             "Gmail · didn't work Nothing taken",
         ]);
@@ -685,10 +687,13 @@ describe("the Usage page (#1999)", () => {
         expect(stepRows()).toEqual(["Gmail · worked $0.02", "Gmail · didn't work Nothing taken"]);
     });
 
-    it("only calls a task partly done when Orbit says so and a step worked and one did not; otherwise it reads as before", async () => {
+    it("only calls a task partly done when Orbit says so and a step worked; otherwise it reads as before", async () => {
+        // Orbit says every step worked: done. (Orbit saying "partial" with one worked step is partly done, since the other step can be the computer)
         const noFailure = partly({
             id: "act_a",
             title: "All worked",
+            outcome: "done",
+            outcomeNote: undefined,
             actions: [{ label: "gmail", outcome: "worked", text: "Gmail · worked", takenText: null }],
         });
         const noWord = partly({ id: "act_b", title: "Older Orbit", outcome: undefined, outcomeNote: undefined });
@@ -708,6 +713,587 @@ describe("the Usage page (#1999)", () => {
         }
         // A task with no actions at all (an older Orbit, a computer's) is exactly as before
         game.getMyUsage.mockResolvedValue(live({}, { activity: [task()] }));
+    });
+
+    describe("how a computer task ended, as Orbit reads it (stopped, still deciding, refund pending, a computer given back beside an App that worked)", () => {
+        const gmail = {
+            label: "gmail",
+            outcome: "worked",
+            text: "Gmail · worked",
+            takenText: null,
+            amountMicros: 9_000,
+        };
+        const rowsOf = (id: string) => {
+            target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+            return {
+                hint:
+                    target.querySelector(`[data-activity="${id}"] .m`)?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+            };
+        };
+        const receiptText = () => byId("usageReceipt")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+        const show = async (item: Record<string, unknown>) => {
+            game.getMyUsage.mockResolvedValue(live({}, { activity: [item] }));
+            await open();
+            const { hint } = rowsOf(String(item.id));
+            await settle();
+            return hint;
+        };
+
+        it("reads a computer given back beside a Gmail that was charged as Partly done, with Orbit's note, the Given back line, and never Done or Refunded", async () => {
+            const hint = await show(
+                task({
+                    id: "act_mixed",
+                    title: "Send the report",
+                    category: "computer",
+                    spentMicros: 9_000,
+                    returnedMicros: 50_000,
+                    outcome: "partial",
+                    outcomeText: "Partly done",
+                    outcomeNote:
+                        "One step worked and one didn’t. Computer cost of $0.05 was returned. Gmail charged $0.009. You pay $0.009 in all.",
+                    actions: [gmail],
+                    lines: [
+                        { label: "Instant gmail, 1 use", amountMicros: 9_000 },
+                        { label: "Computer, 5 minutes", note: "Given back", returnedMicros: 50_000 },
+                    ],
+                })
+            );
+            expect(hint).toContain("Partly done");
+            expect(hint).not.toContain("Refunded");
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "One step worked and one didn’t. Computer cost of $0.05 was returned. Gmail charged $0.009. You pay $0.009 in all."
+            );
+            expect(receiptText()).toContain("Gmail · worked $0.009");
+            expect(receiptText()).toContain("Computer, 5 minutes");
+            // the computer's line says Given back and what came back; it is not "Nothing taken"
+            expect(receiptText()).toContain("Given back $0.05");
+            expect(receiptText()).not.toContain("Nothing taken");
+        });
+
+        describe("a let-go App that was then confirmed delivered, with the computer part given back (Orbit's own words, shown as they are)", () => {
+            const NOTE =
+                "Partly done. Exa was delivered. Its hold was released. The computer part didn't finish and its cost was returned.";
+            const delivered = {
+                label: "exa",
+                outcome: "worked",
+                text: "Exa · worked",
+                takenText: null,
+                amountMicros: 0,
+            };
+            const receipt = () =>
+                task({
+                    id: "act_late",
+                    title: "Research the trip",
+                    category: "computer",
+                    state: "done",
+                    spentMicros: 0,
+                    returnedMicros: 30_000,
+                    outcome: "partial",
+                    outcomeText: "Partly done",
+                    outcomeNote: NOTE,
+                    actions: [delivered],
+                    lines: [{ label: "Computer, 3 minutes", note: "Given back", returnedMicros: 30_000 }],
+                });
+            const row = () => target.querySelector('[data-activity="act_late"]');
+            const collapsedHint = async () => {
+                game.getMyUsage.mockResolvedValue(live({}, { activity: [receipt()] }));
+                await open();
+                return row()?.querySelector(".m")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+            };
+
+            it("says Partly done on the collapsed row itself, with no receipt open, never Done, Refunded or a charge", async () => {
+                const hint = await collapsedHint();
+                expect(hint).toMatch(/Partly done/);
+                expect(hint).not.toMatch(/Refunded|·\s*Done\b/);
+                expect(byId("usageReceipt")).toBeNull();
+                expect(byId("usageReceiptWhy")).toBeNull();
+            });
+
+            it("shows the App that was delivered as its own line, Orbit's note word for word, and the computer part given back, once the row is opened", async () => {
+                await collapsedHint();
+                row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+                expect(stepRows()).toEqual(["Exa · worked $0"]);
+                expect(byId("usageReceiptWhy")?.textContent).toBe(NOTE);
+                expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+                expect(receiptText()).toContain("Computer, 3 minutes");
+                expect(receiptText()).toContain("Given back $0.03");
+                expect(receiptText()).not.toContain("Nothing taken");
+                expect(receiptText()).not.toContain("Refunded");
+                // nothing was owed: no "Paid by" line under it (Orbit says $0)
+                expect(receiptText()).not.toContain("Paid by");
+                expect(byId("usageReceipt")?.querySelector(".paid:not([data-testid])")).toBeNull();
+            });
+
+            it("keeps the Paid by line when something was owed (a partly done task that charged)", async () => {
+                game.getMyUsage.mockResolvedValue(
+                    live(
+                        {},
+                        {
+                            activity: [
+                                { ...receipt(), spentMicros: 9_000, actions: [{ ...delivered, amountMicros: 9_000 }] },
+                            ],
+                        }
+                    )
+                );
+                await open();
+                row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+                expect(receiptText()).toContain("Paid by you");
+            });
+
+            it("keeps the Paid by line for a task that is simply done at $0 (only a partly done task with nothing owed hides it)", async () => {
+                game.getMyUsage.mockResolvedValue(
+                    live(
+                        {},
+                        {
+                            activity: [
+                                {
+                                    ...receipt(),
+                                    outcome: "done",
+                                    outcomeText: undefined,
+                                    outcomeNote: undefined,
+                                    actions: [],
+                                },
+                            ],
+                        }
+                    )
+                );
+                await open();
+                row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+                expect(receiptText()).toContain("Paid by you");
+            });
+
+            it("keeps the Paid by line for a partly done task whose total Orbit did not send (only a total of exactly $0 hides it)", async () => {
+                game.getMyUsage.mockResolvedValue(live({}, { activity: [{ ...receipt(), spentMicros: null }] }));
+                await open();
+                row()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+                expect(receiptText()).toContain("Paid by you");
+            });
+
+            it.each(["universe", "sponsor"])(
+                "says nothing about who paid on the collapsed row either when nothing was paid by anyone else (%s paying a $0 partial)",
+                async (payer) => {
+                    game.getMyUsage.mockResolvedValue(
+                        live(
+                            {},
+                            { activity: [{ ...receipt(), payer, payerName: payer === "sponsor" ? "Dana" : undefined }] }
+                        )
+                    );
+                    await open();
+                    const hint = row()?.querySelector(".m")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+                    expect(hint, payer).toMatch(/Partly done/);
+                    expect(hint, payer).not.toMatch(/Paid by/);
+                }
+            );
+        });
+
+        it("shows Orbit's headline and note for a refund that is pending, never Done, never Refunded, and no Paid by line", async () => {
+            const hint = await show(
+                task({
+                    id: "act_pending",
+                    title: "Weekly report",
+                    category: "computer",
+                    spentMicros: null,
+                    refundPendingMicros: 50_000,
+                    outcome: "refund_pending",
+                    outcomeText: "$0.05 refund pending",
+                    outcomeNote:
+                        "We’re giving back the computer cost. It shows in your credit as soon as it’s confirmed.",
+                    actions: [],
+                    lines: [{ label: "Computer, 5 minutes", note: "Refund pending" }],
+                })
+            );
+            expect(hint).toContain("$0.05 refund pending");
+            expect(hint).not.toMatch(/Refunded|Done/);
+            expect(byId("usageReceiptPartly")?.textContent).toBe("$0.05 refund pending");
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "We’re giving back the computer cost. It shows in your credit as soon as it’s confirmed."
+            );
+            expect(receiptText()).toContain("Refund pending");
+            expect(receiptText()).not.toContain("Paid by");
+            expect(receiptText()).not.toContain("nothing taken");
+        });
+
+        it("says the pending amount itself, the way Orbit does, when Orbit sends no headline (thousandths under a cent)", async () => {
+            const hint = await show(
+                task({
+                    id: "act_pending2",
+                    title: "Tiny report",
+                    category: "computer",
+                    spentMicros: null,
+                    refundPendingMicros: 9_000,
+                    outcome: "refund_pending",
+                    lines: [],
+                })
+            );
+            expect(hint).toContain("$0.009 refund pending");
+            expect(byId("usageReceiptPartly")?.textContent).toBe("$0.009 refund pending");
+        });
+
+        it("reads a job stopped at the person's spending rule as Stopped at your spending rule, never Done", async () => {
+            const hint = await show(
+                task({
+                    id: "act_rule",
+                    title: "Book the table",
+                    category: "computer",
+                    spentMicros: 30_000,
+                    outcome: "stopped",
+                    outcomeText: "Stopped at your spending rule",
+                    outcomeNote:
+                        "It stopped before it finished, and nothing was confirmed as done. Computer time used $0.03.",
+                    actions: [],
+                    lines: [{ label: "Computer, 5 minutes", amountMicros: 30_000 }],
+                })
+            );
+            expect(hint).toContain("Stopped at your spending rule");
+            expect(hint).not.toContain("Done");
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Stopped at your spending rule");
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "It stopped before it finished, and nothing was confirmed as done. Computer time used $0.03."
+            );
+            // what it used is still said, and who paid
+            expect(receiptText()).toContain("Computer, 5 minutes$0.03");
+            expect(receiptText()).toMatch(/Paid by you$/);
+        });
+
+        it("reads a stop by the person, a stop with nothing charged, and a stop that sends no words", async () => {
+            const hint = await show(
+                task({
+                    id: "act_stop",
+                    title: "Look it up",
+                    category: "computer",
+                    spentMicros: null,
+                    outcome: "stopped",
+                    outcomeText: "Stopped",
+                    lines: [],
+                })
+            );
+            expect(hint).toContain("Stopped");
+            expect(receiptText()).not.toContain("Paid by");
+            const plain = await show(
+                task({
+                    id: "act_stop2",
+                    title: "Look it up",
+                    category: "computer",
+                    spentMicros: null,
+                    outcome: "stopped",
+                    lines: [],
+                })
+            );
+            expect(plain).toContain("Stopped");
+            expect(plain).not.toContain("Done");
+        });
+
+        it("shows Still checking with Orbit's note: computer time is charged for now, never Done or Refunded", async () => {
+            const hint = await show(
+                task({
+                    id: "act_deciding",
+                    title: "Fill the form",
+                    category: "computer",
+                    spentMicros: 30_000,
+                    outcome: "deciding",
+                    outcomeText: "Still checking",
+                    outcomeNote:
+                        "We’re still deciding whether to give back the computer cost. Computer time $0.03 is charged for now.",
+                    lines: [{ label: "Computer, 5 minutes", amountMicros: 30_000 }],
+                })
+            );
+            expect(hint).toContain("Still checking");
+            expect(hint).not.toMatch(/Refunded|Done/);
+            expect(byId("usageReceiptWhy")?.textContent).toContain("charged for now");
+        });
+
+        it("shows the headline Orbit sends for a partly done task, and ours only when Orbit sends none", async () => {
+            const orbit = await show(
+                task({
+                    id: "act_w1",
+                    title: "Words",
+                    outcome: "partial",
+                    outcomeText: "Partly done, one step open",
+                    actions: [gmail],
+                    lines: [],
+                })
+            );
+            expect(orbit).toContain("Partly done, one step open");
+            const none = await show(
+                task({ id: "act_w2", title: "No words", outcome: "partial", actions: [gmail], lines: [] })
+            );
+            expect(none).toContain("Partly done");
+            expect(none).not.toContain("one step open");
+        });
+
+        it("a task Orbit calls done is still plain done: no headline, no note", async () => {
+            const hint = await show(task({ id: "act_done", title: "Plain", outcome: "done" }));
+            expect(hint).not.toMatch(/Partly|Stopped|deciding|pending/);
+            expect(byId("usageReceiptPartly")).toBeNull();
+        });
+    });
+
+    describe("a task that did not finish, or could not be confirmed (Orbit's outcome failed / unconfirmed, action unknown)", () => {
+        const unknownStep = (over: Record<string, unknown> = {}) => ({
+            label: "gmail",
+            outcome: "unknown",
+            text: "Gmail · couldn't confirm delivery",
+            takenText: "Hold being released",
+            ...over,
+        });
+        const failedTask = (over: Record<string, unknown> = {}) =>
+            task({
+                id: "act_failed",
+                title: "Email the invoices",
+                category: "computer",
+                spentMicros: 30_000,
+                outcome: "failed",
+                outcomeText: "Didn't finish",
+                outcomeNote: "The message wasn't sent. Computer time used $0.03. Gmail charged $0.",
+                actions: [failedStep],
+                lines: [{ label: "Computer time", amountMicros: 30_000 }],
+                ...over,
+            });
+        const openTask = async (item: Record<string, unknown>) => {
+            game.getMyUsage.mockResolvedValue(live({}, { activity: [item] }));
+            await open();
+            target.querySelector<HTMLElement>(`[data-activity="${item.id}"]`)?.click();
+            await settle();
+        };
+
+        it("never reads a failed task as done: Orbit's headline, each step, and Orbit's note", async () => {
+            await openTask(failedTask());
+            expect(text()).toMatch(/Today, .+ · Didn't finish · \$0\.03 · Computer/);
+            expect(stepRows()).toEqual(["Gmail · didn't work Nothing taken"]);
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "The message wasn't sent. Computer time used $0.03. Gmail charged $0."
+            );
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Didn't finish");
+            expect(byId("usageReceipt")?.textContent).not.toContain("Refunded");
+        });
+
+        it('reads a rule stop as Orbit\'s headline and note, never as done, and with nothing taken no "Paid by" line', async () => {
+            await openTask(
+                failedTask({
+                    id: "act_rule",
+                    outcome: "stopped",
+                    outcomeText: "Stopped at your spending rule",
+                    outcomeNote: "A rule you set stopped this task before it spent more.",
+                    spentMicros: null,
+                    actions: [],
+                    lines: [],
+                })
+            );
+            expect(text()).toMatch(/Today, .+ · Stopped at your spending rule · Computer/);
+            expect(text()).not.toMatch(/· Done/);
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Stopped at your spending rule");
+            expect(byId("usageReceiptWhy")?.textContent).toBe("A rule you set stopped this task before it spent more.");
+            expect(byId("usageReceipt")?.textContent).not.toContain("Paid by");
+        });
+
+        it('shows "$0.05 refund pending" and a task still being decided with Orbit\'s words', async () => {
+            game.getMyUsage.mockResolvedValue(
+                live(
+                    {},
+                    {
+                        activity: [
+                            failedTask({
+                                id: "act_pending",
+                                outcome: "refund_pending",
+                                outcomeText: "$0.05 refund pending",
+                                outcomeNote: "We're giving this back. It will show here when it is done.",
+                                spentMicros: null,
+                                refundPendingMicros: 50_000,
+                                actions: [],
+                                lines: [],
+                            }),
+                            failedTask({
+                                id: "act_deciding",
+                                title: "Second task",
+                                outcome: "deciding",
+                                outcomeText: "Still deciding",
+                                outcomeNote: "We're still checking how this one ended.",
+                                spentMicros: null,
+                                actions: [],
+                                lines: [],
+                            }),
+                        ],
+                    }
+                )
+            );
+            await open();
+            expect(text()).toMatch(/Email the invoices[^]*\$0\.05 refund pending/);
+            expect(text()).toMatch(/Second task[^]*Still deciding/);
+            target.querySelector<HTMLElement>('[data-activity="act_pending"]')?.click();
+            await settle();
+            expect(byId("usageReceiptPartly")?.textContent).toBe("$0.05 refund pending");
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "We're giving this back. It will show here when it is done."
+            );
+            expect(byId("usageReceipt")?.textContent).not.toContain("Refunded");
+        });
+
+        it("reads a task whose computer was returned and whose Gmail step was charged as Partly done, not Done", async () => {
+            await openTask(
+                failedTask({
+                    id: "act_mixed",
+                    outcome: "partial",
+                    outcomeText: "Partly done",
+                    outcomeNote: "The Gmail step worked. The computer's time was returned.",
+                    spentMicros: 5_000,
+                    returnedMicros: 30_000,
+                    actions: [
+                        {
+                            label: "gmail",
+                            outcome: "worked",
+                            text: "Gmail · sent",
+                            takenText: null,
+                            amountMicros: 5_000,
+                        },
+                    ],
+                    lines: [{ label: "Computer time", amountMicros: 30_000, note: "Returned" }],
+                })
+            );
+            expect(text()).toMatch(/Today, .+ · Partly done/);
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+        });
+
+        it("shows an action Orbit could not confirm with its own words, and no claim of ours when it sends none", async () => {
+            await openTask(
+                failedTask({
+                    id: "act_unconfirmed",
+                    outcome: "unconfirmed",
+                    outcomeText: "Couldn't confirm",
+                    outcomeNote: "We couldn't confirm whether Exa finished. We're releasing your hold.",
+                    spentMicros: null,
+                    actions: [
+                        unknownStep(),
+                        unknownStep({ label: "exa", text: "Exa · couldn't confirm", takenText: undefined }),
+                    ],
+                    lines: [],
+                })
+            );
+            expect(text()).toMatch(/Today, .+ · Couldn't confirm · Computer/);
+            expect(stepRows()).toEqual([
+                "Gmail · couldn't confirm delivery Hold being released",
+                "Exa · couldn't confirm",
+            ]);
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "We couldn't confirm whether Exa finished. We're releasing your hold."
+            );
+            // Nothing was taken from anyone, so there is no "Paid by you" line
+            expect(byId("usageReceipt")?.textContent).not.toContain("Paid by");
+        });
+
+        it("shows the headline of an outcome it does not know when Orbit sends no note, and none for a genuine done task", async () => {
+            const future = task({
+                id: "act_future",
+                title: "Future task",
+                outcome: "something_new",
+                outcomeText: "Held up",
+            });
+            // Orbit gives a genuine done task the word "Done" too: that is no headline
+            const genuine = task({ id: "act_done", title: "Done task", outcome: "done", outcomeText: "Done" });
+            // A known outcome with no evidence for it ("partial" with no step that worked) stays done, whatever its word
+            const unproven = task({
+                id: "act_unproven",
+                title: "Unproven task",
+                outcome: "partial",
+                outcomeText: "Partly done",
+            });
+            game.getMyUsage.mockResolvedValue(live({}, { activity: [future, genuine, unproven] }));
+            await open();
+            expect(text()).toMatch(/Future task[^]*Held up/);
+            expect(text()).not.toMatch(/Done task[^]*(Today|Yesterday),[^]*· Done/);
+            expect(text()).not.toContain("Partly done");
+            target.querySelector<HTMLElement>('[data-activity="act_future"]')?.click();
+            await settle();
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Held up");
+            target.querySelector<HTMLElement>('[data-activity="act_future"]')?.click();
+            await settle();
+            for (const id of ["act_done", "act_unproven"]) {
+                target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+                // eslint-disable-next-line no-await-in-loop
+                await settle();
+                expect(byId("usageReceiptPartly")).toBeNull();
+                target.querySelector<HTMLElement>(`[data-activity="${id}"]`)?.click();
+                // eslint-disable-next-line no-await-in-loop
+                await settle();
+            }
+        });
+
+        it("says a refunded task nobody could confirm as both: couldn't confirm, its steps and Orbit's note, and the refund", async () => {
+            await openTask(
+                failedTask({
+                    id: "act_released",
+                    state: "refunded",
+                    outcome: "unconfirmed",
+                    outcomeText: "Couldn't confirm",
+                    outcomeNote: "We couldn't confirm whether Exa finished. We released your hold.",
+                    spentMicros: null,
+                    actions: [unknownStep({ takenText: "Hold released" })],
+                    lines: [],
+                })
+            );
+            expect(text()).toMatch(/Today, .+ · Couldn't confirm · Refunded/);
+            expect(text()).not.toContain("Refunded, nothing taken");
+            expect(stepRows()).toEqual(["Gmail · couldn't confirm delivery Hold released"]);
+            expect(byId("usageReceiptWhy")?.textContent).toBe(
+                "We couldn't confirm whether Exa finished. We released your hold."
+            );
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Couldn't confirm");
+            // Never the words that say it didn't go through: delivery is not known
+            expect(byId("usageReceipt")?.textContent).not.toContain("This didn't go through on our side");
+            expect(byId("usageReceipt")?.textContent?.replace(/\s+/g, " ")).toMatch(/Couldn't confirm\s*Refunded$/);
+        });
+
+        it("says our own words when Orbit sends an outcome with no headline", async () => {
+            await openTask(failedTask({ outcomeText: undefined }));
+            expect(text()).toContain("Didn't finish");
+            game.getMyUsage.mockResolvedValue(
+                live({}, { activity: [failedTask({ id: "act_u", outcome: "unconfirmed", outcomeText: undefined })] })
+            );
+            page?.$destroy();
+            page = undefined;
+            target.innerHTML = "";
+            await open();
+            expect(text()).toContain("Couldn't confirm");
+        });
+
+        it("shows the note of an outcome it does not know, and reads it as done only when Orbit has nothing to say", async () => {
+            const future = task({
+                id: "act_future",
+                title: "Future task",
+                outcome: "something_new",
+                outcomeText: "Held up",
+                outcomeNote: "Orbit's note for an outcome this page does not know.",
+            });
+            const plain = task({ id: "act_plain", title: "Plain task", outcome: "something_new" });
+            game.getMyUsage.mockResolvedValue(live({}, { activity: [future, plain] }));
+            await open();
+            expect(text()).toMatch(/Future task[^]*Held up/);
+            target.querySelector<HTMLElement>('[data-activity="act_future"]')?.click();
+            await settle();
+            expect(byId("usageReceiptWhy")?.textContent).toBe("Orbit's note for an outcome this page does not know.");
+            target.querySelector<HTMLElement>('[data-activity="act_future"]')?.click();
+            await settle();
+            target.querySelector<HTMLElement>('[data-activity="act_plain"]')?.click();
+            await settle();
+            expect(byId("usageReceiptWhy")).toBeNull();
+            expect(byId("usageReceiptPartly")).toBeNull();
+            expect(byId("usageReceipt")?.textContent).toContain("Paid by you");
+        });
+
+        it("calls a task partly done when a step worked and one could not be confirmed", async () => {
+            await openPartly({
+                actions: [worked(20_000), unknownStep()],
+            });
+            expect(stepRows()).toEqual([
+                "Gmail · worked $0.02",
+                "Gmail · couldn't confirm delivery Hold being released",
+            ]);
+            expect(byId("usageReceiptPartly")?.textContent).toBe("Partly done");
+        });
     });
 
     it("says amount unavailable when nobody can tell what a task took yet, never a number and never Nothing", async () => {

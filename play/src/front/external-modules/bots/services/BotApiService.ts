@@ -63,6 +63,17 @@ const DIRECT_CHAT_TIMEOUT_MS = 5000;
 const SESSION_EXCHANGE_MS = 15_000;
 /** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
 const BRICK_WRITE_TIMEOUT_MS = 20_000;
+/**
+ * The header a control of a computer job carries its own id in (GPT's sixth answer, finding 4): Orbit does that control once per id and answers a repeat with what it did the first
+ * time, so a tap whose request is sent again (the sign-in was renewed in the middle of it) pauses once, cancels once and makes one note.
+ */
+export const COMPUTER_COMMAND_HEADER = "X-Computer-Command";
+/** The shape Orbit takes for a control's id: anything else is left off rather than sent as a bad id. */
+const COMMAND_ID_SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
+
+/** The header of one control's id, when there is one to send. */
+const commandHeader = (commandId: string | undefined): { headers?: Record<string, string> } =>
+    commandId && COMMAND_ID_SHAPE.test(commandId) ? { headers: { [COMPUTER_COMMAND_HEADER]: commandId } } : {};
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -1396,7 +1407,14 @@ export class BotApiService {
         brickId: string,
         action: "give" | "turn-off" | "stop" | "take-over" | "hand-back" | "fill-details",
         /** With "fill-details": what the screen showed Brick is ready to put in, and where. Orbit refuses the tap if Brick named something else since. */
-        shown?: { what: string; where: string }
+        shown?: { what: string; where: string },
+        /** With "stop": this tap's own id, so the same tap sent again (a renewed sign-in resends it) ends the jobs once. */
+        commandId?: string,
+        /**
+         * With "stop": the jobs the screen showed when the person tapped (GPT's seventh note D2). Orbit ends only those still live, never a job that began since,
+         * and answers which it stopped and which it left (`{ computer, stopped, left }`).
+         */
+        confirmedJobIds?: string[]
     ): Promise<unknown> {
         const base = `/api/bricks/${encodeURIComponent(brickId)}/computer`;
         // Every call has a deadline, so a stalled one fails and the controls and the poll carry on
@@ -1409,7 +1427,50 @@ export class BotApiService {
                   method: "POST",
                   body: JSON.stringify({ what: shown.what, where: shown.where }),
               })
-            : await this.brickWrite(`${base}/${action}`, { method: "POST" });
+            : action === "stop" && confirmedJobIds && confirmedJobIds.length > 0
+            ? await this.brickWrite(`${base}/${action}`, {
+                  method: "POST",
+                  body: JSON.stringify({ confirmedJobIds }),
+                  ...commandHeader(commandId),
+              })
+            : await this.brickWrite(`${base}/${action}`, { method: "POST", ...commandHeader(commandId) });
+    }
+
+    /**
+     * One of the owner's calls on one job of a Brick's computer: pause it, resume it, move it first in line, or cancel it alone (the other
+     * jobs carry on). With "first", `pauseRunning` also pauses the job that has the computer and starts this one now; the paused one goes
+     * on by itself afterwards. Orbit answers with the computer (`{ computer }`), or refuses with a 409 whose `reason` says why.
+     */
+    async brickComputerJobAction(
+        brickId: string,
+        jobId: string,
+        action: "pause" | "resume" | "first" | "cancel",
+        options: { pauseRunning?: boolean; commandId?: string } = {}
+    ): Promise<unknown> {
+        const url = `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/${action}`;
+        return action === "first" && options.pauseRunning
+            ? await this.brickWrite(url, {
+                  method: "POST",
+                  body: JSON.stringify({ pauseRunning: true }),
+                  ...commandHeader(options.commandId),
+              })
+            : await this.brickWrite(url, { method: "POST", ...commandHeader(options.commandId) });
+    }
+
+    /** Something new for one job, in the person's own words ("use 12 March instead"): it reaches the job within seconds. `{ computer }`. */
+    async noteToBrickComputerJob(brickId: string, jobId: string, text: string, commandId?: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/note`,
+            { method: "POST", body: JSON.stringify({ text }), ...commandHeader(commandId) }
+        );
+    }
+
+    /** What one job has done so far, oldest first (`{ steps }`). Only reads; it never wakes the computer. */
+    async getBrickComputerJobActivity(brickId: string, jobId: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/activity`,
+            {}
+        );
     }
 
     /** Dismisses the notice of how a job ended ("stopped waiting for you", "this month's time ran out"): only the ending it was shown for. */

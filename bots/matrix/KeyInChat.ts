@@ -22,6 +22,83 @@ export function holdsAKey(text: string | undefined | null): boolean {
     return KEY_SHAPES.some((shape) => shape.test(text));
 }
 
+/** How many values of an event are looked at when it is searched for a key without recursion (a Matrix event is at most 64 KB, so it has far fewer values than this; the cap only keeps a hostile one from costing more than a moment). */
+const SCAN_BUDGET = 200_000;
+
+/**
+ * Whether any text anywhere in `value` (a string, a property NAME, at any depth) holds a key. An explicit stack, so a very deep value cannot blow this function's own stack, and a budget, so a
+ * huge one costs a bounded time: past the budget (no real event gets there) the value is refused, as one that could not be looked at.
+ */
+export function holdsAKeyAnywhere(value: unknown): boolean {
+    const stack: unknown[] = [value];
+    let seen = 0;
+    while (stack.length > 0) {
+        const one = stack.pop();
+        seen += 1;
+        if (seen > SCAN_BUDGET) return true;
+        if (typeof one === 'string') {
+            if (holdsAKey(one)) return true;
+        } else if (Array.isArray(one)) {
+            for (const item of one) stack.push(item);
+        } else if (typeof one === 'object' && one !== null) {
+            for (const [name, item] of Object.entries(one)) {
+                if (holdsAKey(name)) return true;
+                stack.push(item);
+            }
+        }
+    }
+    return false;
+}
+
+/** What a key is replaced by in anything kept for later, and the mark on the event that says one was there. */
+const KEY_REMOVED = '[a key was here and is not kept]';
+export const KEY_REDACTED_FIELD = 'universe.key_redacted';
+/** How deep into an event its texts are looked at, and what stands where something deeper was left out. */
+const MAX_DEPTH = 8;
+const TOO_DEEP = '[nested too deeply to keep]';
+
+/**
+ * The event as it may be KEPT (the durable inbox writes it to the shared store before the Brick has looked at it): every text in it that holds a key is replaced, and the content says one
+ * was there, so the Brick refuses the message when it is read back as it would have live. An event that holds none is returned as it is.
+ */
+export function withoutKeys<T>(event: T): T {
+    let found = false;
+    let trimmed = false;
+    const walk = (value: unknown, depth: number): unknown => {
+        if (typeof value === 'string') {
+            if (!holdsAKey(value)) return value;
+            found = true;
+            return KEY_REMOVED;
+        }
+        if (typeof value !== 'object' || value === null) return value;
+        // Nothing below the limit is ever kept unchecked: a subtree that deep is left out (a real event is nowhere near it), so the walk's own stack stays bounded and a key hidden down there never reaches the store
+        if (depth > MAX_DEPTH) {
+            trimmed = true;
+            // What is left out is still LOOKED at (without recursion): a key down there is not kept, and the content says one was there, so the Brick refuses the message as it would have live.
+            // Clean nested content is only left out, never taken for a key
+            if (holdsAKeyAnywhere(value)) found = true;
+            return TOO_DEEP;
+        }
+        if (Array.isArray(value)) return value.map((one) => walk(one, depth + 1));
+        const kept: Array<[string, unknown]> = [];
+        for (const [name, one] of Object.entries(value)) {
+            // The NAME of a property is text too: one that holds a key is left out, with its value, and the content says one was there
+            if (holdsAKey(name)) {
+                found = true;
+                continue;
+            }
+            kept.push([name, walk(one, depth + 1)]);
+        }
+        // fromEntries defines each property as its own, whatever its name (a name like `__proto__` is data here)
+        return Object.fromEntries(kept);
+    };
+    const clean = walk(event, 0);
+    if (!found) return trimmed ? (clean as T) : event;
+    const out = clean as Record<string, unknown>;
+    const content = typeof out.content === 'object' && out.content !== null ? (out.content as Record<string, unknown>) : {};
+    return { ...out, content: { ...content, [KEY_REDACTED_FIELD]: true } } as T;
+}
+
 const WORDS: Record<NoteLanguage, string> = {
     en: "That looks like a key, so I didn't read it or keep it. The message is still in this chat, though: please delete it and change that key, because anyone who can see it could use it. Keys don't go in chat. Ask me to connect the app and I'll give you a safe form for the new one.",
     ar: "يبدو هذا كمفتاح، لذلك لم أقرأه ولم أحتفظ به. لكن الرسالة ما زالت في هذه الدردشة: يرجى حذفها وتغيير ذلك المفتاح، لأن أي شخص يراها يمكنه استخدامه. المفاتيح لا توضع في الدردشة. اطلب مني ربط التطبيق وسأعطيك نموذجًا آمنًا للمفتاح الجديد.",

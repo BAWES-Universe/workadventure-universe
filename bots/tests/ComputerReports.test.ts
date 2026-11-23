@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ComputerReports, FILE_TRIES, computerReportOf, missedText, reportText, receiptOf, workedLine, type AttachedFile, type ComputerReport, type ComputerReportsApi, type ComputerSpeaker, type ComputerSpoke, type FilesAnswer, type UndeliverableWhy } from '../server/ComputerReports';
+import { ComputerReports, FILE_TRIES, computerReportOf, missedText, moneyText, reportText, receiptOf, workedLine, type AttachedFile, type ComputerReport, type ComputerReportsApi, type ComputerSpeaker, type ComputerSpoke, type FilesAnswer, type UndeliverableWhy } from '../server/ComputerReports';
 import axios from 'axios';
 import { AdminApiService } from '../server/AdminApiService';
 
@@ -22,6 +22,14 @@ const base: ComputerReport = {
     files: [],
     handed: [],
     givenBack: false,
+    refundPendingMicros: 0,
+    apps: [],
+    appsTotal: 0,
+    searchApps: [],
+    holdReleased: false,
+    through: null,
+    pausedWhy: null,
+    heldScreen: false,
 };
 const report = (over: Partial<ComputerReport>): ComputerReport => ({ ...base, ...over });
 
@@ -94,6 +102,63 @@ describe('what Brick says when a computer job ends or waits', () => {
         expect(partway).not.toContain('nothing was sent or paid');
     });
 
+    it('says a refund that is pending as pending, and not that the try was given back', () => {
+        const text = reportText(report({ kind: 'failed', givenBack: true, refundPendingMicros: 50_000 }));
+        expect(text).toContain('$0.05 refund pending.');
+        expect(text).not.toContain("won't count against your month");
+        expect(text).not.toMatch(/given back|returned/i);
+        // from an older Orbit, or with nothing pending, it reads as before
+        expect(reportText(report({ kind: 'failed', givenBack: true, refundPendingMicros: 0 }))).toContain("This try won't count against your month.");
+        expect(reportText(report({ kind: 'failed', givenBack: false }))).not.toContain('refund pending');
+        // and in the other reports that carry a receipt
+        expect(reportText(report({ kind: 'done', refundPendingMicros: 9_000 }))).toContain('$0.009 refund pending.');
+        expect(reportText(report({ kind: 'rule', refundPendingMicros: 120_000 }))).toContain('$0.12 refund pending.');
+        expect(receiptOf({ effects: [], writes: true, refundPendingMicros: 50_000 })).toBe('My record shows nothing was sent or paid. $0.05 refund pending.');
+    });
+
+    it('says a refund that is pending in every message that needs the person, whatever it waits for, with or without effects', () => {
+        for (const waitingFor of ['signin', 'upload', 'details', 'answer', 'pay', 'submit'] as const) {
+            const text = reportText(report({ kind: 'needs', waitingFor, effects: [], refundPendingMicros: 50_000 }));
+            expect(text, waitingFor).toContain('$0.05 refund pending.');
+            // nothing pending: nothing is said, as before
+            expect(reportText(report({ kind: 'needs', waitingFor, effects: [], refundPendingMicros: 0 })), waitingFor).not.toContain('refund pending');
+        }
+        // sign-in with nothing done yet reads in the waiting voice, with the pending refund last
+        expect(reportText(report({ kind: 'needs', waitingFor: 'signin', effects: [], writes: true, refundPendingMicros: 50_000 }))).toContain('Nothing has been sent or paid yet. $0.05 refund pending.');
+    });
+
+    it("writes money exactly as Orbit's dollars() does: thousandths under a cent, cents above, rounded the same way", () => {
+        const table: Array<[number, string]> = [
+            [0, '$0'],
+            [1, 'less than $0.001'],
+            [499, 'less than $0.001'],
+            [500, '$0.001'],
+            [1200, '$0.001'],
+            [1500, '$0.002'],
+            [2500, '$0.003'],
+            [9000, '$0.009'],
+            [9999, '$0.010'],
+            [10000, '$0.01'],
+            [10001, '$0.01'],
+            [15000, '$0.01'],
+            [25000, '$0.03'],
+            [35000, '$0.04'],
+            [45000, '$0.04'],
+            [50000, '$0.05'],
+            [1250000, '$1.25'],
+            [5000000, '$5.00'],
+            [3209999, '$3.21'],
+        ];
+        for (const [micros, said] of table) expect(moneyText(micros)).toBe(said);
+    });
+
+    it('reads the refund Orbit has not paid yet as whole micros, and none from an older Orbit or from nonsense', () => {
+        const raw = { key: 'k', jobId: 'j', botId: 'b', title: 'T', kind: 'failed' };
+        expect(computerReportOf({ ...raw, refundPendingMicros: 50_000.4 })?.refundPendingMicros).toBe(50_000);
+        expect(computerReportOf(raw)?.refundPendingMicros).toBe(0);
+        for (const bad of [0, -5, 'x', null, Number.NaN, Infinity]) expect(computerReportOf({ ...raw, refundPendingMicros: bad })?.refundPendingMicros).toBe(0);
+    });
+
     it('says nobody came, at which step, and that it is all saved', () => {
         const text = reportText(report({ kind: 'unanswered', waitedFor: 'pay' }));
         expect(firstSentence(text)).toBe('Visa form stopped waiting for you.');
@@ -111,6 +176,19 @@ describe('what Brick says when a computer job ends or waits', () => {
     it('says a rule the person set stopped it, in their words', () => {
         const text = reportText(report({ kind: 'rule', why: 'no more than $1 a month' }));
         expect(text).toContain('I stopped Visa form because of a rule you set. You said: “no more than $1 a month”.');
+    });
+
+    it('never says a job is done for any ending but done: a job stopped at a rule or its computer time, and every other report that is not a finished one, says what it is instead', () => {
+        for (const kind of ['failed', 'needs', 'unanswered', 'month', 'rule'] as const) {
+            const text = reportText(report({ kind, why: 'no more than $1 a month' }));
+            expect(text).not.toMatch(/\bis done\b|\bwas done\b|\bfinished it\b/i);
+        }
+        // what did work before the stop is said as what it is, beside the stop, never as the job being done
+        const stopped = reportText(report({ kind: 'rule', effects: [{ kind: 'send', state: 'done', where: 'the embassy' }] }));
+        expect(stopped).toContain('I stopped Visa form because of a rule you set.');
+        expect(stopped).toContain('Sent to the embassy.');
+        expect(stopped).not.toMatch(/\bis done\b/);
+        expect(reportText(report({ kind: 'done' }))).toMatch(/is done\./);
     });
 
     it('keeps a long title short and without a stop, so the headline is still a headline', () => {
@@ -245,22 +323,27 @@ describe('what the bot server tells Orbit about delivery', () => {
         expect(calls[0][2]).toEqual({ userId: 'u', title: 'Visa form', origin: { kind: 'dm', ref: '!dm:chat.test' } });
         await service.startComputerJob('brick-1', 'u', { title: 'Visa form' });
         expect(calls[1][2]).toEqual({ userId: 'u', title: 'Visa form' });
+        // a key of its own for each start, in the header Orbit reads it from
+        const keyOf = (call: unknown[]) => (call[5] as Record<string, string>)['X-Computer-Start-Attempt'];
+        expect(keyOf(calls[0])).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+        expect(keyOf(calls[1])).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+        expect(keyOf(calls[0])).not.toBe(keyOf(calls[1]));
     });
 });
 
 function round(reports: ComputerReport[], answers: ComputerSpoke[] = []) {
-    const told: Array<Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>> = [];
-    const undeliverable: Array<{ jobId: string; kind: string; why: UndeliverableWhy }> = [];
+    const told: Array<Pick<ComputerReport, 'jobId' | 'kind' | 'seq'> & { through?: string }> = [];
+    const undeliverable: Array<{ jobId: string; kind: string; why: UndeliverableWhy; through?: string }> = [];
     const delivered: string[] = [];
     const said: Array<{ brickId: string; to: string; text: string; transactionId: string; steps: boolean; room: string | undefined }> = [];
     const api: ComputerReportsApi = {
         reports: vi.fn(async () => reports),
         keepTold: vi.fn(async (one) => {
-            told.push({ jobId: one.jobId, kind: one.kind, seq: one.seq });
+            told.push({ jobId: one.jobId, kind: one.kind, seq: one.seq, ...(one.through ? { through: one.through } : {}) });
             return true;
         }),
         keepUndeliverable: vi.fn(async (one, why) => {
-            undeliverable.push({ jobId: one.jobId, kind: one.kind, why });
+            undeliverable.push({ jobId: one.jobId, kind: one.kind, why, ...(one.through ? { through: one.through } : {}) });
             return true;
         }),
         keepFileDelivered: vi.fn(async (_job, fileId) => {
@@ -389,6 +472,316 @@ describe('saying it, once', () => {
         await vi.advanceTimersByTimeAsync(5000);
         expect(api.reports).toHaveBeenCalledTimes(2);
         vi.useRealTimers();
+    });
+});
+
+
+const T1 = '2026-11-21T22:00:00.000Z';
+const T2 = '2026-11-21T22:05:00.000Z';
+/** What Orbit offers for the late follow-up (its contract): the same shape as any report, with the Apps of one batch, that the hold was released, and `through`: the time of the latest confirmation it covers. */
+const lateRaw = {
+    key: `computer-told:job-1:late:${Date.parse(T1)}`,
+    jobId: 'job-1',
+    botId: 'brick-1',
+    matrixUserId: '@sara:chat.test',
+    origin: { kind: 'dm', ref: '!dm:chat.test' },
+    kind: 'late',
+    title: 'Send the invoice',
+    writes: true,
+    seconds: 120,
+    seq: 1,
+    waitingFor: null,
+    ready: null,
+    waitedFor: null,
+    why: null,
+    effects: [],
+    files: [],
+    handed: [],
+    givenBack: true,
+    refundPendingMicros: 0,
+    apps: ['Gmail'],
+    appsTotal: 1,
+    searchApps: [],
+    holdReleased: true,
+    through: T1,
+};
+const lateOf = (over: Record<string, unknown> = {}): ComputerReport => {
+    const one = computerReportOf({ ...lateRaw, ...over });
+    if (!one) throw new Error('a late report was dropped');
+    return one;
+};
+
+describe('the late follow-up: an App step the provider confirmed after all', () => {
+    it('says it in Brick’s approved words, one App or several, as one message: the provider confirmed the step completed, never that anything was sent', () => {
+        expect(reportText(lateOf())).toBe('Update: Gmail confirmed the step completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Slack'] }))).toBe('Update: Gmail and Slack confirmed the steps completed. You weren’t charged for those steps.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Slack', 'Notion'] }))).toBe('Update: Gmail, Slack and Notion confirmed the steps completed. You weren’t charged for those steps.');
+        // The first sentence is the news a locked phone shows
+        expect(firstSentence(reportText(lateOf()))).toBe('Update: Gmail confirmed the step completed.');
+    });
+
+    it('says a SEARCH App\'s step as its search that completed, never that it went out or was sent (GPT round 4: a search sends nothing)', () => {
+        expect(reportText(lateOf({ apps: ['Exa'] }))).toBe('Update: your Exa search completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['Tavily'] }))).toBe('Update: your Tavily search completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['exa search'], appsTotal: 1 }))).toBe('Update: your exa search completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['Exa', 'Tavily'] }))).toBe('Update: your Exa and Tavily searches completed. You weren’t charged for those steps.');
+        // an Exa step next to an App whose step is not a search: each is said as what it is
+        expect(reportText(lateOf({ apps: ['Exa', 'Gmail'] }))).toBe('Update: your Exa search completed, and Gmail confirmed the step completed. You weren’t charged for those steps.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Slack', 'Tavily'] }))).toBe('Update: your Tavily search completed, and Gmail and Slack confirmed the steps completed. You weren’t charged for those steps.');
+        // the first sentence is the news a locked phone shows
+        expect(firstSentence(reportText(lateOf({ apps: ['Exa'] })))).toBe('Update: your Exa search completed.');
+        for (const apps of [['Exa'], ['Gmail'], ['Exa', 'Tavily', 'Gmail'], Array.from({ length: 9 }, (_unused, index) => `App${index}`)]) {
+            expect(reportText(lateOf({ apps })), apps.join()).not.toMatch(/went out|did go out|\bsent\b|delivered|after all/i);
+        }
+    });
+
+    it('CodeRabbit #7: the search Apps are known for every name Orbit listed, not only the first twelve: an App that is said and comes last in a long list of searches is still said as its search', () => {
+        const others = Array.from({ length: 12 }, (_unused, index) => `Finder${index}`);
+        const long = lateOf({ apps: ['Brave', 'Gmail'], searchApps: [...others, 'Brave'] });
+        expect(long.searchApps).toHaveLength(13);
+        expect(long.searchApps).toContain('Brave');
+        expect(reportText(long)).toBe('Update: your Brave search completed, and Gmail confirmed the step completed. You weren’t charged for those steps.');
+    });
+
+    it('reads the search Apps Orbit names (`searchApps`) together with the two it knows itself: an App Orbit says is a search is said as its search that completed, whatever it is called', () => {
+        expect(reportText(lateOf({ apps: ['Brave'], searchApps: ['Brave'] }))).toBe('Update: your Brave search completed. You weren’t charged for that step.');
+        expect(reportText(lateOf({ apps: ['Gmail', 'Brave search'], searchApps: ['brave'] }))).toBe('Update: your Brave search completed, and Gmail confirmed the step completed. You weren’t charged for those steps.');
+        // a name Orbit lists that was not one of the Apps of the report changes nothing; so does an App it does not list
+        expect(reportText(lateOf({ apps: ['Gmail'], searchApps: ['Brave'] }))).toBe('Update: Gmail confirmed the step completed. You weren’t charged for that step.');
+        // the two we know are still said as searches when Orbit sends none (an Orbit from before)
+        expect(reportText(lateOf({ apps: ['Exa'] }))).toBe('Update: your Exa search completed. You weren’t charged for that step.');
+        // plain text like the names; read for a late report only
+        expect(lateOf({ apps: ['Brave'], searchApps: ['<b>Brave</b>', 7, null] }).searchApps).toEqual(['b Brave /b']);
+        expect(lateOf({ searchApps: 'Brave' }).searchApps).toEqual([]);
+        expect(computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done', seq: null, searchApps: ['Brave'] })?.searchApps).toEqual([]);
+        for (const searchApps of [['Brave'], []]) expect(reportText(lateOf({ apps: ['Brave'], searchApps })), String(searchApps)).not.toMatch(/went out|did go out|\bsent\b|delivered|after all/i);
+    });
+
+    it('names no more than five Apps, and says how many more, so it stays one short message', () => {
+        const five = reportText(lateOf({ apps: ['A1', 'A2', 'A3', 'A4', 'A5'] }));
+        expect(five).toBe('Update: A1, A2, A3, A4 and A5 confirmed the steps completed. You weren’t charged for those steps.');
+        const seven = reportText(lateOf({ apps: ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7'] }));
+        expect(seven).toBe('Update: A1, A2, A3, A4 and 3 more confirmed the steps completed. You weren’t charged for those steps.');
+    });
+
+    it('is built only from what Orbit gives: the title, the files, the receipt and the number of a report are never in it', () => {
+        const text = reportText(lateOf({ title: 'Secret invoice title', files: ['a.pdf'], effects: [{ kind: 'send', state: 'done', where: 'the embassy' }], why: 'because', refundPendingMicros: 5000 }));
+        expect(text).toBe('Update: Gmail confirmed the step completed. You weren’t charged for that step.');
+    });
+
+    it('reads Orbit’s report: the Apps of its batch, that the hold was released, how far it covers (`through`), and the conversation it began in', () => {
+        const one = lateOf();
+        expect(one).toMatchObject({ key: `computer-told:job-1:late:${Date.parse(T1)}`, kind: 'late', apps: ['Gmail'], holdReleased: true, through: T1, origin: { kind: 'dm', ref: '!dm:chat.test' } });
+        // Orbit's late report numbers its batch and says no `through`: it is still read, with none (Orbit marks only that batch when the number comes back)
+        expect(computerReportOf({ ...lateRaw, through: undefined })?.through).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: null })?.through).toBeNull();
+        // Only a time is kept, and it is said back exactly as Orbit gave it
+        expect(computerReportOf({ ...lateRaw, through: 'yesterday' })?.through).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: 5 })?.through).toBeNull();
+        expect(computerReportOf({ ...lateRaw, through: '2026-11-21T22:00:00.123456Z' })?.through).toBe('2026-11-21T22:00:00.123456Z');
+        // `through` belongs to a late report: any other kind has none
+        expect(computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done' })?.through).toBeNull();
+    });
+
+    it('drops a late report with nothing true to say: no App named, or no word that the hold was released', () => {
+        expect(computerReportOf({ ...lateRaw, apps: [] })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, apps: undefined })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, apps: 'Gmail' })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, apps: [3, null, '   '] })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, holdReleased: false })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, holdReleased: undefined })).toBeNull();
+        expect(computerReportOf({ ...lateRaw, holdReleased: 'true' })).toBeNull();
+    });
+
+    it('drops a late report that has no number (Orbit numbers every late report and refuses the acknowledgement of one without): it is never told, so never acknowledged without a seq', () => {
+        for (const seq of [undefined, null, '3', NaN, {}]) expect(computerReportOf({ ...lateRaw, seq }), String(seq)).toBeNull();
+        expect(computerReportOf({ ...lateRaw, seq: 0 })).toMatchObject({ kind: 'late', seq: 0 });
+        expect(computerReportOf({ ...lateRaw, seq: 7 })).toMatchObject({ kind: 'late', seq: 7 });
+        // the other kinds that need no number are read as before
+        expect(computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done', seq: null })).toMatchObject({ kind: 'done', seq: null });
+    });
+
+    it('keeps an App’s name as plain text: no markup, links, control characters or line breaks, whole characters, no repeats', () => {
+        const one = lateOf({ apps: ['  Gmail  ', '<b>Slack</b>', 'gmail', 'Not\nion\u0000', '[Docs](https://x.test)', '`Sheets`', 'Del\u007fete', 'Tab\tle', 'GMAIL', 'Two    spaces', `   ${'y'.repeat(40)}`, `${'x'.repeat(39)}😀😀😀`] });
+        expect(one.apps).toEqual(['Gmail', 'b Slack /b', 'Not ion', 'Docs (https: //x·test)', 'Sheets', 'Del ete', 'Tab le', 'Two spaces', 'y'.repeat(40), `${'x'.repeat(39)}😀`]);
+        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(reportText(one))).toBe(false);
+        expect(reportText(one)).not.toMatch(/[<>`[\]\n]/);
+    });
+
+    it('keeps at most a dozen Apps from Orbit, and counts every distinct one it named for the "and N more"', () => {
+        const thirty = lateOf({ apps: Array.from({ length: 30 }, (_unused, index) => `App${index}`) });
+        expect(thirty.apps).toHaveLength(12);
+        expect(thirty.appsTotal).toBe(30);
+        // the whole of them is what "more" counts, not the dozen that are kept
+        expect(reportText(thirty)).toBe('Update: App0, App1, App2, App3 and 26 more confirmed the steps completed. You weren’t charged for those steps.');
+        // just past what is kept, and just past what is named
+        expect(reportText(lateOf({ apps: Array.from({ length: 13 }, (_unused, index) => `App${index}`) }))).toContain('App3 and 9 more confirmed the steps completed');
+        expect(reportText(lateOf({ apps: Array.from({ length: 6 }, (_unused, index) => `App${index}`) }))).toContain('App3 and 2 more confirmed the steps completed');
+        // a name said twice (any case or spacing), a blank and a thing that is not text are not Apps: only distinct names count
+        const counted = lateOf({ apps: ['Gmail', 'gmail', '  GMAIL ', '', '   ', 7, null, 'Slack', ...Array.from({ length: 20 }, (_unused, index) => `Tool${index}`), 'tool3'] });
+        expect(counted.appsTotal).toBe(22);
+        expect(reportText(counted)).toContain('Gmail, Slack, Tool0, Tool1 and 18 more confirmed the steps completed');
+        // a few Apps: no "more", and "it" for one
+        expect(lateOf({ apps: ['Gmail', 'gmail'] }).appsTotal).toBe(1);
+        expect(reportText(lateOf({ apps: ['Gmail', 'gmail'] }))).toContain('You weren’t charged for that step.');
+        // another kind of report counts none
+        expect(computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done' })?.appsTotal).toBe(0);
+    });
+
+    it('writes an address or a domain in an App’s name so that a chat cannot make a link of it (it reads as what it is), and keeps the name a plain, short name', () => {
+        const names = ['https://evil.test/pay?now=1', 'evil.example.com', 'www.evil.test', 'mail me at a.b@evil.test', 'Node.js', 'Gmail', 'Zoho. Desk', 'ftp://files.test', 'a.b', 'evil。test', 'x'.repeat(30) + '.evil.test'];
+        const one = lateOf({ apps: names });
+        expect(one.apps).toEqual([
+            'https: //evil·test/pay?now=1',
+            'evil·example·com',
+            'www·evil·test',
+            'mail me at a·b@evil·test',
+            'Node·js',
+            'Gmail',
+            'Zoho. Desk',
+            'ftp: //files·test',
+            'a·b',
+            'evil·test',
+            `${'x'.repeat(30)}·evil·test`,
+        ]);
+        const text = reportText(one);
+        // nothing a chat's link finder reads: no scheme, and no dot between two letters or digits
+        expect(text).not.toMatch(/:\/\//);
+        expect(text.replace(/^Update: /, '')).not.toMatch(/[\p{L}\p{N}]\.[\p{L}\p{N}]/u);
+        // every name is still within the length and never ends in half of what stands for a dot or a scheme
+        for (const name of one.apps) {
+            expect(Array.from(name).length).toBeLessThanOrEqual(40);
+            expect(name).toBe(name.trim());
+        }
+        // a long address is cut to the length said, after it is written this way (and is still no link)
+        const long = lateOf({ apps: [`${'sub.'.repeat(20)}example.com/pay`] }).apps[0];
+        expect(Array.from(long)).toHaveLength(40);
+        expect(long).not.toMatch(/[\p{L}\p{N}]\.[\p{L}\p{N}]/u);
+        // a name that is only an address is still a name, and two spellings of one address are one App
+        expect(lateOf({ apps: ['evil.test', 'EVIL.test'] }).appsTotal).toBe(1);
+        // the names that were plain stay as they were
+        expect(lateOf({ apps: ['Google Sheets', 'Microsoft 365', 'Zoho Mail'] }).apps).toEqual(['Google Sheets', 'Microsoft 365', 'Zoho Mail']);
+    });
+
+    it('is a late report only: the Apps and the word about the hold on any other kind are ignored', () => {
+        const done = computerReportOf({ ...lateRaw, kind: 'done', key: 'computer-told:job-1:done' });
+        expect(done).toMatchObject({ kind: 'done', apps: [], holdReleased: false });
+        expect(reportText(done as ComputerReport)).not.toMatch(/did go out after all|weren’t charged/);
+        // The number of another kind is as before: a finished job has none, a wait needs its own
+        expect(computerReportOf({ ...base, seq: 3 })?.seq).toBe(3);
+        // a late report is told by what it covers (`through`), never by a number
+        expect(computerReportOf({ ...lateRaw, seq: 4 })?.seq).toBe(4);
+    });
+
+    it('is told through the admin service: asked for with accepts=late, marked delivered with its `through` said back unchanged (without one when it has none), and marked undeliverable with its reason', async () => {
+        const admin = new AdminApiService() as unknown as {
+            brickCall: (...args: unknown[]) => Promise<unknown>;
+            computerReports(): Promise<ComputerReport[]>;
+            keepComputerReportTold(r: unknown): Promise<boolean>;
+            keepComputerReportUndeliverable(r: unknown, why: string): Promise<boolean>;
+        };
+        const calls: unknown[][] = [];
+        admin.brickCall = vi.fn(async (...args: unknown[]) => {
+            calls.push(args);
+            return { data: args[0] === 'get' ? { reports: [lateRaw, { ...lateRaw, key: 'k2', jobId: 'job-2', apps: [] }] } : {} };
+        });
+        const got = await admin.computerReports();
+        // A late report that has no App to name is dropped, the good one is kept
+        expect(got.map((one) => [one.jobId, one.kind])).toEqual([['job-1', 'late']]);
+        // Asking with accepts=late is what lets Orbit offer it: an older game never asks and never meets the kind
+        expect(calls[0].slice(0, 2)).toEqual(['get', 'api/computer/jobs/reports']);
+        expect(calls[0][3]).toEqual({ accepts: 'late,paused,carried_on,can_carry_on,back_in_line' });
+        expect(await admin.keepComputerReportTold(got[0])).toBe(true);
+        expect(calls[1]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'late', seq: 1, outcome: 'delivered', through: T1 }]);
+        expect(await admin.keepComputerReportUndeliverable(got[0], 'origin_gone')).toBe(true);
+        expect(calls[2]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'late', seq: 1, outcome: 'undeliverable', why: 'origin_gone', through: T1 }]);
+        // An ack for a late report that carries no `through` still works: Orbit then covers what it has confirmed by then
+        expect(await admin.keepComputerReportTold({ jobId: 'job-1', kind: 'late', seq: null })).toBe(true);
+        expect(calls[3]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'late', outcome: 'delivered' }]);
+        // Every other kind is told as before: no outcome word, no time
+        expect(await admin.keepComputerReportTold({ jobId: 'job-1', kind: 'done', seq: null })).toBe(true);
+        expect(calls[4]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'done' }]);
+    });
+
+    it('says it once in the conversation the job began in, under its own key, with no steps line and no files, then tells Orbit it was delivered', async () => {
+        const { runner, said, told } = round([lateOf({ handed: undefined })]);
+        expect(await runner.tick()).toBe(1);
+        expect(said).toEqual([{ brickId: 'brick-1', to: '@sara:chat.test', text: reportText(lateOf()), transactionId: `computer-told:job-1:late:${Date.parse(T1)}`, steps: false, room: '!dm:chat.test' }]);
+        expect(told).toEqual([{ jobId: 'job-1', kind: 'late', seq: 1, through: T1 }]);
+    });
+
+    it('never attaches files to it, even when Orbit sent some', async () => {
+        const { runner, speaker } = round([{ ...lateOf(), handed: handed('a.pdf') }]);
+        await runner.tick();
+        expect((speaker.say as ReturnType<typeof vi.fn>).mock.calls[0][4]).toEqual({ room: '!dm:chat.test' });
+    });
+
+    it('is the same message when Orbit did not keep that it was delivered: a retry carries the same key, so the chat shows it once', async () => {
+        const first = round([lateOf()]);
+        (first.api.keepTold as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+        await first.runner.tick();
+        await first.runner.tick();
+        expect(first.said.map((one) => [one.transactionId, one.text])).toEqual([
+            [`computer-told:job-1:late:${Date.parse(T1)}`, reportText(lateOf())],
+            [`computer-told:job-1:late:${Date.parse(T1)}`, reportText(lateOf())],
+        ]);
+    });
+
+    it('is one message per batch: two batches of one job are two messages under two keys (one per `through`), each told with its own `through`, and each names only its own Apps', async () => {
+        const first = lateOf({ key: `computer-told:job-1:late:${Date.parse(T1)}`, seq: 1, through: T1, apps: ['Gmail', 'Slack'] });
+        const second = lateOf({ key: `computer-told:job-1:late:${Date.parse(T2)}`, seq: 2, through: T2, apps: ['Notion'] });
+        const { runner, said, told } = round([first, second]);
+        expect(await runner.tick()).toBe(2);
+        expect(said.map((one) => [one.transactionId, one.text])).toEqual([
+            [`computer-told:job-1:late:${Date.parse(T1)}`, 'Update: Gmail and Slack confirmed the steps completed. You weren’t charged for those steps.'],
+            [`computer-told:job-1:late:${Date.parse(T2)}`, 'Update: Notion confirmed the step completed. You weren’t charged for that step.'],
+        ]);
+        expect(told).toEqual([{ jobId: 'job-1', kind: 'late', seq: 1, through: T1 }, { jobId: 'job-1', kind: 'late', seq: 2, through: T2 }]);
+    });
+
+    it('G68-1: a late report with its number and NO `through` (Orbit marks late reports by batch) is told, and the confirmation carries kind late and the number, and nothing else', async () => {
+        const batch = lateOf({ key: 'computer-told:job-1:late:3', seq: 3, through: undefined });
+        expect(batch.through).toBeNull();
+        const { runner, said, told } = round([batch]);
+        expect(await runner.tick()).toBe(1);
+        expect(said.map((one) => one.text)).toEqual(['Update: Gmail confirmed the step completed. You weren’t charged for that step.']);
+        expect(told).toEqual([{ jobId: 'job-1', kind: 'late', seq: 3 }]);
+        // and what goes to Orbit is the number of the batch, with no `through`
+        const admin = new AdminApiService() as unknown as { brickCall: (...args: unknown[]) => Promise<unknown>; keepComputerReportTold(r: unknown): Promise<boolean> };
+        const calls: unknown[][] = [];
+        admin.brickCall = vi.fn(async (...args: unknown[]) => {
+            calls.push(args);
+            return { data: {} };
+        });
+        expect(await admin.keepComputerReportTold({ jobId: 'job-1', kind: 'late', seq: 3, through: null })).toBe(true);
+        expect(calls[0]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'late', seq: 3, outcome: 'delivered' }]);
+    });
+
+    it('a retry of one batch is the same message (told once per key) while the next batch is a new one: a batch Orbit did not keep is said again under its key, the next only once', async () => {
+        const first = lateOf({ through: T1 });
+        const { runner, api, said, told } = round([first]);
+        (api.keepTold as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+        await runner.tick();
+        (api.reports as ReturnType<typeof vi.fn>).mockResolvedValue([first, lateOf({ key: `computer-told:job-1:late:${Date.parse(T2)}`, through: T2, apps: ['Slack'] })]);
+        await runner.tick();
+        expect(said.map((one) => one.transactionId)).toEqual([`computer-told:job-1:late:${Date.parse(T1)}`, `computer-told:job-1:late:${Date.parse(T1)}`, `computer-told:job-1:late:${Date.parse(T2)}`]);
+        // the batch that was told twice (Orbit missed the first mark) was marked with the same `through` both times
+        expect((api.keepTold as ReturnType<typeof vi.fn>).mock.calls.map(([one]) => (one as ComputerReport).through)).toEqual([T1, T1, T2]);
+        expect(told.map((one) => one.through)).toEqual([T1, T2]);
+    });
+
+    it('leaves it for the next round when the chat did not answer, and never calls it delivered when it could not go: no chat, or a conversation that is gone, is undeliverable with its reason', async () => {
+        const unsure = round([lateOf()], [{ ok: false, reason: 'unsure' }]);
+        expect(await unsure.runner.tick()).toBe(0);
+        expect(unsure.told).toEqual([]);
+        expect(unsure.undeliverable).toEqual([]);
+        const gone = round([lateOf(), lateOf({ key: 'computer-told:job-2:late:1', jobId: 'job-2', matrixUserId: null })], [{ ok: false, reason: 'origin_gone' }]);
+        expect(await gone.runner.tick()).toBe(0);
+        expect(gone.told).toEqual([]);
+        expect(gone.undeliverable).toEqual([
+            { jobId: 'job-1', kind: 'late', why: 'origin_gone', through: T1 },
+            { jobId: 'job-2', kind: 'late', why: 'no_chat', through: T1 },
+        ]);
     });
 });
 
@@ -643,3 +1036,57 @@ describe('fetching a file from Orbit', () => {
         await expect(down.admin.computerReportFile('j', 'f')).rejects.toThrow('Orbit down');
     });
 });
+
+describe('a job Orbit paused by itself (the month or the person`s own limit), and its carrying on (computers plan, decisions 23 Nov section 1)', () => {
+    const raw = { key: 'computer-told:job-1:paused:1', jobId: 'job-1', botId: 'brick-1', matrixUserId: '@sara:chat.test', origin: { kind: 'dm', ref: '!dm:chat.test' }, title: 'Visa form', seq: 1 };
+
+    it('reads a pause with its number and why, and a carrying on with its number; anything less is not told', () => {
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance' })).toMatchObject({ kind: 'paused', pausedWhy: 'allowance', seq: 1 });
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'rule' })).toMatchObject({ kind: 'paused', pausedWhy: 'rule' });
+        // The person's own Pause is never told back (they just did it), and a pause with no number cannot be marked for that pause only
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'person' })).toBeNull();
+        expect(computerReportOf({ ...raw, kind: 'paused' })).toBeNull();
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', seq: null })).toBeNull();
+        expect(computerReportOf({ ...raw, kind: 'carried_on' })).toMatchObject({ kind: 'carried_on', seq: 1, pausedWhy: null });
+        expect(computerReportOf({ ...raw, kind: 'carried_on', seq: undefined })).toBeNull();
+        // Why goes only with a pause
+        expect(computerReportOf({ ...raw, kind: 'carried_on', pausedWhy: 'rule' })?.pausedWhy).toBeNull();
+    });
+
+    it('says the decided words: no number, no price, and nothing lost', () => {
+        const paused = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance' }) as ComputerReport;
+        expect(reportText(paused)).toBe("I paused “Visa form”: this month's computer time is used up. Nothing is lost. Tap Ask for more in [Usage](#usage) and it carries on by itself.");
+        const limit = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'rule' }) as ComputerReport;
+        expect(reportText(limit)).toBe('I paused “Visa form”: it reached the spending limit you set. Nothing is lost. Raise the limit or say resume.');
+        const on = computerReportOf({ ...raw, kind: 'carried_on' }) as ComputerReport;
+        expect(reportText(on)).toBe('I’m carrying on with “Visa form”.'.replace('’', "'"));
+        for (const one of [paused, limit, on]) expect(reportText(one)).not.toMatch(/\$|\d/);
+    });
+
+    it('names the kinds exactly as Orbit does (carried_on, can_carry_on), and asks Orbit for all of them', () => {
+        expect(computerReportOf({ ...raw, kind: 'can_carry_on' })).toMatchObject({ kind: 'can_carry_on', seq: 1, pausedWhy: null, heldScreen: false });
+        expect(computerReportOf({ ...raw, kind: 'can_carry_on', seq: undefined })).toBeNull();
+        // The old name was never Orbit's: a report under it is not one this game reads
+        expect(computerReportOf({ ...raw, kind: 'carrying_on' })).toBeNull();
+        expect(reportText(computerReportOf({ ...raw, kind: 'can_carry_on' }) as ComputerReport)).toBe('“Visa form” can carry on now. Want me to?');
+        // GPT's sixth answer, finding 5: the pause is over but the job is queued, not running. Told by the pause's number, no price and no reason why more arrived
+        expect(computerReportOf({ ...raw, kind: 'back_in_line' })).toMatchObject({ kind: 'back_in_line', seq: 1, pausedWhy: null, heldScreen: false });
+        expect(computerReportOf({ ...raw, kind: 'back_in_line', seq: undefined })).toBeNull();
+        expect(reportText(computerReportOf({ ...raw, kind: 'back_in_line' }) as ComputerReport)).toBe('“Visa form” is back in line. It carries on by itself when its turn comes.');
+    });
+
+    it('a limit reached while the person held the screen: Brick took the screen back, and says the two section 7 lines once, in place of the usual pause line', () => {
+        const month = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', heldScreen: true }) as ComputerReport;
+        expect(month.heldScreen).toBe(true);
+        expect(reportText(month)).toBe("I had to take the screen back and pause “Visa form”: this month's computer time is used up. The job and its files are kept. Tap Ask for more in [Usage](#usage), and I'll ask you before I carry on.");
+        const limit = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'rule', heldScreen: true }) as ComputerReport;
+        expect(reportText(limit)).toBe('I had to take the screen back and pause “Visa form”: it reached the spending limit you set. The job and its files are kept. Raise the limit or say resume.');
+        for (const one of [month, limit]) expect(reportText(one)).not.toMatch(/\$|\d/);
+        // Only true says it: anything else, or the marker on another kind, is the usual line
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', heldScreen: 'yes' })?.heldScreen).toBe(false);
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance' })?.heldScreen).toBe(false);
+        expect(computerReportOf({ ...raw, kind: 'carried_on', heldScreen: true })?.heldScreen).toBe(false);
+        expect(reportText(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', heldScreen: false }) as ComputerReport)).toMatch(/^I paused “Visa form”/);
+    });
+});
+

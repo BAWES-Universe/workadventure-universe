@@ -1163,6 +1163,13 @@ const chat: BaseTranslation = {
             // Connected and this Brick may use it, but the Brick could not be told to carry on: they ask it again
             couldNotResume: "{name} is connected and this Brick may use it. Ask it again to carry on.",
         },
+        // The one button under an answer that says a computer job cannot be carried on (GPT's sixth answer, finding 6): starting it afresh.
+        // The answer's own words already say why it cannot carry on, so the card says only what the button does.
+        newJobCard: {
+            ask: "Start \u201c{title}\u201d as a new job?",
+            start: "Start a new job",
+            startLine: "From the beginning",
+        },
         // The starter that opens the Apps page (#2001)
         connectMyApps: "Connect my apps",
         connectMyAppsLine: "Email, calendar, GitHub and more",
@@ -1607,6 +1614,55 @@ const chat: BaseTranslation = {
             barAskYou: "Waiting for you · {what}",
             barInLine: "Waiting its turn",
             barUsedUp: "Waiting · this month's computer time is used up",
+            // A paused job on the bar: "<title> · paused", and why when the month's computer time ran out (decided 23 Nov)
+            barPaused: "paused",
+            barPausedMonth: "paused · this month's computer time is used up",
+            // A job that "Do this first" put back in line, named after what runs now: "Airport taxi · getting it ready · Visa form next"
+            barNext: "{line} · {title} next",
+            // The computer's jobs, one row each (steering mock, approved 23 Nov)
+            jobsSub: "One job uses it at a time. You can also just tell {name} in the chat.",
+            jobsNote:
+                "Tap a job to see what it has done so far. A paused job keeps its progress, files and sign-ins, and uses no computer time. A waiting job uses nothing until it starts.",
+            jobsOpen: "Show every job on {name}'s computer",
+            untitledJob: "Your job",
+            pause: "Pause",
+            resume: "Resume",
+            doThisNext: "Do this next",
+            cancel: "Cancel",
+            rowWorking: "Working · {step}",
+            rowWaking: "Working · {step}",
+            rowPaused: "Paused · progress kept · not using computer time",
+            rowPausedMonth: "Paused · this month's computer time is used up",
+            rowPausedRule: "Paused · it reached the spending limit you set",
+            rowComesBack: "Paused · carries on next, by itself",
+            rowNext: "Next in line",
+            rowInLine: "Waiting its turn",
+            rowUsedUp: "Waiting · this month's computer time is used up",
+            rowBusy: "Waiting for a free computer",
+            // Activity: what one job has done so far
+            activityBack: "Back to the jobs",
+            activityNone: "Nothing done yet. Its steps show here as it works.",
+            activityFailed: "What it has done couldn't be read just now.",
+            activityRetry: "Try again",
+            // Asked first: Stop that would end several jobs, and Cancel of a job that has run (steering mock, approved 23 Nov)
+            askCancelOne: "Cancel “{title}”?",
+            askEndsHere: "It ends here and its files are kept. Time it used stays on its receipt.",
+            keepIt: "Keep it",
+            cancelJob: "Cancel job",
+            askStopAll: "Stop all {count} jobs?",
+            askStopsNow: "{title} stops now.",
+            askEndsTooPaused: "{title} (paused) ends too.",
+            askEndsTooWaiting: "{title} (waiting) ends too.",
+            askFilesKept: "Their files are kept. Time already used stays on their receipts.",
+            askJustOne: "To end just one, tap the bar and Cancel it there, or tell {name}.",
+            keepThem: "Keep them",
+            stopAll: "Stop all {count}",
+            // When Orbit says no to a tap on one job
+            refusedTakenOver: "You have the screen right now. Hand it back first.",
+            refusedEnding: "That job is already ending.",
+            refusedGone: "That job has already ended.",
+            refusedOutOfTime: "This month's computer time is used up, so it stays paused. Tap Ask for more in Usage.",
+            refusedOverLimit: "It reached the spending limit you set, so it stays paused.",
             // How the last job ended, told once on the page and in the chat until it is dismissed or a new job starts
             noticeUnanswered: "{name}'s computer stopped waiting for you. Its files are kept.",
             noticeMonth: "This month's computer time ran out, so {name}'s computer stopped. Its files are kept.",
@@ -1709,6 +1765,9 @@ const chat: BaseTranslation = {
             // A positive amount under one cent is said so, never rounded up or down to a cent; a true zero is "$0"
             lessThanCent: "Less than $0.01",
             lessThanCentInLine: "less than $0.01",
+            // What was taken, under a tenth of a cent: Orbit says the same ("less than $0.001"); larger amounts under a cent are said in thousandths
+            lessThanTenthOfCent: "Less than $0.001",
+            lessThanTenthOfCentInLine: "less than $0.001",
             unavailable: "Usage temporarily unavailable",
             unavailableHint: "Your Bricks keep working. Try again in a moment.",
             askNoteApps:
@@ -1741,6 +1800,13 @@ const chat: BaseTranslation = {
             activityNothingTaken: "Nothing taken",
             // A task where some steps worked and some did not (Orbit's outcome "partial"), and an amount nobody can tell yet
             activityPartly: "Partly done",
+            // Words for a task Orbit says did not finish, or could not be confirmed, when it sends none of its own
+            activityDidntFinish: "Didn't finish",
+            activityStopped: "Stopped",
+            activityDeciding: "Still checking",
+            activityRefundPending: "{amount:string} refund pending",
+            activityRefundPendingNoAmount: "Refund pending",
+            activityCouldntConfirm: "Couldn't confirm",
             amountUnavailable: "amount unavailable",
             paidByYou: "Paid by you",
             paidByUniverse: "Paid by Universe",
@@ -2217,20 +2283,25 @@ const chat: BaseTranslation = {
         payPaidAccount: "Paid. Thank you.",
         payPaidAccountSub: "It's saved to your account, so it comes back whenever you open this page.",
         payPaidGuest: "Paid. Thank you.",
-        payPaidGuestSub: "Save your receipt link. It brings this purchase back on any device.",
+        payPaidGuestSub:
+            "A guest purchase on this browser. Save your private receipt link: it brings this purchase back on any device, so share it with no one.",
         payPaidGuestNoReceiptSub: "It's kept in this browser, so it comes back whenever you open this page here.",
         payPaidTest: "Test payment received. No money moved.",
         payPaidTestSub: "Only a live payment counts as a purchase.",
         payRestored: "Your purchase from {date:string} is back.",
         payRestoredNoDate: "Your purchase is back.",
-        payReceiptCopied: "Receipt link copied.",
-        payReceiptCopiedSub: "Keep it somewhere safe, like your notes or email.",
+        payReceiptCopied: "Private receipt link copied.",
+        payReceiptCopiedSub:
+            "Keep it somewhere safe, like your notes or email. Anyone who has it can bring this purchase back.",
         payNotHeard: "We haven't heard back about your payment yet.",
-        payNotHeardSub: "If you paid, it still counts. You can check now.",
+        payNotHeardSub: "If you paid, it still counts. Check it here before paying again.",
+        payStillChecking: "We're still checking your earlier payment.",
+        payStillCheckingSub:
+            "If you paid, it will show up here when your payment service confirms it. Buying again starts a new payment.",
         payNotPaid: "Not paid yet.",
-        payNotPaidSub: "If you just paid, it can take a few minutes to show.",
+        payNotPaidSub: "If you already paid, it can take a while to show. Check it here before paying again.",
         payNeedsUpdate: "This page's pay button needs an update.",
-        payNeedsUpdateSub: "If you already paid, you can check it here.",
+        payNeedsUpdateSub: "If you already paid, check it here before paying again.",
         payNeedsUpdateOwnerSub: "Ask {maker:string} to make the page again.",
         payUnavailable: "Payments unavailable",
         payLimit: "Too many tries for now.",
@@ -2242,7 +2313,9 @@ const chat: BaseTranslation = {
         payNoneAccountSub: "If you paid as a guest, open the receipt link you saved.",
         payCheckPayment: "Check payment",
         payRestorePurchase: "Restore purchase",
-        payCopyReceipt: "Copy receipt link",
+        payCopyReceipt: "Copy private receipt link",
+        // The label of the link shown to be selected by hand when the browser would not copy it (Orbit's page says the same)
+        payReceiptLinkLabel: "Private receipt link",
         payCopied: "Copied",
         payClose: "Close",
         payContinue: "Continue to {app:string}",

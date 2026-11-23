@@ -113,6 +113,14 @@ const PayAnswer = z.object({
         .unknown()
         .transform((ms) => (typeof ms === "number" && Number.isFinite(ms) ? ms : undefined))
         .optional(),
+    /**
+     * A `checking` answer for an order that closed while its payment service has still not had the last word: there is no checkout to go on with and
+     * nothing to wait on for twenty minutes. Only `true` is kept: anything else is no reason to lose the rest of the answer
+     */
+    longWait: z
+        .unknown()
+        .transform((value) => (value === true ? true : undefined))
+        .optional(),
     /** When a restored purchase was paid, for "Your purchase from 19 Nov is back." */
     paidAt: z.string().nullable().optional(),
     /** A start sent again found the order it had made */

@@ -132,7 +132,10 @@ import {
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
-import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
+import type { StartKeyStore } from '../server/ComputerStartKeys';
+import { CANCEL_JOB_TOOL, COMPUTER_JOBS_TOOL, JOB_FIRST_TOOL, PAUSE_JOB_TOOL, RESUME_JOB_TOOL, STOP_COMPUTER_TOOL, TELL_JOB_TOOL, computerControlToolDefinitions, newControlState, runComputerControlTool, startControlTurn } from './ComputerControlTools';
+import { asksToTryAgain, offersTryAgain, tryAgainNote, type RetryJob } from './ComputerTryAgain';
+import { COMPUTER_TOOL, ConfirmationQueue, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
@@ -306,7 +309,7 @@ export class AIService {
     private botCredentialVersion: Map<string, number> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
     /** How each Brick's computer reaches its AI, kept for the same short time (relayRoute). */
-    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null; expiresAt: number }>();
+    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null; expiresAt: number }>();
     /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
     private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
     private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
@@ -784,15 +787,17 @@ export class AIService {
 
     /**
      * How a Brick's computer reaches its AI (the model relay): the same answer a reply gets from Orbit, by Brick, with the key still
-     * encrypted. Null when Orbit does not know the Brick or its key is resting (nothing is called then). Kept for the same short
+     * encrypted. Null when Orbit does not know the Brick; `restingOwnKey` when its own key is down and the owner chose Stop replying (nothing is called then). Kept for the same short
      * time as a reply's, so a run of calls does not ask Orbit each time; a Brick moved to another AI is followed within seconds.
      */
-    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null> {
+    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null> {
         const cacheKey = `relay:${botId}`;
         const cached = this.relayRouteCache.get(cacheKey);
         if (cached && Date.now() < cached.expiresAt) return cached.route;
         const answer = await this.adminApiService.getBotAiCredentials(botId);
-        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null = null;
+        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null = null;
+        // The owner's own key is down and they chose Stop replying: the person's, not ours (an answer with no owner is not that)
+        if (answer && answer.source === 'resting' && answer.keyOwnerId) route = { restingOwnKey: true };
         if (answer && answer.source !== 'resting') {
             const resolved = this.resolvedFromAnswer(answer);
             if ('config' in resolved) route = { config: resolved.config, source: resolved.source, keyOwnerId: answer.source === 'own-key' ? (answer.keyOwnerId ?? null) : null };
@@ -1380,11 +1385,23 @@ export class AIService {
         const ledger = options?.usage?.ledger ?? new UsageLedger();
         // Whether the reply's usage has been recorded, so a failure after that is not recorded with the same cost again
         let usageRecorded = false;
+        // The confirmations of the computer jobs an EARLIER answer named are dropped when a new answer is begun (a newer message, or this one asked again): only the answer that is delivered
+        // confirms what it said. This answer has a queue of its own, which whoever sends the reply delivers (`DmReplyService`)
+        if (playerId !== undefined) {
+            const chat = this.conversationMemory?.getMemory(botId, playerId);
+            if (chat) {
+                chat.computerConfirmations?.drop();
+                chat.computerConfirmations = new ConfirmationQueue();
+            }
+        }
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
         if (!isRetry && playerId !== undefined) {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
+            forgetSettledStarts(memory?.computerStarts);
+            // A question Brick asked before cancelling or stopping a job is answered by this message only, and only when it is a clear yes (checked in code); this turn's controls start clean
+            startControlTurn(memory?.computerControls, message);
             memory?.sharedUncertain?.clear();
             memory?.sharedInFlight?.clear();
             memory?.sentAgain?.clear();
@@ -1649,6 +1666,8 @@ export class AIService {
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
+                    // "Try again" carries on the job that failed as ours or that we ended, only when the person asks for it (piece 8)
+                    computerOn && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? await this.tryAgainNoteFor(botId, playerId, adminApiService) : '',
                     instantListing ? instantToolsNote() : '',
                     // The owner, in their own Brick's direct messages: it can set reminders when they ask (#2002)
                     taskSettings ? taskToolsNote(taskSettings, Date.now()) : '',
@@ -3728,7 +3747,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
-        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
+        // With it, Brick's controls of those jobs: see them, pause, carry on, do first, cancel one, stop, pass words on (computers full plan, piece 5)
+        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions(), ...computerControlToolDefinitions());
         // Tools: Instant Apps, exactly the list Orbit gave for this Brick. Owner only, in their Brick's direct messages.
         if (channel === 'dm' && !botClient) {
             if (instant) tools.push(...instantToolDefinitions(instant));
@@ -3967,7 +3987,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
     /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000) or reminders (#2002). */
     private ownBricks = new Set<string>();
-    private computerOnCache = new Map<string, { on: boolean; at: number }>();
+    private computerOnCache = new Map<string, { on: boolean; at: number; retry?: RetryJob | null }>();
+    /** Where the key of a computer job's start waits while its outcome is open, so a restart of this server finds it (see `ComputerStartKeys`). Set by the server when it has a shared store. */
+    private computerStartKeys: StartKeyStore | undefined;
+    setComputerStartKeys(store: StartKeyStore | undefined): void {
+        this.computerStartKeys = store;
+    }
 
     /**
      * Whether this Brick's computer is on for the person in this direct message. Orbit answers; the answer is kept a short while so
@@ -3980,9 +4005,45 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const key = `${botId}|${userId}`;
         const known = this.computerOnCache.get(key);
         if (known && Date.now() - known.at < 30_000) return known.on;
-        const on = await admin.computerIsOn(botId, userId).catch(() => false);
-        this.computerOnCache.set(key, { on, at: Date.now() });
-        return on;
+        // The same one read also names the job "try again" would carry on (piece 8); an admin without that read says only whether it is on
+        const state = admin.computerState ? await admin.computerState(botId, userId).catch(() => ({ on: false, retry: null })) : { on: await admin.computerIsOn(botId, userId).catch(() => false), retry: undefined };
+        this.computerOnCache.set(key, { on: state.on, at: Date.now(), ...(state.retry !== undefined ? { retry: state.retry } : {}) });
+        return state.on;
+    }
+
+    /**
+     * "Try again" (piece 8), in the owner's direct messages while the computer is on: the line that names the job "try again" would carry on, for this turn only, when Orbit names one and
+     * the person's words ask to try again or this is their first message since Brick told them how it ended (`offersTryAgain`). The job is kept for this turn's `use_computer`. Words
+     * that ask for it with nothing named in the short-lived read are read again once, fresh (the job may have ended a moment ago). Never throws; nothing is said when it cannot tell.
+     */
+    private async tryAgainNoteFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<string> {
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory) return '';
+        delete memory.computerRetry;
+        // They tapped "Start a new job" on the card for a job Orbit would not carry on (finding 6): this turn starts it afresh, so carrying one on is not offered in it
+        if (memory.newJobAsked) {
+            return '';
+        }
+        try {
+            const admin = adminApiService ?? this.adminApiService;
+            const userId = memory.userUuid;
+            if (!admin?.computerState || !userId) return '';
+            const people = memory.conversationHistory.filter((line) => line.sender === 'person');
+            const said = people.at(-1)?.message;
+            const previousAt = people.at(-2)?.timestamp;
+            const key = `${botId}|${userId}`;
+            let retry = this.computerOnCache.get(key)?.retry ?? null;
+            if (!retry && asksToTryAgain(said)) {
+                const fresh = await admin.computerState(botId, userId);
+                this.computerOnCache.set(key, { on: fresh.on, at: Date.now(), retry: fresh.retry });
+                retry = fresh.on ? fresh.retry : null;
+            }
+            if (!retry || !offersTryAgain(retry, said, previousAt)) return '';
+            memory.computerRetry = { id: retry.id, title: retry.title };
+            return tryAgainNote(retry);
+        } catch {
+            return '';
+        }
     }
 
     private instantOffers = new InstantOffers();
@@ -4132,12 +4193,45 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             ...(typeof memory?.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
             // The direct chat this was asked in: the result goes back to it, never to another chat
             ...(memory?.dmRoomId ? { origin: { kind: 'dm' as const, ref: memory.dmRoomId } } : {}),
+            // The inbound event this reply answers: a start made for it has a key made from it, so the same event delivered again makes no second job
+            ...(memory?.dmRoomId && memory.dmEventId ? { inbound: { roomId: memory.dmRoomId, eventId: memory.dmEventId, ...(memory.dmEventTs !== undefined ? { ts: memory.dmEventTs } : {}) } } : {}),
             apps: where.apps,
             reviewed: where.reviewed,
+            // The job "try again" carries on in this turn, when the person asked for it (piece 8)
+            ...(memory?.computerRetry ? { retry: memory.computerRetry } : {}),
+            // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
+            ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
+            ...(this.computerStartKeys ? { startKeyStore: this.computerStartKeys } : {}),
+            // Orbit refused to carry a job on: the reply carries a "Start a new job" button for it, and nothing is started here (finding 6)
+            ...(memory ? { offerNewJob: (title: string) => void (memory.pendingNewJob = { title }) } : {}),
+            // Confirmed to Orbit only once the reply that names the job reaches the person
+            ...(memory?.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time
         this.computerOnCache.delete(`${botId}|${userId}`);
+        return result;
+    }
+
+    /** Runs one of Brick's controls of its computer jobs for the person in this direct message. Orbit checks the owner and the job, as for a start. */
+    private async runComputerControlCall(name: string, args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        const userId = memory?.userUuid;
+        if (!admin || !where.botId || !userId || !memory || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
+        const result = await runComputerControlTool(name, args, {
+            admin,
+            botId: where.botId,
+            userId,
+            ...(typeof memory.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
+            state: (memory.computerControls ??= newControlState()),
+            // The fixed line of each control goes under the reply, and a question counts as asked once that reply reached them
+            ...(memory.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
+            // The message this control was asked in: every control of it goes to Orbit under an id made from that message, so one sent again is done once
+            ...(memory.dmEventId ? { inbound: { eventId: memory.dmEventId } } : {}),
+        });
+        // What the bar says has changed: read it fresh next time
+        this.computerOnCache.delete(`${where.botId}|${userId}`);
         return result;
     }
 
@@ -5171,6 +5265,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId, reviewed: reviewedApps, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
                         );
+                        break;
+
+                    case COMPUTER_JOBS_TOOL:
+                    case PAUSE_JOB_TOOL:
+                    case RESUME_JOB_TOOL:
+                    case JOB_FIRST_TOOL:
+                    case CANCEL_JOB_TOOL:
+                    case STOP_COMPUTER_TOOL:
+                    case TELL_JOB_TOOL:
+                        result = await this.runComputerControlCall(toolCall.name, typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {}, { adminApiService, botId, playerId });
                         break;
 
                     case ASK_PERSON_TOOL:

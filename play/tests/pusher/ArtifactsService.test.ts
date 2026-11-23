@@ -108,6 +108,35 @@ describe("ArtifactsService", () => {
         expect(odd).toMatchObject({ code: "unavailable", status: 409, unsure: false });
     });
 
+    it("keeps longWait on a checking answer (a closed order the service has not settled), and drops anything that is not true without losing the answer", async () => {
+        const http = { put: vi.fn(), post: vi.fn() };
+        const service = new ArtifactsService("http://orbit", "token", http);
+        http.post.mockResolvedValueOnce({
+            data: { status: "checking", via: "own", orderId: "o1", longWait: true, pollAfterMs: 3000 },
+        });
+        expect(await service.pay(ID, { restore: true }, viewer)).toEqual({
+            status: "checking",
+            via: "own",
+            orderId: "o1",
+            longWait: true,
+            pollAfterMs: 3000,
+        });
+        const odds = [false, "true", 1, null, { a: 1 }];
+        for (const odd of odds) {
+            http.post.mockResolvedValueOnce({ data: { status: "checking", orderId: "o1", longWait: odd } });
+        }
+        const answers = await Promise.all(
+            odds.map(() => service.pay(ID, { check: true, orderId: "o1" } as never, viewer))
+        );
+        for (const answer of answers) {
+            expect(answer).toMatchObject({ status: "checking", orderId: "o1" });
+            expect(answer.longWait).toBeUndefined();
+        }
+        // an older Orbit says nothing of it
+        http.post.mockResolvedValueOnce({ data: { status: "checking", orderId: "o1" } });
+        expect((await service.pay(ID, { check: true, orderId: "o1" } as never, viewer)).longWait).toBeUndefined();
+    });
+
     it("keeps the status of an answer whose pollAfterMs is odd (a fraction, a negative, a huge number, a word)", async () => {
         const http = { put: vi.fn(), post: vi.fn() };
         const service = new ArtifactsService("https://orbit.test", "secret", http);

@@ -12,6 +12,10 @@
  *    given back. The computer's own sentence is only ever why it could not go on, and Orbit has cleaned it of links and markup.
  * The person's own Stop, a computer turned off and a Brick deleted are never offered: they just did it.
  *
+ * The late follow-up (`late`): an App that was let go unconfirmed (so its hold was released and nothing was charged) may be confirmed later by the provider's log. Orbit then offers
+ * one more message for the job, once per batch of Apps confirmed together (its key ends in the time the batch covers up to, `through`, which is said back in the acknowledgement), in the same conversation: "Update: <App> confirmed the step completed. You weren’t charged for that step." (a search App, Exa or Tavily: "Update: your Exa search completed. You weren’t charged for that step."; "those steps" for several). It never says "sent" or "delivered": Orbit names the App and nothing of what the step did. The game only says
+ * it, from Orbit's facts: it never charges, refunds or decides anything. Orbit offers it only to a game that asks for it (`accepts=late`), so an older game never meets the kind.
+ *
  * The file card: the files a finished job made come as `handed`: they are the person's own, kept by Orbit (and shown in their Files) whether or not the chat took them.
  * Each is fetched from Orbit one at a time, uploaded to the chat and sent as a file message under its own transaction id, after the message, and Orbit is told
  * as soon as each one is in, so a restart never sends one twice. A file that cannot go (too big for the chat, the chat kept refusing) is said so in a short
@@ -20,7 +24,9 @@
 
 import type { StepsField } from '../ai/ToolSteps';
 
-export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule';
+export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule' | 'late' | 'paused' | 'carried_on' | 'can_carry_on' | 'back_in_line';
+/** Why Orbit paused a job by itself (computers plan, piece 3): the person's month of computer time is used up, or a spending limit they set was reached. */
+export type PausedWhy = 'allowance' | 'rule';
 export type Waiting = 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer';
 
 /** A file a finished job made, handed over to be put in the chat as a card. */
@@ -60,9 +66,60 @@ export interface ComputerReport {
     /** Files handed over to be put in the chat as cards. */
     handed: HandedFile[];
     givenBack: boolean;
+    /** Whole micros of a refund Orbit has promised and not paid yet (0 when none, or from an older Orbit): said as pending, never as given back. */
+    refundPendingMicros: number;
+    /** Only for `late`: the Apps (display names, in the order they were confirmed) that went out after all. Empty for every other kind. */
+    apps: string[];
+    /** Only for `late`: how many distinct Apps Orbit named in all (the whole of them, before `apps` keeps the few that are said), so "and N more" counts every one. 0 for every other kind. */
+    appsTotal: number;
+    /** Only for `late`: which of those Apps Orbit says are search Apps (their step is a search), by the same display names; read together with the names we know ourselves. Empty for every other kind, or from an Orbit that sends none. */
+    searchApps: string[];
+    /** Only for `late`: the time of the latest confirmation this batch covers, exactly as Orbit gave it (a time), said back in the acknowledgement so an App confirmed between the offer and the mark is not marked. Null for every other kind, or from an Orbit that sends none. */
+    through: string | null;
+    /** Only for `late`: Orbit let the Apps go unconfirmed, released their hold and was never paid for them: the one fact "you weren't charged" rests on. False for every other kind. */
+    holdReleased: boolean;
+    /** Only for `paused`: why Orbit paused the job (never the person's own Pause: they just did it). Null for every other kind. */
+    pausedWhy: PausedWhy | null;
+    /** Only for `paused`: the person held the job's screen when the limit was reached, so Brick took the screen back to pause it (decisions 23 Nov, section 7). False for every other kind. */
+    heldScreen: boolean;
 }
 
-const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule'];
+const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late', 'paused', 'carried_on', 'can_carry_on', 'back_in_line'];
+
+/** The longest an App's name is said, and how many are named before "and N more": a follow-up is one short message. */
+const APP_NAME_MAX = 40;
+const APPS_NAMED = 5;
+const APPS_KEPT = 12;
+
+/** What a chat reads as a link in a name: a scheme's `://`, and the dot between two letters or digits of a domain (`example.com`, `www.example.com`, an address). Written `: //` and `·`. */
+const LINK_SCHEME = /:\/\//g;
+const DOMAIN_DOT = /(?<=[\p{L}\p{N}])[.\u3002\uff0e\uff61](?=[\p{L}\p{N}])/gu;
+
+/**
+ * The Apps of a late report as plain names: no markup or control characters, and nothing a chat could turn into a link (the name of an App is not ours: an address or a
+ * domain in it is written `example·com`, `https: //example·com`, which reads as what it is and is no link), whole characters, no repeats, in the order Orbit gave them.
+  * `names` are the ones to say (at most `keep`, APPS_KEPT unless said); `total` is how many distinct names there were in all, counted before that limit.
+ */
+function appsOf(raw: unknown, keep = APPS_KEPT): { names: string[]; total: number } {
+    if (!Array.isArray(raw)) return { names: [], total: 0 };
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const one of raw) {
+        if (typeof one !== 'string') continue;
+        // A name is a name: nothing a chat could read as a link, a tag or a line of its own
+        // eslint-disable-next-line no-control-regex
+        const flat = one.replace(/[\u0000-\u001f\u007f<>[\]`]+/g, ' ').replace(/\s+/g, ' ').trim().replace(LINK_SCHEME, ': //').replace(DOMAIN_DOT, '\u00b7');
+        // Cut to the length said, whole characters
+        const plain = Array.from(flat)
+            .slice(0, APP_NAME_MAX)
+            .join('')
+            .trim();
+        if (!plain || seen.has(plain.toLowerCase())) continue;
+        seen.add(plain.toLowerCase());
+        if (names.length < keep) names.push(plain);
+    }
+    return { names, total: seen.size };
+}
 const WAITINGS: readonly Waiting[] = ['details', 'signin', 'upload', 'pay', 'submit', 'answer'];
 
 /** The files handed over, each kept only when it has what a card needs. */
@@ -96,9 +153,22 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     }
     const origin = report.origin as { kind?: unknown; ref?: unknown } | null | undefined;
     const kind = report.kind as ReportKind;
-    const seq = typeof report.seq === 'number' ? report.seq : null;
+    const seq = typeof report.seq === 'number' && Number.isFinite(report.seq) ? report.seq : null;
+    const { names: apps, total: appsTotal } = kind === 'late' ? appsOf(report.apps) : { names: [], total: 0 };
+    // Which of the Apps were searches is known for EVERY name Orbit listed (not only the ones the message says): an App that is said can come last in a long list of searches
+    const searchApps = kind === 'late' ? appsOf(report.searchApps, Number.POSITIVE_INFINITY).names : [];
+    // "You weren't charged" is only said when Orbit says the hold was released, and an App is only named when there is a name to say: otherwise there is nothing true to tell
+    // Orbit numbers every late report, and refuses (400) the acknowledgement of one that has no number: a late report without a number is never told, so it is never acknowledged without one (a refusal that would come back for ever)
+    // Orbit numbers every late report (a batch) and marks as told only the runs of THAT batch when it is acknowledged with the number, so the report is told with its number and `through` is optional: passed back when Orbit says it
+    const through = kind === 'late' && typeof report.through === 'string' && Number.isFinite(Date.parse(report.through)) ? report.through : null;
+    if (kind === 'late' && (apps.length === 0 || report.holdReleased !== true || seq === null)) return null;
     // A wait is told by its number: without one it could not be marked as told for that wait only
     if (kind === 'needs' && (seq === null || waiting(report.waitingFor) === null)) return null;
+    // A pause Orbit made (the month or the person's own limit) and its carrying on are told once each, by the pause's number: without one they could not be marked for that pause only
+    const pausedWhy = kind === 'paused' && (report.pausedWhy === 'allowance' || report.pausedWhy === 'rule') ? (report.pausedWhy as PausedWhy) : null;
+    if (kind === 'paused' && (seq === null || pausedWhy === null)) return null;
+    // Carrying on by itself, and "it can carry on now" (something changed while it waited, so it asks): each told once, by its number, the way Orbit names them
+    if ((kind === 'carried_on' || kind === 'can_carry_on' || kind === 'back_in_line') && seq === null) return null;
     return {
         key: report.key,
         jobId: report.jobId,
@@ -118,7 +188,26 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
         files: Array.isArray(report.files) ? report.files.filter((name): name is string => typeof name === 'string' && name.length > 0) : [],
         handed: handedOf(report.handed),
         givenBack: report.givenBack === true,
+        refundPendingMicros: typeof report.refundPendingMicros === 'number' && Number.isFinite(report.refundPendingMicros) && report.refundPendingMicros > 0 ? Math.round(report.refundPendingMicros) : 0,
+        apps,
+        appsTotal,
+        searchApps,
+        holdReleased: kind === 'late' && report.holdReleased === true,
+        through,
+        pausedWhy,
+        heldScreen: kind === 'paused' && report.heldScreen === true,
     };
+}
+
+/**
+ * Money as the person reads it, exactly as Orbit's `dollars()` says it (the game's Usage page says it the same way): "$0", "less than $0.001"
+ * under half a thousandth, thousandths of a dollar under a cent (`$0.009`), cents from a cent up (`$0.05`, `$2.50`).
+ */
+export function moneyText(micros: number): string {
+    if (!(micros > 0)) return '$0';
+    if (micros < 500) return 'less than $0.001';
+    if (micros < 10_000) return `$${(micros / 1_000_000).toFixed(3)}`;
+    return `$${(micros / 1_000_000).toFixed(2)}`;
 }
 
 // --- the words -------------------------------------------------------------------------------------------------------------------------------
@@ -136,6 +225,13 @@ const sentence = (text: string): string => {
     return /[.!?…]["”’)]?$/.test(trimmed) ? trimmed : `${trimmed}.`;
 };
 const capital = (text: string): string => (text ? text[0].toUpperCase() + text.slice(1) : text);
+/** The Apps whose step is a search (it sends nothing): their late confirmation is said as the search that completed. */
+const SEARCH_APPS = new Set(['exa', 'tavily']);
+const searchName = (name: string): string => name.toLowerCase().replace(/\s+search$/, '').trim();
+const isSearchApp = (name: string, told: readonly string[] = []): boolean => SEARCH_APPS.has(searchName(name)) || told.some((one) => searchName(one) === searchName(name));
+/** The "N more" entry that stands for the Apps left out of the names. */
+const MORE_APPS = /^\d+ more$/;
+
 const list = (items: string[]): string => (items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
 const DONE_WORDS: Record<string, (where: string | null) => string> = {
@@ -152,7 +248,13 @@ const UNSURE_NOUN: Record<string, string> = { send: 'message', publish: 'publish
  * What reached other places, from the record only: what is known to have gone, what was tried and is not known, and (only then) that the record
  * shows nothing went. A job that was only to look says that instead.
  */
-export function receiptOf(report: Pick<ComputerReport, 'effects' | 'writes'>, quiet: 'ended' | 'waiting' = 'ended'): string {
+export function receiptOf(report: Pick<ComputerReport, 'effects' | 'writes'> & { refundPendingMicros?: number }, quiet: 'ended' | 'waiting' = 'ended'): string {
+    const said = receiptWords(report, quiet);
+    // A refund Orbit has promised and not paid is said as pending, after what the record proves: it is not said as given back
+    return report.refundPendingMicros && report.refundPendingMicros > 0 ? `${said} ${moneyText(report.refundPendingMicros)} refund pending.` : said;
+}
+
+function receiptWords(report: Pick<ComputerReport, 'effects' | 'writes'>, quiet: 'ended' | 'waiting'): string {
     const done = report.effects.filter((effect) => effect.state === 'done').map((effect) => (DONE_WORDS[effect.kind] ?? (() => 'Something was done.'))(effect.where));
     const unsure = report.effects
         .filter((effect) => effect.state === 'unknown')
@@ -198,12 +300,13 @@ export function reportText(report: ComputerReport): string {
                     ? ` I'm ready to put in ${report.ready.what.trim().replace(/[.!?]+$/, '')} at ${report.ready.where.trim().replace(/[.!?]+$/, '')}, and nothing of yours has reached it yet.`
                     : '';
             // Paying and submitting are the person's: they are told, from the record, that nothing has gone yet (or what has)
-            const so = report.effects.length > 0 || report.waitingFor === 'pay' || report.waitingFor === 'submit' ? ` ${receiptOf(report, 'waiting')}` : '';
+            const so = report.effects.length > 0 || report.waitingFor === 'pay' || report.waitingFor === 'submit' || report.refundPendingMicros > 0 ? ` ${receiptOf(report, 'waiting')}` : '';
             return `${name} needs you.${ready}${so} ${next}`;
         }
         case 'failed': {
             const why = report.why ? ` ${capital(sentence(report.why))}` : '';
-            const back = report.givenBack ? " This try won't count against your month." : '';
+            // A refund that is still pending is said in the receipt as pending: the try is not said to be given back until it is
+            const back = report.givenBack && report.refundPendingMicros <= 0 ? " This try won't count against your month." : '';
             return `I couldn't finish ${name}.${why} ${receiptOf(report)} My computer kept what I had ready.${back} Want me to try again, or would you rather do that step yourself?`;
         }
         case 'unanswered': {
@@ -215,6 +318,42 @@ export function reportText(report: ComputerReport): string {
         case 'rule': {
             const said = report.why ? ` You said: “${report.why.replace(/[.!?]+$/, '')}”.` : '';
             return `I stopped ${name} because of a rule you set.${said} ${receiptOf(report)} My computer kept what I had ready.`;
+        }
+        // A job Orbit paused by itself mid-job (decisions 23 Nov, section 1): said once, with no number and no price; nothing of it is lost and it carries on by itself
+        case 'paused':
+            // The person held the screen when the limit was reached: Brick took it back to pause the job, and it never carries on by itself (it asks first), so these two lines are said in place of the usual ones (section 7)
+            if (report.heldScreen) {
+                return report.pausedWhy === 'rule'
+                    ? `I had to take the screen back and pause “${name}”: it reached the spending limit you set. The job and its files are kept. Raise the limit or say resume.`
+                    : `I had to take the screen back and pause “${name}”: this month's computer time is used up. The job and its files are kept. Tap Ask for more in [Usage](#usage), and I'll ask you before I carry on.`;
+            }
+            return report.pausedWhy === 'rule'
+                ? `I paused “${name}”: it reached the spending limit you set. Nothing is lost. Raise the limit or say resume.`
+                : `I paused “${name}”: this month's computer time is used up. Nothing is lost. Tap Ask for more in [Usage](#usage) and it carries on by itself.`;
+        // And once when it carries on by itself
+        case 'carried_on':
+            return `I'm carrying on with “${name}”.`;
+        // More time arrived and the pause is over, but another job has the computer (or every computer is busy): it is in line, not running. One line for either reason: "when its turn comes" is true for both (GPT's sixth answer, finding 5)
+        case 'back_in_line':
+            return `“${name}” is back in line. It carries on by itself when its turn comes.`;
+        // More time arrived, but something about the job changed while it waited (or the person held its screen), so it asks: a yes is the person's own resume
+        case 'can_carry_on':
+            return `“${name}” can carry on now. Want me to?`;
+        case 'late': {
+            // Only what Orbit's record proves: the provider's log confirmed it later, nothing was ever charged for it. Said once, as one message, whatever the number of Apps
+            // The count of ALL the distinct Apps Orbit named (the names kept are only the first few): "and N more" is how many were left out, whatever the limit of names kept
+            const total = Math.max(report.appsTotal, report.apps.length);
+            const named = total > APPS_NAMED ? [...report.apps.slice(0, APPS_NAMED - 1), `${total - (APPS_NAMED - 1)} more`] : report.apps;
+            // What Orbit's record proves is that the provider confirmed a step of the App completed: "sent" or "delivered" is never said (Orbit names the App and nothing of what the step did;
+            // a search App's step is a search, which sends nothing). A search App is said as its search that completed
+            const searches = named.filter((one) => isSearchApp(one, report.searchApps)).map((one) => one.replace(/\s+search$/i, ''));
+            const others = named.filter((one) => !isSearchApp(one, report.searchApps));
+            const several = others.length > 1 || others.some((one) => MORE_APPS.test(one));
+            const said = [
+                ...(searches.length > 0 ? [`your ${list(searches)} ${searches.length === 1 ? 'search' : 'searches'} completed`] : []),
+                ...(others.length > 0 ? [`${list(others)} confirmed the ${several ? 'steps' : 'step'} completed`] : []),
+            ];
+            return `Update: ${said.join(', and ')}. You weren’t charged for ${total === 1 ? 'that step' : 'those steps'}.`;
         }
     }
 }
@@ -241,9 +380,9 @@ export interface ComputerReportsApi {
     /** What is to be told now; throws when Orbit cannot be asked (nothing is lost: it is offered again). */
     reports(): Promise<ComputerReport[]>;
     /** Orbit is told it reached the chat. False when Orbit did not take it: it is offered again and said again as the same message. */
-    keepTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>): Promise<boolean>;
+    keepTold(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'> & { through?: string | null }): Promise<boolean>;
     /** Orbit is told it can never reach the chat, and why: it is not offered again and is not "told"; what the job made stays in Files. False when Orbit did not take it. */
-    keepUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'>, why: UndeliverableWhy): Promise<boolean>;
+    keepUndeliverable(report: Pick<ComputerReport, 'jobId' | 'kind' | 'seq'> & { through?: string | null }, why: UndeliverableWhy): Promise<boolean>;
     /** Orbit is told this file is in the chat, so a restart never sends it again and Files shows it as delivered. False when Orbit did not take it. */
     keepFileDelivered(jobId: string, fileId: string): Promise<boolean>;
     /** The bytes of one handed-over file, or null when Orbit no longer has it. Throws when Orbit cannot be asked (it is asked again). */

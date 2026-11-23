@@ -44,7 +44,13 @@ import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds 
 import { readBotSteps } from "../../Bots/BotSteps";
 import { readNoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
 import { BOT_ASK_ANSWER_EVENT, botAskAnswerContent, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
-import { APP_CONNECTED_EVENT, BRICK_MAKE_KEY, STARTER_KEY, type BrickOffer } from "../../Bricks/Brick";
+import {
+    APP_CONNECTED_EVENT,
+    BRICK_MAKE_KEY,
+    COMPUTER_NEW_JOB_KEY,
+    STARTER_KEY,
+    type BrickOffer,
+} from "../../Bricks/Brick";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -780,6 +786,19 @@ export class MatrixChatRoom
             msgtype: MsgType.Text,
             formatted_body: message,
             [BRICK_MAKE_KEY]: { topic, name, line, instructions },
+        } as RoomMessageEventContent);
+    }
+
+    /**
+     * A tap on "Start a new job" on the card for a job Orbit would not carry on (GPT's sixth answer, finding 6): the button's
+     * words go as the person's own message, and the event carries the job's title, so the Brick starts THAT job afresh.
+     */
+    async sendNewJob(message: string, job: { title: string }): Promise<void> {
+        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, {
+            body: message,
+            msgtype: MsgType.Text,
+            formatted_body: message,
+            [COMPUTER_NEW_JOB_KEY]: { title: job.title },
         } as RoomMessageEventContent);
     }
 

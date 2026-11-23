@@ -23,7 +23,7 @@ import { BotRegistry } from '../server/BotRegistry';
 import { brickChangedEverywhere, listenForBrickChanges } from '../server/brickChanges';
 import { BRICK_NOT_MADE_TEXT, DmReplyService, brickMadeText } from '../server/DmReplyService';
 import { ConversationMemory } from '../memory/ConversationMemory';
-import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
+import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, COMPUTER_NEW_JOB_KEY, COMPUTER_NEW_JOB_OFFER_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { AIService } from '../ai/AIService';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from '../ai/BrickTools';
 import type { MatrixEvent } from '../matrix/MatrixAppServiceRouter';
@@ -321,7 +321,7 @@ describe('A reply that made a Brick, or suggests one', () => {
             conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
         });
         const history = () => (memory.getMemory(BRICK, service.playerIdFor(ALICE))?.conversationHistory ?? []).map((entry) => [entry.sender, entry.message]);
-        return { service, generate, noteBrick, admin, history };
+        return { service, generate, noteBrick, admin, history, memory };
     }
 
     beforeEach(() => {
@@ -344,6 +344,85 @@ describe('A reply that made a Brick, or suggests one', () => {
         const plain = makeReplies(brickConfig);
         const first = await plain.service.reply(BRICK, person, 'hello', [], { roomId: ROOM });
         expect(first).not.toHaveProperty('bricks');
+    });
+
+    // GPT's sixth answer, finding 6
+    it('carries the "Start a new job" offer with the reply, once, and only with words of an answer', async () => {
+        let once = true;
+        const offer = (memory: ConversationMemory, playerId: number) => {
+            if (!once) return;
+            once = false;
+            memory.getMemory(BRICK, playerId)!.pendingNewJob = { title: 'Visa form' };
+        };
+        const { service, generate } = makeReplies(brickConfig, offer);
+        // A turn that came back with no words at all: the card would have nothing to sit under, so none goes out and the offer is not used up
+        generate.mockImplementationOnce(async function* () {
+            offer((service as unknown as { conversationMemory: ConversationMemory }).conversationMemory, service.playerIdFor(ALICE));
+            yield { content: '   ', done: true, metadata: {} };
+        });
+        expect(await service.reply(BRICK, person, 'try the visa form again', [], { roomId: ROOM })).not.toHaveProperty('newJob');
+        once = true;
+        expect((await service.reply(BRICK, person, 'try the visa form again', [], { roomId: ROOM }))!.newJob).toEqual({ title: 'Visa form' });
+        // Taken for that turn only: the next answer carries none
+        expect(await service.reply(BRICK, person, 'thanks', [], { roomId: ROOM })).not.toHaveProperty('newJob');
+    });
+
+    it('tells the model which job a tap on "Start a new job" means, in a line that is from the system, and carries nothing on in that turn', async () => {
+        const { service, generate, memory } = makeReplies(brickConfig);
+        await service.reply(BRICK, person, 'Start a new job', [], { roomId: ROOM, newJobAsked: { title: 'Visa form' } });
+        const asked = String((generate.mock.calls[0] as unknown as unknown[])[2]);
+        expect(asked).toContain('Start a new job');
+        expect(asked).toMatch(/call use_computer with job "Visa form" and WITHOUT try_again/);
+        expect(asked).toMatch(/This line is from the system, not words they typed/);
+        // The turn knows it starts a job afresh, so "try again" is not offered in it
+        expect(memory.getMemory(BRICK, service.playerIdFor(ALICE))?.newJobAsked).toEqual({ title: 'Visa form' });
+        // And it is for that turn only: an ordinary message after it leaves nothing behind
+        await service.reply(BRICK, person, 'thanks', [], { roomId: ROOM });
+        expect(memory.getMemory(BRICK, service.playerIdFor(ALICE))?.newJobAsked).toBeUndefined();
+    });
+
+    // CodeRabbit on #2114: a tap on "Start a new job" is its own reply, in either order
+    it('keeps a tap on "Start a new job" out of a batch of typed words, and typed words out of its batch', async () => {
+        for (const tapFirst of [true, false]) {
+            const { service, generate } = makeReplies(brickConfig);
+            // the first reply is slow, so what comes next waits behind it
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            generate.mockImplementationOnce(async function* () {
+                await gate;
+                yield { content: 'First.', done: false };
+                yield { content: '', done: true, metadata: {} };
+            });
+            const first = service.reply(BRICK, person, 'hello', [], { roomId: ROOM });
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            const tap = () => service.reply(BRICK, person, 'Start a new job', [], { roomId: ROOM, eventId: '$tap', newJobAsked: { title: 'Visa form' } });
+            const typed = () => service.reply(BRICK, person, 'and one more thing', [], { roomId: ROOM, eventId: '$typed' });
+            const second = tapFirst ? tap() : typed();
+            const third = tapFirst ? typed() : tap();
+            release();
+            const replies = await Promise.all([first, second, third]);
+            // three turns, none answered together with another
+            expect(generate).toHaveBeenCalledTimes(3);
+            expect(replies.some((reply) => reply?.answeredTogether)).toBe(false);
+            const asked = generate.mock.calls.map((call) => String((call as unknown as unknown[])[2]));
+            const tapAsked = asked.find((text) => /call use_computer with job "Visa form"/.test(text));
+            expect(tapAsked, String(tapFirst)).toBeDefined();
+            // the typed words never reached the tap's turn, and the tap's words never reached theirs
+            expect(tapAsked).not.toContain('and one more thing');
+            expect(asked.filter((text) => text.includes('and one more thing')).every((text) => !/call use_computer with job "Visa form"/.test(text))).toBe(true);
+        }
+    });
+
+    it('an offer a failed turn set is not shown under a later reply', async () => {
+        const { service, generate, memory } = makeReplies(brickConfig);
+        generate.mockImplementationOnce(async function* () {
+            memory.getMemory(BRICK, service.playerIdFor(ALICE))!.pendingNewJob = { title: 'Visa form' };
+            yield { content: 'Here is', done: false };
+            throw new Error('provider down');
+        });
+        await service.reply(BRICK, person, 'try the visa form again', [], { roomId: ROOM }).catch(() => null);
+        const next = await service.reply(BRICK, person, 'thanks', [], { roomId: ROOM });
+        expect(next).not.toHaveProperty('newJob');
     });
 
     it('asks Orbit about a suggestion only when its card is about to go out, once, and says when to leave it out', async () => {
@@ -957,5 +1036,80 @@ describe('Hearing Brick changes from other bot servers', () => {
         await firstTry;
         await vi.advanceTimersByTimeAsync(60_000);
         expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * GPT's sixth answer, finding 6: an answer that says Orbit would not carry a computer job on carries a separate "Start a new job" card. The tap is an ordinary new start of that
+ * job: the person's message is the button's words, the card names the job, and the turn carries nothing on.
+ */
+describe('the card that starts a job afresh when Orbit would not carry it on', () => {
+    beforeEach(() => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    it('sends it as its own card AFTER the answer, and never without words of an answer', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const order: string[] = [];
+        // a send that Matrix took gives its event id, as a real one does: the case of a send with no confirmed id is a different one
+        client.sendText.mockImplementation(async () => {
+            order.push('answer');
+            return '$evt';
+        });
+        client.sendMessage.mockImplementation(async () => void order.push('card'));
+        deps.reply.mockResolvedValue({ text: "“Visa form” can't carry on, because you ended it.", media: [], newJob: { title: 'Visa form' } });
+        await bridge.onEvent(invite());
+
+        await bridge.onEvent(message('try the visa form again'));
+
+        expect(order).toEqual(['answer', 'card']);
+        expect(client.sendMessage.mock.calls[0]).toEqual([
+            BRICK_USER,
+            ROOM,
+            { msgtype: 'm.text', body: 'Visa form', [COMPUTER_NEW_JOB_OFFER_KEY]: { title: 'Visa form' } },
+            expect.any(String),
+        ]);
+
+        // No words of an answer, only a file: no card either, since the words that say why are what it follows
+        client.sendMessage.mockClear();
+        vi.spyOn(bridge as unknown as { sendMedia: () => Promise<void> }, 'sendMedia').mockResolvedValue(undefined);
+        deps.reply.mockResolvedValue({
+            text: '',
+            media: [{ url: 'https://tools.example.com/form.pdf', mediaType: 'file', mimeType: 'application/pdf', createdAt: 0, retryCount: 0 }],
+            newJob: { title: 'Visa form' },
+        });
+        await bridge.onEvent(message('again'));
+        expect(client.sendMessage.mock.calls.some(([, , content]) => COMPUTER_NEW_JOB_OFFER_KEY in content)).toBe(false);
+        // An answer with nothing at all never gets that far either
+        client.sendMessage.mockClear();
+        deps.reply.mockResolvedValue({ text: '', media: [], newJob: { title: 'Visa form' } });
+        await bridge.onEvent(message('again'));
+        expect(client.sendMessage.mock.calls.some(([, , content]) => COMPUTER_NEW_JOB_OFFER_KEY in content)).toBe(false);
+    });
+
+    it('passes a tap on it to the reply as the job to start afresh, and reads nothing from a card without a title', async () => {
+        const { bridge, deps } = makeBridge();
+        deps.reply.mockResolvedValue({ text: "I've started it.", media: [] });
+        await bridge.onEvent(invite());
+
+        await bridge.onEvent({
+            type: 'm.room.message',
+            room_id: ROOM,
+            sender: ALICE,
+            event_id: '$tap-new-job',
+            origin_server_ts: Date.now(),
+            content: { msgtype: 'm.text', body: 'Start a new job', [COMPUTER_NEW_JOB_KEY]: { title: '  Visa   form  ' } },
+        } as MatrixEvent);
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ newJobAsked: { title: 'Visa form' } });
+
+        await bridge.onEvent({
+            type: 'm.room.message',
+            room_id: ROOM,
+            sender: ALICE,
+            event_id: '$tap-no-title',
+            origin_server_ts: Date.now(),
+            content: { msgtype: 'm.text', body: 'Start a new job', [COMPUTER_NEW_JOB_KEY]: { title: '   ' } },
+        } as MatrixEvent);
+        expect(deps.reply.mock.calls[1][4]).not.toHaveProperty('newJobAsked');
     });
 });
