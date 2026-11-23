@@ -14,8 +14,10 @@
         dismissComputerNotice,
         followBrickComputer,
     } from "./BrickComputerStore";
-    import { canWatch, fileSize, holdsComputer, monthWord, noticeToTell } from "./BrickComputer";
+    import { canWatch, fileSize, holdsComputer, inLine, monthWord, noticeToTell, pausedJobs } from "./BrickComputer";
     import { openBrickScreen, type BrickRef } from "./BrickScreenStore";
+    import ComputerJobRows from "./ComputerJobRows.svelte";
+    import { askToEnd, openComputerJobs } from "./OpenComputerJobs";
     import {
         IconDeviceDesktop,
         IconFileSpreadsheet,
@@ -38,6 +40,8 @@
     $: view = $brickComputers.get(brick.id);
     $: name = brick.name;
     $: job = view?.job ?? null;
+    // The jobs in line and the paused ones, each with its own buttons, under the one that has the computer (steering mock, 23 Nov)
+    $: others = view ? [...inLine(view), ...pausedJobs(view)] : [];
     $: active = holdsComputer(job) ? job : null;
     $: working = active !== null;
     $: brief = !view
@@ -109,6 +113,11 @@
 
     function act(action: "give" | "turn-off" | "stop") {
         if (busy) return;
+        // Stop ends every job on the computer: it asks first when that is several jobs, and ends a single job at once
+        if (action === "stop") {
+            askToEnd(brick, { stop: true });
+            return;
+        }
         busy = true;
         brickComputerAction(brick.id, action)
             .then((ok) => {
@@ -224,6 +233,15 @@
                         {/if}
                     {/if}
                 </div>
+                {#if view && others.length > 0}
+                    <ComputerJobRows
+                        {brick}
+                        {view}
+                        jobs={others}
+                        onOpen={(each) => openComputerJobs(brick, each)}
+                        onCancel={(each) => askToEnd(brick, { cancel: each.id })}
+                    />
+                {/if}
 
                 {#if month}
                     <div class="bp-cap gap">{$LL.chat.brick.computer.month()}</div>

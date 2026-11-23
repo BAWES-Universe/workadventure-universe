@@ -1412,6 +1412,39 @@ export class BotApiService {
             : await this.brickWrite(`${base}/${action}`, { method: "POST" });
     }
 
+    /**
+     * One of the owner's calls on one job of a Brick's computer: pause it, resume it, move it first in line, or cancel it alone (the other
+     * jobs carry on). With "first", `pauseRunning` also pauses the job that has the computer and starts this one now; the paused one goes
+     * on by itself afterwards. Orbit answers with the computer (`{ computer }`), or refuses with a 409 whose `reason` says why.
+     */
+    async brickComputerJobAction(
+        brickId: string,
+        jobId: string,
+        action: "pause" | "resume" | "first" | "cancel",
+        options: { pauseRunning?: boolean } = {}
+    ): Promise<unknown> {
+        const url = `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/${action}`;
+        return action === "first" && options.pauseRunning
+            ? await this.brickWrite(url, { method: "POST", body: JSON.stringify({ pauseRunning: true }) })
+            : await this.brickWrite(url, { method: "POST" });
+    }
+
+    /** Something new for one job, in the person's own words ("use 12 March instead"): it reaches the job within seconds. `{ computer }`. */
+    async noteToBrickComputerJob(brickId: string, jobId: string, text: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/note`,
+            { method: "POST", body: JSON.stringify({ text }) }
+        );
+    }
+
+    /** What one job has done so far, oldest first (`{ steps }`). Only reads; it never wakes the computer. */
+    async getBrickComputerJobActivity(brickId: string, jobId: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/activity`,
+            {}
+        );
+    }
+
     /** Dismisses the notice of how a job ended ("stopped waiting for you", "this month's time ran out"): only the ending it was shown for. */
     async dismissBrickComputerNotice(brickId: string, jobId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/dismiss`, {

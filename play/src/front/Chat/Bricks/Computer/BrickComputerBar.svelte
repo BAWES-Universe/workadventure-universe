@@ -1,26 +1,37 @@
 <script lang="ts">
     // The line above a Brick's chat while its computer has something to do (game #2000): what it is doing, with Stop and Watch
     // one tap away. Chat answers as fast as ever under it. It only reads: it never wakes a computer, and Watch is only offered
-    // for a computer that is working.
+    // for a computer that is working. Its line opens every job on the computer, Stop asks first, and a paused job shows Resume
+    // (steering mock, approved 23 Nov).
     import { onDestroy } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import {
-        brickComputerAction,
+        brickComputerJobAction,
         brickComputers,
         dismissComputerNotice,
         followBrickComputer,
+        pendingJobCalls,
     } from "./BrickComputerStore";
-    import { barState, canWatch, noticeToTell, type WaitingFor } from "./BrickComputer";
+    import { barJob, barState, canWatch, holdsComputer, inLine, noticeToTell, sentenceStart } from "./BrickComputer";
     import { openBrickScreen, type BrickRef } from "./BrickScreenStore";
-    import { IconDeviceDesktop } from "@wa-icons";
+    import { refusalWords, stepLine, waitingWhat } from "./ComputerJobWords";
+    import { askToEnd, openComputerJobs } from "./OpenComputerJobs";
+    import { IconChevronRight, IconDeviceDesktop } from "@wa-icons";
 
     export let brick: BrickRef;
 
     $: view = $brickComputers.get(brick.id);
     $: state = barState(view);
     $: job = view?.job ?? null;
-    $: queued = view?.queued.length ?? 0;
+    // Only the jobs that start by themselves are "waiting": a paused one waits for the person's Resume
+    $: waitingInLine = inLine(view);
+    $: queued = waitingInLine.length;
+    $: pausedJob = state === "paused" ? barJob(view) : null;
+    $: pausedWords =
+        pausedJob?.pausedWhy === "allowance"
+            ? $LL.chat.brick.computer.barPausedMonth()
+            : $LL.chat.brick.computer.barPaused();
     // Nothing is happening, and the last job ended in a way the person should hear about: said once, until dismissed or a new job starts
     $: notice = state ? null : noticeToTell(view);
     $: noticeLine = !notice
@@ -29,46 +40,31 @@
         ? $LL.chat.brick.computer.noticeUnanswered({ name: brick.name })
         : $LL.chat.brick.computer.noticeMonth({ name: brick.name });
 
-    function waitingWhat(waitingFor: WaitingFor | null): string {
-        switch (waitingFor) {
-            case "details":
-                return $LL.chat.brick.computer.waitingDetails();
-            case "signin":
-                return $LL.chat.brick.computer.waitingSignin();
-            case "upload":
-                return $LL.chat.brick.computer.waitingUpload();
-            case "pay":
-                return $LL.chat.brick.computer.waitingPay();
-            case "submit":
-                return $LL.chat.brick.computer.waitingSubmit();
-            default:
-                return $LL.chat.brick.computer.waitingAnswer();
-        }
-    }
-
-    $: step = !job
-        ? ""
-        : job.stepTotal
-        ? job.stepLabel
-            ? `${job.stepLabel} · ${$LL.chat.brick.computer.stepOf({ done: job.stepDone, total: job.stepTotal })}`
-            : $LL.chat.brick.computer.stepOf({ done: job.stepDone, total: job.stepTotal })
-        : job.stepLabel ?? $LL.chat.brick.computer.gettingReady();
+    $: step = job ? stepLine($LL, job) : "";
+    // A job "Do this first" put back in line carries on by itself right after: the bar names it ("· Visa form next")
+    $: comesBack = holdsComputer(job) && waitingInLine[0]?.pausedBefore ? waitingInLine[0] : null;
     $: line =
         state === "waking"
             ? $LL.chat.brick.computer.wakingUp()
             : state === "waiting"
-            ? $LL.chat.brick.computer.barAskYou({ what: waitingWhat(job?.waitingFor ?? null) })
+            ? $LL.chat.brick.computer.barAskYou({ what: waitingWhat($LL, job?.waitingFor ?? null) })
             : state === "working" && job
             ? job.title
                 ? $LL.chat.brick.computer.barJob({ job: job.title, step })
                 : step
             : state === "queued"
-            ? view?.queued[0]?.queuedFor === "allowance"
+            ? waitingInLine[0]?.queuedFor === "allowance"
                 ? $LL.chat.brick.computer.barUsedUp()
                 : $LL.chat.brick.computer.barInLine()
+            : state === "paused" && pausedJob
+            ? pausedJob.title
+                ? $LL.chat.brick.computer.barJob({ job: pausedJob.title, step: pausedWords })
+                : sentenceStart(pausedWords)
             : "";
     $: fullLine =
-        queued > 0 && (state === "working" || state === "waiting")
+        comesBack && (state === "working" || state === "waiting")
+            ? $LL.chat.brick.computer.barNext({ line, title: comesBack.title || $LL.chat.brick.computer.untitledJob() })
+            : queued > 0 && (state === "working" || state === "waiting")
             ? $LL.chat.brick.computer.barJobsWaiting({
                   line,
                   queued: $LL.chat.brick.computer.barQueued({ count: queued }),
@@ -98,32 +94,52 @@
                 busy = false;
             });
     }
+    // Stop ends every job on the computer: it asks first when that is several jobs, and ends a single job at once
     function stop() {
         if (busy) return;
-        busy = true;
-        brickComputerAction(brick.id, "stop")
-            .then((ok) => {
-                if (!ok) warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
+        askToEnd(brick, { stop: true });
+    }
+
+    $: resuming = !!pausedJob && ($pendingJobCalls.get(brick.id)?.has(pausedJob.id) ?? false);
+    function resume() {
+        if (!pausedJob || resuming) return;
+        brickComputerJobAction(brick.id, pausedJob.id, "resume")
+            .then((answer) => {
+                const words = answer.ok ? null : refusalWords($LL, answer.why);
+                if (words) warningMessageStore.addWarningMessage(words);
             })
-            .catch((error) => console.error(error))
-            .finally(() => {
-                busy = false;
-            });
+            .catch((error) => console.error(error));
     }
 </script>
 
 {#if state}
     <div class="cb" data-testid="brickComputerBar">
         <span class="cb-ic"><IconDeviceDesktop font-size="24" /></span>
-        <span class="cb-tx"
-            ><span class="cb-h">{$LL.chat.brick.computer.machine({ name: brick.name })}</span><span class="cb-l"
-                >{fullLine}</span
-            ></span
+        <button
+            type="button"
+            class="cb-tx"
+            aria-label={$LL.chat.brick.computer.jobsOpen({ name: brick.name })}
+            data-testid="brickComputerBarOpen"
+            on:click={() => openComputerJobs(brick)}
+            ><span class="cb-h"
+                >{$LL.chat.brick.computer.machine({ name: brick.name })}<IconChevronRight
+                    class="cb-cv"
+                    font-size="15"
+                /></span
+            ><span class="cb-l">{fullLine}</span></button
         >
         <button type="button" class="cb-quiet" disabled={busy} data-testid="brickComputerBarStop" on:click={stop}
             >{$LL.chat.brick.computer.stop()}</button
         >
-        {#if canWatch(view)}
+        {#if state === "paused" && pausedJob}
+            <button
+                type="button"
+                class="cb-go"
+                disabled={resuming}
+                data-testid="brickComputerBarResume"
+                on:click={resume}>{$LL.chat.brick.computer.resume()}</button
+            >
+        {:else if canWatch(view)}
             <button
                 type="button"
                 class="cb-go"
@@ -171,6 +187,23 @@
         flex-direction: column;
         gap: 1px;
         min-width: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        text-align: start;
+        cursor: pointer;
+    }
+    /* The notice is a sentence, not a way into the jobs */
+    span.cb-tx {
+        cursor: default;
+    }
+    .cb-h :global(.cb-cv) {
+        vertical-align: -3px;
+        margin-inline-start: 2px;
+        color: rgba(244, 242, 250, 0.8);
     }
     .cb-h {
         font-size: 14px;
@@ -206,7 +239,8 @@
     .cb-go {
         background: linear-gradient(135deg, #8629fc, #4156f6);
     }
-    .cb-quiet:disabled {
+    .cb-quiet:disabled,
+    .cb-go:disabled {
         opacity: 0.6;
     }
 </style>
