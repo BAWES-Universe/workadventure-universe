@@ -4221,6 +4221,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             state: (memory.computerControls ??= newControlState()),
             // The fixed line of each control goes under the reply, and a question counts as asked once that reply reached them
             ...(memory.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
+            // The message this control was asked in: every control of it goes to Orbit under an id made from that message, so one sent again is done once
+            ...(memory.dmEventId ? { inbound: { eventId: memory.dmEventId } } : {}),
         });
         // What the bar says has changed: read it fresh next time
         this.computerOnCache.delete(`${where.botId}|${userId}`);

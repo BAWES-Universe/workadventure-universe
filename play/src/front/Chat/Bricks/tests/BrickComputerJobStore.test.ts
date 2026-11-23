@@ -11,9 +11,15 @@ const game = vi.hoisted(() => ({
     dismissBrickComputerNotice: vi.fn<(brickId: string, jobId: string) => Promise<unknown>>(),
     brickComputerJobAction:
         vi.fn<
-            (brickId: string, jobId: string, action: string, options?: { pauseRunning?: boolean }) => Promise<unknown>
+            (
+                brickId: string,
+                jobId: string,
+                action: string,
+                options?: { pauseRunning?: boolean; commandId?: string }
+            ) => Promise<unknown>
         >(),
-    noteToBrickComputerJob: vi.fn<(brickId: string, jobId: string, text: string) => Promise<unknown>>(),
+    noteToBrickComputerJob:
+        vi.fn<(brickId: string, jobId: string, text: string, commandId?: string) => Promise<unknown>>(),
     getBrickComputerJobActivity: vi.fn<(brickId: string, jobId: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
@@ -75,7 +81,7 @@ describe("calls on one job of a Brick's computer", () => {
     it("pauses a job and shows the computer Orbit answers with: the job paused in line", async () => {
         game.brickComputerJobAction.mockResolvedValue(computer({ machine: "resting", queued: [pausedVisa] }));
         expect(await brickComputerJobAction(BRICK, "j1", "pause")).toEqual({ ok: true });
-        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "j1", "pause");
+        expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "j1", "pause", { commandId: expect.any(String) });
         expect(brickComputerOf(BRICK)?.job).toBeNull();
         expect(brickComputerOf(BRICK)?.queued[0]).toMatchObject({ id: "j1", queuedFor: "paused", pausedWhy: "person" });
         expect(game.getBrickComputer).not.toHaveBeenCalled();
@@ -87,8 +93,8 @@ describe("calls on one job of a Brick's computer", () => {
         game.brickComputerJobAction.mockResolvedValue(computer({ job: running }));
         await brickComputerJobAction(BRICK, "j2", "cancel");
         expect(game.brickComputerJobAction.mock.calls).toEqual([
-            [BRICK, "j1", "resume"],
-            [BRICK, "j2", "cancel"],
+            [BRICK, "j1", "resume", { commandId: expect.any(String) }],
+            [BRICK, "j2", "cancel", { commandId: expect.any(String) }],
         ]);
     });
 
@@ -97,8 +103,8 @@ describe("calls on one job of a Brick's computer", () => {
         await brickComputerJobAction(BRICK, "j2", "first");
         await brickComputerJobAction(BRICK, "j2", "first-now");
         expect(game.brickComputerJobAction.mock.calls).toEqual([
-            [BRICK, "j2", "first"],
-            [BRICK, "j2", "first", { pauseRunning: true }],
+            [BRICK, "j2", "first", { commandId: expect.any(String) }],
+            [BRICK, "j2", "first", { pauseRunning: true, commandId: expect.any(String) }],
         ]);
     });
 
@@ -113,6 +119,29 @@ describe("calls on one job of a Brick's computer", () => {
         expect(await second).toEqual({ ok: true });
         expect(game.brickComputerJobAction).toHaveBeenCalledTimes(1);
         expect(get(pendingJobCalls).get(BRICK)).toBeUndefined();
+    });
+
+    // GPT's sixth answer, finding 4: every tap carries its own id, made at the click and kept with the request on its way, so a request sent again does the control once.
+    it("gives every tap its own id, the same one for the whole of that request, and a new one for a later tap", async () => {
+        game.brickComputerJobAction.mockResolvedValue(computer({ machine: "resting", queued: [pausedVisa] }));
+        await brickComputerJobAction(BRICK, "j1", "pause");
+        await brickComputerJobAction(BRICK, "j1", "pause");
+        const ids = game.brickComputerJobAction.mock.calls.map((call) => call[3]?.commandId);
+        expect(ids).toHaveLength(2);
+        for (const id of ids) expect(id).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+        // two taps, two controls: a second deliberate pause is not the first one again
+        expect(ids[0]).not.toBe(ids[1]);
+    });
+
+    it("joins a second tap of the same kind to the one on its way, so one id and one control reach Orbit", async () => {
+        const answer = later<unknown>();
+        game.brickComputerJobAction.mockReturnValueOnce(answer.promise);
+        const first = brickComputerJobAction(BRICK, "j1", "pause");
+        const second = brickComputerJobAction(BRICK, "j1", "pause");
+        answer.settle(computer({ machine: "resting", queued: [pausedVisa] }));
+        await Promise.all([first, second]);
+        expect(game.brickComputerJobAction).toHaveBeenCalledTimes(1);
+        expect(game.brickComputerJobAction.mock.calls[0][3]?.commandId).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
     });
 
     it("sends a different tap on the same job after the first one's answer, so none is lost and the order holds", async () => {
@@ -235,7 +264,7 @@ describe("calls on one job of a Brick's computer", () => {
     it("sends a note in the person's words, without the spaces around them, and nothing for spaces alone", async () => {
         game.noteToBrickComputerJob.mockResolvedValue(computer({ job: running }));
         expect(await noteToComputerJob(BRICK, "j1", "  Use 12 March instead \n")).toEqual({ ok: true });
-        expect(game.noteToBrickComputerJob).toHaveBeenCalledWith(BRICK, "j1", "Use 12 March instead");
+        expect(game.noteToBrickComputerJob).toHaveBeenCalledWith(BRICK, "j1", "Use 12 March instead", expect.any(String));
         expect(await noteToComputerJob(BRICK, "j1", "   ")).toEqual({ ok: false, why: "changed" });
         expect(game.noteToBrickComputerJob).toHaveBeenCalledTimes(1);
     });

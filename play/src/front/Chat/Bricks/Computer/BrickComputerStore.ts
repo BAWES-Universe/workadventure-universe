@@ -34,6 +34,15 @@ const ticket = (brickId: string): number => {
     return next;
 };
 
+/**
+ * One control's own id, made at the tap (GPT's sixth answer, finding 4): it goes with the request, so the same request sent again does the control once. In the shape Orbit takes
+ * (letters, digits, `_` and `-`), with a plain fallback where the browser has no uuid of its own.
+ */
+export const newCommandId = (): string =>
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+
 const put = (brickId: string, view: BrickComputerView, sentAs: number) => {
     if (sentAs < (onScreen.get(brickId) ?? 0)) return;
     onScreen.set(brickId, sentAs);
@@ -72,6 +81,9 @@ export async function brickComputerAction(
     try {
         const answer = shown
             ? await botApiService.brickComputerAction(brickId, action, shown)
+            : // Stop ends every job, so the tap carries its own id: a request sent again under it (a renewed sign-in) ends them once (finding 4)
+            action === "stop"
+            ? await botApiService.brickComputerAction(brickId, action, undefined, newCommandId())
             : await botApiService.brickComputerAction(brickId, action);
         const view = parseBrickComputer(answer);
         if (view) put(brickId, view, sentAs);
@@ -155,18 +167,21 @@ async function jobCall(
     brickId: string,
     jobId: string,
     what: string,
-    send: () => Promise<unknown>
+    send: (commandId: string) => Promise<unknown>
 ): Promise<JobCallResult> {
     const key = `${brickId}\u0000${jobId}`;
     const running = inFlight.get(key);
     if (running?.what === what) return running.answer;
     const before = running?.answer;
+    // This tap's own id, made HERE at the click and kept with the request while it is on its way (GPT's sixth answer, finding 4): a request that goes out
+    // again under it (a renewed sign-in resends the same one) is done once by Orbit, and a later tap is a control of its own with its own id
+    const commandId = newCommandId();
     const call = (async (): Promise<JobCallResult> => {
         if (before) await before;
         const sentAs = ticket(brickId);
         markPending(brickId, jobId, true);
         try {
-            const answer = await send();
+            const answer = await send(commandId);
             const view = parseBrickComputer(answer);
             if (view) put(brickId, view, sentAs);
             else await loadBrickComputer(brickId);
@@ -190,10 +205,10 @@ async function jobCall(
 
 /** Pause, Resume, Do this next (now, pausing what runs, with "first-now") or Cancel, on one job. */
 export function brickComputerJobAction(brickId: string, jobId: string, control: JobControl): Promise<JobCallResult> {
-    return jobCall(brickId, jobId, control, () =>
+    return jobCall(brickId, jobId, control, (commandId) =>
         control === "first-now"
-            ? botApiService.brickComputerJobAction(brickId, jobId, "first", { pauseRunning: true })
-            : botApiService.brickComputerJobAction(brickId, jobId, control)
+            ? botApiService.brickComputerJobAction(brickId, jobId, "first", { pauseRunning: true, commandId })
+            : botApiService.brickComputerJobAction(brickId, jobId, control, { commandId })
     );
 }
 
@@ -201,8 +216,8 @@ export function brickComputerJobAction(brickId: string, jobId: string, control: 
 export async function noteToComputerJob(brickId: string, jobId: string, words: string): Promise<JobCallResult> {
     const note = words.trim();
     if (!note) return { ok: false, why: "changed" };
-    return jobCall(brickId, jobId, `note\u0000${note}`, () =>
-        botApiService.noteToBrickComputerJob(brickId, jobId, note)
+    return jobCall(brickId, jobId, `note\u0000${note}`, (commandId) =>
+        botApiService.noteToBrickComputerJob(brickId, jobId, note, commandId)
     );
 }
 

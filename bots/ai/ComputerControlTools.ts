@@ -16,6 +16,8 @@
  *  - An answer that did not come back whole is never told as done or as failed, and is not sent again.
  *  - No price, no count of time, no machine reaches the model or the chat.
  */
+import { randomUUID } from 'node:crypto';
+import { v5 as uuidv5 } from 'uuid';
 import type { ComputerControlAnswer, ComputerControlAsk, ComputerControlJob, ComputerControlView, AdminApiService } from '../server/AdminApiService';
 import type { ConfirmationQueue } from './ComputerTools';
 import { CONTROL_REFUSALS, CONTROL_WORDS, lineOf, quotedTitles } from './ComputerControlWords';
@@ -104,10 +106,15 @@ export interface ControlState {
     said: string;
     /** The job a control named in this turn, as it was when first named: the same control again in this turn (a reply asked again) goes to the same job, and replays what it did. */
     resolved: Map<string, ComputerControlJob>;
+    /**
+     * The id each control of this turn goes to Orbit under, by what it asks (GPT's sixth answer, finding 4): the same ask in this turn always sends the SAME id, so a control sent
+     * again (a reply written again, a request whose answer was lost) is done once. The person's next message clears them, so a second identical note is a second note.
+     */
+    commands: Map<string, string>;
 }
 
 export function newControlState(): ControlState {
-    return { asks: new Map(), calls: new Map(), chain: Promise.resolve(), turn: 0, said: '', resolved: new Map() };
+    return { asks: new Map(), calls: new Map(), chain: Promise.resolve(), turn: 0, said: '', resolved: new Map(), commands: new Map() };
 }
 
 /** Words that end an answer being a plain yes: a no, a keep, a wait, a "but" (English and Arabic, as the people of the chat write). */
@@ -162,6 +169,8 @@ export function startControlTurn(state: ControlState | undefined, message?: stri
     }
     state.calls.clear();
     state.resolved.clear();
+    // A new message is a new set of controls: an identical one (the same note again, say) is a second control with an id of its own, and is done again
+    state.commands.clear();
 }
 
 export interface ComputerControlContext {
@@ -172,6 +181,36 @@ export interface ComputerControlContext {
     state: ControlState;
     /** Where this reply's fixed lines go (the DM). Without it the model is given the line to say. */
     confirmations?: ConfirmationQueue;
+    /**
+     * The message of the person this control was asked in: every control of it goes to Orbit under an id made from that message, so the same control sent again (the reply written
+     * again, an answer that was lost, the whole event delivered again) is done once. Without it a control has a random id, as before: it is done once per request only.
+     */
+    inbound?: { eventId: string };
+}
+
+/** The name the ids of controls are made under: a fixed name of our own, so the same message and control always make the same id, here and after a restart. */
+export const COMPUTER_COMMAND_NAMESPACE = '6f1d2a7e-3b64-4a10-9c8e-5d2f4b7a1c90';
+
+/**
+ * The id one control goes to Orbit under (GPT's sixth answer, finding 4): made from the person's message, the kind of control, the job and how many controls of that kind and job
+ * this turn has already made, so it is the SAME every time this control is sent and a different one for a second, deliberate control of the same kind. Random (and so done once per
+ * request only) when the control was not asked in a message of a chat.
+ */
+export function commandIdOf(state: ControlState, eventId: string | undefined, kind: string, jobId: string, extra = ''): string {
+    const slot = `${kind}|${jobId}|${extra}`;
+    const held = state.commands.get(slot);
+    if (held) return held;
+    if (!eventId) {
+        // No message to make it from: a fresh id, kept for this turn so the same control in it still goes under one id
+        const once = randomUUID();
+        state.commands.set(slot, once);
+        return once;
+    }
+    let n = 0;
+    for (const other of state.commands.keys()) if (other.startsWith(`${kind}|${jobId}|`)) n += 1;
+    const id = uuidv5(`${eventId}:${kind}:${jobId}:${n}`, COMPUTER_COMMAND_NAMESPACE);
+    state.commands.set(slot, id);
+    return id;
 }
 
 const clean = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
@@ -285,6 +324,9 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     if (!isComputerControlTool(name)) return { error: 'Unknown tool.' };
     const door = (ask: Omit<ComputerControlAsk, 'isGuest'>): Promise<ComputerControlAnswer> =>
         context.admin.controlComputerJobs(context.botId, context.userId, { ...ask, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}) });
+    /** A control that changes something carries its own id: the same control sent again is done once (finding 4). Reading the list changes nothing and carries none. */
+    const acting = (ask: Omit<ComputerControlAsk, 'isGuest' | 'commandId'>, extra = ''): Promise<ComputerControlAnswer> =>
+        door({ ...ask, commandId: commandIdOf(context.state, context.inbound?.eventId, ask.action, ask.jobId ?? '', extra) });
     const listed = await door({ action: 'list' });
     if (!listed.ok || !listed.view) {
         if (name === COMPUTER_JOBS_TOOL) return { success: false, note: "Their jobs could not be read just now. Say so in one plain sentence, and that the bar above this chat shows them." };
@@ -324,7 +366,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
         case PAUSE_JOB_TOOL:
             if (isPaused(job) && !context.state.calls.has(`pause|${job.id}`)) return say(context, [lineOf(CONTROL_REFUSALS.alreadyPaused, job.title)], { done: false });
             return once(context, `pause|${job.id}`, async () => {
-                const answer = await door({ action: 'pause', jobId: job.id });
+                const answer = await acting({ action: 'pause', jobId: job.id });
                 if (!answer.ok) return refused(reasonOf(answer), job, view);
                 const lost = answer.signInsKept === false;
                 return { result: { done: true }, lines: [lineOf(lost ? CONTROL_WORDS.pausedSignInLost : CONTROL_WORDS.paused, job.title)] };
@@ -332,7 +374,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
         case RESUME_JOB_TOOL:
             if (!isPaused(job) && !context.state.calls.has(`resume|${job.id}`)) return say(context, [lineOf(CONTROL_REFUSALS.notPaused, job.title)], { done: false });
             return once(context, `resume|${job.id}`, async () => {
-                const answer = await door({ action: 'resume', jobId: job.id });
+                const answer = await acting({ action: 'resume', jobId: job.id });
                 if (!answer.ok) return refused(reasonOf(answer), job, view);
                 return { result: { done: true }, lines: [resumedLine(job, answer.view)] };
             });
@@ -343,7 +385,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
             // The one that has the computer now: paused by "do this first", it carries on by itself after
             const running = pauseRunning ? view.job : null;
             return once(context, firstKey, async () => {
-                const answer = await door({ action: 'first', jobId: job.id, ...(running ? { pauseRunning: true } : {}) });
+                const answer = await acting({ action: 'first', jobId: job.id, ...(running ? { pauseRunning: true } : {}) }, String(pauseRunning));
                 if (!answer.ok) return refused(reasonOf(answer), running && reasonOf(answer) === 'taken_over' ? running : job, view);
                 const nowHas = answer.view?.job?.id === job.id;
                 // The mock's two lines: what has the computer now, then the job that was working, paused, which carries on by itself right after
@@ -367,7 +409,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
             if (hasStarted(job) && (!ask || !ask.told || !ask.answerable)) return askFirst(context, key, { kind: 'cancel', jobIds: [job.id] }, [lineOf(CONTROL_WORDS.askCancel, job.title)]);
             context.state.asks.delete(key);
             return once(context, key, async () => {
-                const answer = await door({ action: 'cancel', jobId: job.id });
+                const answer = await acting({ action: 'cancel', jobId: job.id });
                 if (!answer.ok) return refused(reasonOf(answer), job, view);
                 return { result: { done: true }, lines: [lineOf(hasStarted(job) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, job.title)] };
             });
@@ -376,7 +418,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
             const message = cleanMessage(args.message);
             if (!message) return { error: 'Say what to tell the job.' };
             return once(context, `note|${job.id}|${message}`, async () => {
-                const answer = await door({ action: 'note', jobId: job.id, text: message });
+                const answer = await acting({ action: 'note', jobId: job.id, text: message }, message);
                 if (!answer.ok) return refused(reasonOf(answer), job, view);
                 return { result: { done: true }, lines: [toldLine(job, answer.delivery)] };
             });
@@ -501,7 +543,8 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
     }
     context.state.asks.delete(key);
     return once(context, `stop|${ids.join('|')}`, async () => {
-        const answer = await door({ action: 'stop' });
+        // Stop names no one job: its id is made from the jobs it was asked about, so a stop asked again over the same jobs is one stop (finding 4)
+        const answer = await door({ action: 'stop', commandId: commandIdOf(context.state, context.inbound?.eventId, 'stop', '', ids.join('|')) });
         if (!answer.ok) return refused(reasonOf(answer), jobs[0], view);
         const only = jobs.length === 1 ? jobs[0] : null;
         return { result: { done: true }, lines: [only ? lineOf(hasStarted(only) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, only.title) : CONTROL_WORDS.stoppedAll(jobs.length)] };

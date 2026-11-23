@@ -528,6 +528,51 @@ describe("the calls on one computer job (computers plan, piece 7)", () => {
         ]);
     });
 
+    // GPT's sixth answer, finding 4: the control's own id travels in a header, so Orbit does that control once however often the request goes out.
+    it("carries a control's own id in its header, on every kind of control, and leaves it off when there is none or it is not of Orbit's shape", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(() => Promise.resolve(json({ computer: {} })));
+        const api = service();
+        await api.brickComputerJobAction("b1", "j1", "pause", { commandId: "cmd-00000001" });
+        await api.brickComputerJobAction("b1", "j1", "first", { pauseRunning: true, commandId: "cmd-00000002" });
+        await api.noteToBrickComputerJob("b1", "j1", "Use 12 March", "cmd-00000003");
+        await api.brickComputerAction("b1", "stop", undefined, "cmd-00000004");
+        await api.brickComputerJobAction("b1", "j1", "cancel");
+        await api.brickComputerJobAction("b1", "j1", "cancel", { commandId: "no spaces allowed" });
+        const ids = fetchMock.mock.calls.map(
+            ([, init]) => (init?.headers as Record<string, string> | undefined)?.["X-Computer-Command"]
+        );
+        expect(ids).toEqual([
+            "cmd-00000001",
+            "cmd-00000002",
+            "cmd-00000003",
+            "cmd-00000004",
+            undefined,
+            undefined,
+        ]);
+    });
+
+    it("sends the SAME id again when a renewed sign-in resends the request, so the control is done once", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementationOnce(() => Promise.resolve(json({ error: "expired" }, 401)))
+            .mockImplementation(() => Promise.resolve(json({ computer: {} })));
+        // A sign-in the service can renew (its payload holds an access token)
+        const api = service("header.eyJhY2Nlc3NUb2tlbiI6InRvayJ9.signature");
+        // The first answer is a 401: the session is renewed and the very same request goes out again
+        vi.spyOn(
+            api as unknown as { fetchSessionTokenFromAdminApi: () => Promise<string> },
+            "fetchSessionTokenFromAdminApi"
+        ).mockResolvedValue("orb_sess_v2_renewed");
+        await api.brickComputerJobAction("b1", "j1", "pause", { commandId: "cmd-00000009" });
+        const ids = fetchMock.mock.calls
+            .map(([, init]) => (init?.headers as Record<string, string> | undefined)?.["X-Computer-Command"])
+            .filter((id) => id !== undefined);
+        expect(ids.length).toBeGreaterThanOrEqual(2);
+        expect(new Set(ids)).toEqual(new Set(["cmd-00000009"]));
+    });
+
     it("passes on why Orbit refused, so the panel can say it", async () => {
         vi.spyOn(globalThis, "fetch").mockResolvedValue(
             json({ error: "Hand it back first", reason: "taken_over" }, 409)

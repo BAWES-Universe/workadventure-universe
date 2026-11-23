@@ -558,6 +558,11 @@ export const COMPUTER_START_ACKS_HEADER = 'X-Computer-Start-Acks';
  * takes it: an Orbit without it reads an ordinary fresh start. Orbit decides again from its own record, and says `continued: true` only when the new job does carry on.
  */
 export const COMPUTER_CONTINUES_HEADER = 'X-Computer-Continues';
+/**
+ * The header a control carries its own id in (GPT's sixth answer, finding 4; Orbit's `computer_job_commands`): Orbit applies the control once per id and answers a repeat with the
+ * outcome it stored, so a pause that is sent twice pauses once, a note that is sent twice is one note, and a repeat cancels no provider turn. Same shape as a start's key.
+ */
+export const COMPUTER_COMMAND_HEADER = 'X-Computer-Command';
 /** The states of a job that was made and is going to run or is waiting its turn (a failed or stopped one is not "starting"). */
 const COMPUTER_JOB_LIVE = ['running', 'waiting', 'queued'];
 /** The states of a job that was made and is over without having finished: it failed or was stopped. */
@@ -648,6 +653,11 @@ export interface ComputerControlAsk {
     /** With `first`: pause the job that has the computer and start this one now (the paused one carries on by itself after). */
     pauseRunning?: boolean;
     isGuest?: boolean;
+    /**
+     * This control's own id (GPT's sixth answer, finding 4), made once where the person asked for it and the same every time THAT ask is sent again: Orbit applies a control once
+     * per id and answers a repeat with what it did the first time. Without one a control that is sent twice (a retried turn, a resent click) could pause twice or make a second note.
+     */
+    commandId?: string;
 }
 
 /** One job as the door's view gives it: only what Brick needs to name it and say where it is (never a price, a count of time or a machine). */
@@ -2124,7 +2134,11 @@ export class AdminApiService {
                     ...(ask.jobId ? { jobId: ask.jobId } : {}),
                     ...(typeof ask.text === 'string' ? { text: ask.text } : {}),
                     ...(ask.pauseRunning ? { pauseRunning: true } : {}),
-                }
+                },
+                undefined,
+                undefined,
+                // This control's own id, in a header (the body stays as it was): Orbit does it once per id, and a repeat is answered with what the first one did
+                ask.commandId && START_KEY_SHAPE.test(ask.commandId) ? { [COMPUTER_COMMAND_HEADER]: ask.commandId } : undefined
             );
             return controlAnswerOf(response.data);
         } catch (error) {

@@ -13,8 +13,10 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 import axios from 'axios';
 import { AdminApiService, controlAnswerOf, type ComputerControlAsk } from '../server/AdminApiService';
 import { AIService } from '../ai/AIService';
+import { v5 as uuidv5 } from 'uuid';
 import {
     CANCEL_JOB_TOOL,
+    COMPUTER_COMMAND_NAMESPACE,
     COMPUTER_CONTROL_TOOLS,
     COMPUTER_JOBS_TOOL,
     JOB_FIRST_TOOL,
@@ -54,7 +56,20 @@ function door(view: ReturnType<typeof viewOf>, answers: Partial<Record<ComputerC
         if (answer instanceof Error) throw answer;
         return controlAnswerOf(answer ?? view);
     });
-    return { admin: { controlComputerJobs }, asks, acted: () => asks.filter((ask) => ask.action !== 'list') };
+    return {
+        admin: { controlComputerJobs },
+        asks,
+        /** What was asked, without each control's own id (`commands()` reads those): the ids are made from the message and are checked where that is what the test is about. */
+        acted: () =>
+            asks
+                .filter((ask) => ask.action !== 'list')
+                .map((ask) => {
+                    const { commandId: _id, ...rest } = ask;
+                    return rest;
+                }),
+        /** The id every control that changed something went under, in order (finding 4). */
+        commands: () => asks.filter((ask) => ask.action !== 'list').map((ask) => ask.commandId),
+    };
 }
 
 function chat(admin: ReturnType<typeof door>['admin'], state: ControlState = newControlState()) {
@@ -64,7 +79,8 @@ function chat(admin: ReturnType<typeof door>['admin'], state: ControlState = new
         get queue() {
             return queue;
         },
-        run: (name: string, args: Record<string, unknown> = {}) => runComputerControlTool(name, args, { admin, botId: BRICK, userId: 'uuid-alice', state, confirmations: queue }),
+        run: (name: string, args: Record<string, unknown> = {}, event = '$msg:one') =>
+            runComputerControlTool(name, args, { admin, botId: BRICK, userId: 'uuid-alice', state, confirmations: queue, inbound: { eventId: event } }),
         /** The reply reached the person: its lines are in the event Matrix took. Returns the lines it carried. */
         deliver: async (): Promise<string[]> => {
             const lines = queue.tell();
@@ -989,5 +1005,95 @@ describe('CodeRabbit N8: an ambiguous HTTP failure is never read as Orbit\'s ref
     it('Orbit\'s own refusals on 404 and 409 are still read as refusals, and a 503 that says retry is still asked again', async () => {
         expect(await asked(409, { ok: false, reason: 'ending' })).toEqual({ ok: false, reason: 'ending' });
         expect(await asked(404, { ok: false, reason: 'not_found' })).toEqual({ ok: false, reason: 'not_found' });
+    });
+});
+
+// GPT's sixth answer, finding 4: every control that changes something carries its own id, made from the person's message, the kind and the job. Orbit does it once per id.
+describe('finding 4: each control goes to Orbit under its own id', () => {
+    it('makes the id from the message, the kind and the job, so the same control sent again is the same id', async () => {
+        const orbit = door(viewOf(working(), [paused('job-taxi', 'Taxi booking')]));
+        const c = chat(orbit.admin);
+        await c.run(PAUSE_JOB_TOOL);
+        const [first] = orbit.commands();
+        expect(first).toBe(uuidv5(`$msg:one:pause:job-visa:0`, COMPUTER_COMMAND_NAMESPACE));
+        // the same control in the same message, from a reply written again: the same id (and here the turn's own record means nothing is even sent twice)
+        c.retry();
+        await c.run(PAUSE_JOB_TOOL);
+        expect(orbit.commands()).toEqual([first]);
+        // another kind, and another job, each get their own
+        await c.run(RESUME_JOB_TOOL, { job: 'taxi' });
+        expect(orbit.commands()).toEqual([first, uuidv5('$msg:one:resume:job-taxi:0', COMPUTER_COMMAND_NAMESPACE)]);
+    });
+
+    it('sends the SAME id again when the request itself broke before Orbit answered, so the control is done once', async () => {
+        const orbit = door(viewOf(working()), { pause: new Error('socket hang up') });
+        const c = chat(orbit.admin);
+        await c.run(PAUSE_JOB_TOOL);
+        expect(orbit.commands()).toHaveLength(1);
+        // tried again in the same message: it goes out again (nothing was changed), under the id it had
+        orbit.admin.controlComputerJobs.mockImplementation(async (_bot: string, _user: string, ask: ComputerControlAsk) => {
+            orbit.asks.push(ask);
+            return controlAnswerOf(ask.action === 'list' ? viewOf(working()) : viewOf(paused('job-visa', 'Visa form')));
+        });
+        await c.run(PAUSE_JOB_TOOL);
+        const ids = orbit.commands();
+        expect(ids).toHaveLength(2);
+        expect(ids[1]).toBe(ids[0]);
+    });
+
+    it('gives two different notes in one message two ids, and the same note in the NEXT message an id of its own (a deliberate second note)', async () => {
+        const told = { ...viewOf(working()), note: { seq: 1, delivery: 'now' } };
+        const orbit = door(viewOf(working()), { note: told });
+        const c = chat(orbit.admin);
+        await c.run(TELL_JOB_TOOL, { message: 'Use 12 March instead.' });
+        await c.run(TELL_JOB_TOOL, { message: 'And aisle seat.' });
+        const [one, two] = orbit.commands();
+        expect(one).toBe(uuidv5('$msg:one:note:job-visa:0', COMPUTER_COMMAND_NAMESPACE));
+        expect(two).toBe(uuidv5('$msg:one:note:job-visa:1', COMPUTER_COMMAND_NAMESPACE));
+        // the same words again in the same message are the same note: nothing is sent
+        await c.run(TELL_JOB_TOOL, { message: 'Use 12 March instead.' });
+        expect(orbit.commands()).toEqual([one, two]);
+        // their next message asking for the same note is a second note, under an id of its own
+        c.nextMessage('Tell it again');
+        await c.run(TELL_JOB_TOOL, { message: 'Use 12 March instead.' }, '$msg:two');
+        const ids = orbit.commands();
+        expect(ids).toHaveLength(3);
+        expect(ids[2]).toBe(uuidv5('$msg:two:note:job-visa:0', COMPUTER_COMMAND_NAMESPACE));
+        expect(new Set(ids).size).toBe(3);
+    });
+
+    it('gives cancel, do-this-first and stop their own ids, and stop names the jobs it was asked about', async () => {
+        const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]));
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.deliver();
+        c.nextMessage('Yes');
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:two');
+        expect(orbit.commands()).toEqual([uuidv5('$msg:two:cancel:job-visa:0', COMPUTER_COMMAND_NAMESPACE)]);
+        await c.run(JOB_FIRST_TOOL, { job: 'taxi', pause_running: true }, '$msg:two');
+        expect(orbit.commands()[1]).toBe(uuidv5('$msg:two:first:job-taxi:0', COMPUTER_COMMAND_NAMESPACE));
+        await c.run(STOP_COMPUTER_TOOL, {}, '$msg:two');
+        await c.deliver();
+        c.nextMessage('Yes');
+        await c.run(STOP_COMPUTER_TOOL, {}, '$msg:three');
+        // Stop names no one job, so its id is the message's own stop (the jobs it was asked about keep it apart from a later stop in the same message)
+        expect(orbit.commands()[2]).toBe(uuidv5('$msg:three:stop::0', COMPUTER_COMMAND_NAMESPACE));
+    });
+
+    it('reading the jobs carries no id at all: it changes nothing', async () => {
+        const orbit = door(viewOf(working()));
+        const c = chat(orbit.admin);
+        await c.run(COMPUTER_JOBS_TOOL);
+        expect(orbit.asks.every((ask) => ask.commandId === undefined)).toBe(true);
+    });
+
+    it('a control asked outside a chat message still goes under one id for the turn', async () => {
+        const orbit = door(viewOf(working()));
+        const state = newControlState();
+        const answer = await runComputerControlTool(PAUSE_JOB_TOOL, {}, { admin: orbit.admin, botId: BRICK, userId: 'uuid-alice', state });
+        expect(answer).toMatchObject({ done: true });
+        const [id] = orbit.commands();
+        expect(id).toMatch(/^[0-9a-f-]{36}$/);
+        expect(state.commands.get('pause|job-visa|')).toBe(id);
     });
 });
