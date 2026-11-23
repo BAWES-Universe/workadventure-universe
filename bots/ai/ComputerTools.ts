@@ -10,7 +10,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/node';
-import type { StartKeyStore, StoredStartPayload } from '../server/ComputerStartKeys';
+import type { StartKeyStore, StoredStartKey, StoredStartPayload } from '../server/ComputerStartKeys';
 import { jobLine, type JobNote } from './JobStatusLine';
 import type { AdminApiService, CannotContinue } from '../server/AdminApiService';
 import { CANNOT_CONTINUE_NOTE, cannotContinue, cannotContinueSaid } from './ComputerTryAgainWords';
@@ -545,8 +545,10 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         let sent: StartAnswer | undefined;
         if (!looked) {
             // A key whose words nobody holds (a record that had none) cannot be sent: whatever the person asks now is not what that key stands for. It stays open and is looked up on every ask.
-            let said = entry.payload;
-            if (!said) return { started: false, unknown: true, note: COULD_NOT_CHECK_NOTE };
+            const firstWords = entry.payload;
+            if (!firstWords) return { started: false, unknown: true, note: COULD_NOT_CHECK_NOTE };
+            // Typed, so the closure below sees words and never a possible nothing (a `let` narrowed above is not narrowed inside it)
+            let said: StoredStartPayload = firstWords;
             entry.sent = true;
             try {
                 // The words of the ask that FIRST sent this key, never the words of this call (when they differ the answer is told as that earlier ask's)
@@ -560,7 +562,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                     entry.key = startKey;
                     entry.at = Date.now();
                     await context.startKeyStore?.delete(scope, old).catch(() => undefined);
-                    const held = await context.startKeyStore?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
+                    const held: StoredStartKey | undefined = await context.startKeyStore?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
                     // Another server already holds a key of this ask: that is the one to send (the store's contract), so it is looked up first, and what it said is what goes with it. Two keys must never reach Orbit
                     if (held && held.key !== startKey) {
                         startKey = held.key;
