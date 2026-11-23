@@ -184,9 +184,12 @@ function titleRunsNamed(tokens: string[], titles: string[]): { named: boolean[];
             if (!endsJobBefore(tokens, at)) continue;
             let length = 0;
             while (at + length < tokens.length && length < title.length && tokens[at + length] === title[length]) length++;
+            // A title that BEGINS with a condition word ("When ready") is told apart from the condition only when the message says it is a name: "yes, cancel when ready" is ambiguous and is no yes,
+            // "yes, cancel the job called When ready" is the title (CodeRabbit on ea88b4c1, 11)
+            const ambiguous = length === title.length && CONDITION_WORDS.has(tokens[at]) && !(at > 0 && (tokens[at - 1] === 'called' || tokens[at - 1] === 'named'));
             for (let i = 0; i < length; i++) {
                 named[at + i] = true;
-                if (length === title.length) whole[at + i] = true;
+                if (length === title.length && !ambiguous) whole[at + i] = true;
             }
         }
     }
