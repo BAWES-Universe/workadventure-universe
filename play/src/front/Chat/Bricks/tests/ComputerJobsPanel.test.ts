@@ -57,6 +57,7 @@ const closeAllModals = () => {
     document.querySelectorAll("[data-modal]").forEach((modal) => modal.remove());
 };
 
+import { get } from "svelte/store";
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import BrickComputerBar from "../Computer/BrickComputerBar.svelte";
@@ -64,7 +65,6 @@ import ComputerGroup from "../Computer/ComputerGroup.svelte";
 import ComputerJobsSheet from "../Computer/ComputerJobsSheet.svelte";
 import { loadBrickComputer } from "../Computer/BrickComputerStore";
 import { brickScreenStore, closeBrickScreen } from "../Computer/BrickScreenStore";
-import { get } from "svelte/store";
 
 const BRICK = "1c8d2e3f-2222-4333-8444-a55566667777";
 const brick = {
@@ -296,7 +296,9 @@ describe("the job controls on a Brick's computer", () => {
     it("CodeRabbit: Stop on the bar is off while its request is on its way, so a second tap sends no second Stop", async () => {
         await showBar(computer({ job: taxi }));
         let answer!: (value: unknown) => void;
-        game.brickComputerAction.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        game.brickComputerAction.mockImplementationOnce(() => new Promise((resolve) => {
+            answer = resolve;
+        }));
         one("brickComputerBarStop")?.click();
         await settle();
         expect((one("brickComputerBarStop") as HTMLButtonElement | null)?.disabled).toBe(true);

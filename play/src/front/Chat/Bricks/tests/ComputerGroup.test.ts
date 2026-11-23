@@ -171,7 +171,9 @@ describe("a Brick's computer on screen (#2000)", () => {
     it("CodeRabbit: Stop on the page is off while its request is on its way, so a second tap sends no second Stop", async () => {
         await showGroup(computer({ machine: "working", job: job() }));
         let answer!: (value: unknown) => void;
-        game.brickComputerAction.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        game.brickComputerAction.mockImplementationOnce(() => new Promise((resolve) => {
+            answer = resolve;
+        }));
         byId("brickComputerStop")?.click();
         await settle();
         byId("brickComputerStop")?.click();
