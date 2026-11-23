@@ -83,7 +83,10 @@ export class ConfirmationQueue {
      * a fixed sentence built from it when the answer has no words of its own, so what is confirmed is always something the person was told.
      */
     add(key: string, send: () => Promise<void>, note?: JobNote): void {
-        if (!this.closed && !this.dropped) this.items.set(key, { send, ...(note ? { note } : {}) });
+        if (this.closed || this.dropped) return;
+        // A job the reply being sent already names (`tell` put its line in the words) keeps its entry: the same key added again must not take away what that event will confirm
+        if (this.items.get(key)?.told) return;
+        this.items.set(key, { send, ...(note ? { note } : {}) });
     }
 
     private starts = 0;
@@ -518,7 +521,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // Where this start is kept once it is settled: under the ask that SENT it (the words it holds), not under whatever is asked now, so the same ask in this turn finds it
         const keptAsked = entry.payload ? askedOf(entry.payload.title, entry.payload.origin) : asked;
         // A start with this key may have gone out BEFORE this call (an earlier ask of this person, here or at another server): whatever this call's own answer is, it says nothing of that one
-        const priorSend = entry.sent === true;
+        let priorSend = entry.sent === true;
         const leave = () => {
             if (context.startKeys?.get(OPEN_START_SLOT) === entry) context.startKeys.delete(OPEN_START_SLOT);
             if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
@@ -572,6 +575,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                     await context.startKeyStore?.delete(scope, old).catch(() => undefined);
                     const store = context.startKeyStore;
                     const held: StoredStartKey | undefined = await store?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
+                    // A key this call made itself, with no start sent under it yet: its record is this call's to delete when the send fails (the key before it may have gone out, this one has not)
+                    priorSend = false;
                     // The shared store is expected and did not confirm the new key: another server may hold a key of this ask that this one cannot see, so nothing is sent (as for the first key).
                     // The new key is checked again on the next ask
                     if (store && !held && (store.expected?.() ?? true)) {
@@ -580,6 +585,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                     }
                     // Another server already holds a key of this ask: that is the one to send (the store's contract), so it is looked up first, and what it said is what goes with it. Two keys must never reach Orbit
                     if (held && held.key !== startKey) {
+                        // The key (and its record in the shared store) is ANOTHER server's: it may have gone out, and this call never deletes a record it did not make
+                        priorSend = true;
                         startKey = held.key;
                         entry.key = held.key;
                         entry.at = held.at;

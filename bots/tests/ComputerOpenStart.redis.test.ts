@@ -14,6 +14,7 @@ import type { Server } from 'node:http';
 import { AdminApiService } from '../server/AdminApiService';
 import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
 import { createEventInbox, INBOX_KEY, PaidFenceError, type EventInbox, type InboxEntry } from '../matrix/MatrixEventInbox';
+import { takeTurnOnInbox } from './helpers/sharedInboxLock';
 import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, jobLine, runComputerTool, startKeyFor, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
@@ -1483,6 +1484,43 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             }
         });
 
+        // CodeRabbit on #2114 (d098522a): a key adopted from another server is that server's record; this call never deletes it, even when its own send of that key fails
+        it('S2 `expired`, another server\'s key adopted and the send of it FAILS: its record stays in the store (only a key this call made is ever deleted)', async () => {
+            const HELD = 'mx_held0000000000000000000000000002';
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            // the post of the adopted key fails (nothing answered, no job)
+            const inner = (orbit as unknown as { call: (...args: unknown[]) => Promise<unknown> }).call;
+            let posts = 0;
+            (orbit as unknown as { call: unknown }).call = async (...args: unknown[]) => {
+                const [method, , body] = args as [string, string, { action?: string } | undefined];
+                if (method === 'post' && !body?.action && ++posts === 2) throw new Error('Orbit did not answer');
+                return inner(...args);
+            };
+            const server = process_(orbit, who);
+            const real = new RedisStartKeys(() => client as never);
+            const deleted: string[] = [];
+            let claims = 0;
+            const store = {
+                expected: () => true,
+                delete: (scope: string, key: string) => (deleted.push(key), real.delete(scope, key)),
+                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
+                    claims += 1;
+                    if (claims === 2) {
+                        // another server's record, in the store itself
+                        await real.claim(scope, { key: HELD, at: Date.now(), payload: { title: 'The held ask', writes: true } } as never, keep, life).catch(() => undefined);
+                        return { key: HELD, at: Date.now(), payload: { title: 'The held ask', writes: true } } as never;
+                    }
+                    return real.claim(scope, entry as never, keep, life);
+                },
+            };
+            await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
+            expect(posts).toBe(2);
+            // the adopted key was never deleted by this call
+            expect(deleted).not.toContain(HELD);
+        });
+
         it('S2 `expired`, the shared store expected but it did not confirm the new key: nothing is sent under it (another server may hold a key of this ask), and the next ask checks it again', async () => {
             const who = ids();
             const orbit = new FakeOrbit();
@@ -1632,9 +1670,15 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             const config = { homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as-secret', hsToken: 'hs-secret' };
             const servers: Server[] = [];
             const ids_: string[] = [];
+            // The inbox is one set in the shared Redis, and another test file uses it too: this block has it to itself while it runs (CodeRabbit on d098522a)
+            let giveTurnBack: (() => Promise<void>) | undefined;
+            beforeAll(async () => {
+                giveTurnBack = await takeTurnOnInbox(client as never);
+            }, 330_000);
             afterAll(async () => {
                 await Promise.all(servers.map((one) => new Promise<void>((resolve) => one.close(() => resolve()))));
                 if (client.isOpen && ids_.length > 0) await client.del([...ids_.map((id) => `matrix:event:${id}`), ...ids_.map((id) => `matrix:inbox:${id}`), INBOX_KEY]);
+                await giveTurnBack?.();
             });
             const event = (id: string, body = 'Hi', at?: number) => {
                 ids_.push(id);

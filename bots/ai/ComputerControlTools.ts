@@ -156,13 +156,17 @@ export function isClearYes(message: string | undefined): boolean {
     return YES_FIRST.has(first) || (second !== undefined && YES_PAIRS.has(`${first} ${second}`)) || YES_PAIRS.has(first);
 }
 
+/** Words that name ANOTHER thing to do with a job than ending it: a yes that says "yes, pause it" is not a yes to a question about cancelling. */
+const OTHER_ACTION = new Set(['pause', 'paused', 'pausing', 'resume', 'resumed', 'resuming', 'redirect', 'redirected']);
+
 /** How far a message names the question: the whole-word overlap with the titles of the jobs a cancel is about, and for Stop the words that mean everything. 0 names it not at all. */
-function askNamedBy(message: string, ask: ControlAsk): number {
+export function askNamedBy(message: string, ask: Pick<ControlAsk, 'kind' | 'titles'>): number {
     const tokens = new Set(tokensOf(message));
     if (ask.kind === 'stop') return ['all', 'everything', 'both', 'everyone', 'jobs'].some((word) => tokens.has(word)) ? 1 : 0;
     let best = 0;
     for (const title of ask.titles) {
-        const words = plain(title).split(' ').filter((word) => word.length >= 3 && !COMMON.has(word));
+        // Each distinct word of a title counts once, however often the title repeats it ("Paris Paris trip" is not twice as near to "Paris" as "Paris hotel")
+        const words = [...new Set(plain(title).split(' ').filter((word) => word.length >= 3 && !COMMON.has(word)))];
         const shared = words.filter((word) => tokens.has(word) || tokens.has(word.replace(/s$/, '')) || tokens.has(`${word}s`)).length;
         best = Math.max(best, shared);
     }
@@ -178,16 +182,15 @@ export function startControlTurn(state: ControlState | undefined, message?: stri
     state.turn += 1;
     state.said = typeof message === 'string' ? message : '';
     const answered = new Set<string>();
-    if (isClearYes(message)) {
+    // A yes that names another action ("yes, pause it") is no answer to a question about ending a job
+    if (isClearYes(message) && !tokensOf(message as string).some((word) => OTHER_ACTION.has(word))) {
         const told = [...state.asks].filter(([, ask]) => ask.told && !ask.answerable);
-        // One question was asked: a yes answers it. Several were asked in one reply (cancel this job, cancel that one): a yes answers ONE of them, and only when it names it; a bare yes, or one
-        // that fits more than one, answers none, and every question ends (they are asked again, so the person says which)
+        // One question was asked: a yes answers it. Several were asked in one reply (cancel this job, cancel that one): a yes answers ONE of them, and only when it names that one alone; a
+        // bare yes, or one that names more than one, answers none, and every question ends (they are asked again, so the person says which)
         if (told.length === 1) answered.add(told[0][0]);
         else if (told.length > 1) {
-            const scores = told.map(([key, ask]) => ({ key, score: askNamedBy(message as string, ask) }));
-            const best = Math.max(...scores.map((one) => one.score));
-            const top = scores.filter((one) => one.score === best);
-            if (best > 0 && top.length === 1) answered.add(top[0].key);
+            const named = told.filter(([, ask]) => askNamedBy(message as string, ask) > 0);
+            if (named.length === 1) answered.add(named[0][0]);
         }
     }
     for (const [key, ask] of state.asks) {
@@ -580,7 +583,15 @@ function askFirst(context: ComputerControlContext, key: string, ask: Pick<Contro
         lines,
         { done: false, asked: true, waitingForTheirAnswer: true },
         () => {
-            if (context.state.asks.get(key) === entry) entry.told = true;
+            const current = context.state.asks.get(key);
+            if (current === entry) entry.told = true;
+            // A newer message of the person's began a turn while this reply was being delivered, and that turn ended the question as one never asked. The person did read it in this event
+            // though, so it is asked now (answerable by their NEXT message). It never takes the place of a different question for the same key
+            else if (current === undefined) {
+                entry.told = true;
+                entry.answerable = false;
+                context.state.asks.set(key, entry);
+            }
         }
     );
 }

@@ -10,6 +10,9 @@ import type { EvidenceRedis } from './ComputerEvidenceStore';
  *
  * The first key of an ask wins across servers: `claim` is ONE step in the store that returns the key already held while it is still good, and otherwise keeps the caller's
  * and returns that. Two servers that handle the same ask at the same moment, and an ask that races a stored one, therefore send the same key (one job, never two).
+ *
+ * Whose record it is: a call deletes only a key it made itself (the answer of `claim` was its own key and nothing was sent under it yet, or it sent and Orbit refused it). A key it ADOPTED
+ * from the store (another server's claim, which may have gone out) is never deleted by it, even when its own send of that key fails: the record stays for the next ask, here or elsewhere, to look up.
  */
 export const START_KEY_PREFIX = 'computer:startkey:';
 

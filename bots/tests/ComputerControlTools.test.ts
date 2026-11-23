@@ -25,6 +25,7 @@ import {
     STOP_COMPUTER_TOOL,
     TELL_JOB_TOOL,
     computerControlToolDefinitions,
+    askNamedBy,
     findJob,
     isClearYes,
     newControlState,
@@ -1267,5 +1268,119 @@ describe('CodeRabbit on #2114: exact selectors, a replay that needs no list, and
         const c = chat(orbit.admin);
         await c.run(RESUME_JOB_TOOL);
         expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.resumeAsked, 'Hotel booking')]);
+    });
+});
+
+// CodeRabbit on #2114 (review of d098522a)
+describe('CodeRabbit on d098522a: which question a yes answers, and a question whose reply is still being delivered', () => {
+    it('a yes that names ANOTHER action ("yes, pause it") does not answer a cancel question: the job is not cancelled and the question ends', async () => {
+        for (const said of ['Yes, pause it', 'yes please pause that one for now', 'ok resume it']) {
+            const orbit = door(viewOf(working()), { cancel: viewOf(null) });
+            const c = chat(orbit.admin);
+            await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+            await c.deliver();
+            c.nextMessage(said);
+            await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+            expect(orbit.acted(), said).toEqual([]);
+        }
+        // the plain yes still answers it
+        const orbit = door(viewOf(working()), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.deliver();
+        c.nextMessage('Yes, cancel it');
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+    });
+
+    it('a stop question is not answered by a yes that says pause either', async () => {
+        const orbit = door(viewOf(working()), { stop: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(STOP_COMPUTER_TOOL);
+        await c.deliver();
+        c.nextMessage('yes pause everything');
+        await c.run(STOP_COMPUTER_TOOL);
+        expect(orbit.acted()).toEqual([]);
+    });
+
+    it('two questions in one reply: a message that names BOTH answers neither, even when it names one more closely (ending a job is never decided by the nearer match)', async () => {
+        const orbit = door(viewOf(working({ title: 'Visa booking trip' }), [paused('job-hotel', 'Hotel booking')]), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        await c.deliver();
+        // "visa" and "booking" are in the first title, "booking" in the second: both are named
+        c.nextMessage('yes cancel the visa booking');
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([]);
+    });
+
+    it('askNamedBy counts each distinct word of a title once, however often the title repeats it, and still matches a plural', () => {
+        const ask = (titles: string[]) => ({ kind: 'cancel' as const, titles });
+        expect(askNamedBy('cancel the paris one', ask(['Paris Paris trip']))).toBe(1);
+        expect(askNamedBy('cancel the paris trip', ask(['Paris Paris trip']))).toBe(2);
+        expect(askNamedBy('the visas', ask(['Visa form']))).toBe(1);
+        expect(askNamedBy('paris', ask(['Paris hotel', 'Paris flight']))).toBe(1);
+    });
+
+    // GPT/CodeRabbit: a newer message begins a turn while the reply that carries the question is still being delivered
+    it('a question whose reply is delivered AFTER a newer message began a turn is asked then: the next message\'s yes answers it', async () => {
+        const orbit = door(viewOf(working()), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        const sending = c.queue;
+        // the reply is handed over to be sent (its text carries the question) ...
+        expect(sending.tell()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Visa form')]);
+        // ... and the person writes again before Matrix has taken it: a new turn, the old queue dropped (what it already told stays)
+        c.nextMessage('what is going on?');
+        sending.drop();
+        // Matrix then accepts the event: the person read the question in it
+        await sending.deliver('$event:late');
+        c.nextMessage('Yes');
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:three');
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+    });
+
+    it('the late delivery never replaces a different question that the newer turn asked for the same key, and asks nothing when the reply was never delivered', async () => {
+        const orbit = door(viewOf(working()), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        const sending = c.queue;
+        sending.tell();
+        c.nextMessage('what is going on?');
+        sending.drop();
+        // the newer turn asks its own question about the same job (same key), in a reply of its own
+        const c2 = chat(orbit.admin, c.state);
+        await c2.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:three');
+        expect(c.state.asks.size).toBe(1);
+        const newer = [...c.state.asks.values()][0];
+        await sending.deliver('$event:late');
+        // still the newer question: not told (its own reply was not delivered), and not the old one
+        expect([...c.state.asks.values()]).toEqual([newer]);
+        expect(newer.told).toBe(false);
+        // a reply that is never delivered asks nothing
+        const never = door(viewOf(working()), { cancel: viewOf(null) });
+        const c3 = chat(never.admin);
+        await c3.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        c3.queue.tell();
+        c3.nextMessage('hello');
+        c3.queue.drop();
+        expect(c3.state.asks.size).toBe(0);
+        c3.nextMessage('Yes');
+        await c3.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:three');
+        expect(never.acted()).toEqual([]);
+    });
+
+    it('a job added again after the reply took its line keeps what that reply confirms; a new key not in the reply stays out of it', async () => {
+        const sent: string[] = [];
+        const queue = new ConfirmationQueue();
+        queue.add('k1', async () => void sent.push('first'), { state: 'started', title: 'Visa form' } as never);
+        expect(queue.tell()).toHaveLength(1);
+        // the same key again (a tool call retried while the reply is being sent), and one that was never in the reply
+        queue.add('k1', async () => void sent.push('replacement'), { state: 'started', title: 'Other' } as never);
+        queue.add('k2', async () => void sent.push('second'), { state: 'started', title: 'Late' } as never);
+        await queue.deliver('$event:one');
+        expect(sent).toEqual(['first']);
     });
 });

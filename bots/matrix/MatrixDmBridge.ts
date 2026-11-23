@@ -1844,6 +1844,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // The store that says which bot is in this chat is unreachable (a reconnect, say). That is not a chat without a
             // bot, so the message is kept here and tried again, never dropped.
             console.warn(`[MatrixDmBridge] Could not look up the bot for ${event.room_id}, will try again:`, error?.message ?? error);
+            // An event the durable inbox holds (it gave us `hooks`) is the inbox's to keep: the failure goes back to the router, which gives the entry back and has it taken again with a fresh
+            // acquisition (and its own paid hook). Kept only in this process's memory it would be lost with a restart, and its local retry would run without that hook
+            if (hooks) throw error;
             this.keepUnplaced(event);
             return;
         }
@@ -1994,7 +1997,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // confirms the person has that App connected for this Brick; otherwise it is dropped (a lost answer costs nothing)
         let connectedApp = this.connectedNotes.get(event) ?? null;
         if (connectedApp) {
-            const confirmed = await this.deps.appConnected?.(botId, user.uuid, connectedApp.app).catch(() => false);
+            // A lookup that FAILS is not an answer that the App is not connected: for an event the inbox holds it goes back (the entry is given back and taken again); only an answer of "no" stops
+            const confirmed = await this.deps.appConnected?.(botId, user.uuid, connectedApp.app).catch((error) => {
+                if (hooks) throw error;
+                return false;
+            });
             if (confirmed !== true) {
                 console.info(`[MatrixDmBridge] Not carrying on after an App was connected in ${event.room_id}: not confirmed as connected`);
                 return;
@@ -2162,8 +2169,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 wordsEvent = await out.sendText(botUserId, event.room_id, reply.text);
             }
             // Kept (and the computer jobs it names confirmed to Orbit) only once Matrix took the words of the reply AND gave the event's id: a card or a file that comes after, and fails, changes nothing
-            // of that. A send that was suppressed (the chat was cleared meanwhile), or that gave no id, confirms nothing. The words of every job the reply names are in this one event
-            if (reply.text) reply.keep?.(wordsEvent);
+            // of that. A send that was suppressed (the chat was cleared meanwhile), or that gave no id, keeps and confirms nothing: the person was told nothing, so no line of that reply (a job's
+            // status, say) is in the history as something they were told. The words of every job the reply names are in this one event
+            if (reply.text && wordsEvent) reply.keep?.(wordsEvent);
             // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
             // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;

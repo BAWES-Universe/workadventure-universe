@@ -30,9 +30,14 @@ export const RECOVER_EVERY_MS = 30 * 1000;
 export const MAX_TRIES = 3;
 /** How long the shared store has to answer: the router waits for the first step before it answers Matrix, so it can never wait long. */
 export const INBOX_DEADLINE_MS = 3000;
-/** Where an event came in, in the order this process took them: milliseconds with a count behind them, so two events taken in the same millisecond keep their order. */
-let arrivals = 0;
-const arrivalOf = (): number => Date.now() * 1000 + (arrivals++ % 1000);
+/** Where an event came in, in the order this process took them: microseconds of the clock, and never less than one more than the stamp before it, so any number of events taken in one millisecond (or after the clock stepped back) keep their order. */
+let lastArrival = 0;
+const arrivalOf = (): number => {
+    lastArrival = Math.max(Date.now() * 1000, lastArrival + 1);
+    return lastArrival;
+};
+/** How many times a give-back that the store did not take is tried again before it is left. */
+export const GIVE_BACK_TRIES = 8;
 /** How many stale entries one scan takes. */
 export const RECOVER_BATCH = 50;
 
@@ -89,14 +94,15 @@ return 1
 `;
 /**
  * Given back for another try (nothing of it was paid for): the entry keeps its place in the inbox with no owner and the oldest score, so the next scan anywhere takes it. Once it has had
- * all its tries it becomes `d` instead: an event that throws every time must not go round for ever.
+ * all its tries it becomes `d` instead: an event that throws every time must not go round for ever. It is only ever called for work that did NOT begin, so a paid mark on the entry
+ * (`|$`: a write of the fence that the store did not confirm to this server, so the work was never started) is taken off with it, and the tries counted are kept.
  */
 const RELEASE = `
 local held = redis.call('GET', KEYS[1])
 if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
   return 0
 end
-local tries = tonumber(string.match(held, '|(%d+)$')) or 1
+local tries = tonumber(string.match(held, '|(%d+)$')) or tonumber(string.match(held, '|(%d+)|%$$')) or 1
 if tries >= tonumber(ARGV[3]) then
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
@@ -264,9 +270,49 @@ export function createEventInbox(
             clearInterval(beat);
             await step(redis, script, eventId, args).catch((error) => say(`Could not mark an event as ${what}; it is taken up again by another server:`, error));
         };
+        /**
+         * Given back for another try. When the store does not take it, the entry keeps beating and the give-back is tried again (a few times, a beat apart) instead of being left: a paid mark
+         * that the store wrote but never confirmed to this server stands on an entry whose work never began, and an entry that went quiet with that mark on it would be closed by another server
+         * as paid work, and the person's message lost. Only a server that dies before the store takes it back leaves that mark standing.
+         */
+        const giveBack = async (): Promise<void> => {
+            if (over) return;
+            over = true;
+            const attempt = (): Promise<boolean> =>
+                step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(maxTries), eventId]).then(
+                    () => true,
+                    (error) => {
+                        say('Could not give an event back for another try:', error);
+                        return false;
+                    }
+                );
+            if (await attempt()) {
+                clearInterval(beat);
+                return;
+            }
+            let tried = 1;
+            let running = false;
+            const again = setInterval(() => {
+                if (running) return;
+                running = true;
+                void attempt()
+                    .then((given) => {
+                        tried += 1;
+                        if (given || tried >= GIVE_BACK_TRIES) {
+                            clearInterval(again);
+                            clearInterval(beat);
+                            if (!given) say('Gave up giving an event back; it is taken up again by another server (or closed, if it carries a paid mark):', eventId);
+                        }
+                    })
+                    .finally(() => {
+                        running = false;
+                    });
+            }, beatEveryMs);
+            again.unref?.();
+        };
         return {
             done: () => end(DONE, [token, String(ttlSeconds), eventId], 'handled'),
-            release: () => end(RELEASE, [token, String(ttlSeconds), String(maxTries), eventId], 'to be tried again'),
+            release: giveBack,
             undo: () => end(UNDO, [token, eventId], 'taken back'),
             // Awaited before the first paid call, and it must SUCCEED: when it does not (another server holds the event now, or the store did not answer) it throws, and nothing paid for
             // begins. The event then goes back for another try, as one that nothing was paid for

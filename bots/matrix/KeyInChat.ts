@@ -25,6 +25,9 @@ export function holdsAKey(text: string | undefined | null): boolean {
 /** What a key is replaced by in anything kept for later, and the mark on the event that says one was there. */
 const KEY_REMOVED = '[a key was here and is not kept]';
 export const KEY_REDACTED_FIELD = 'universe.key_redacted';
+/** How deep into an event its texts are looked at, and what stands where something deeper was left out. */
+const MAX_DEPTH = 8;
+const TOO_DEEP = '[nested too deeply to keep]';
 
 /**
  * The event as it may be KEPT (the durable inbox writes it to the shared store before the Brick has looked at it): every text in it that holds a key is replaced, and the content says one
@@ -32,18 +35,34 @@ export const KEY_REDACTED_FIELD = 'universe.key_redacted';
  */
 export function withoutKeys<T>(event: T): T {
     let found = false;
+    let trimmed = false;
     const walk = (value: unknown, depth: number): unknown => {
         if (typeof value === 'string') {
             if (!holdsAKey(value)) return value;
             found = true;
             return KEY_REMOVED;
         }
-        if (depth > 8 || typeof value !== 'object' || value === null) return value;
+        if (typeof value !== 'object' || value === null) return value;
+        // Nothing below the limit is ever kept unchecked: a subtree that deep is left out (a real event is nowhere near it), so the walk's own stack stays bounded and a key hidden down there never reaches the store
+        if (depth > MAX_DEPTH) {
+            trimmed = true;
+            return TOO_DEEP;
+        }
         if (Array.isArray(value)) return value.map((one) => walk(one, depth + 1));
-        return Object.fromEntries(Object.entries(value).map(([name, one]) => [name, walk(one, depth + 1)]));
+        const kept: Array<[string, unknown]> = [];
+        for (const [name, one] of Object.entries(value)) {
+            // The NAME of a property is text too: one that holds a key is left out, with its value, and the content says one was there
+            if (holdsAKey(name)) {
+                found = true;
+                continue;
+            }
+            kept.push([name, walk(one, depth + 1)]);
+        }
+        // fromEntries defines each property as its own, whatever its name (a name like `__proto__` is data here)
+        return Object.fromEntries(kept);
     };
     const clean = walk(event, 0);
-    if (!found) return event;
+    if (!found) return trimmed ? (clean as T) : event;
     const out = clean as Record<string, unknown>;
     const content = typeof out.content === 'object' && out.content !== null ? (out.content as Record<string, unknown>) : {};
     return { ...out, content: { ...content, [KEY_REDACTED_FIELD]: true } } as T;

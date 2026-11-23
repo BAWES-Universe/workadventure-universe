@@ -39,7 +39,10 @@ function leasedOrbit(options: { epoch?: number; clock?: () => number; turns?: Ar
         state.asked.push({ action, answer, body, ...(typeof body.epoch === 'number' ? { epoch: body.epoch } : {}), ...(typeof body.run === 'string' ? { run: body.run } : {}) });
     const live = () => state.status === 'running';
     const held = () => state.leaseUntil !== null && state.leaseUntil > clock();
+    /** The signal of every turn that was opened, in order: a turn is stopped through it, so whether it was aborted says whether that worker was stopped. */
+    const signals: AbortSignal[] = [];
     const turnOf = (signal: AbortSignal): AsyncGenerator<RunnerEvent> => {
+        signals.push(signal);
         const make = state.turnScripts.shift();
         if (make) return make();
         if (options.holdTurn) {
@@ -119,6 +122,7 @@ function leasedOrbit(options: { epoch?: number; clock?: () => number; turns?: Ar
     return {
         orbit,
         state,
+        signals,
         of: (action: string) => state.asked.filter((row) => row.action === action),
         actions: () => state.asked.map((row) => row.action),
     };
@@ -430,6 +434,10 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         await vi.advanceTimersByTimeAsync(0);
         // the new worker is still working, and its beat goes on under its own epoch
         expect(instance.active()).toEqual([JOB.jobId]);
+        // the replacement turn itself was not stopped by the old beat's late answer (the signal of the turn opened by the restart), while the first one was stopped with its worker
+        expect(fake.signals).toHaveLength(2);
+        expect(fake.signals[0].aborted).toBe(true);
+        expect(fake.signals[1].aborted).toBe(false);
         at += 30_000;
         await vi.advanceTimersByTimeAsync(30_000);
         expect(fake.of('beat').length).toBeGreaterThan(beatsBefore);

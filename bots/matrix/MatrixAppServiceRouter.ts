@@ -65,6 +65,11 @@ export function createMatrixAppServiceRouter(
     const roomChains = new Map<string, Promise<void>>();
     /** The transactions being taken in right now, by id: what each answers is whether its events were all kept. */
     const pendingTxns = new Map<string, Promise<boolean>>();
+    /**
+     * Transactions are taken in one after another in this process (each is a few quick steps in the shared store): a transaction never finds an event held by another intake that is still
+     * running and can still roll it back, so "already held" always means kept (or handled), and the same event in two transactions is taken in by whichever comes first.
+     */
+    let intakes: Promise<unknown> = Promise.resolve();
     /** The look for events another server left, while one is going on (one at a time). */
     let recovering: Promise<number> | null = null;
     let closing = false;
@@ -103,7 +108,8 @@ export function createMatrixAppServiceRouter(
             return;
         }
         const events: MatrixEvent[] = Array.isArray(req.body?.events) ? req.body.events : [];
-        const intake = takeIn(events, res, txnId);
+        const intake = intakes.then(() => takeIn(events, res, txnId)).catch(() => false);
+        intakes = intake;
         pendingTxns.set(txnId, intake);
         void intake.finally(() => {
             if (pendingTxns.get(txnId) === intake) pendingTxns.delete(txnId);
