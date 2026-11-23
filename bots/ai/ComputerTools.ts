@@ -321,7 +321,8 @@ export function forgetSettledStarts(starts: Map<string, StartKeyEntry> | undefin
 }
 
 /** Orbit's answers to a start that are final for the turn: nothing was made, and nothing is started in their place. */
-const TERMINAL_REASONS = ['expired', 'retired', 'stale_consent'];
+// `retired_by_game`: a late copy of a key this game itself retired (Orbit round 8): nothing was made, and it is told in the words of `expired` (no new text)
+const TERMINAL_REASONS = ['expired', 'retired', 'stale_consent', 'retired_by_game'];
 /** The reasons a start was refused before any job was made are the ones NOT in these: the ask went nowhere, so the next ask in the turn is a new one with a key of its own. */
 const UNCERTAIN_REASONS = ['starting', 'unknown', 'ended', 'done'];
 /** Of those, the ones whose outcome is still open: the key stays for the next ask of the same title, whichever turn it is in. */
@@ -434,7 +435,7 @@ export async function reviewAppSteps(
 
 /** The final answer of a start that Orbit ended with `expired`, `retired` or `stale_consent`: the same wherever it is asked again in the turn. */
 function terminalAnswer(reason: string, title: string | undefined, context: ComputerToolContext): Record<string, unknown> {
-    if (reason === 'expired') return answerOf({ ok: false, reason: 'expired' } as StartAnswer, context);
+    if (reason === 'expired' || reason === 'retired_by_game') return answerOf({ ok: false, reason: 'expired' } as StartAnswer, context);
     const kind = reason === 'retired' ? 'retired' : 'stale_consent';
     const line = kind === 'retired' ? START_REFUSAL_WORDS.retired : title ? START_REFUSAL_WORDS.staleConsent.titled(quotedTitle(title)) : START_REFUSAL_WORDS.staleConsent.plain;
     const answer = { started: false, success: false, reason: kind };
@@ -573,8 +574,6 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         }
         // Open when this call began: a key that went out before (here, at another server, or in an earlier turn) and whose outcome was not known. The words it said are the ones that go again.
         const wasOpen = entry.open;
-        // This message's OWN key, when this call made it: the one to go back to if the key adopted instead (another start's) turns out to be `expired` (A2, rule 2)
-        const ownKey = entry.unchecked ? entry.key : undefined;
         /** Whether the record of the key now in use is this call's own (stored by it): only then may a definite failure delete it. */
         let ownsRecord = true;
         // The FIRST key of the open start wins, across bot servers and restarts: one step in the shared store keeps ours BEFORE the start is sent unless it already holds a key
@@ -609,7 +608,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // Where this start is kept once it is settled: under the ask that SENT it (the words it holds), not under whatever is asked now, so the same ask in this turn finds it
         const keptAsked = entry.payload ? askedOf(entry.payload.title, entry.payload.origin) : asked;
         // A start with this key may have gone out BEFORE this call (an earlier ask of this person, here or at another server): whatever this call's own answer is, it says nothing of that one
-        let priorSend = entry.sent === true;
+        const priorSend = entry.sent === true;
         const leave = () => {
             if (context.startKeys?.get(OPEN_START_SLOT) === entry) context.startKeys.delete(OPEN_START_SLOT);
             if (context.startKeys?.get(asked) === entry) context.startKeys.delete(asked);
@@ -717,37 +716,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         if (looked && ['starting', 'done', 'ended'].includes((looked as unknown as StartAnswer).reason)) {
             context.startKeys?.set(FOUND_EARLIER_SLOT, { key: startKey, at: now, open: false, found: (looked as unknown as StartAnswer).reason, ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
         }
-        let started = (looked ?? sent) as StartAnswer;
-        // `expired` on a key ADOPTED from another start (the store's, or an `earlier` answer's): nothing was made by it. Go back to THIS message's own key and send it ONCE (Orbit reopens it, or answers
-        // with the job that superseded it). `expired` on the message's own key is final, below: never a key derived from it, and never a second try
-        if (!started.ok && started.reason === 'expired' && ownKey && startKey !== ownKey) {
-            const dead = startKey;
-            try {
-                await context.startKeyStore?.delete(scope, dead).catch(() => undefined);
-                const store = context.startKeyStore;
-                const mine: StoredStartKey | undefined = await store?.claim(scope, { key: ownKey, at: now, payload: current }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
-                // The shared store is expected and did not confirm the key, or another server holds one by now: nothing is sent (the key is checked again on the next ask)
-                if (store && (store.expected?.() ?? true) && (!mine || mine.key !== ownKey || mine.mine === false)) {
-                    entry.unchecked = true;
-                    entry.key = mine?.key ?? ownKey;
-                    return { started: false, unconfirmed: true, note: COULD_NOT_CHECK_NOTE };
-                }
-                startKey = ownKey;
-                entry.key = ownKey;
-                entry.at = now;
-                entry.payload = current;
-                entry.sent = true;
-                priorSend = false;
-                ownsRecord = true;
-                looked = undefined;
-                sent = (await context.admin.startComputerJob(context.botId, context.userId, { title: current.title, startKey: ownKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(current.brief ? { brief: current.brief } : {}), writes: current.writes, ...(current.plan ? { plan: current.plan } : {}), ...(current.origin ? { origin: current.origin } : {}), ...(current.continues ? { continuesJobId: current.continues } : {}) })) as unknown as StartAnswer;
-                started = sent;
-            } catch (error) {
-                if (!priorSend) await dropKey();
-                console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
-                return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
-            }
-        }
+        const started = (looked ?? sent) as StartAnswer;
         // `expired`, `retired`, `stale_consent`: Orbit's answer to THIS start is final, and nothing paid goes out in its place (GPT seventh note, A). The key made nothing now and may not be revived;
         // a new start comes only from the person's own next message (a new key). The record of the key goes at once (a dead key is never adopted again), and every later ask of this turn gets this
         // same answer, never a start under a fresh key

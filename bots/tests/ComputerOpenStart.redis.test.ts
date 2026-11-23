@@ -1543,24 +1543,24 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
         });
 
         // Opus's contract (round 8, A2 game rule 2): `expired` on a key ADOPTED from another start goes back to THIS message's own key, once
-        describe('`expired` on a key adopted from another start', () => {
+        // Opus round 8: `expired` is FINAL everywhere, including on a key adopted from another start. The person is told to ask again, and their new message brings a new key
+        describe('`expired` on a key adopted from another start is final', () => {
             const HELD = 't1h0000-mx_00000000000000000000000000000001';
             const seed = async (who: { botId: string; userId: string }, title = 'Fill in my visa form') => new RedisStartKeys(() => client as never).claim(`${who.botId}|${who.userId}`, { key: HELD, at: Date.now(), payload: { title, writes: true } }, 600_000, 600_000);
-            it('the held key is sent first and answers expired: this message\'s own key is then sent ONCE and makes ONE job; the dead key\'s record is gone', async () => {
+            it('the held key is sent and answers expired: NOTHING else is sent (not this message\'s own key, never a second key), no job is made, and the dead record is gone', async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
                 await seed(who);
                 scripted(orbit, [{ ok: false, reason: 'expired' }]);
                 const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
-                expect(answer).toMatchObject({ started: true });
-                const own = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts);
-                expect(orbit.posts.map((one) => one.key)).toEqual([HELD, own]);
-                expect([...orbit.jobs.keys()]).toEqual([own]);
-                expect(orbit.reservations).toBe(1);
-                expect(orbit.acks.map((one) => one.attempt)).toEqual([own]);
+                expect(answer).toMatchObject({ started: false, reason: 'expired' });
+                expect(orbit.posts.map((one) => one.key)).toEqual([HELD]);
+                expect(orbit.jobs.size).toBe(0);
+                expect(orbit.reservations).toBe(0);
+                expect(await held(who)).toBeNull();
             });
             // CodeRabbit item 7: the order of what reaches Orbit, not only what reached it
-            it('the held key (another start\'s) is LOOKED UP before it is sent: the look-up of the key comes first in the trace, then its send, then this message\'s own key', async () => {
+            it('the held key (another start\'s) is LOOKED UP before it is sent: the look-up of the key comes first in the trace, then its send, and nothing after', async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
                 await seed(who);
@@ -1574,30 +1574,33 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                     return inner(...args);
                 };
                 await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
-                const own = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts);
                 expect(trace.indexOf(`look:${HELD}`)).toBeGreaterThanOrEqual(0);
                 expect(trace.indexOf(`look:${HELD}`)).toBeLessThan(trace.indexOf(`send:${HELD}`));
-                expect(trace.indexOf(`send:${HELD}`)).toBeLessThan(trace.indexOf(`send:${own}`));
+                expect(trace.filter((one) => one.startsWith('send:'))).toEqual([`send:${HELD}`]);
             });
-            it('the own key answers expired too: final, nothing more is sent (never a third key)', async () => {
+            it('Orbit round 8: `retired_by_game` (a late copy of a key the game retired) is final too: told as expired, nothing else sent, no job', async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
                 await seed(who);
-                scripted(orbit, [{ ok: false, reason: 'expired' }, { ok: false, reason: 'expired' }]);
+                scripted(orbit, [{ ok: false, reason: 'retired_by_game' }]);
                 const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
                 expect(answer).toMatchObject({ started: false, reason: 'expired' });
-                expect(orbit.posts).toHaveLength(2);
+                expect(orbit.posts.map((one) => one.key)).toEqual([HELD]);
                 expect(orbit.jobs.size).toBe(0);
+                expect(await held(who)).toBeNull();
             });
-            it('the own key is superseded by the job a reworded earlier start made: that job is the answer, no second job', async () => {
+            it('the person\'s NEXT message (a new event) brings a new key and makes ONE job: the dead key is never the one sent again', async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
                 await seed(who);
-                scripted(orbit, [{ ok: false, reason: 'expired' }, { ok: false, reason: 'earlier', earlier: { id: 'job-superseding', status: 'running', attempt: 'tzzzzzz-mx_00000000000000000000000000000009' } }]);
-                const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
-                expect(answer).toMatchObject({ started: false });
-                expect(orbit.posts).toHaveLength(2);
-                expect(orbit.jobs.size).toBe(0);
+                scripted(orbit, [{ ok: false, reason: 'expired' }]);
+                await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+                const later = await process_(orbit, who).ask('Fill in my visa form', { inbound: { ...EVENT, eventId: '$visa-next' } });
+                expect(later).toMatchObject({ started: true });
+                const fresh = startKeyFor(who.botId, EVENT.roomId, '$visa-next', 0, EVENT.ts);
+                expect(orbit.posts.map((one) => one.key)).toEqual([HELD, fresh]);
+                expect(orbit.jobs.size).toBe(1);
+                expect(orbit.reservations).toBe(1);
             });
         });
 
