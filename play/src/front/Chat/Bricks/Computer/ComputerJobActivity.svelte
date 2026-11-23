@@ -25,6 +25,7 @@
     export let onBack: () => void;
     export let onCancel: (job: ComputerJob) => void;
 
+    let job: ComputerJob | null = null;
     $: job = allJobs(view).find((each) => each.id === jobId) ?? null;
     $: shown = job ?? opened;
     $: steps = $jobActivities.get(jobId);
